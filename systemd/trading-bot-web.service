@@ -1,0 +1,13 @@
+# Systemd Service File
+[Unit]
+Description=Trading Bot Web Dashboard
+After=network.target
+[Service]
+User=claw
+WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot/web/
+ExecStart=/usr/bin/python3 /home/claw/.openclaw/workspace/trading-bot/web/server.py
+Restart=always
+Environment="FLASK_ENV=production"
+Environment="FLASK_APP=app"
+[Install]
+WantedBy=default.target

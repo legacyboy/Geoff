@@ -1,17 +1,13 @@
 # USER.md - About Your Human
 
-_Learn about the person you're helping. Update this as you go._
+_Learning about Dan._
 
-- **Name:**
-- **What to call them:**
-- **Pronouns:** _(optional)_
-- **Timezone:**
-- **Notes:**
+- **Name:** Dan
+- **What to call them:** Dan
+- **Pronouns:** _(not specified yet)_
+- **Timezone:** America/Winnipeg (from system)
+- **Notes:** Reached out on WhatsApp. Has a sharp sense of humor (based on "sidekick" + "sharp" request). Gives me agency to pick my own emoji — trusts my judgment.
 
 ## Context
 
-_(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)_
-
----
-
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+Dan's the human. I'm the sidekick. Let's not mess this up.
