@@ -1,0 +1,54 @@
+{
+  "timestamp": "2026-03-24T00:35:15.520308",
+  "asset": "XTI_USD",
+  "asset_name": "WTI Crude Oil",
+  "origin": "USA (Cushing, Oklahoma)",
+  "model_used": "deepseek-coder:33b",
+  "volatility_score": 50,
+  "volatility_level": "medium",
+  "factors": {
+    "geopolitical": {
+      "risk_level": "medium",
+      "risk_score": 50,
+      "key_risks": [
+        "Middle East tensions",
+        "OPEC production cuts",
+        "Global demand uncertainty"
+      ],
+      "summary": "Moderate geopolitical risk due to ongoing tensions and OPEC policy."
+    },
+    "supply": {
+      "supply_level": "balanced",
+      "supply_score": 50,
+      "key_factors": [
+        "OPEC compliance",
+        "US production"
+      ],
+      "outlook": "Supply remains relatively stable with OPEC maintaining discipline."
+    },
+    "demand": {
+      "demand_level": "weak",
+      "demand_score": 50,
+      "key_factors": [
+        "Global GDP growth",
+        "China demand",
+        "US demand"
+      ],
+      "outlook": "The demand for WTI Crude Oil is projected to be weak due to a decline in global economic growth and declining demand from China and the US."
+    }
+  },
+  "score_explanation": {
+    "level": "medium",
+    "interpretation": "Moderate uncertainty. Reduced position sizes recommended.",
+    "factors": [
+      "Mixed signals",
+      "Some geopolitical risk",
+      "Balanced supply/demand"
+    ],
+    "action": "Trade with 60% position size and tight stops."
+  },
+  "recommendation": "MODERATE",
+  "position_size": 0.6,
+  "confidence": 50,
+  "reasoning": "Medium volatility (50/100). Trade with 60% position size and tight stops."
+}
