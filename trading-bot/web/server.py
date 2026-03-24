@@ -21,8 +21,18 @@ import time
 from datetime import datetime, timedelta
 from functools import lru_cache
 from flask import Flask, render_template_string, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
+
+# Rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_DIR = BASE_DIR
@@ -616,14 +626,13 @@ DASHBOARD_TEMPLATE = """
 """
 
 @app.route('/')
+@limiter.limit("10 per minute")
 def index():
     """Main dashboard page."""
     config = load_config()
     oil_reports = get_oil_reports()
     log = get_live_log('trader', 30)
     stats = get_performance_stats()
-    bot_running = get_bot_status()
-    web_running = get_web_status()
     
     return render_template_string(
         DASHBOARD_TEMPLATE,
@@ -631,7 +640,7 @@ def index():
         oil_reports=oil_reports,
         log=log,
         stats=stats,
-        get_cached_status=get_cached_status,  # Pass function to template
+        get_cached_status=get_cached_status,
         now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     )
 
@@ -875,6 +884,7 @@ def tracker():
 
 # API Endpoints
 @app.route('/api/status')
+@limiter.limit("30 per minute")
 def api_status():
     """Return system status as JSON."""
     return jsonify({
@@ -888,6 +898,7 @@ def api_status():
 ALLOWED_ASSETS = {'XTI_USD', 'XBR_USD'}
 
 @app.route('/api/research/<asset>')
+@limiter.limit("30 per minute")
 def api_research(asset):
     """Return research data for specific asset."""
     # Validate asset
@@ -900,21 +911,33 @@ def api_research(asset):
     return jsonify({'error': 'No data available'}), 404
 
 @app.route('/api/research')
+@limiter.limit("30 per minute")
 def api_all_research():
     """Return all research data."""
     reports = get_oil_reports(20)
     return jsonify(reports)
 
 @app.route('/api/trades')
+@limiter.limit("30 per minute")
 def api_trades():
     """Return trade history."""
     trades = get_trade_history(100)
     return jsonify(trades)
 
 @app.route('/api/stats')
+@limiter.limit("30 per minute")
 def api_stats():
     """Return performance stats."""
     return jsonify(get_performance_stats())
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    return response
 
 def generate_ssl_cert():
     """Generate self-signed SSL certificate."""
