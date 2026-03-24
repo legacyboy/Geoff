@@ -1,0 +1,161 @@
+{
+  "timestamp": "2026-03-24T02:58:18.505527",
+  "data_quality": "LIVE",
+  "sources": {
+    "newsapi": {
+      "trump": 5,
+      "opec": 3,
+      "conflicts": 3
+    },
+    "alpha_vantage": 3,
+    "fred": 1
+  },
+  "trump_news": [
+    {
+      "id": "news_0",
+      "source": "The Verge",
+      "timestamp": "2026-03-03T21:41:25Z",
+      "title": "What Trump\u2019s war on Iran means for the US energy crunch",
+      "description": "Fuel prices surged after the Trump administration launched strikes against Iran on Saturday, immediately raising questions about whether the war would increase energy costs for Americans, put more pressure on power grids, and push companies to pump out more o\u2026",
+      "url": "https://www.theverge.com/science/888526/what-trumps-war-on-iran-means-for-the-us-energy-crunch",
+      "query": "Trump oil energy"
+    },
+    {
+      "id": "news_1",
+      "source": "Gizmodo.com",
+      "timestamp": "2026-03-19T19:30:17Z",
+      "title": "Higher Oil Prices From Trump\u2019s Iran War Risk Killing the AI Boom, WTO Says",
+      "description": "President Deals seems to be setting the global economy on fire.",
+      "url": "https://gizmodo.com/higher-oil-prices-from-trumps-iran-war-risk-killing-the-ai-boom-wto-says-2000735678",
+      "query": "Trump oil energy"
+    },
+    {
+      "id": "news_2",
+      "source": "Gizmodo.com",
+      "timestamp": "2026-03-17T18:40:09Z",
+      "title": "Trump Advisor Says Pain for U.S. Consumers \u2018Last of Our Concerns\u2019 as Other Countries Start Gas Rationing",
+      "description": "Kevin Hassett claims the war will last 4-6 weeks.",
+      "url": "https://gizmodo.com/trump-advisor-says-pain-for-u-s-consumers-last-of-our-concerns-as-other-countries-start-gas-rationing-2000734625",
+      "query": "Trump oil energy"
+    },
+    {
+      "id": "news_3",
+      "source": "NPR",
+      "timestamp": "2026-03-21T09:43:23Z",
+      "title": "Iran war enters its fourth week, with no clear end in sight",
+      "description": "As the war in the Middle East enters its fourth week, President Trump says the U.S. is considering \"winding down\" military efforts, as it also seeks to ease the energy crisis by lifting sanctions on Iranian oil stranded at sea.",
+      "url": "https://www.npr.org/2026/03/21/nx-s1-5755539/iran-war-fourth-week",
+      "query": "Trump oil energy"
+    },
+    {
+      "id": "news_4",
+      "source": "Business Insider",
+      "timestamp": "2026-03-02T09:17:01Z",
+      "title": "From Iran to Venezuela to New York, Trump wants to control the world's oil",
+      "description": "Forget Saudi Arabia. Trump is making America the world's most dominant petrostate.",
+      "url": "https://www.businessinsider.com/trump-energy-dominance-oil-iran-venezuela-2026-2",
+      "query": "Trump oil energy"
+    }
+  ],
+  "opec_news": [
+    {
+      "id": "news_0",
+      "source": "Autoblog",
+      "timestamp": "2026-03-16T15:30:00Z",
+      "title": "These Are the Most Efficient Electric Cars on Sale Today",
+      "description": "Fuel efficiency has been a major factor for new vehicle purchasers ever since the OPEC oil crisis in 1973 forced manufacturers and consumers to reassess...",
+      "url": "https://www.autoblog.com/electric/these-are-the-most-efficient-electric-cars-on-sale-today",
+      "query": "OPEC oil production"
+    },
+    {
+      "id": "news_1",
+      "source": "NPR",
+      "timestamp": "2026-03-11T14:24:18Z",
+      "title": "Countries agree to historic release of stockpiled oil to ease the global shortage",
+      "description": "Members of the International Energy Agency have announced a coordinated release of 400 million barrels of stockpiled oil in an attempt to counter the disruption in oil trade triggered by the Iran war.",
+      "url": "https://www.npr.org/2026/03/11/nx-s1-5743816/iran-war-oil-reserves-iea",
+      "query": "OPEC oil production"
+    },
+    {
+      "id": "news_2",
+      "source": "Yahoo Entertainment",
+      "timestamp": "2026-02-28T19:37:06Z",
+      "title": "Market analysts react to US-Israel strikes on Iran",
+      "description": "Feb 28 (Reuters) - The United States and Israel launched strikes on Iran on Saturday, targeting its leadership and\u00a0plunging the Middle East into a new...",
+      "url": "https://finance.yahoo.com/news/market-analysts-react-us-israel-193706525.html",
+      "query": "OPEC oil production"
+    }
+  ],
+  "conflict_news": [
+    {
+      "id": "news_0",
+      "source": "Wired",
+      "timestamp": "2026-03-05T22:28:33Z",
+      "title": "Here\u2019s Every Country Directly Impacted by the War on Iran",
+      "description": "As the conflict in the Middle East continues to escalate, more than a dozen countries in the region have reportedly been affected by strikes.",
+      "url": "https://www.wired.com/story/every-country-directly-impacted-by-the-war-on-iran/",
+      "query": "Middle East Iran Israel oil"
+    },
+    {
+      "id": "news_1",
+      "source": "Gizmodo.com",
+      "timestamp": "2026-03-19T19:30:17Z",
+      "title": "Higher Oil Prices From Trump\u2019s Iran War Risk Killing the AI Boom, WTO Says",
+      "description": "President Deals seems to be setting the global economy on fire.",
+      "url": "https://gizmodo.com/higher-oil-prices-from-trumps-iran-war-risk-killing-the-ai-boom-wto-says-2000735678",
+      "query": "Middle East Iran Israel oil"
+    },
+    {
+      "id": "news_2",
+      "source": "NPR",
+      "timestamp": "2026-03-12T10:07:42Z",
+      "title": "Oil price surges as Iran steps up attacks on ships in the Persian Gulf",
+      "description": "Markets seesawed on Day 13 of the war in the Middle East, as two oil tankers were struck by projectiles near Iraq's southern ports and attacks between Israel and Hezbollah intensified.",
+      "url": "https://www.npr.org/2026/03/12/nx-s1-5745689/oil-price-surges-as-iran-steps-up-attacks-on-ships-in-the-persian-gulf",
+      "query": "Middle East Iran Israel oil"
+    }
+  ],
+  "forex": {
+    "USD_CAD": {
+      "1. From_Currency Code": "USD",
+      "2. From_Currency Name": "United States Dollar",
+      "3. To_Currency Code": "CAD",
+      "4. To_Currency Name": "Canadian Dollar",
+      "5. Exchange Rate": "1.37410000",
+      "6. Last Refreshed": "2026-03-24 07:58:14",
+      "7. Time Zone": "UTC",
+      "8. Bid Price": "1.37409000",
+      "9. Ask Price": "1.37415000"
+    },
+    "USD_EUR": {
+      "1. From_Currency Code": "USD",
+      "2. From_Currency Name": "United States Dollar",
+      "3. To_Currency Code": "EUR",
+      "4. To_Currency Name": "Euro",
+      "5. Exchange Rate": "0.86140000",
+      "6. Last Refreshed": "2026-03-24 07:58:15",
+      "7. Time Zone": "UTC",
+      "8. Bid Price": "0.86139000",
+      "9. Ask Price": "0.86142000"
+    },
+    "USD_NOK": {
+      "1. From_Currency Code": "USD",
+      "2. From_Currency Name": "United States Dollar",
+      "3. To_Currency Code": "NOK",
+      "4. To_Currency Name": "Norwegian Krone",
+      "5. Exchange Rate": "9.73150000",
+      "6. Last Refreshed": "2026-03-24 07:58:17",
+      "7. Time Zone": "UTC",
+      "8. Bid Price": "9.73137000",
+      "9. Ask Price": "9.73195000"
+    }
+  },
+  "oil_prices": {
+    "wti": {
+      "realtime_start": "2026-03-18",
+      "realtime_end": "2026-03-18",
+      "date": "2026-03-16",
+      "value": "93.39"
+    }
+  }
+}
