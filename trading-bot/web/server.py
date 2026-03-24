@@ -766,13 +766,13 @@ def tracker():
                 <tbody>
                     {% for trade in trades %}
                     <tr>
-                        <td>{{ trade.timestamp }}</td>
-                        <td>{{ trade.asset }}</td>
-                        <td>{{ trade.action }}</td>
-                        <td>{{ trade.signal }}</td>
-                        <td>{{ trade.position_size }}</td>
-                        <td class="{{ 'pnl-positive' if trade.unrealized_pnl >= 0 else 'pnl-negative' }}">
-                            ${{ "%.2f"|format(trade.unrealized_pnl) }}
+                        <td>{{ trade.get('timestamp', 'N/A') }}</td>
+                        <td>{{ trade.get('asset', 'N/A') }}</td>
+                        <td>{{ trade.get('action', 'N/A') }}</td>
+                        <td>{{ trade.get('signal', 'N/A') }}</td>
+                        <td>{{ trade.get('position_size', 'N/A') }}</td>
+                        <td class="{{ 'pnl-positive' if trade.get('unrealized_pnl', 0) >= 0 else 'pnl-negative' }}">
+                            ${{ "%.2f"|format(trade.get('unrealized_pnl', 0)) }}
                         </td>
                     </tr>
                     {% endfor %}
