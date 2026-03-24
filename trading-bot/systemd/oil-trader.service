@@ -1,0 +1,16 @@
+[Unit]
+Description=Oil Trader - 60 Second Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=claw
+WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot
+ExecStart=/bin/bash /home/claw/.openclaw/workspace/trading-bot/cron/oil-trader-60s.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,17 +1,17 @@
 {
-  "trading_interval_minutes": 60,
-  "risk_level": "medium",
+  "trading_interval_seconds": 60,
+  "trading_asset": "XTI_USD",
+  "asset_name": "WTI Crude Oil",
+  "risk_level": "high",
   "web_port": 8443,
   "data_retention_days": 30,
   "oanda_api_key": "0fa297d8cf36920e6cd554119eb23136-7384a65e0752ba56b576873af718f015",
   "oanda_account_type": "practice",
   "oanda_account_id": "101-002-38876987-001",
-  "trading_pairs": [
-    "EUR_USD",
-    "GBP_USD",
-    "USD_JPY"
-  ],
-  "default_units": 100,
+  "default_units": 10,
   "learning_mode": true,
-  "paper_trading": true
+  "paper_trading": true,
+  "volatility_threshold": 2.0,
+  "oil_focus": true,
+  "position_size_multiplier": 1.0
 }

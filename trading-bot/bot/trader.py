@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-OANDA Trading Bot with Learning & Monitoring
-Real forex trading via OANDA API with paper trading mode.
+OANDA Oil Trading Bot with 60-Second Intervals
+Trades WTI Crude Oil (XTI_USD) with volatility-based position sizing.
 """
 
 import json
@@ -17,27 +17,32 @@ BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / 'config' / 'config.json'
 LOGS_DIR = BASE_DIR / 'logs'
 DATA_DIR = BASE_DIR / 'data'
-LEARNING_DIR = DATA_DIR / 'learning'
 PAPER_DIR = DATA_DIR / 'paper_trades'
+OIL_DATA_DIR = DATA_DIR / 'oil_tracking'
 
 # Ensure directories exist
-for d in [LOGS_DIR, DATA_DIR, LEARNING_DIR, PAPER_DIR]:
+for d in [LOGS_DIR, DATA_DIR, PAPER_DIR, OIL_DATA_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-class OandaTrader:
-    """OANDA Forex Trading Bot with Learning"""
+class OilTrader:
+    """WTI Oil Trading Bot with Volatility Monitoring"""
     
     def __init__(self):
         # Load config
         with open(CONFIG_PATH) as f:
             self.config = json.load(f)
         
-        # OANDA API settings
+        # OANDA settings
         self.api_key = self.config.get('oanda_api_key')
         self.account_type = self.config.get('oanda_account_type', 'practice')
         self.account_id = self.config.get('oanda_account_id', '')
         self.paper_trading = self.config.get('paper_trading', True)
-        self.learning_mode = self.config.get('learning_mode', True)
+        
+        # Oil trading settings
+        self.asset = self.config.get('trading_asset', 'XTI_USD')
+        self.asset_name = self.config.get('asset_name', 'WTI Crude Oil')
+        self.interval = self.config.get('trading_interval_seconds', 60)
+        self.volatility_threshold = self.config.get('volatility_threshold', 2.0)
         
         # API URL
         if self.account_type == 'practice':
@@ -45,7 +50,6 @@ class OandaTrader:
         else:
             self.base_url = 'https://api-fxtrade.oanda.com/v3'
         
-        # Headers
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json'
@@ -60,130 +64,110 @@ class OandaTrader:
         )
         self.logger = logging.getLogger(__name__)
         
-        # Discover account if needed
-        if not self.account_id:
-            self.account_id = self.discover_account()
-            if self.account_id:
-                self.save_account_id()
+        # Price history for volatility
+        self.price_history = []
+        self.max_history = 20
         
-        self.logger.info(f'OANDA Trader initialized (Paper: {self.paper_trading})')
+        self.logger.info(f'Oil Trader initialized for {self.asset_name} ({self.asset})')
     
-    def discover_account(self):
-        """Auto-discover OANDA account ID."""
-        try:
-            url = f'{self.base_url}/accounts'
-            response = requests.get(url, headers=self.headers)
-            if response.status_code == 200:
-                accounts = response.json().get('accounts', [])
-                if accounts:
-                    account_id = accounts[0]['id']
-                    self.logger.info(f'Discovered account: {account_id}')
-                    return account_id
-                else:
-                    self.logger.error('No accounts found')
-            else:
-                self.logger.error(f'Failed to list accounts: {response.status_code}')
-        except Exception as e:
-            self.logger.error(f'Account discovery error: {e}')
-        return None
-    
-    def save_account_id(self):
-        """Save discovered account ID to config."""
-        try:
-            self.config['oanda_account_id'] = self.account_id
-            with open(CONFIG_PATH, 'w') as f:
-                json.dump(self.config, f, indent=2)
-            self.logger.info(f'Saved account ID to config')
-        except Exception as e:
-            self.logger.error(f'Failed to save account ID: {e}')
-    
-    def get_account_summary(self):
-        """Get account information from OANDA."""
-        if not self.account_id:
-            return None
-        try:
-            url = f'{self.base_url}/accounts/{self.account_id}/summary'
-            response = requests.get(url, headers=self.headers)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                self.logger.error(f'Failed to get account: {response.status_code}')
-        except Exception as e:
-            self.logger.error(f'Error getting account: {e}')
-        return None
-    
-    def get_prices(self, instruments):
-        """Get current prices for instruments."""
-        if not self.account_id:
-            return None
+    def get_current_price(self):
+        """Get current oil price."""
         try:
             url = f'{self.base_url}/accounts/{self.account_id}/pricing'
-            params = {'instruments': ','.join(instruments)}
+            params = {'instruments': self.asset}
             response = requests.get(url, headers=self.headers, params=params)
             if response.status_code == 200:
-                return response.json()
-            else:
-                self.logger.error(f'Failed to get prices: {response.status_code}')
+                data = response.json()
+                if 'prices' in data and len(data['prices']) > 0:
+                    price_data = data['prices'][0]
+                    return {
+                        'bid': float(price_data['closeoutBid']),
+                        'ask': float(price_data['closeoutAsk']),
+                        'timestamp': datetime.now().isoformat()
+                    }
         except Exception as e:
-            self.logger.error(f'Error getting prices: {e}')
+            self.logger.error(f'Error getting price: {e}')
         return None
     
-    def get_open_positions(self):
-        """Get list of open positions."""
-        if not self.account_id:
-            return None
+    def calculate_volatility(self):
+        """Calculate price volatility from history."""
+        if len(self.price_history) < 5:
+            return 0.0
+        
+        prices = [p['bid'] for p in self.price_history]
+        avg_price = sum(prices) / len(prices)
+        
+        # Calculate standard deviation
+        variance = sum((p - avg_price) ** 2 for p in prices) / len(prices)
+        std_dev = variance ** 0.5
+        
+        # Volatility as percentage
+        volatility = (std_dev / avg_price) * 100 if avg_price > 0 else 0
+        return volatility
+    
+    def get_position_size(self):
+        """Calculate position size based on volatility."""
+        volatility = self.calculate_volatility()
+        base_units = self.config.get('default_units', 10)
+        
+        if volatility > self.volatility_threshold * 2:
+            # High volatility - reduce position
+            multiplier = 0.3
+            self.logger.info(f'High volatility ({volatility:.2f}%) - reducing position')
+        elif volatility > self.volatility_threshold:
+            # Medium volatility - normal position
+            multiplier = 0.7
+            self.logger.info(f'Medium volatility ({volatility:.2f}%) - cautious position')
+        else:
+            # Low volatility - full position
+            multiplier = 1.0
+            self.logger.info(f'Low volatility ({volatility:.2f}%) - full position')
+        
+        return int(base_units * multiplier)
+    
+    def get_open_position(self):
+        """Check if we have an open oil position."""
         try:
             url = f'{self.base_url}/accounts/{self.account_id}/openPositions'
             response = requests.get(url, headers=self.headers)
             if response.status_code == 200:
-                return response.json()
-            else:
-                self.logger.error(f'Failed to get positions: {response.status_code}')
+                positions = response.json().get('positions', [])
+                for pos in positions:
+                    if pos['instrument'] == self.asset:
+                        return {
+                            'long_units': float(pos['long']['units']),
+                            'short_units': float(pos['short']['units']),
+                            'unrealized_pnl': float(pos.get('unrealizedPL', 0))
+                        }
         except Exception as e:
             self.logger.error(f'Error getting positions: {e}')
         return None
     
-    def get_trade_history(self):
-        """Get OANDA trade history."""
-        if not self.account_id:
-            return None
-        try:
-            url = f'{self.base_url}/accounts/{self.account_id}/trades'
-            response = requests.get(url, headers=self.headers)
-            if response.status_code == 200:
-                return response.json()
-        except Exception as e:
-            self.logger.error(f'Error getting trade history: {e}')
-        return None
-    
-    def place_order(self, instrument, units, side='buy'):
-        """Place a market order (or simulate in paper mode)."""
-        if not self.account_id:
-            return None
-        
-        order_units = units if side == 'buy' else -units
-        
+    def place_order(self, units, side='buy'):
+        """Place order (or simulate)."""
         if self.paper_trading:
-            # Paper trading - simulate order
+            price = self.get_current_price()
             paper_trade = {
                 'time': datetime.now().isoformat(),
-                'instrument': instrument,
-                'units': order_units,
+                'instrument': self.asset,
+                'asset_name': self.asset_name,
+                'units': units,
                 'side': side,
-                'status': 'simulated',
-                'price': self.get_current_price(instrument)
+                'price': price['bid'] if price else 0,
+                'status': 'paper_filled',
+                'volatility': self.calculate_volatility()
             }
             self.save_paper_trade(paper_trade)
-            self.logger.info(f'PAPER TRADE: {side} {units} {instrument}')
             return paper_trade
         
         # Real trading
         try:
             url = f'{self.base_url}/accounts/{self.account_id}/orders'
+            order_units = units if side == 'buy' else -units
             order_data = {
                 'order': {
                     'type': 'MARKET',
-                    'instrument': instrument,
+                    'instrument': self.asset,
                     'units': str(order_units),
                     'timeInForce': 'FOK',
                     'positionFill': 'DEFAULT'
@@ -191,185 +175,147 @@ class OandaTrader:
             }
             response = requests.post(url, headers=self.headers, json=order_data)
             if response.status_code == 201:
-                result = response.json()
-                self.logger.info(f'Order placed: {side} {units} {instrument}')
-                return result
-            else:
-                self.logger.error(f'Order failed: {response.status_code}')
+                self.logger.info(f'Order placed: {side} {units} {self.asset}')
+                return response.json()
         except Exception as e:
-            self.logger.error(f'Error placing order: {e}')
+            self.logger.error(f'Order error: {e}')
         return None
     
-    def get_current_price(self, instrument):
-        """Get current price for an instrument."""
-        prices = self.get_prices([instrument])
-        if prices and 'prices' in prices:
-            return float(prices['prices'][0]['closeoutBid'])
-        return 0.0
-    
     def save_paper_trade(self, trade):
-        """Save paper trade to file."""
+        """Save paper trade."""
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = PAPER_DIR / f'paper_{timestamp}.json'
             with open(filename, 'w') as f:
                 json.dump(trade, f, indent=2)
+            print(f"💾 Paper trade saved: {filename}")
         except Exception as e:
             self.logger.error(f'Error saving paper trade: {e}')
     
-    def load_learning_data(self):
-        """Load learning data from previous runs."""
+    def save_oil_data(self, price, volatility, decision):
+        """Save oil tracking data."""
         try:
-            learning_file = LEARNING_DIR / 'performance.json'
-            if learning_file.exists():
-                with open(learning_file) as f:
-                    return json.load(f)
-        except Exception as e:
-            self.logger.error(f'Error loading learning data: {e}')
-        return {'trades': [], 'win_rate': 0.0, 'total_pnl': 0.0, 'total_trades': 0, 'wins': 0, 'losses': 0}
-    
-    def save_learning_data(self, data):
-        """Save learning data."""
-        try:
-            learning_file = LEARNING_DIR / 'performance.json'
-            with open(learning_file, 'w') as f:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            data = {
+                'timestamp': timestamp,
+                'asset': self.asset,
+                'price': price,
+                'volatility': volatility,
+                'decision': decision
+            }
+            filename = OIL_DATA_DIR / f'oil_{timestamp}.json'
+            with open(filename, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            self.logger.error(f'Error saving learning data: {e}')
+            self.logger.error(f'Error saving oil data: {e}')
     
-    def analyze_performance(self):
-        """Analyze trading performance."""
-        data = self.load_learning_data()
-        trades = data.get('trades', [])
-        
-        if not trades:
-            return {
-                'win_rate': 0.0,
-                'total_pnl': 0.0,
-                'avg_profit': 0.0,
-                'total_trades': 0,
-                'wins': 0,
-                'losses': 0
-            }
-        
-        wins = sum(1 for t in trades if t.get('pnl', 0) > 0)
-        win_rate = (wins / len(trades)) * 100 if trades else 0
-        total_pnl = sum(t.get('pnl', 0) for t in trades)
-        avg_profit = total_pnl / len(trades) if trades else 0
-        
-        return {
-            'win_rate': win_rate,
-            'total_pnl': total_pnl,
-            'avg_profit': avg_profit,
-            'total_trades': len(trades),
-            'wins': wins,
-            'losses': len(trades) - wins
-        }
-    
-    def learning_strategy(self, instrument='EUR_USD'):
-        """Strategy that learns from past performance."""
-        # Get current price
-        prices = self.get_prices([instrument])
-        if not prices or 'prices' not in prices:
+    def oil_trading_strategy(self):
+        """Oil trading strategy with volatility adjustment."""
+        price = self.get_current_price()
+        if not price:
+            self.logger.error('Failed to get oil price')
             return None
         
-        current_price = float(prices['prices'][0]['closeoutBid'])
+        # Update price history
+        self.price_history.append(price)
+        if len(self.price_history) > self.max_history:
+            self.price_history.pop(0)
         
-        # Check open positions
-        positions = self.get_open_positions()
-        has_position = False
-        position_side = None
+        current_price = price['bid']
+        volatility = self.calculate_volatility()
+        position_size = self.get_position_size()
+        open_pos = self.get_open_position()
         
-        if positions and 'positions' in positions:
-            for pos in positions['positions']:
-                if pos['instrument'] == instrument:
-                    has_position = True
-                    position_side = 'buy' if float(pos['long']['units']) > 0 else 'sell'
-                    break
-        
-        # Analyze past performance
-        perf = self.analyze_performance()
-        win_rate = perf['win_rate']
-        
-        # Learning: adjust confidence based on win rate
-        confidence = min(win_rate / 100, 0.9) if win_rate > 0 else 0.5
-        
-        # Simple strategy with learning
-        if not has_position:
-            # Check recent performance before trading
-            if perf['total_trades'] < 5 or win_rate >= 40:
-                self.logger.info(f'Learning Signal: BUY {instrument} at {current_price} (confidence: {confidence:.2f})')
-                return {'action': 'buy', 'instrument': instrument, 'price': current_price, 'confidence': confidence}
+        # Simple momentum strategy
+        if len(self.price_history) >= 3:
+            prev_price = self.price_history[-2]['bid']
+            price_change = ((current_price - prev_price) / prev_price) * 100
+            
+            decision = {
+                'timestamp': datetime.now().isoformat(),
+                'asset': self.asset,
+                'price': current_price,
+                'volatility': volatility,
+                'position_size': position_size,
+                'price_change_1m': price_change
+            }
+            
+            # Trading logic
+            if not open_pos:
+                if price_change < -0.5 and volatility < self.volatility_threshold * 1.5:
+                    # Price dropped, low vol - buy
+                    decision['action'] = 'buy'
+                    decision['reason'] = 'dip_buy'
+                    self.logger.info(f'BUY signal: {self.asset} at {current_price}')
+                elif price_change > 0.5 and volatility < self.volatility_threshold * 1.5:
+                    # Price rose, low vol - trend following
+                    decision['action'] = 'buy'
+                    decision['reason'] = 'momentum'
+                    self.logger.info(f'MOMENTUM signal: {self.asset} at {current_price}')
+                else:
+                    decision['action'] = 'hold'
+                    decision['reason'] = 'no_signal'
             else:
-                self.logger.info(f'Learning: Skipping trade due to low win rate ({win_rate:.1f}%)')
-                return {'action': 'hold', 'instrument': instrument, 'reason': 'low_win_rate'}
-        else:
-            self.logger.info(f'Holding position in {instrument} at {current_price}')
-            return {'action': 'hold', 'instrument': instrument, 'price': current_price}
+                # Have position - check for exit
+                unrealized = open_pos.get('unrealized_pnl', 0)
+                if unrealized > 20 or unrealized < -10:
+                    decision['action'] = 'close'
+                    decision['reason'] = 'take_profit_or_stop_loss'
+                    self.logger.info(f'CLOSE signal: P&L {unrealized}')
+                else:
+                    decision['action'] = 'hold'
+                    decision['reason'] = 'position_open'
+            
+            self.save_oil_data(current_price, volatility, decision)
+            return decision
+        
+        return None
     
-    def generate_report(self, trade_data):
-        """Generate trade report."""
+    def run_once(self):
+        """Execute one trading cycle."""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        print(f"\n🛢️  [{timestamp}] Oil Trading Cycle - {self.asset_name}")
+        
+        signal = self.oil_trading_strategy()
+        if signal:
+            action = signal.get('action')
+            
+            if action == 'buy':
+                size = signal.get('position_size', 10)
+                result = self.place_order(size, 'buy')
+                if result:
+                    print(f"✅ BUY {size} {self.asset} @ {signal['price']:.2f} ({signal['reason']})")
+                    print(f"📊 Volatility: {signal['volatility']:.2f}% | Change: {signal['price_change_1m']:.3f}%")
+            
+            elif action == 'close':
+                print(f"🔴 CLOSE position: {signal['reason']}")
+            
+            elif action == 'hold':
+                print(f"⏸️  HOLD: {signal['reason']} | Price: {signal['price']:.2f}")
+        else:
+            print("⚠️  No signal generated")
+    
+    def run_continuous(self):
+        """Run continuous 60-second trading loop."""
+        self.logger.info(f'Starting continuous oil trading every {self.interval}s')
+        print(f"🛢️  OIL TRADER STARTED")
+        print(f"Asset: {self.asset_name} ({self.asset})")
+        print(f"Interval: {self.interval} seconds")
+        print(f"Mode: {'PAPER' if self.paper_trading else 'LIVE'} TRADING")
+        print(f"Press Ctrl+C to stop\n")
+        
         try:
-            report_time = datetime.now().strftime('%Y%m%d_%H%M%S')
-            report_path = DATA_DIR / 'reports' / f'{report_time}.json'
-            
-            report_data = {
-                'time': report_time,
-                'trade': trade_data,
-                'account_type': self.account_type,
-                'account_id': self.account_id,
-                'paper_trading': self.paper_trading
-            }
-            
-            with open(report_path, 'w') as f:
-                json.dump(report_data, f, indent=2)
-            
-            self.logger.info(f'Report saved: {report_path}')
-            return str(report_path)
-        except Exception as e:
-            self.logger.error(f'Report generation error: {e}')
-            return None
-    
-    def run(self):
-        """Main trading loop."""
-        self.logger.info('Starting trading bot with learning...')
-        print(f'🤖 Trading Bot Started (Paper: {self.paper_trading})')
-        
-        # Check account
-        account = self.get_account_summary()
-        if account:
-            acc = account.get('account', {})
-            balance = acc.get('balance', 'N/A')
-            nav = acc.get('NAV', 'N/A')
-            print(f'💰 Account Balance: {balance} | NAV: {nav}')
-            self.logger.info(f'Account balance: {balance}')
-        else:
-            self.logger.error('Failed to connect to account')
-            print('❌ Failed to connect to OANDA account')
-            return
-        
-        # Show performance
-        perf = self.analyze_performance()
-        total_trades = perf.get('total_trades', 0)
-        print(f'📊 Performance: Win Rate {perf["win_rate"]:.1f}% | Total P&L: {perf["total_pnl"]:.2f} | Trades: {total_trades}')
-        
-        # Run strategy
-        for pair in self.config.get('trading_pairs', ['EUR_USD']):
-            signal = self.learning_strategy(pair)
-            if signal:
-                if signal['action'] == 'buy':
-                    units = self.config.get('default_units', 100)
-                    order = self.place_order(pair, units, 'buy')
-                    if order:
-                        self.generate_report(signal)
-                        print(f"✅ Trade {'SIMULATED' if self.paper_trading else 'PLACED'}: BUY {units} {pair} at {signal['price']}")
-                elif signal['action'] == 'hold':
-                    reason = signal.get('reason', '')
-                    print(f"⏸️  Holding {pair}: {reason}")
+            while True:
+                self.run_once()
+                print(f"⏳ Waiting {self.interval}s for next cycle...")
+                time.sleep(self.interval)
+        except KeyboardInterrupt:
+            print("\n🛑 Oil trader stopped by user")
+            self.logger.info('Oil trader stopped')
 
 def main():
-    trader = OandaTrader()
-    trader.run()
+    trader = OilTrader()
+    trader.run_continuous()
 
 if __name__ == "__main__":
     main()

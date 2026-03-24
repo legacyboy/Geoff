@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-03-24T00:14:34.357990",
+  "asset": "XTI_USD",
+  "asset_name": "WTI Crude Oil",
+  "volatility_score": 50,
+  "volatility_level": "medium",
+  "factors": {
+    "geopolitical": {
+      "risks": [
+        {
+          "name": "Middle East tensions",
+          "impact": "high",
+          "probability": "medium"
+        },
+        {
+          "name": "Trade war escalation",
+          "impact": "medium",
+          "probability": "medium"
+        }
+      ],
+      "level": "high"
+    },
+    "supply": {
+      "us_production": "stable",
+      "saudi_output": "normal",
+      "russian_exports": "reduced",
+      "strategic_reserves": "stable"
+    },
+    "demand": {
+      "global_economy": "slowing",
+      "china_demand": "increasing",
+      "us_demand": "stable",
+      "seasonal_factor": "winter_heating"
+    },
+    "opec": {
+      "production_cuts": "maintained",
+      "next_meeting": "upcoming",
+      "compliance": "high",
+      "spare_capacity": "limited"
+    }
+  },
+  "recommendation": "REDUCE",
+  "position_size": 0.3,
+  "reasoning": "Moderate volatility - reduced exposure | High geopolitical risk",
+  "confidence": 50
+}
