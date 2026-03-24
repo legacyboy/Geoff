@@ -470,6 +470,43 @@ DASHBOARD_TEMPLATE = """
             </div>
         </div>
         
+        # Get Trump factor from first report
+        {% set trump = (oil_reports.values() | list | first | default({})).data.trump_factor if oil_reports else None %}
+        
+        <!-- Trump Factor -->
+        {% if trump %}
+        <h2>🦅 Trump Factor</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" style="color: {{ '#e74c3c' if trump.level == 'high' else '#f39c12' if trump.level == 'medium' else '#00d4aa' }}">
+                    {{ trump.trump_factor_score }}/100
+                </div>
+                <div class="stat-label">Trump Factor ({{ trump.level.upper() }})</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ trump.relevant_items }}</div>
+                <div class="stat-label">Relevant Statements</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ trump.sentiment.replace('_', ' ').title() }}</div>
+                <div class="stat-label">Trump Sentiment</div>
+            </div>
+        </div>
+        <div style="background: #16213e; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+            <p>💡 {{ trump.explanation }}</p>
+            {% if trump.recent_posts %}
+            <div style="margin-top: 15px;">
+                <strong>Recent Activity:</strong>
+                <ul style="margin-top: 10px; padding-left: 20px;">
+                {% for post in trump.recent_posts[:3] %}
+                <li>[{{ post.source }}] {{ post.content[:60] }}... (Impact: {{ post.impact_score }})</li>
+                {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        
         <!-- Oil Cards -->
         <h2>🛢️ Market Analysis</h2>
         <div class="oil-grid">
