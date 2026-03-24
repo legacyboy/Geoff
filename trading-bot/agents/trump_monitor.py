@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Trump Monitor for Oil Markets
-Tracks Trump statements, Truth Social posts, and news that impacts oil prices.
+Trump Monitor - Truth Social Priority
+Tracks Trump's Truth Social account as PRIMARY source for oil market impacts.
+Falls back to news aggregators and RSS feeds if direct API fails.
 """
 
 import json
@@ -9,13 +10,17 @@ import logging
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+import xml.etree.ElementTree as ET
 
 BASE_DIR = Path(__file__).parent.parent
 LOGS_DIR = BASE_DIR / 'logs'
 DATA_DIR = BASE_DIR / 'data' / 'trump_monitor'
+CACHE_FILE = DATA_DIR / 'trump_cache.json'
+SEEN_POSTS_FILE = DATA_DIR / 'seen_posts.json'
 
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -27,302 +32,488 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TrumpMonitor:
-    """Monitor Trump activities relevant to oil markets."""
+class TrumpTruthSocialMonitor:
+    """
+    Priority 1: Monitor Trump's Truth Social account.
+    This is where he speaks FIRST before anywhere else.
+    """
+    
+    TRUTH_SOCIAL_USER = 'realDonaldTrump'
+    TRUTH_SOCIAL_ID = '107780257626128481'  # Trump's account ID
+    
+    # Multiple endpoints to try (in order of preference)
+    ENDPOINTS = [
+        # Direct Mastodon API (Truth Social uses Mastodon)
+        f'https://truthsocial.com/api/v1/accounts/{TRUTH_SOCIAL_ID}/statuses',
+        # Alternative RSS feeds
+        'https://truthsocial.com/@realDonaldTrump.rss',
+        'https://nitter.net/realDonaldTrump/rss',
+        # Fallback to third-party aggregators
+        'https://rss.app/feeds/TrumpTruthSocial.xml',
+    ]
     
     def __init__(self):
         self.oil_keywords = [
             'oil', 'drill', 'drilling', 'fracking', 'shale', 'petroleum',
-            'energy', 'gas', 'gasoline', 'crude', 'opec', 'saudi',
+            'energy', 'gas', 'gasoline', 'crude', 'opec', 'saudi', 'keystone',
             'iran', 'venezuela', 'sanctions', 'tariffs', 'trade war',
-            'production', 'exports', 'domestic', 'keystone', 'pipeline',
-            'permian', 'texas', 'north dakota', 'alaska', 'anwr'
+            'production', 'exports', 'domestic', 'pipeline', 'permian',
+            'texas', 'north dakota', 'alaska', 'anwr', 'energy dominance',
+            'energy independent', 'drill baby drill'
         ]
         
         self.impact_keywords = {
-            'high': ['sanctions', 'war', 'ban', 'prohibit', 'emergency', 'crisis'],
+            'critical': ['emergency', 'crisis', 'war', 'invasion', 'attack'],
+            'high': ['sanctions', 'ban', 'prohibit', 'stop', 'end'],
             'medium': ['tariffs', 'tax', 'regulation', 'restrict', 'limit'],
-            'low': ['review', 'study', 'consider', 'plan']
+            'low': ['review', 'study', 'consider', 'plan', 'thinking']
         }
+        
+        self.seen_posts = self._load_seen_posts()
+        self.last_check = None
     
-    def fetch_truth_social(self) -> List[Dict]:
+    def _load_seen_posts(self) -> set:
+        """Load previously seen post IDs to avoid duplicates."""
+        if SEEN_POSTS_FILE.exists():
+            try:
+                with open(SEEN_POSTS_FILE) as f:
+                    return set(json.load(f))
+            except:
+                pass
+        return set()
+    
+    def _save_seen_posts(self):
+        """Save seen post IDs."""
+        try:
+            with open(SEEN_POSTS_FILE, 'w') as f:
+                json.dump(list(self.seen_posts), f)
+        except Exception as e:
+            logger.error(f"Error saving seen posts: {e}")
+    
+    def fetch_truth_social_api(self) -> List[Dict]:
         """
-        Fetch Trump's Truth Social posts.
-        Note: Truth Social doesn't have a public API, so we use RSS feeds or web scraping.
+        PRIMARY: Fetch from Truth Social Mastodon API.
+        This is the most direct source.
         """
         posts = []
         
-        # Method 1: Try to get from RSS feed (if available)
         try:
-            # Some third-party services provide RSS feeds
+            # Use curl to avoid Python SSL issues
+            headers = [
+                '-H', 'Accept: application/json',
+                '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0'
+            ]
+            
             result = subprocess.run(
-                ['curl', '-s', 'https://truthsocial.com/api/v1/accounts/trump/statuses'],
-                capture_output=True, text=True, timeout=10
+                ['curl', '-s', '-L', '--max-time', '15'] + headers + [self.ENDPOINTS[0]],
+                capture_output=True, text=True, timeout=20
             )
-            if result.returncode == 0:
+            
+            if result.returncode == 0 and result.stdout:
                 data = json.loads(result.stdout)
-                for post in data.get('data', [])[:10]:
+                
+                for post in data:
+                    post_id = post.get('id', '')
+                    content = post.get('content', '')
+                    
+                    # Clean HTML from content
+                    content = re.sub(r'<[^\u003e]+>', '', content)
+                    content = content.strip()
+                    
+                    if not content:
+                        continue
+                    
                     posts.append({
-                        'source': 'Truth Social',
+                        'id': post_id,
+                        'source': 'Truth Social (PRIMARY)',
                         'timestamp': post.get('created_at'),
-                        'content': post.get('content', ''),
-                        'url': post.get('url'),
-                        'reblogs_count': post.get('reblogs_count', 0),
-                        'favourites_count': post.get('favourites_count', 0)
+                        'content': content,
+                        'url': post.get('url', f'https://truthsocial.com/@realDonaldTrump/posts/{post_id}'),
+                        'reblogs': post.get('reblogs_count', 0),
+                        'favourites': post.get('favourites_count', 0),
+                        'replies': post.get('replies_count', 0),
+                        'is_new': post_id not in self.seen_posts
                     })
+                    
+                    self.seen_posts.add(post_id)
+                
+                self._save_seen_posts()
+                logger.info(f"Fetched {len(posts)} posts from Truth Social API")
+                
         except Exception as e:
-            logger.error(f"Error fetching Truth Social: {e}")
-        
-        # Method 2: Fallback to simulated current data
-        if not posts:
-            posts = self._get_fallback_posts()
+            logger.error(f"Truth Social API error: {e}")
         
         return posts
     
-    def _get_fallback_posts(self) -> List[Dict]:
-        """Fallback: Get recent known Trump statements about oil/energy."""
-        # Based on actual Trump statements about energy policy
-        return [
-            {
-                'source': 'Truth Social',
-                'timestamp': (datetime.now() - timedelta(hours=2)).isoformat(),
-                'content': 'ENERGY DOMINATION! Drill baby drill! We will unleash American energy like never before.',
-                'url': 'https://truthsocial.com/@realDonaldTrump',
-                'oil_relevant': True,
-                'sentiment': 'bullish_supply',
-                'impact_score': 25
-            },
-            {
-                'source': 'News Report',
-                'timestamp': (datetime.now() - timedelta(hours=8)).isoformat(),
-                'content': 'Trump threatens new sanctions on Iran oil exports if they don\'t make a deal.',
-                'url': 'https://news.example.com/trump-iran',
-                'oil_relevant': True,
-                'sentiment': 'bullish_price',
-                'impact_score': 35
-            },
-            {
-                'source': 'Truth Social',
-                'timestamp': (datetime.now() - timedelta(days=1)).isoformat(),
-                'content': 'OPEC needs to lower oil prices. They are ripping off America! Not acceptable!',
-                'url': 'https://truthsocial.com/@realDonaldTrump',
-                'oil_relevant': True,
-                'sentiment': 'bearish_price',
-                'impact_score': 30
-            },
-            {
-                'source': 'News Report',
-                'timestamp': (datetime.now() - timedelta(days=2)).isoformat(),
-                'content': 'Trump announces plan to fast-track permits for new oil drilling on federal lands.',
-                'url': 'https://news.example.com/trump-drilling',
-                'oil_relevant': True,
-                'sentiment': 'bullish_supply',
-                'impact_score': 40
-            }
+    def fetch_truth_social_rss(self) -> List[Dict]:
+        """
+        SECONDARY: Fetch from RSS feed.
+        """
+        posts = []
+        
+        rss_urls = [
+            'https://truthsocial.com/@realDonaldTrump.rss',
+            'https://rsshub.app/truthsocial/user/realDonaldTrump',
         ]
-    
-    def fetch_news(self) -> List[Dict]:
-        """Fetch news about Trump and oil markets."""
-        news_items = []
         
-        # Try to use news API if available
+        for rss_url in rss_urls:
+            try:
+                result = subprocess.run(
+                    ['curl', '-s', '-L', '--max-time', '10', rss_url],
+                    capture_output=True, text=True, timeout=15
+                )
+                
+                if result.returncode == 0 and result.stdout:
+                    # Parse RSS XML
+                    root = ET.fromstring(result.stdout)
+                    
+                    # Find items
+                    for item in root.findall('.//item'):
+                        title = item.find('title')
+                        link = item.find('link')
+                        pub_date = item.find('pubDate')
+                        description = item.find('description')
+                        
+                        content = title.text if title is not None else ''
+                        if description is not None and description.text:
+                            content = description.text
+                        
+                        post_id = link.text.split('/')[-1] if link is not None else hash(content)
+                        
+                        if post_id not in self.seen_posts:
+                            posts.append({
+                                'id': str(post_id),
+                                'source': 'Truth Social RSS',
+                                'timestamp': pub_date.text if pub_date is not None else datetime.now().isoformat(),
+                                'content': content,
+                                'url': link.text if link is not None else '',
+                                'is_new': True
+                            })
+                            self.seen_posts.add(post_id)
+                
+                if posts:
+                    self._save_seen_posts()
+                    logger.info(f"Fetched {len(posts)} posts from RSS: {rss_url}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"RSS error for {rss_url}: {e}")
+                continue
+        
+        return posts
+    
+    def fetch_backup_sources(self) -> List[Dict]:
+        """
+        TERTIARY: Check news aggregators and Twitter/X mirrors.
+        These are delayed but capture posts that might be missed.
+        """
+        posts = []
+        
+        # Check Google News for recent Trump + oil
         try:
-            # Search for recent Trump + oil news
-            search_terms = ['Trump oil', 'Trump energy', 'Trump sanctions Iran']
-            # In a real implementation, would use NewsAPI or similar
-            
-            # Simulated news items based on typical Trump headlines
-            news_items = [
-                {
-                    'source': 'Financial Times',
-                    'timestamp': (datetime.now() - timedelta(hours=4)).isoformat(),
-                    'title': 'Trump policies could increase US oil production by 1m barrels/day',
-                    'url': 'https://ft.com/trump-oil',
-                    'oil_relevant': True,
-                    'sentiment': 'bearish_price',
-                    'impact_score': 45,
-                    'region': 'US'
-                },
-                {
-                    'source': 'Reuters',
-                    'timestamp': (datetime.now() - timedelta(hours=12)).isoformat(),
-                    'title': 'Trump threatens 25% tariff on Canadian oil imports',
-                    'url': 'https://reuters.com/trump-tariffs',
-                    'oil_relevant': True,
-                    'sentiment': 'bullish_price',
-                    'impact_score': 35,
-                    'region': 'North America'
-                },
-                {
-                    'source': 'Bloomberg',
-                    'timestamp': (datetime.now() - timedelta(days=1)).isoformat(),
-                    'title': 'OPEC responds to Trump pressure, considering output increase',
-                    'url': 'https://bloomberg.com/opec-trump',
-                    'oil_relevant': True,
-                    'sentiment': 'bearish_price',
-                    'impact_score': 50,
-                    'region': 'Global'
-                }
-            ]
+            news_items = self._check_news_aggregators()
+            posts.extend(news_items)
         except Exception as e:
-            logger.error(f"Error fetching news: {e}")
+            logger.error(f"News aggregator error: {e}")
         
-        return news_items
+        return posts
     
-    def analyze_content(self, content: str) -> Dict:
-        """Analyze Trump content for oil market impact."""
+    def _check_news_aggregators(self) -> List[Dict]:
+        """Check news for Trump statements about oil."""
+        posts = []
+        
+        # In a real implementation, would use NewsAPI
+        # For now, this is a placeholder
+        
+        return posts
+    
+    def get_all_truth_posts(self, hours: int = 24) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Get ALL Trump posts from Truth Social as priority.
+        Returns: (truth_social_posts, backup_posts)
+        """
+        print("🦅 Checking Truth Social FIRST (Trump's primary platform)...")
+        
+        # Priority 1: Direct Truth Social API
+        truth_posts = self.fetch_truth_social_api()
+        
+        if not truth_posts:
+            print("   ⚠️  Direct API failed, trying RSS...")
+            # Priority 2: RSS feeds
+            truth_posts = self.fetch_truth_social_rss()
+        
+        if truth_posts:
+            print(f"   ✅ Found {len(truth_posts)} posts on Truth Social")
+            new_posts = [p for p in truth_posts if p.get('is_new')]
+            if new_posts:
+                print(f"   🆕 {len(new_posts)} NEW posts since last check")
+        else:
+            print("   ⚠️  No posts found on Truth Social")
+        
+        # Priority 3: Backup sources
+        print("🔍 Checking backup news sources...")
+        backup_posts = self.fetch_backup_sources()
+        
+        self.last_check = datetime.now()
+        
+        return truth_posts, backup_posts
+    
+    def analyze_for_oil(self, posts: List[Dict]) -> List[Dict]:
+        """Analyze posts for oil market relevance."""
+        analyzed = []
+        
+        for post in posts:
+            content = post.get('content', '').lower()
+            
+            # Check if oil-relevant
+            found_keywords = [kw for kw in self.oil_keywords if kw.lower() in content]
+            
+            if not found_keywords:
+                continue
+            
+            # Calculate impact score
+            impact_score = self._calculate_impact(content)
+            
+            # Determine sentiment
+            sentiment = self._determine_sentiment(content)
+            
+            # Determine urgency
+            urgency = self._determine_urgency(content, post)
+            
+            post.update({
+                'oil_relevant': True,
+                'oil_keywords': found_keywords,
+                'impact_score': impact_score,
+                'sentiment': sentiment,
+                'urgency': urgency,
+                'analysis_time': datetime.now().isoformat()
+            })
+            
+            analyzed.append(post)
+        
+        # Sort by impact score (highest first)
+        analyzed.sort(key=lambda x: x.get('impact_score', 0), reverse=True)
+        
+        return analyzed
+    
+    def _calculate_impact(self, content: str) -> int:
+        """Calculate impact score (0-100)."""
+        score = 20  # Base score for mentioning oil
         content_lower = content.lower()
         
-        # Check if oil-relevant
-        is_oil_relevant = any(kw in content_lower for kw in self.oil_keywords)
-        
-        if not is_oil_relevant:
-            return {'oil_relevant': False}
-        
-        # Determine sentiment
-        bullish_price = ['shortage', 'war', 'sanctions', 'crisis', 'cut', 'reduce']
-        bearish_price = ['drill', 'produce', 'dominate', 'increase production', 'flood', 'glut']
-        bullish_supply = ['drill baby drill', 'fracking', 'permian', 'more production']
-        
-        sentiment = 'neutral'
-        if any(term in content_lower for term in bullish_price):
-            sentiment = 'bullish_price'  # Prices go up
-        elif any(term in content_lower for term in bearish_price):
-            sentiment = 'bearish_price'  # Prices go down
-        elif any(term in content_lower for term in bullish_supply):
-            sentiment = 'bullish_supply'  # More supply
-        
-        # Calculate impact score (0-100)
-        impact_score = 0
-        
-        # Base score for mentioning oil
-        impact_score += 10
-        
-        # Keywords that increase impact
+        # Check impact keywords
         for level, keywords in self.impact_keywords.items():
             for kw in keywords:
                 if kw in content_lower:
-                    if level == 'high':
-                        impact_score += 20
+                    if level == 'critical':
+                        score += 25
+                    elif level == 'high':
+                        score += 15
                     elif level == 'medium':
-                        impact_score += 10
+                        score += 10
                     else:
-                        impact_score += 5
+                        score += 5
         
-        # Exclamation marks indicate urgency
-        impact_score += content.count('!') * 3
+        # Exclamation marks
+        score += content.count('!') * 3
         
-        # ALL CAPS indicates importance
-        if re.search(r'\b[A-Z]{3,}\b', content):
-            impact_score += 10
+        # ALL CAPS words (Trump style)
+        caps_words = len(re.findall(r'\b[A-Z]{3,}\b', content))
+        score += caps_words * 2
         
-        # Cap at 100
-        impact_score = min(impact_score, 100)
+        # "Drill baby drill" - signature phrase
+        if 'drill baby drill' in content_lower:
+            score += 15
         
-        return {
-            'oil_relevant': True,
-            'sentiment': sentiment,
-            'impact_score': impact_score,
-            'keywords_found': [kw for kw in self.oil_keywords if kw in content_lower]
-        }
+        # Energy dominance - key policy
+        if 'energy dominance' in content_lower or 'energy domination' in content_lower:
+            score += 20
+        
+        return min(score, 100)
     
-    def calculate_trump_factor(self, posts: List[Dict], news: List[Dict]) -> Dict:
-        """Calculate overall Trump factor for oil volatility."""
-        all_items = posts + news
+    def _determine_sentiment(self, content: str) -> str:
+        """Determine oil market sentiment."""
+        content_lower = content.lower()
         
-        if not all_items:
-            return {
-                'trump_factor_score': 0,
-                'level': 'none',
-                'sentiment': 'neutral',
-                'relevant_items': 0,
-                'explanation': 'No relevant Trump activity detected'
-            }
+        # Bearish for oil prices (more supply)
+        bearish_indicators = [
+            'drill', 'produce', 'dominance', 'domination', 'unleash',
+            'increase production', 'more oil', 'energy independent'
+        ]
         
-        # Filter to oil-relevant items
-        oil_items = [item for item in all_items if item.get('oil_relevant', False)]
+        # Bullish for oil prices (supply constraints)
+        bullish_indicators = [
+            'sanctions', 'war', 'stop', 'ban', 'crisis', 'shortage',
+            'iran', 'venezuela', 'attack'
+        ]
         
-        if not oil_items:
-            return {
-                'trump_factor_score': 0,
-                'level': 'none',
-                'sentiment': 'neutral',
-                'relevant_items': 0,
-                'explanation': 'No oil-relevant Trump activity in monitoring period'
-            }
+        bearish_score = sum(1 for ind in bearish_indicators if ind in content_lower)
+        bullish_score = sum(1 for ind in bullish_indicators if ind in content_lower)
         
-        # Calculate weighted score
-        total_score = sum(item.get('impact_score', 0) for item in oil_items)
-        avg_score = total_score / len(oil_items)
-        
-        # Determine overall sentiment
-        sentiments = [item.get('sentiment', 'neutral') for item in oil_items]
-        bullish_count = sentiments.count('bullish_price') + sentiments.count('bullish_supply')
-        bearish_count = sentiments.count('bearish_price')
-        
-        if bullish_count > bearish_count:
-            overall_sentiment = 'oil_bullish'
-        elif bearish_count > bullish_count:
-            overall_sentiment = 'oil_bearish'
+        if bearish_score > bullish_score:
+            return 'bearish_price'  # Prices go down (more supply)
+        elif bullish_score > bearish_score:
+            return 'bullish_price'  # Prices go up (supply constraints)
         else:
-            overall_sentiment = 'mixed'
-        
-        # Determine level
-        if avg_score >= 40:
-            level = 'high'
-        elif avg_score >= 20:
-            level = 'medium'
-        else:
-            level = 'low'
-        
-        return {
-            'trump_factor_score': int(avg_score),
-            'level': level,
-            'sentiment': overall_sentiment,
-            'relevant_items': len(oil_items),
-            'recent_posts': oil_items[:5],
-            'explanation': self._generate_explanation(oil_items, level, overall_sentiment)
-        }
+            return 'neutral'
     
-    def _generate_explanation(self, items: List[Dict], level: str, sentiment: str) -> str:
-        """Generate human-readable explanation."""
-        explanations = {
-            'high': f"HIGH Trump impact: {len(items)} significant oil-related statements detected. Market volatility expected.",
-            'medium': f"MODERATE Trump impact: {len(items)} oil-related statements with measurable market influence.",
-            'low': f"LOW Trump impact: {len(items)} oil-related statement(s) with limited market significance."
-        }
+    def _determine_urgency(self, content: str, post: Dict) -> str:
+        """Determine urgency level."""
+        content_lower = content.lower()
         
-        base = explanations.get(level, explanations['low'])
+        # Immediate action indicators
+        immediate = ['emergency', 'now', 'immediate', 'today', 'executive order']
+        if any(word in content_lower for word in immediate):
+            return 'immediate'
         
-        if sentiment == 'oil_bullish':
-            base += " Sentiment is pro-production/increased supply (typically bearish for prices)."
-        elif sentiment == 'oil_bearish':
-            base += " Sentiment suggests supply constraints or geopolitical tension (typically bullish for prices)."
+        # High engagement = high urgency
+        if post.get('reblogs', 0) > 10000 or post.get('favourites', 0) > 50000:
+            return 'high'
         
-        return base
+        # Recent timestamp
+        if post.get('is_new'):
+            return 'high'
+        
+        return 'normal'
     
-    def get_trump_analysis(self) -> Dict:
-        """Get complete Trump analysis for oil markets."""
-        print("🦅 Monitoring Trump activity...")
+    def get_trump_factor(self) -> Dict:
+        """Get comprehensive Trump analysis."""
+        print("\n" + "="*60)
+        print("🦅 TRUMP MONITOR - Truth Social Priority Mode")
+        print("="*60)
+        print("⚠️  Trump speaks FIRST on Truth Social - this is our #1 source")
         
-        posts = self.fetch_truth_social()
-        news = self.fetch_news()
+        # Get posts from Truth Social first
+        truth_posts, backup_posts = self.get_all_truth_posts(hours=24)
         
-        # Analyze each post
-        for post in posts:
-            if 'content' in post:
-                analysis = self.analyze_content(post['content'])
-                post.update(analysis)
+        # Analyze for oil relevance
+        print("\n🔍 Analyzing posts for oil market impact...")
+        analyzed_truth = self.analyze_for_oil(truth_posts)
+        analyzed_backup = self.analyze_for_oil(backup_posts)
         
-        trump_factor = self.calculate_trump_factor(posts, news)
+        all_relevant = analyzed_truth + analyzed_backup
+        
+        # Calculate Trump Factor
+        trump_factor = self._calculate_trump_factor(all_relevant, analyzed_truth)
         
         return {
             'timestamp': datetime.now().isoformat(),
             'trump_factor': trump_factor,
-            'truth_social_posts': posts,
-            'news_stories': news,
-            'monitoring_active': True
+            'truth_social_posts': analyzed_truth,
+            'backup_posts': analyzed_backup,
+            'total_posts_checked': len(truth_posts) + len(backup_posts),
+            'oil_relevant_posts': len(all_relevant),
+            'monitoring_active': True,
+            'priority_source': 'Truth Social'
         }
+    
+    def _calculate_trump_factor(self, all_posts: List[Dict], truth_posts: List[Dict]) -> Dict:
+        """Calculate overall Trump Factor score."""
+        if not all_posts:
+            return {
+                'trump_factor_score': 0,
+                'level': 'none',
+                'sentiment': 'neutral',
+                'relevant_items': 0,
+                'explanation': 'No Trump oil-related activity detected in monitoring period',
+                'priority_posts': []
+            }
+        
+        # Calculate weighted score
+        total_impact = sum(p.get('impact_score', 0) for p in all_posts)
+        avg_impact = total_impact / len(all_posts)
+        
+        # Boost score for Truth Social posts (higher credibility)
+        truth_boost = len(truth_posts) * 5
+        
+        final_score = min(int(avg_impact + truth_boost), 100)
+        
+        # Determine sentiment
+        sentiments = [p.get('sentiment', 'neutral') for p in all_posts]
+        bullish = sentiments.count('bullish_price')
+        bearish = sentiments.count('bearish_price')
+        
+        if bearish > bullish:
+            overall_sentiment = 'oil_bearish'
+        elif bullish > bearish:
+            overall_sentiment = 'oil_bullish'
+        else:
+            overall_sentiment = 'mixed'
+        
+        # Determine level
+        if final_score >= 60:
+            level = 'high'
+        elif final_score >= 30:
+            level = 'medium'
+        else:
+            level = 'low'
+        
+        # Get priority posts (from Truth Social first)
+        priority_posts = sorted(
+            all_posts,
+            key=lambda x: (x.get('source') == 'Truth Social (PRIMARY)', x.get('impact_score', 0)),
+            reverse=True
+        )[:5]
+        
+        return {
+            'trump_factor_score': final_score,
+            'level': level,
+            'sentiment': overall_sentiment,
+            'relevant_items': len(all_posts),
+            'truth_social_count': len(truth_posts),
+            'explanation': self._generate_explanation(final_score, level, overall_sentiment, truth_posts),
+            'priority_posts': priority_posts
+        }
+    
+    def _generate_explanation(self, score: int, level: str, sentiment: str, truth_posts: List[Dict]) -> str:
+        """Generate human-readable explanation."""
+        base = f"Trump Factor: {score}/100 ({level.upper()}). "
+        
+        if truth_posts:
+            base += f"{len(truth_posts)} oil-relevant post(s) on Truth Social. "
+        
+        if level == 'high':
+            base += "IMMEDIATE ATTENTION REQUIRED - Major market impact expected."
+        elif level == 'medium':
+            base += "Notable impact likely - monitor closely."
+        else:
+            base += "Limited immediate impact expected."
+        
+        if sentiment == 'oil_bearish':
+            base += " Pro-production stance suggests downward pressure on prices."
+        elif sentiment == 'oil_bullish':
+            base += " Supply-constraint stance suggests upward pressure on prices."
+        
+        return base
+    
+    def display_analysis(self, analysis: Dict):
+        """Display formatted Trump analysis."""
+        tf = analysis['trump_factor']
+        
+        print("\n" + "="*60)
+        print("🦅 TRUMP FACTOR ANALYSIS")
+        print("="*60)
+        
+        print(f"\n📊 Score: {tf['trump_factor_score']}/100 ({tf['level'].upper()})")
+        print(f"   Sentiment: {tf['sentiment']}")
+        print(f"   Relevant Posts: {tf['relevant_items']}")
+        
+        if tf.get('truth_social_count', 0) > 0:
+            print(f"   ✅ From Truth Social: {tf['truth_social_count']}")
+        
+        print(f"\n💡 {tf['explanation']}")
+        
+        if tf.get('priority_posts'):
+            print(f"\n📱 Top Priority Posts:")
+            for i, post in enumerate(tf['priority_posts'][:3], 1):
+                source = post.get('source', 'Unknown')
+                content = post.get('content', '')[:80]
+                impact = post.get('impact_score', 0)
+                is_new = "🆕 " if post.get('is_new') else ""
+                print(f"\n   {is_new}[{source}] Impact: {impact}")
+                print(f"   \"{content}...\"")
+        
+        print("\n" + "="*60)
     
     def save_analysis(self, analysis: Dict) -> Optional[Path]:
         """Save analysis to file."""
@@ -338,35 +529,10 @@ class TrumpMonitor:
         except Exception as e:
             logger.error(f'Error saving analysis: {e}')
             return None
-    
-    def display_analysis(self, analysis: Dict):
-        """Display formatted Trump analysis."""
-        tf = analysis['trump_factor']
-        
-        print("\n" + "="*60)
-        print("🦅 TRUMP FACTOR ANALYSIS")
-        print("="*60)
-        
-        print(f"\n📊 Trump Factor Score: {tf['trump_factor_score']}/100")
-        print(f"   Level: {tf['level'].upper()}")
-        print(f"   Sentiment: {tf['sentiment']}")
-        print(f"   Relevant Items: {tf['relevant_items']}")
-        
-        print(f"\n💡 {tf['explanation']}")
-        
-        if tf['recent_posts']:
-            print(f"\n📱 Recent Oil-Relevant Posts:")
-            for post in tf['recent_posts'][:3]:
-                content = post.get('content', post.get('title', 'N/A'))
-                source = post.get('source', 'Unknown')
-                print(f"\n   [{source}] Impact: {post.get('impact_score', 0)}")
-                print(f"   \"{content[:100]}{'...' if len(content) > 100 else ''}\"")
-        
-        print("\n" + "="*60)
 
 def main():
-    monitor = TrumpMonitor()
-    analysis = monitor.get_trump_analysis()
+    monitor = TrumpTruthSocialMonitor()
+    analysis = monitor.get_trump_factor()
     monitor.display_analysis(analysis)
     filename = monitor.save_analysis(analysis)
     if filename:

@@ -58,11 +58,11 @@ class OilResearcher:
         logger.info(f"Oil Researcher initialized with model: {self.model}")
     
     def get_trump_factor(self):
-        """Get Trump monitoring data."""
+        """Get Trump monitoring data - TRUTH SOCIAL IS PRIORITY #1."""
         try:
-            from trump_monitor import TrumpMonitor
-            monitor = TrumpMonitor()
-            return monitor.get_trump_analysis()
+            from trump_monitor import TrumpTruthSocialMonitor
+            monitor = TrumpTruthSocialMonitor()
+            return monitor.get_trump_factor()
         except Exception as e:
             logger.error(f"Trump monitor error: {e}")
             return None
