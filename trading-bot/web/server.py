@@ -56,10 +56,11 @@ def get_research_history(limit=10):
                 try:
                     with open(filepath) as f:
                         data = json.load(f)
-                        research.append({
-                            'filename': filename,
-                            'data': data
-                        })
+                        if data:  # Only add if data is not None/empty
+                            research.append({
+                                'filename': filename,
+                                'data': data
+                            })
                 except:
                     pass
     except Exception as e:
@@ -139,7 +140,6 @@ DASHBOARD_TEMPLATE = """
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
         h1 { color: #00d4aa; margin-bottom: 20px; border-bottom: 2px solid #00d4aa; padding-bottom: 10px; }
         h2 { color: #00d4aa; margin: 30px 0 15px; }
-        
         .status-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -156,7 +156,6 @@ DASHBOARD_TEMPLATE = """
         .status-card .value { font-size: 1.5em; font-weight: bold; }
         .status-running { color: #00d4aa; }
         .status-stopped { color: #e74c3c; }
-        
         .research-card {
             background: #16213e;
             border-radius: 10px;
@@ -165,11 +164,10 @@ DASHBOARD_TEMPLATE = """
             border-left: 4px solid #3498db;
         }
         .research-card h3 { color: #3498db; margin-bottom: 10px; }
-        .recommendation { display: inline-block; padding: 5px 15px; border-radius: 20px; font-weight: bold; }
+        .recommendation { display: inline-block; padding: 5px 15px; border-radius: 20px; font-weight: bold; margin-right: 5px; }
         .rec-buy { background: #00d4aa; color: #1a1a2e; }
         .rec-sell { background: #e74c3c; color: white; }
         .rec-hold { background: #f39c12; color: #1a1a2e; }
-        
         table {
             width: 100%;
             border-collapse: collapse;
@@ -190,7 +188,6 @@ DASHBOARD_TEMPLATE = """
         tr:hover { background: #1a1a3e; }
         .decision-buy { color: #00d4aa; font-weight: bold; }
         .decision-sell { color: #e74c3c; font-weight: bold; }
-        
         .log-viewer {
             background: #0a0a1a;
             border-radius: 10px;
@@ -202,7 +199,6 @@ DASHBOARD_TEMPLATE = """
             white-space: pre-wrap;
             color: #aaa;
         }
-        
         .config-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -213,7 +209,6 @@ DASHBOARD_TEMPLATE = """
         }
         .config-item { display: flex; justify-content: space-between; }
         .config-item strong { color: #00d4aa; }
-        
         .refresh-btn {
             background: #00d4aa;
             color: #1a1a2e;
@@ -225,7 +220,6 @@ DASHBOARD_TEMPLATE = """
             margin-bottom: 20px;
         }
         .refresh-btn:hover { background: #00b894; }
-        
         footer {
             margin-top: 40px;
             padding-top: 20px;
@@ -233,7 +227,6 @@ DASHBOARD_TEMPLATE = """
             color: #666;
             font-size: 0.9em;
         }
-        
         nav a:hover { opacity: 0.8; }
     </style>
 </head>
@@ -264,7 +257,7 @@ DASHBOARD_TEMPLATE = """
         
         <h2>🔬 Researcher Activity</h2>
         <div class="research-card">
-            {% if latest_research %}
+            {% if latest_research and latest_research.data %}
                 <h3>Latest Research: {{ latest_research.filename }}</h3>
                 <p><strong>Date:</strong> {{ latest_research.data.get('date', 'Unknown') }}</p>
                 <p><strong>Recommendations:</strong> 
@@ -292,10 +285,10 @@ DASHBOARD_TEMPLATE = """
                 {% for trade in trades %}
                 <tr>
                     <td>{{ trade.time }}</td>
-                    <td class="{{ 'decision-buy' if trade.trade.action == 'buy' else 'decision-sell' }}">
-                        {{ trade.trade.action.upper() if trade.trade else 'N/A' }}
+                    <td class="{{ 'decision-buy' if trade.trade and trade.trade.action == 'buy' else 'decision-sell' if trade.trade and trade.trade.action == 'sell' else '' }}">
+                        {{ trade.trade.action.upper() if trade.trade and trade.trade.action else 'N/A' }}
                     </td>
-                    <td>{{ trade.trade.instrument if trade.trade else 'N/A' }}</td>
+                    <td>{{ trade.trade.instrument if trade.trade and trade.trade.instrument else 'N/A' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -342,7 +335,6 @@ RESEARCHER_TEMPLATE = """
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
         h1 { color: #3498db; margin-bottom: 20px; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
         h2 { color: #3498db; margin: 30px 0 15px; }
-        
         nav {
             background: #0f3460;
             padding: 15px;
@@ -356,7 +348,6 @@ RESEARCHER_TEMPLATE = """
             font-weight: bold;
         }
         nav a:hover { opacity: 0.8; }
-        
         .research-item {
             background: #16213e;
             border-radius: 10px;
@@ -378,7 +369,6 @@ RESEARCHER_TEMPLATE = """
         .rec-buy { background: #00d4aa; color: #1a1a2e; }
         .rec-sell { background: #e74c3c; color: white; }
         .rec-hold { background: #f39c12; color: #1a1a2e; }
-        
         .log-viewer {
             background: #0a0a1a;
             border-radius: 10px;
@@ -390,7 +380,6 @@ RESEARCHER_TEMPLATE = """
             white-space: pre-wrap;
             color: #aaa;
         }
-        
         .refresh-btn {
             background: #3498db;
             color: white;
@@ -402,7 +391,6 @@ RESEARCHER_TEMPLATE = """
             margin-bottom: 20px;
         }
         .refresh-btn:hover { background: #2980b9; }
-        
         footer {
             margin-top: 40px;
             padding-top: 20px;

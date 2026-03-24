@@ -1,0 +1,12 @@
+{
+  "time": "20260324_000755",
+  "trade": {
+    "action": "buy",
+    "instrument": "USD_JPY",
+    "price": 158.746,
+    "confidence": 0.5
+  },
+  "account_type": "practice",
+  "account_id": "101-002-38876987-001",
+  "paper_trading": true
+}

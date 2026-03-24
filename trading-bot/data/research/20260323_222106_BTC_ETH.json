@@ -1,1 +1,24 @@
-null
+{
+  "date": "20260323",
+  "time": "22:21:06",
+  "symbols": ["BTC", "ETH"],
+  "research_type": "comprehensive",
+  "recommendations": ["HOLD", "BUY"],
+  "sentiment_score": 0.65,
+  "confidence": 72,
+  "analysis": {
+    "BTC": {
+      "trend": "bullish",
+      "support": 42000,
+      "resistance": 48000,
+      "volume": "high"
+    },
+    "ETH": {
+      "trend": "neutral",
+      "support": 2800,
+      "resistance": 3200,
+      "volume": "medium"
+    }
+  },
+  "summary": "Market showing mixed signals. BTC trending bullish with strong volume. ETH consolidating in range."
+}

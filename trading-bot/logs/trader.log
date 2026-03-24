@@ -4,3 +4,35 @@
 2026-03-23 20:37:57,660 - INFO - Trade Decision: sell
 2026-03-23 20:45:21,631 - INFO - Trader started.
 2026-03-23 20:45:21,631 - INFO - Trade Decision: buy
+2026-03-23 23:54:38,500 - INFO - OANDA Trader initialized
+2026-03-23 23:54:38,500 - INFO - Starting trading bot...
+2026-03-23 23:54:38,756 - ERROR - Failed to get account: 400 - {"errorMessage":"Invalid value specified for 'accountID'"}
+2026-03-23 23:54:38,757 - ERROR - Failed to connect to account
+2026-03-23 23:55:47,951 - INFO - OANDA Trader initialized
+2026-03-23 23:55:47,951 - INFO - Starting trading bot...
+2026-03-23 23:55:48,217 - ERROR - Failed to get account: 400 - {"errorMessage":"Invalid value specified for 'accountID'"}
+2026-03-23 23:55:48,217 - ERROR - Failed to connect to account
+2026-03-24 00:06:45,772 - INFO - Discovered account: 101-002-38876987-001
+2026-03-24 00:06:45,776 - INFO - Saved account ID to config
+2026-03-24 00:06:45,776 - INFO - OANDA Trader initialized (Paper: True)
+2026-03-24 00:06:45,776 - INFO - Starting trading bot with learning...
+2026-03-24 00:06:46,039 - INFO - Account balance: 100000.0000
+2026-03-24 00:07:05,286 - INFO - OANDA Trader initialized (Paper: True)
+2026-03-24 00:07:05,286 - INFO - Starting trading bot with learning...
+2026-03-24 00:07:06,041 - INFO - Account balance: 100000.0000
+2026-03-24 00:07:29,383 - INFO - OANDA Trader initialized (Paper: True)
+2026-03-24 00:07:38,725 - INFO - OANDA Trader initialized (Paper: True)
+2026-03-24 00:07:38,725 - INFO - Starting trading bot with learning...
+2026-03-24 00:07:38,956 - INFO - Account balance: 100000.0000
+2026-03-24 00:07:53,358 - INFO - OANDA Trader initialized (Paper: True)
+2026-03-24 00:07:53,358 - INFO - Starting trading bot with learning...
+2026-03-24 00:07:53,633 - INFO - Account balance: 100000.0000
+2026-03-24 00:07:54,142 - INFO - Learning Signal: BUY EUR_USD at 1.15757 (confidence: 0.50)
+2026-03-24 00:07:54,377 - INFO - PAPER TRADE: buy 100 EUR_USD
+2026-03-24 00:07:54,378 - INFO - Report saved: /home/claw/.openclaw/workspace/trading-bot/data/reports/20260324_000754.json
+2026-03-24 00:07:54,871 - INFO - Learning Signal: BUY GBP_USD at 1.33852 (confidence: 0.50)
+2026-03-24 00:07:55,085 - INFO - PAPER TRADE: buy 100 GBP_USD
+2026-03-24 00:07:55,086 - INFO - Report saved: /home/claw/.openclaw/workspace/trading-bot/data/reports/20260324_000755.json
+2026-03-24 00:07:55,539 - INFO - Learning Signal: BUY USD_JPY at 158.746 (confidence: 0.50)
+2026-03-24 00:07:55,812 - INFO - PAPER TRADE: buy 100 USD_JPY
+2026-03-24 00:07:55,813 - INFO - Report saved: /home/claw/.openclaw/workspace/trading-bot/data/reports/20260324_000755.json

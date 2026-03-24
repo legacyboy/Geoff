@@ -3,9 +3,15 @@
   "risk_level": "medium",
   "web_port": 8443,
   "data_retention_days": 30,
-  "oanda_api_key": "7df52e1cb6bb3836047627110754de3d-176b3febe32dc67248164c564e35f513",
+  "oanda_api_key": "0fa297d8cf36920e6cd554119eb23136-7384a65e0752ba56b576873af718f015",
   "oanda_account_type": "practice",
-  "oanda_account_id": "",
-  "trading_pairs": ["EUR_USD", "GBP_USD", "USD_JPY"],
-  "default_units": 100
+  "oanda_account_id": "101-002-38876987-001",
+  "trading_pairs": [
+    "EUR_USD",
+    "GBP_USD",
+    "USD_JPY"
+  ],
+  "default_units": 100,
+  "learning_mode": true,
+  "paper_trading": true
 }
