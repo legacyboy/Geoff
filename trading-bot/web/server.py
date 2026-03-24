@@ -470,8 +470,10 @@ DASHBOARD_TEMPLATE = """
             </div>
         </div>
         
-        # Get Trump factor from first report
-        {% set trump = (oil_reports.values() | list | first | default({})).data.trump_factor if oil_reports else None %}
+        {# Get Trump factor from first report #}
+        {% set first_report_list = oil_reports.values() | list %}
+        {% set first_report = first_report_list[0] if first_report_list else None %}
+        {% set trump = first_report.data.trump_factor if first_report and first_report.data else None %}
         
         <!-- Trump Factor -->
         {% if trump %}
