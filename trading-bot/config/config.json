@@ -1,18 +1,24 @@
 {
-  "trading_interval_seconds": 60,
+  "trading_interval_seconds": 300,
   "trading_assets": ["XTI_USD", "XBR_USD"],
   "asset_names": {"XTI_USD": "WTI Crude Oil", "XBR_USD": "Brent Crude Oil"},
-  "risk_level": "high",
+  "risk_level": "controlled",
   "web_port": 8443,
   "data_retention_days": 30,
   "oanda_api_key": "0fa297d8cf36920e6cd554119eb23136-7384a65e0752ba56b576873af718f015",
   "oanda_account_type": "practice",
   "oanda_account_id": "101-002-38876987-001",
+  "account_balance": 1000.0,
   "default_units": 10,
   "learning_mode": true,
   "paper_trading": true,
   "volatility_threshold": 2.0,
   "oil_focus": true,
   "position_size_multiplier": 1.0,
-  "track_brent_wti_spread": true
+  "track_brent_wti_spread": true,
+  "max_risk_per_trade_pct": 0.01,
+  "max_leverage": 5.0,
+  "max_daily_loss_pct": 0.05,
+  "atr_periods": 14,
+  "consecutive_loss_limit": 3
 }

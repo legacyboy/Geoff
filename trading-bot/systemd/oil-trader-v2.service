@@ -1,0 +1,16 @@
+[Unit]
+Description=Oil Trader v2.0 - Risk-Managed CFD Trading
+After=network.target
+
+[Service]
+Type=simple
+User=claw
+WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot
+ExecStart=/usr/bin/python3 /home/claw/.openclaw/workspace/trading-bot/bot/trader_v2.py
+Restart=always
+RestartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

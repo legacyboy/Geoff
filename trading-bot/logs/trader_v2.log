@@ -1,0 +1,4 @@
+2026-03-24 01:12:50,897 - INFO - Oil Trader v2 initialized: WTI Crude Oil (XTI_USD) - 5min timeframe
+2026-03-24 01:12:59,779 - INFO - Oil Trader v2 initialized: WTI Crude Oil (XTI_USD) - 5min timeframe
+2026-03-24 01:12:59,779 - INFO - Starting v2 trader: 300s intervals
+2026-03-24 01:12:59,959 - ERROR - Failed to get oil price
