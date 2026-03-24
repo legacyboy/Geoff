@@ -1,0 +1,124 @@
+{
+  "timestamp": "2026-03-24T00:24:20.857033",
+  "asset": "XBR_USD",
+  "asset_name": "Brent Crude Oil",
+  "origin": "North Sea (Europe)",
+  "volatility_score": 100,
+  "volatility_level": "high",
+  "score_explanation": {
+    "score": 100,
+    "breakdown": {
+      "Geopolitical Risk": "35/40 points",
+      "Supply Disruption": "30/30 points",
+      "Demand Shock": "35/30 points",
+      "Explanation": "High volatility indicates significant market stress - war, major supply disruptions, or economic shocks. High risk of large moves."
+    },
+    "level": "high",
+    "interpretation": "High uncertainty. Consider very small positions or holding."
+  },
+  "factors": {
+    "geopolitical": {
+      "risks": [
+        {
+          "name": "Russia-Ukraine conflict",
+          "impact": 20,
+          "explanation": "Affects European supply routes"
+        },
+        {
+          "name": "North Sea production",
+          "impact": 10,
+          "explanation": "Weather/technical issues in UK/Norway"
+        },
+        {
+          "name": "European energy policy",
+          "impact": 8,
+          "explanation": "Sanctions on Russian oil affect Brent markets"
+        },
+        {
+          "name": "Middle East tensions",
+          "impact": 15,
+          "explanation": "Saudi Arabia, Iran, Iraq stability affects both benchmarks"
+        },
+        {
+          "name": "OPEC+ decisions",
+          "impact": 12,
+          "explanation": "Production cuts/quotas directly impact prices"
+        },
+        {
+          "name": "China demand",
+          "impact": 10,
+          "explanation": "Largest oil importer - economic health matters"
+        },
+        {
+          "name": "US Dollar strength",
+          "impact": 8,
+          "explanation": "Oil priced in USD - currency fluctuations matter"
+        }
+      ],
+      "total_risk_score": 83,
+      "risk_level": "medium",
+      "explanation": "Geopolitical risk contributes 83 points to volatility score"
+    },
+    "supply": {
+      "factors": {
+        "North Sea Production": {
+          "status": "stable",
+          "impact": 5,
+          "explanation": "Norway/UK output steady"
+        },
+        "Russian Exports": {
+          "status": "constrained",
+          "impact": 25,
+          "explanation": "Sanctions limit Brent-relevant supply"
+        },
+        "OPEC Compliance": {
+          "status": "high",
+          "impact": 10,
+          "explanation": "Most members following quotas"
+        },
+        "Strategic Reserves": {
+          "status": "normal",
+          "impact": 3,
+          "explanation": "IEA stockpiles adequate"
+        }
+      },
+      "total_impact": 43,
+      "explanation": "Brent supply constrained by Russian sanctions; North Sea stable"
+    },
+    "demand": {
+      "factors": {
+        "Global GDP Growth": {
+          "trend": "slowing",
+          "impact": 20,
+          "explanation": "Recession fears reduce oil demand outlook"
+        },
+        "China Recovery": {
+          "trend": "uncertain",
+          "impact": 18,
+          "explanation": "Post-COVID reopening speed unclear"
+        },
+        "Inventory Levels": {
+          "trend": "low",
+          "impact": 12,
+          "explanation": "Low stocks support prices despite demand concerns"
+        },
+        "Seasonal Factor": {
+          "trend": "winter_heating",
+          "impact": 8,
+          "explanation": "Northern hemisphere heating season"
+        },
+        "Europe Energy Crisis": {
+          "trend": "ongoing",
+          "impact": 22,
+          "explanation": "EU oil demand affected by gas-to-oil switching"
+        }
+      },
+      "total_impact": 80,
+      "explanation": "Demand concerns from slowing global economy offset by China reopening hopes"
+    }
+  },
+  "recommendation": "REDUCE",
+  "position_size": 0.3,
+  "reasoning": "High volatility (100/100) - High volatility indicates significant market stress - war, major supply disruptions, or economic shocks. High risk of large moves.",
+  "confidence": 25
+}

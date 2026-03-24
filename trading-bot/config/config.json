@@ -1,7 +1,7 @@
 {
   "trading_interval_seconds": 60,
-  "trading_asset": "XTI_USD",
-  "asset_name": "WTI Crude Oil",
+  "trading_assets": ["XTI_USD", "XBR_USD"],
+  "asset_names": {"XTI_USD": "WTI Crude Oil", "XBR_USD": "Brent Crude Oil"},
   "risk_level": "high",
   "web_port": 8443,
   "data_retention_days": 30,
@@ -13,5 +13,6 @@
   "paper_trading": true,
   "volatility_threshold": 2.0,
   "oil_focus": true,
-  "position_size_multiplier": 1.0
+  "position_size_multiplier": 1.0,
+  "track_brent_wti_spread": true
 }

@@ -1,0 +1,124 @@
+{
+  "timestamp": "2026-03-24T00:24:20.856677",
+  "asset": "XTI_USD",
+  "asset_name": "WTI Crude Oil",
+  "origin": "USA (Cushing, Oklahoma)",
+  "volatility_score": 100,
+  "volatility_level": "high",
+  "score_explanation": {
+    "score": 100,
+    "breakdown": {
+      "Geopolitical Risk": "35/40 points",
+      "Supply Disruption": "30/30 points",
+      "Demand Shock": "35/30 points",
+      "Explanation": "High volatility indicates significant market stress - war, major supply disruptions, or economic shocks. High risk of large moves."
+    },
+    "level": "high",
+    "interpretation": "High uncertainty. Consider very small positions or holding."
+  },
+  "factors": {
+    "geopolitical": {
+      "risks": [
+        {
+          "name": "US-Iran tensions",
+          "impact": 15,
+          "explanation": "Strait of Hormuz risk affects global supply"
+        },
+        {
+          "name": "Venezuela sanctions",
+          "impact": 10,
+          "explanation": "Heavy oil supply disruptions"
+        },
+        {
+          "name": "US shale production",
+          "impact": 8,
+          "explanation": "Domestic supply fluctuations"
+        },
+        {
+          "name": "Middle East tensions",
+          "impact": 15,
+          "explanation": "Saudi Arabia, Iran, Iraq stability affects both benchmarks"
+        },
+        {
+          "name": "OPEC+ decisions",
+          "impact": 12,
+          "explanation": "Production cuts/quotas directly impact prices"
+        },
+        {
+          "name": "China demand",
+          "impact": 10,
+          "explanation": "Largest oil importer - economic health matters"
+        },
+        {
+          "name": "US Dollar strength",
+          "impact": 8,
+          "explanation": "Oil priced in USD - currency fluctuations matter"
+        }
+      ],
+      "total_risk_score": 78,
+      "risk_level": "medium",
+      "explanation": "Geopolitical risk contributes 78 points to volatility score"
+    },
+    "supply": {
+      "factors": {
+        "US Shale": {
+          "status": "increasing",
+          "impact": 15,
+          "explanation": "Permian Basin production growing"
+        },
+        "Strategic Reserve": {
+          "status": "releasing",
+          "impact": 12,
+          "explanation": "SPR draws affect domestic supply"
+        },
+        "Canada Imports": {
+          "status": "stable",
+          "impact": 5,
+          "explanation": "Heavy oil from Canada steady"
+        },
+        "Refinery Capacity": {
+          "status": "tight",
+          "impact": 15,
+          "explanation": "Limited upgrading capacity"
+        }
+      },
+      "total_impact": 47,
+      "explanation": "WTI supply growing from shale but constrained by infrastructure"
+    },
+    "demand": {
+      "factors": {
+        "Global GDP Growth": {
+          "trend": "slowing",
+          "impact": 20,
+          "explanation": "Recession fears reduce oil demand outlook"
+        },
+        "China Recovery": {
+          "trend": "uncertain",
+          "impact": 18,
+          "explanation": "Post-COVID reopening speed unclear"
+        },
+        "Inventory Levels": {
+          "trend": "low",
+          "impact": 12,
+          "explanation": "Low stocks support prices despite demand concerns"
+        },
+        "Seasonal Factor": {
+          "trend": "winter_heating",
+          "impact": 8,
+          "explanation": "Northern hemisphere heating season"
+        },
+        "US Driving Season": {
+          "trend": "approaching",
+          "impact": 15,
+          "explanation": "Summer gasoline demand typically rises"
+        }
+      },
+      "total_impact": 73,
+      "explanation": "Demand concerns from slowing global economy offset by China reopening hopes"
+    }
+  },
+  "recommendation": "REDUCE",
+  "position_size": 0.3,
+  "reasoning": "High volatility (100/100) - High volatility indicates significant market stress - war, major supply disruptions, or economic shocks. High risk of large moves.",
+  "confidence": 25
+}
