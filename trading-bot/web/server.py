@@ -369,6 +369,45 @@ RESEARCHER_TEMPLATE = """
         .rec-buy { background: #00d4aa; color: #1a1a2e; }
         .rec-sell { background: #e74c3c; color: white; }
         .rec-hold { background: #f39c12; color: #1a1a2e; }
+        .rec-reduce { background: #e67e22; color: white; }
+        .rec-trade { background: #9b59b6; color: white; }
+        .volatility-high { color: #e74c3c; font-weight: bold; }
+        .volatility-medium { color: #f39c12; font-weight: bold; }
+        .volatility-low { color: #00d4aa; font-weight: bold; }
+        .report-header {
+            background: #0f3460;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .report-header h2 {
+            color: #00d4aa;
+            margin: 0 0 10px 0;
+            border: none;
+        }
+        .volatility-score {
+            font-size: 2em;
+            font-weight: bold;
+            color: #00d4aa;
+        }
+        .factors-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .factor-card {
+            background: #1a1a3e;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .factor-card h4 {
+            color: #3498db;
+            margin-bottom: 8px;
+        }
+        .risk-high { color: #e74c3c; }
+        .risk-medium { color: #f39c12; }
+        .risk-low { color: #00d4aa; }
         .log-viewer {
             background: #0a0a1a;
             border-radius: 10px;
@@ -411,24 +450,80 @@ RESEARCHER_TEMPLATE = """
         
         <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
         
-        <h2>Recent Research Reports</h2>
+        <h2>🛢️ Oil Volatility Research Reports</h2>
         {% if research %}
             {% for item in research %}
             <div class="research-item">
-                <h3>{{ item.filename }}</h3>
-                <p><strong>Date:</strong> {{ item.data.get('date', 'Unknown') }}</p>
-                <p><strong>Symbols:</strong> {{ item.data.get('symbols', 'N/A') }}</p>
-                <p><strong>Recommendations:</strong> 
-                    {% for rec in item.data.get('recommendations', []) %}
-                    <span class="recommendation rec-{{ rec.lower() }}">{{ rec }}</span>
-                    {% endfor %}
+                <div class="report-header">
+                    <h2>🛢️ OIL VOLATILITY RESEARCH REPORT</h2>
+                    <p><strong>Asset:</strong> {{ item.data.get('asset_name', 'WTI Crude Oil') }} ({{ item.data.get('asset', 'XTI_USD') }})</p>
+                    <p><strong>Time:</strong> {{ item.data.get('timestamp', item.filename) }}</p>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 15px; background: #1a1a3e; border-radius: 10px;">
+                    <p style="font-size: 1.2em;"><strong>📊 Volatility Score:</strong> 
+                        <span class="volatility-score">{{ item.data.get('volatility_score', 'N/A') }}/100</span>
+                    </p>
+                    <p><strong>Level:</strong> 
+                        {% set vol_level = item.data.get('volatility_level', 'unknown') %}
+                        <span class="volatility-{{ vol_level }}">{{ vol_level.upper() }}</span>
+                    </p>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 15px; background: #1a1a3e; border-radius: 10px;">
+                    <p style="font-size: 1.3em;"><strong>🎯 Recommendation:</strong> 
+                        {% set rec = item.data.get('recommendation', 'HOLD') %}
+                        <span class="recommendation rec-{{ rec.lower() }}">{{ rec }}</span>
+                    </p>
+                    <p><strong>Position Size:</strong> {{ (item.data.get('position_size', 0) * 100)|int }}%</p>
+                    <p><strong>Confidence:</strong> {{ item.data.get('confidence', 'N/A') }}%</p>
+                    <p style="margin-top: 10px; padding: 10px; background: #0a0a1a; border-radius: 5px;">
+                        <strong>💡 Reasoning:</strong> {{ item.data.get('reasoning', 'N/A') }}
+                    </p>
+                </div>
+                
+                <div class="factors-grid">
+                    {% set factors = item.data.get('factors', {}) %}
+                    <div class="factor-card">
+                        <h4>🔍 Geopolitical</h4>
+                        <p class="risk-{{ factors.get('geopolitical', {}).get('level', 'low') }}">
+                            {{ factors.get('geopolitical', {}).get('level', 'N/A').upper() }}
+                        </p>
+                        <p>{{ factors.get('geopolitical', {}).get('risks', [])|length }} active risk factors</p>
+                    </div>
+                    <div class="factor-card">
+                        <h4>📦 Supply</h4>
+                        {% set supply = factors.get('supply', {}) %}
+                        <p>US: {{ supply.get('us_production', 'N/A') }}</p>
+                        <p>Saudi: {{ supply.get('saudi_output', 'N/A') }}</p>
+                        <p>Russia: {{ supply.get('russian_exports', 'N/A') }}</p>
+                    </div>
+                    <div class="factor-card">
+                        <h4>📈 Demand</h4>
+                        {% set demand = factors.get('demand', {}) %}
+                        <p>Global: {{ demand.get('global_economy', 'N/A') }}</p>
+                        <p>China: {{ demand.get('china_demand', 'N/A') }}</p>
+                        <p>Season: {{ demand.get('seasonal_factor', 'N/A') }}</p>
+                    </div>
+                    <div class="factor-card">
+                        <h4>🏛️ OPEC</h4>
+                        {% set opec = factors.get('opec', {}) %}
+                        <p>Cuts: {{ opec.get('production_cuts', 'N/A') }}</p>
+                        <p>Compliance: {{ opec.get('compliance', 'N/A') }}</p>
+                        <p>Capacity: {{ opec.get('spare_capacity', 'N/A') }}</p>
+                    </div>
+                </div>
+                
+                <p style="margin-top: 15px; text-align: right; color: #666; font-size: 0.9em;">
+                    Report: {{ item.filename }}
                 </p>
-                <p><strong>Sentiment Score:</strong> {{ item.data.get('sentiment_score', 'N/A') }}</p>
-                <p><strong>Confidence:</strong> {{ item.data.get('confidence', 'N/A') }}%</p>
             </div>
             {% endfor %}
         {% else %}
-            <p>No research data available. Run the researcher agent to generate reports.</p>
+            <div class="research-item">
+                <p>No oil volatility research data available.</p>
+                <p>Run: <code>python3 agents/researcher_agent.py</code></p>
+            </div>
         {% endif %}
         
         <h2>📜 Researcher Log</h2>
