@@ -25,6 +25,9 @@ from flask import Flask, render_template, jsonify, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+# Import intelligence modules
+from geo_intelligence import format_for_dashboard as get_geo_intel
+
 # Initialize Flask app
 app = Flask(__name__, 
     template_folder='templates',
@@ -372,12 +375,8 @@ def index() -> Any:
     log = get_live_log('trader', 30)
     stats = get_performance_stats()
     
-    # Get Trump factor from first report
-    trump = None
-    for reports in oil_reports.values():
-        if reports and reports[0].get('data', {}).get('trump_factor'):
-            trump = reports[0]['data']['trump_factor']
-            break
+    # Get geopolitical intelligence
+    geo_intel = get_geo_intel()
     
     return render_template(
         'dashboard.html',
@@ -385,7 +384,7 @@ def index() -> Any:
         oil_reports=oil_reports,
         log=log,
         stats=stats,
-        trump=trump,
+        geo_intel=geo_intel,
         bot_running=get_cached_status('bot'),
         web_running=get_cached_status('web'),
         now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -477,6 +476,13 @@ def api_trades() -> Any:
 def api_stats() -> Any:
     """Return performance stats."""
     return jsonify(get_performance_stats())
+
+
+@app.route('/api/geopolitical')
+@limiter.limit("30 per minute")
+def api_geopolitical() -> Any:
+    """Return geopolitical intelligence."""
+    return jsonify(get_geo_intel())
 
 
 @app.route('/health')

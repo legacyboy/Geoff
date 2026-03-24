@@ -1,0 +1,17 @@
+[Unit]
+Description=Geopolitical Monitor Service
+After=network.target
+
+[Service]
+Type=simple
+User=claw
+WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot/agents
+Environment="PATH=/home/claw/.openclaw/workspace/trading-bot/venv/bin"
+ExecStart=/home/claw/.openclaw/workspace/trading-bot/venv/bin/python /home/claw/.openclaw/workspace/trading-bot/agents/geo_monitor_service.py
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

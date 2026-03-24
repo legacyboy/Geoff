@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-03-24T01:51:28.179305",
+  "summary": {
+    "total_events_24h": 0,
+    "critical_events": 0,
+    "high_events": 0,
+    "threat_level": "LOW",
+    "primary_concerns": []
+  },
+  "threat_levels": {
+    "overall": "LOW",
+    "trump_factor": "MEDIUM",
+    "opec_stability": "LOW",
+    "conflict_risk": "LOW",
+    "sanctions_risk": "MEDIUM"
+  },
+  "attribution": {
+    "trump": 0,
+    "opec": 0,
+    "conflicts": 0,
+    "sanctions": 0,
+    "other": 100
+  },
+  "key_factors": [],
+  "recent_events": [],
+  "trump_activity": {
+    "statements_24h": 0,
+    "impact_score": 0,
+    "latest_statement": null
+  },
+  "opec_status": {
+    "last_meeting": null,
+    "production_policy": "stable",
+    "compliance_rate": 100
+  },
+  "supply_risks": []
+}

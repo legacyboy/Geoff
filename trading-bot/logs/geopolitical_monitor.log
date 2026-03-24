@@ -1,0 +1,3 @@
+2026-03-24 01:51:28,178 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 01:51:28,179 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 01:51:28,179 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json

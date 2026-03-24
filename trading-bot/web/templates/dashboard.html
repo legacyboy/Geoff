@@ -2,6 +2,161 @@
 
 {% block title %}Dashboard - Oil Trading Bot{% endblock %}
 
+{% block extra_css %}
+<style>
+    .threat-high { border-left: 4px solid #e74c3c; }
+    .threat-medium { border-left: 4px solid #f39c12; }
+    .threat-low { border-left: 4px solid #00d4aa; }
+    
+    .attribution-bar {
+        height: 30px;
+        border-radius: 5px;
+        display: flex;
+        overflow: hidden;
+        margin: 10px 0;
+    }
+    
+    .attribution-segment {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.85em;
+        font-weight: bold;
+        transition: width 0.3s;
+    }
+    
+    .threat-card {
+        background: var(--bg-secondary);
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .threat-icon {
+        font-size: 1.5em;
+    }
+    
+    .threat-content {
+        flex: 1;
+    }
+    
+    .threat-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    
+    .threat-level {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75em;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    
+    .threat-level-critical {
+        background: #e74c3c;
+        color: white;
+    }
+    
+    .threat-level-high {
+        background: #f39c12;
+        color: black;
+    }
+    
+    .threat-level-medium {
+        background: #3498db;
+        color: white;
+    }
+    
+    .threat-level-low {
+        background: #00d4aa;
+        color: black;
+    }
+    
+    .contributor-list {
+        list-style: none;
+        padding: 0;
+    }
+    
+    .contributor-item {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        background: var(--bg-secondary);
+        border-radius: 5px;
+        margin-bottom: 8px;
+    }
+    
+    .contributor-impact {
+        width: 50px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 0.9em;
+    }
+    
+    .contributor-info {
+        flex: 1;
+        margin-left: 10px;
+    }
+    
+    .contributor-title {
+        font-weight: 600;
+    }
+    
+    .contributor-desc {
+        font-size: 0.85em;
+        color: var(--text-secondary);
+    }
+    
+    .geo-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+    
+    .event-item {
+        padding: 10px;
+        background: var(--bg-secondary);
+        border-radius: 5px;
+        margin-bottom: 10px;
+        border-left: 3px solid var(--accent);
+    }
+    
+    .event-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+    
+    .event-type {
+        font-size: 0.8em;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: var(--bg-card);
+    }
+    
+    .event-impact {
+        font-size: 0.75em;
+        font-weight: bold;
+    }
+    
+    .event-title {
+        font-weight: 600;
+        margin-bottom: 3px;
+    }
+    
+    .event-time {
+        font-size: 0.8em;
+        color: var(--text-secondary);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- Status Bar -->
 <div class="status-bar">
@@ -17,11 +172,186 @@
         <div class="status-dot status-online"></div>
         <span>Mode: {{ config.mode|capitalize }}</span>
     </div>
+    {% if geo_intel %}
+    <div class="status-item threat-{{ geo_intel.overview.threat_level|lower }}">
+        <span>🌍 Geo Risk: {{ geo_intel.overview.threat_level }}</span>
+    </div>
+    {% endif %}
 </div>
+
+<!-- Geopolitical Intelligence Overview -->
+{% if geo_intel %}
+<div class="card">
+    <h2>🌍 Geopolitical Intelligence</h2>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.overview.threat_level == 'CRITICAL' else '#f39c12' if geo_intel.overview.threat_level == 'HIGH' else '#00d4aa' }}">
+                {{ geo_intel.overview.threat_level }}
+            </div>
+            <div class="stat-label">Threat Level</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ geo_intel.overview.critical_events }}</div>
+            <div class="stat-label">Critical Events</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ geo_intel.overview.total_events }}</div>
+            <div class="stat-label">Events (24h)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if geo_intel.trump.attribution_pct < 20 else 'negative' }}">
+                {{ "%.0f"|format(geo_intel.trump.attribution_pct) }}%
+            </div>
+            <div class="stat-label">Trump Factor</div>
+        </div>
+    </div>
+</div>
+
+<!-- Volatility Attribution -->
+<div class="card">
+    <h2>📊 Volatility Attribution</h2>    
+    <p style="margin-bottom: 15px; color: var(--text-secondary);">Breakdown of what's driving oil market volatility:</p>
+    
+    <div class="attribution-bar">
+        {% for key, data in geo_intel.volatility_breakdown.items() %}
+        {% if data.pct > 0 %}
+        <div class="attribution-segment" 
+             style="width: {{ data.pct }}%; background: {{ data.color }};"
+             title="{{ data.description }}">
+            {% if data.pct > 8 %}{{ data.icon }} {{ "%.0f"|format(data.pct) }}%{% endif %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    
+    <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px;">
+        {% for key, data in geo_intel.volatility_breakdown.items() %}
+        {% if data.pct > 0 %}
+        <div style="display: flex; align-items: center; font-size: 0.9em;">
+            <span style="display: inline-block; width: 12px; height: 12px; background: {{ data.color }}; border-radius: 2px; margin-right: 5px;"></span>
+            <span>{{ data.icon }} {{ key.capitalize() }}: {{ "%.1f"|format(data.pct) }}%</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Active Threats -->
+{% if geo_intel.active_threats %}
+<div class="card">
+    <h2>⚠️ Active Threats</h2>
+    
+    {% for threat in geo_intel.active_threats %}
+    <div class="threat-card threat-{{ threat.level|lower }}">
+        <div class="threat-icon">{{ threat.icon }}</div>
+        <div class="threat-content">
+            <div class="threat-title">
+                {{ threat.title }}
+                <span class="threat-level threat-level-{{ threat.level|lower }}">
+                    {{ threat.level }}
+                </span>
+            </div>
+            <p>{{ threat.description }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Trump Activity Detail -->
+{% if geo_intel.trump.active %}
+<div class="card">
+    <h2>🦅 Trump Activity Tracker</h2>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ geo_intel.trump.statements_24h }}</div>
+            <div class="stat-label">Statements (24h)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.trump.impact_score > 200 else '#f39c12' if geo_intel.trump.impact_score > 100 else '#00d4aa' }}">
+                {{ geo_intel.trump.impact_score }}
+            </div>
+            <div class="stat-label">Impact Score</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ geo_intel.trump.attribution_pct }}%</div>
+            <div class="stat-label">Market Attribution</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.trump.threat_level == 'CRITICAL' else '#f39c12' if geo_intel.trump.threat_level == 'HIGH' else '#00d4aa' }}">
+                {{ geo_intel.trump.threat_level }}
+            </div>
+            <div class="stat-label">Threat Level</div>
+        </div>
+    </div>
+    
+    {% if geo_intel.trump.latest_statement %}
+    <div class="card" style="margin-top: 20px; background: var(--bg-secondary);">
+        <h4>📝 Latest Statement</h4>
+        <p style="margin: 10px 0; font-style: italic;">"{{ geo_intel.trump.latest_statement.content[:200] }}..."</p>
+        <p style="font-size: 0.85em; color: var(--text-secondary);">
+            Source: {{ geo_intel.trump.latest_statement.source }} | 
+            {{ geo_intel.trump.latest_statement.timestamp[:19] if geo_intel.trump.latest_statement.timestamp else 'Unknown' }}
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Key Contributors -->
+{% if geo_intel.key_contributors %}
+<div class="card">
+    <h2>🎯 Key Volatility Contributors</h2>
+    
+    <ul class="contributor-list">
+        {% for contributor in geo_intel.key_contributors %}
+        <li class="contributor-item">
+            <div class="contributor-impact" 
+                 style="color: {{ '#e74c3c' if contributor.impact >= 80 else '#f39c12' if contributor.impact >= 50 else '#00d4aa' }}">
+                {{ contributor.impact }}
+            </div>
+            <div class="contributor-info">
+                <div class="contributor-title">{{ contributor.factor }}</div>
+                <div class="contributor-desc">{{ contributor.description }}</div>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- Recent Events -->
+{% if geo_intel.recent_events %}
+<div class="card">
+    <h2>📰 Recent Geopolitical Events</h2>
+    
+    {% for event in geo_intel.recent_events %}
+    <div class="event-item">
+        <div class="event-header">
+            <span class="event-type">{{ event.event_type|replace('_', ' ')|title }}</span>
+            <span class="event-impact" 
+                  style="color: {{ '#e74c3c' if event.impact_level >= 4 else '#f39c12' if event.impact_level >= 3 else '#00d4aa' }}">
+                Impact: {{ event.impact_level }}/5
+            </span>
+        </div>        
+        <div class="event-title">{{ event.title }}</div>        
+        <p style="font-size: 0.9em; margin: 5px 0;">{{ event.description[:120] }}...</p>
+        
+        <div class="event-time">
+            {{ event.timestamp[:19] if event.timestamp else '' }} | 
+            Source: {{ event.source }}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endif %}
 
 <!-- Performance Stats -->
 <div class="card">
-    <h2>📊 Performance</h2>
+    <h2>📊 Trading Performance</h2>
     <div class="stats-grid">
         <div class="stat-card">
             <div class="stat-value">{{ stats.total_trades }}</div>
@@ -47,45 +377,6 @@
         </div>
     </div>
 </div>
-
-<!-- Trump Factor -->
-{% if trump %}
-<div class="card">
-    <h2>🦅 Trump Factor</h2>
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value" style="color: {{ '#e74c3c' if trump.level == 'high' else '#f39c12' if trump.level == 'medium' else '#00d4aa' }}">
-                {{ trump.trump_factor_score }}/100
-            </div>
-            <div class="stat-label">Trump Factor ({{ trump.level.upper() }})</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ trump.relevant_items }}</div>
-            <div class="stat-label">Relevant Statements</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{{ trump.sentiment.replace('_', ' ').title() }}</div>
-            <div class="stat-label">Trump Sentiment</div>
-        </div>
-    </div>
-    
-    {% if trump.explanation %}
-    <div class="card" style="margin-top: 20px;">
-        <p>💡 {{ trump.explanation }}</p>
-        {% if trump.recent_posts %}
-        <div style="margin-top: 15px;">
-            <strong>Recent Activity:</strong>
-            <ul style="margin-top: 10px; padding-left: 20px;">
-            {% for post in trump.recent_posts[:3] %}
-            <li>[{{ post.source }}] {{ post.content[:60] }}... (Impact: {{ post.impact_score }})</li>
-            {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-</div>
-{% endif %}
 
 <!-- Oil Market Analysis -->
 <div class="card">
