@@ -1,1 +1,11 @@
-{"trading_interval_minutes": 60, "risk_level": "medium", "web_port": 8443, "data_retention_days": 30}
+{
+  "trading_interval_minutes": 60,
+  "risk_level": "medium",
+  "web_port": 8443,
+  "data_retention_days": 30,
+  "oanda_api_key": "7df52e1cb6bb3836047627110754de3d-176b3febe32dc67248164c564e35f513",
+  "oanda_account_type": "practice",
+  "oanda_account_id": "",
+  "trading_pairs": ["EUR_USD", "GBP_USD", "USD_JPY"],
+  "default_units": 100
+}

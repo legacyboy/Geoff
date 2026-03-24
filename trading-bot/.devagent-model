@@ -1,0 +1,15 @@
+# Dev Agent Model Configuration
+# Current: deepseek-coder:33b (PrimaryCoder)
+# Previous: qwen2.5:14b
+
+MODEL=ollama/deepseek-coder:33b
+ALIAS=PrimaryCoder
+CONTEXT_WINDOW=16384
+MAX_TOKENS=8192
+
+# To use dev agent with this model:
+# sessions_spawn with model="ollama/deepseek-coder:33b"
+
+# Model Comparison:
+# - qwen2.5:14b: Fast, efficient, good for simple tasks
+# - deepseek-coder:33b: Better coding, larger context (16k), more capable
