@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Oil Trading Bot{% endblock %}
+
+{% block content %}
+<!-- Status Bar -->
+<div class="status-bar">
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if bot_running else 'status-offline' }}"></div>
+        <span>Trader: {{ 'Running' if bot_running else 'Stopped' }}</span>
+    </div>
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if web_running else 'status-offline' }}"></div>
+        <span>Web: {{ 'Online' if web_running else 'Offline' }}</span>
+    </div>
+    <div class="status-item">
+        <div class="status-dot status-online"></div>
+        <span>Mode: {{ config.mode|capitalize }}</span>
+    </div>
+</div>
+
+<!-- Performance Stats -->
+<div class="card">
+    <h2>📊 Performance</h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.total_trades }}</div>
+            <div class="stat-label">Total Trades</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if stats.win_rate >= 50 else 'negative' }}">
+                {{ "%.1f"|format(stats.win_rate) }}%
+            </div>
+            <div class="stat-label">Win Rate</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if stats.avg_pnl > 0 else 'negative' }}">
+                ${{ "%.2f"|format(stats.avg_pnl) }}
+            </div>
+            <div class="stat-label">Avg P&L</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if stats.total_pnl >= 0 else 'negative' }}">
+                ${{ "%.2f"|format(stats.total_pnl) }}
+            </div>
+            <div class="stat-label">Total P&L</div>
+        </div>
+    </div>
+</div>
+
+<!-- Trump Factor -->
+{% if trump %}
+<div class="card">
+    <h2>🦅 Trump Factor</h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if trump.level == 'high' else '#f39c12' if trump.level == 'medium' else '#00d4aa' }}">
+                {{ trump.trump_factor_score }}/100
+            </div>
+            <div class="stat-label">Trump Factor ({{ trump.level.upper() }})</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ trump.relevant_items }}</div>
+            <div class="stat-label">Relevant Statements</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ trump.sentiment.replace('_', ' ').title() }}</div>
+            <div class="stat-label">Trump Sentiment</div>
+        </div>
+    </div>
+    
+    {% if trump.explanation %}
+    <div class="card" style="margin-top: 20px;">
+        <p>💡 {{ trump.explanation }}</p>
+        {% if trump.recent_posts %}
+        <div style="margin-top: 15px;">
+            <strong>Recent Activity:</strong>
+            <ul style="margin-top: 10px; padding-left: 20px;">
+            {% for post in trump.recent_posts[:3] %}
+            <li>[{{ post.source }}] {{ post.content[:60] }}... (Impact: {{ post.impact_score }})</li>
+            {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Oil Market Analysis -->
+<div class="card">
+    <h2>🛢️ Market Analysis</h2>
+    
+    {% for asset, reports in oil_reports.items() %}
+    {% if reports %}
+    {% set report = reports[0] %}
+    {% set data = report.data if report.data else {} %}
+    
+    <div class="card" style="margin-bottom: 15px;">
+        <h3>{{ data.display_name | default(asset) }} ({{ asset }})</h3>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" style="color: {{ '#e74c3c' if (data.volatility_score | default(0)) >= 70 else '#f39c12' if (data.volatility_score | default(0)) >= 40 else '#00d4aa' }}">
+                    {{ data.volatility_score | default('N/A') }}
+                </div>
+                <div class="stat-label">Volatility Score</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ data.trend | default('N/A') }}</div>
+                <div class="stat-label">Trend</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: {{ '#00d4aa' if (data.recommendation | default('')) == 'buy' else '#e74c3c' if (data.recommendation | default('')) == 'sell' else '#f39c12' }}">
+                    {{ data.recommendation | default('N/A') | upper }}
+                </div>
+                <div class="stat-label">Recommendation</div>
+            </div>
+        </div>
+        
+        {% if data.factors %}
+        <p style="margin-top: 15px;"><strong>Key Factors:</strong></p>
+        <ul>
+        {% for factor in data.factors[:5] %}
+        <li>{{ factor }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        
+        {% if data.latest_data %}
+        <p style="margin-top: 10px; font-size: 0.9em; color: var(--text-secondary);">
+            Latest: ${{ "%.2f"|format(data.latest_data.price | default(0)) }} 
+            ({{ "+%.2f"|format(data.latest_data.change | default(0)) if (data.latest_data.change | default(0)) > 0 else "%.2f"|format(data.latest_data.change | default(0)) }}%)
+            - ATR: {{ "%.2f"|format(data.latest_data.atr | default(0)) }}
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+<!-- Live Log -->
+<div class="card">
+    <h2>📋 Live Log (Trader)</h2>
+    <div class="log-container" id="trader-log">{{ log }}</div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-refresh every 30 seconds
+    setInterval(() => {
+        window.location.reload();
+    }, 30000);
+</script>
+{% endblock %}

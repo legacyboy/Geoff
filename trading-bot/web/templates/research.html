@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Research - Oil Trading Bot{% endblock %}
+
+{% block content %}
+<!-- Status Bar -->
+<div class="status-bar">
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if bot_running else 'status-offline' }}"></div>
+        <span>Trader: {{ 'Running' if bot_running else 'Stopped' }}</span>
+    </div>
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if web_running else 'status-offline' }}"></div>
+        <span>Web: {{ 'Online' if web_running else 'Offline' }}</span>
+    </div>
+</div>
+
+<!-- Live Log -->
+<div class="card">
+    <h2>🔬 Live Log (Researcher)</h2>
+    <div class="log-container" id="researcher-log">{{ log }}</div>
+</div>
+
+<!-- Detailed Research -->
+{% for asset, reports in oil_reports.items() %}
+<div class="card">
+    <h2>🛢️ {{ asset }} Research Reports</h2>
+    
+    {% for report in reports %}
+    <div class="card" style="margin-bottom: 15px;">
+        <h3>{{ report.timestamp }}</h3>        
+        {% if report.data %}
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" style="color: {{ '#e74c3c' if report.data.volatility_score >= 70 else '#f39c12' if report.data.volatility_score >= 40 else '#00d4aa' }}">
+                    {{ report.data.volatility_score }}
+                </div>
+                <div class="stat-label">Volatility Score</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-value">{{ report.data.trend }}</div>
+                <div class="stat-label">Trend</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-value" style="color: {{ '#00d4aa' if report.data.recommendation == 'buy' else '#e74c3c' if report.data.recommendation == 'sell' else '#f39c12' }}">
+                    {{ report.data.recommendation.upper() }}
+                </div>
+                <div class="stat-label">Recommendation</div>
+            </div>
+            
+            {% if report.data.confidence %}
+            <div class="stat-card">
+                <div class="stat-value">{{ "%.1f"|format(report.data.confidence * 100) }}%</div>
+                <div class="stat-label">Confidence</div>
+            </div>
+            {% endif %}
+        </div>
+        
+        {% if report.data.factors %}
+        <p style="margin-top: 15px;"><strong>Key Factors:</strong></p>
+        <ul>
+        {% for factor in report.data.factors %}
+        <li>{{ factor }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
+        
+        {% if report.data.risk_assessment %}
+        <p style="margin-top: 10px;"><strong>Risk Assessment:</strong> {{ report.data.risk_assessment }}</p>
+        {% endif %}
+        
+        {% if report.data.latest_data %}
+        <p style="margin-top: 10px; font-size: 0.9em; color: var(--text-secondary);">
+            Price: ${{ "%.2f"|format(report.data.latest_data.price) }} |
+            Change: {{ "+%.2f"|format(report.data.latest_data.change) if report.data.latest_data.change > 0 else "%.2f"|format(report.data.latest_data.change) }}% |
+            ATR: {{ "%.2f"|format(report.data.latest_data.atr) }}
+        </p>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-refresh every 60 seconds
+    setInterval(() => {
+        window.location.reload();
+    }, 60000);
+</script>
+{% endblock %}

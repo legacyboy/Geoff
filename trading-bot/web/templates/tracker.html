@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Trade Tracker - Oil Trading Bot{% endblock %}
+
+{% block content %}
+<!-- Status Bar -->
+<div class="status-bar">
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if bot_running else 'status-offline' }}"></div>
+        <span>Trader: {{ 'Running' if bot_running else 'Stopped' }}</span>
+    </div>
+    <div class="status-item">
+        <div class="status-dot {{ 'status-online' if web_running else 'status-offline' }}"></div>
+        <span>Web: {{ 'Online' if web_running else 'Offline' }}</span>
+    </div>
+</div>
+
+<!-- Trade History -->
+<div class="card">
+    <h2>📋 Trade History</h2>
+    
+    {% if trades %}
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Asset</th>
+                    <th>Action</th>
+                    <th>Signal</th>
+                    <th>Size</th>
+                    <th>Entry Price</th>
+                    <th>Leverage</th>
+                    <th>P&L</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for trade in trades %}
+                <tr>
+                    <td>{{ trade.timestamp[:19] if trade.timestamp else 'N/A' }}</td>
+                    <td>{{ trade.asset or 'N/A' }}</td>
+                    <td style="color: {{ '#00d4aa' if trade.action == 'buy' else '#e74c3c' if trade.action == 'sell' else 'inherit' }}">
+                        {{ trade.action.upper() if trade.action else 'N/A' }}
+                    </td>
+                    <td>{{ trade.signal or 'N/A' }}</td>
+                    <td>{{ trade.position_size or 'N/A' }}</td>
+                    <td>${{ "%.2f"|format(trade.entry_price) if trade.entry_price else 'N/A' }}</td>
+                    <td>{{ "%.1f"|format(trade.leverage) if trade.leverage else '1.0' }}x</td>
+                    <td class="{{ 'positive' if trade.unrealized_pnl > 0 else 'negative' if trade.unrealized_pnl < 0 else '' }}">
+                        ${{ "%.2f"|format(trade.unrealized_pnl) if trade.unrealized_pnl else '0.00' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="stats-grid" style="margin-top: 20px;">
+        <div class="stat-card">
+            <div class="stat-value">{{ stats.total_trades }}</div>
+            <div class="stat-label">Total Trades</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if stats.win_rate >= 50 else 'negative' }}">
+                {{ "%.1f"|format(stats.win_rate) }}%
+            </div>
+            <div class="stat-label">Win Rate</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {{ 'positive' if stats.total_pnl >= 0 else 'negative' }}">
+                ${{ "%.2f"|format(stats.total_pnl) }}
+            </div>
+            <div class="stat-label">Total P&L</div>
+        </div>
+    </div>
+    {% else %}
+    <p style="text-align: center; color: var(--text-secondary);">No trades recorded yet.</p>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-refresh every 30 seconds
+    setInterval(() => {
+        window.location.reload();
+    }, 30000);
+</script>
+{% endblock %}

@@ -1,13 +1,14 @@
 [Unit]
-Description=Oil Trading Bot Web Dashboard (venv)
+Description=Oil Trading Bot Web Dashboard v2.0 (Grade A)
 After=network.target
 
 [Service]
 Type=simple
 User=claw
-WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot
+WorkingDirectory=/home/claw/.openclaw/workspace/trading-bot/web
 Environment="PATH=/home/claw/.openclaw/workspace/trading-bot/venv/bin"
-ExecStart=/home/claw/.openclaw/workspace/trading-bot/venv/bin/python /home/claw/.openclaw/workspace/trading-bot/web/server.py
+Environment="PYTHONPATH=/home/claw/.openclaw/workspace/trading-bot/web"
+ExecStart=/home/claw/.openclaw/workspace/trading-bot/venv/bin/python server_v2.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

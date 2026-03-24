@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Error {{ code }} - Oil Trading Bot{% endblock %}
+
+{% block content %}
+<div class="card" style="text-align: center; padding: 60px 20px;">
+    <h1 style="font-size: 4em; margin-bottom: 20px;">
+        {% if code == 404 %}🔍{% elif code == 429 %}⏳{% elif code == 500 %}🔥{% else %}⚠️{% endif %}
+    </h1>
+    
+    <h2>Error {{ code }}</h2>
+    <p style="margin: 20px 0; color: var(--text-secondary);">{{ message }}</p>
+    
+    {% if code == 429 %}
+    <p style="color: var(--accent-orange);">You've made too many requests. Please wait a moment before trying again.</p>
+    {% endif %}
+    
+    <a href="/" class="btn" style="display: inline-block; margin-top: 20px; text-decoration: none;">
+        ← Back to Dashboard
+    </a>
+</div>
+{% endblock %}
