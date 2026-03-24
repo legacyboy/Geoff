@@ -17,8 +17,10 @@ import json
 import os
 import ssl
 import subprocess
+import time
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string, jsonify, Response
+from functools import lru_cache
+from flask import Flask, render_template_string, jsonify
 
 app = Flask(__name__)
 
@@ -32,6 +34,32 @@ OIL_TRACKER_DIR = os.path.join(PROJECT_DIR, 'data', 'oil_tracker')
 PAPER_TRADES_DIR = os.path.join(PROJECT_DIR, 'data', 'paper_trades')
 CERT_DIR = os.path.join(PROJECT_DIR, 'certs')
 
+# Cache for status checks
+_status_cache = {}
+_status_cache_time = {}
+STATUS_CACHE_TTL = 10  # seconds
+
+def get_cached_status(service_name):
+    """Get cached service status."""
+    now = time.time()
+    cache_key = f'status_{service_name}'
+    
+    if cache_key in _status_cache:
+        if now - _status_cache_time.get(cache_key, 0) < STATUS_CACHE_TTL:
+            return _status_cache[cache_key]
+    
+    # Get fresh status
+    if service_name == 'bot':
+        result = get_bot_status()
+    elif service_name == 'web':
+        result = get_web_status()
+    else:
+        result = False
+    
+    _status_cache[cache_key] = result
+    _status_cache_time[cache_key] = now
+    return result
+
 def load_config():
     """Load trading bot configuration."""
     try:
@@ -44,11 +72,15 @@ def get_bot_status():
     """Check if trading bot is running."""
     try:
         result = subprocess.run(
-            ['systemctl', '--user', 'is-active', 'oil-trader.service'],
-            capture_output=True, text=True
+            ['systemctl', '--user', 'is-active', 'oil-trader-v2.service'],
+            capture_output=True, text=True, timeout=5
         )
         return result.stdout.strip() == 'active'
-    except:
+    except subprocess.TimeoutExpired:
+        app.logger.warning('Timeout checking bot status')
+        return False
+    except Exception as e:
+        app.logger.error(f'Error checking bot status: {e}')
         return False
 
 def get_web_status():
@@ -56,10 +88,14 @@ def get_web_status():
     try:
         result = subprocess.run(
             ['systemctl', '--user', 'is-active', 'trading-bot-web.service'],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=5
         )
         return result.stdout.strip() == 'active'
-    except:
+    except subprocess.TimeoutExpired:
+        app.logger.warning('Timeout checking web status')
+        return False
+    except Exception as e:
+        app.logger.error(f'Error checking web status: {e}')
         return False
 
 def get_oil_reports(limit=10):
@@ -433,12 +469,12 @@ DASHBOARD_TEMPLATE = """
         
         <div class="status-bar">
             <div class="status-item">
-                <div class="status-dot {{ 'status-online' if bot_running else 'status-offline' }}"></div>
-                <span>Trader: {{ 'Running' if bot_running else 'Stopped' }}</span>
+                <div class="status-dot {{ 'status-online' if get_cached_status('bot') else 'status-offline' }}"></div>
+                <span>Trader: {{ 'Running' if get_cached_status('bot') else 'Stopped' }}</span>
             </div>
             <div class="status-item">
-                <div class="status-dot {{ 'status-online' if web_running else 'status-offline' }}"></div>
-                <span>Web: {{ 'Online' if web_running else 'Offline' }}</span>
+                <div class="status-dot {{ 'status-online' if get_cached_status('web') else 'status-offline' }}"></div>
+                <span>Web: {{ 'Online' if get_cached_status('web') else 'Offline' }}</span>
             </div>
             <div class="status-item">
                 <span>⏱️ Auto-refresh: 30s</span>
@@ -595,8 +631,7 @@ def index():
         oil_reports=oil_reports,
         log=log,
         stats=stats,
-        bot_running=bot_running,
-        web_running=web_running,
+        get_cached_status=get_cached_status,  # Pass function to template
         now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     )
 
@@ -850,9 +885,15 @@ def api_status():
         'mode': 'paper_trading'
     })
 
+ALLOWED_ASSETS = {'XTI_USD', 'XBR_USD'}
+
 @app.route('/api/research/<asset>')
 def api_research(asset):
     """Return research data for specific asset."""
+    # Validate asset
+    if asset not in ALLOWED_ASSETS:
+        return jsonify({'error': 'Invalid asset', 'allowed': list(ALLOWED_ASSETS)}), 400
+    
     reports = get_oil_reports(1)
     if asset in reports and reports[asset]:
         return jsonify(reports[asset][0]['data'])
