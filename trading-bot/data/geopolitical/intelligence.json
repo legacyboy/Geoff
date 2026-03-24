@@ -1,170 +1,37 @@
 {
-  "timestamp": "2026-03-24T02:00:00Z",
+  "timestamp": "2026-03-24T02:16:28.203268",
   "summary": {
-    "total_events_24h": 5,
-    "critical_events": 1,
-    "threat_level": "HIGH",
-    "primary_concerns": [
-      "Trump tariff threats on Canadian oil",
-      "OPEC+ production policy uncertainty", 
-      "Russia-Ukraine conflict escalation",
-      "Iran sanctions enforcement"
-    ]
+    "total_events_24h": 0,
+    "critical_events": 0,
+    "high_events": 0,
+    "threat_level": "LOW",
+    "primary_concerns": []
   },
   "threat_levels": {
-    "overall": "HIGH",
-    "trump_factor": "HIGH",
-    "opec_stability": "MEDIUM",
-    "conflict_risk": "HIGH",
+    "overall": "LOW",
+    "trump_factor": "MEDIUM",
+    "opec_stability": "LOW",
+    "conflict_risk": "LOW",
     "sanctions_risk": "MEDIUM"
   },
   "attribution": {
-    "trump": 35,
-    "opec": 15,
-    "conflicts": 25,
-    "sanctions": 10,
-    "other": 15
+    "trump": 0,
+    "opec": 0,
+    "conflicts": 0,
+    "sanctions": 0,
+    "other": 100
   },
-  "key_factors": [
-    {
-      "factor": "Trump Tariff Threats",
-      "impact": 85,
-      "description": "25% tariffs threatened on Canadian oil imports",
-      "sentiment": "bullish_price"
-    },
-    {
-      "factor": "Russia-Ukraine Conflict",
-      "impact": 70,
-      "description": "Ongoing conflict affecting Russian supply",
-      "sentiment": "bullish_price"
-    },
-    {
-      "factor": "OPEC+ Policy",
-      "impact": 60,
-      "description": "Production cuts maintained, uncertainty on increases",
-      "sentiment": "bullish_price"
-    },
-    {
-      "factor": "Iran Sanctions",
-      "impact": 45,
-      "description": "Tightened sanctions enforcement limiting exports",
-      "sentiment": "bullish_price"
-    }
-  ],
+  "key_factors": [],
+  "recent_events": [],
   "trump_activity": {
-    "statements_24h": 3,
-    "impact_score": 255,
-    "latest_statement": {
-      "id": "trump_001",
-      "source": "Truth Social",
-      "timestamp": "2026-03-24T01:30:00Z",
-      "content": "We're looking at tariffs on Canadian oil. They need to pay their fair share. American energy dominance!",
-      "impact_score": 90,
-      "urgency": "high"
-    }
+    "statements_24h": 0,
+    "impact_score": 0,
+    "latest_statement": null
   },
   "opec_status": {
-    "last_meeting": "2026-03-15",
-    "production_policy": "maintaining_cuts",
-    "compliance_rate": 102
+    "last_meeting": null,
+    "production_policy": "stable",
+    "compliance_rate": 100
   },
-  "supply_risks": [
-    {
-      "region": "Middle East",
-      "risk_level": "MEDIUM",
-      "supply_at_risk_bpd": 35000000,
-      "pct_global_supply": 35,
-      "active_threats": 2
-    },
-    {
-      "region": "Russia/Ukraine",
-      "risk_level": "HIGH",
-      "supply_at_risk_bpd": 10000000,
-      "pct_global_supply": 10,
-      "active_threats": 1
-    }
-  ],
-  "recent_events": [
-    {
-      "id": "geo_001",
-      "timestamp": "2026-03-24T01:30:00Z",
-      "event_type": "trump_statement",
-      "source": "Truth Social",
-      "title": "Trump Threatens Canadian Oil Tariffs",
-      "description": "President Trump announced consideration of 25% tariffs on Canadian oil imports, citing need for 'fair share' payments",
-      "impact_level": 5,
-      "regions_affected": ["canada", "united_states"],
-      "oil_market_impact": {
-        "sentiment": "bullish_price",
-        "keywords": ["tariffs", "canada", "oil", "trade"],
-        "categories": ["trade", "policy"]
-      },
-      "sentiment": "bullish",
-      "keywords": ["tariffs", "canada", "oil", "energy dominance"]
-    },
-    {
-      "id": "geo_002",
-      "timestamp": "2026-03-23T18:00:00Z",
-      "event_type": "conflict_escalation",
-      "source": "News Report",
-      "title": "Russia-Ukraine Conflict Intensifies",
-      "description": "Escalation in conflict region raises concerns about Russian oil supply disruptions",
-      "impact_level": 4,
-      "regions_affected": ["russia", "ukraine", "europe"],
-      "oil_market_impact": {
-        "supply_risk": 70,
-        "sentiment": "bullish"
-      },
-      "sentiment": "bullish",
-      "keywords": ["russia", "ukraine", "conflict", "supply disruption"]
-    },
-    {
-      "id": "geo_003",
-      "timestamp": "2026-03-23T14:00:00Z",
-      "event_type": "opec_decision",
-      "source": "OPEC",
-      "title": "OPEC+ Maintains Production Cuts",
-      "description": "OPEC+ committee decided to maintain current production cuts through Q2 2026",
-      "impact_level": 3,
-      "regions_affected": ["middle_east", "global"],
-      "oil_market_impact": {
-        "type": "production",
-        "sentiment": "bullish"
-      },
-      "sentiment": "bullish",
-      "keywords": ["opec", "production", "cuts", "supply"]
-    },
-    {
-      "id": "geo_004",
-      "timestamp": "2026-03-23T10:00:00Z",
-      "event_type": "sanctions",
-      "source": "US Treasury",
-      "title": "Enhanced Iran Sanctions Enforcement",
-      "description": "US announces stricter enforcement of oil export sanctions on Iran",
-      "impact_level": 3,
-      "regions_affected": ["iran", "middle_east"],
-      "oil_market_impact": {
-        "supply_constraint": 60,
-        "sentiment": "bullish"
-      },
-      "sentiment": "bullish",
-      "keywords": ["iran", "sanctions", "exports", "supply"]
-    },
-    {
-      "id": "geo_005",
-      "timestamp": "2026-03-22T22:00:00Z",
-      "event_type": "trump_statement",
-      "source": "Truth Social",
-      "title": "Trump on Energy Dominance",
-      "description": "Trump posts about American energy dominance and need to increase domestic production",
-      "impact_level": 3,
-      "regions_affected": ["united_states"],
-      "oil_market_impact": {
-        "sentiment": "bearish_price",
-        "keywords": ["production", "domestic", "drill"]
-      },
-      "sentiment": "bearish",
-      "keywords": ["energy dominance", "domestic", "production"]
-    }
-  ]
+  "supply_risks": []
 }

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-03-24T02:12:00Z",
+  "data_quality": "partial",
+  "sources_available": {
+    "newsapi": "requires_api_key",
+    "reddit": "working_limited",
+    "rss_feeds": "blocked_by_cloudflare",
+    "direct_scraping": "against_tos",
+    "manual_updates": "recommended"
+  },
+  "collected_data": {
+    "reddit_posts": 15,
+    "trump_specific": 10,
+    "conflicts": 3
+  },
+  "recommendation": "Set up NEWSAPI_KEY for real-time data",
+  "api_signup_url": "https://newsapi.org/register"
+}

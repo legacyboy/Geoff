@@ -1,0 +1,171 @@
+{
+  "timestamp": "2026-03-24T02:12:07.365366",
+  "sources": {
+    "newsapi": 0,
+    "reddit": 15,
+    "rss": 0,
+    "conflicts": 3
+  },
+  "articles": [],
+  "reddit_posts": [
+    {
+      "id": "reddit_politics_0",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:08:31",
+      "title": "Iran is in an internal battle between Doves and Hawks",
+      "content": "It seems there is a battle for control over Iran between the Doves and Hawks.\n\nThe Doves, which seem to include their Speaker Mohammad Bager, and possibly their President Masoud Pezeshkian, seem to have opened up back channels to the US via various Arab states and Pakistan, and seem to be attempting to negotiate a cease fire at the minimum, and potentially a full-fledged peace deal. I believe that the Trump Admin has made contact with the Doves, but that the Doves were caught off guard by the Tr",
+      "url": "https://reddit.com/r/IRstudies/comments/1s26sgb/iran_is_in_an_internal_battle_between_doves_and/",
+      "engagement": 2
+    },
+    {
+      "id": "reddit_politics_1",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:04:52",
+      "title": "Volume in stock and oil futures surged minutes before Trump's market-turning post [CNBC]",
+      "content": "[https://www.cnbc.com/amp/2026/03/23/volume-in-stock-and-oil-futures-surged-minutes-before-trumps-market-turning-post.html](https://www.cnbc.com/amp/2026/03/23/volume-in-stock-and-oil-futures-surged-minutes-before-trumps-market-turning-post.html)\n\nS&amp;P 500 futures and oil futures flashed an unusual burst of activity early Monday minutes before a market-moving social media post from President Donald Trump.\n\nAt around 6:50 a.m. in New York, S&amp;P 500 e-Mini futures trading on the CME recorded",
+      "url": "https://reddit.com/r/stocks/comments/1s26q8r/volume_in_stock_and_oil_futures_surged_minutes/",
+      "engagement": 14
+    },
+    {
+      "id": "reddit_politics_2",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:03:50",
+      "title": "Taco trading",
+      "content": "What are you thoughts on the idea that trump is engaging in market manipulation?\n\nHere's a couple possibilities \n\nIn a sense it's undeniably true, because even a headline can move markets temporarily. Most of us to the left of republicans can see these statements as lies, yet half the country doesn't. Hence the markets moving based  on whatever trump says.\n\nA more sinister plot is that there's massive insider trading going on. And there's a signal sent to pull off so called \"taco trades\". For ex",
+      "url": "https://reddit.com/r/BreakingPoints/comments/1s26poo/taco_trading/",
+      "engagement": 2
+    },
+    {
+      "id": "reddit_politics_3",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T01:58:25",
+      "title": "\ud83c\udf05 Morning Update | 24 March 2026",
+      "content": "https://preview.redd.it/xwlcfypeyxqg1.png?width=1536&amp;format=png&amp;auto=webp&amp;s=16323d0c87d3bceb441b7c646c88e952623c168a\n\n\ud83c\udf0d **Markets remain highly sensitive to Middle East developments.** Donald Trump signalled a possible deal with Iran and a temporary pause in strikes, but Tehran denied negotiations. The situation remains unstable, keeping volatility elevated across all major asset classes.\n\n\ud83d\udee2 **Oil holds near critical levels.** Brent is trading close to **100 USD per barrel**, maintai",
+      "url": "https://reddit.com/r/NordFX/comments/1s26mc5/morning_update_24_march_2026/",
+      "engagement": 1
+    },
+    {
+      "id": "reddit_politics_4",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T01:57:04",
+      "title": "Manipulation at its best",
+      "content": "",
+      "url": "https://reddit.com/r/NSEbets/comments/1s26lk7/manipulation_at_its_best/",
+      "engagement": 6
+    }
+  ],
+  "rss_items": [],
+  "conflicts": [
+    {
+      "id": "conflict_ukraine",
+      "region": "Russia/Ukraine",
+      "status": "active",
+      "impact": "high",
+      "oil_supply_at_risk": 10000000,
+      "description": "Ongoing conflict affecting Russian oil exports and infrastructure"
+    },
+    {
+      "id": "conflict_gaza",
+      "region": "Middle East",
+      "status": "active",
+      "impact": "medium",
+      "oil_supply_at_risk": 2000000,
+      "description": "Regional tensions affecting shipping lanes"
+    },
+    {
+      "id": "conflict_sudan",
+      "region": "East Africa",
+      "status": "active",
+      "impact": "low",
+      "oil_supply_at_risk": 150000,
+      "description": "Civil conflict disrupting Sudanese oil production"
+    }
+  ],
+  "trump_specific": [
+    {
+      "id": "reddit_politics_2",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:03:50",
+      "title": "Taco trading",
+      "url": "https://reddit.com/r/BreakingPoints/comments/1s26poo/taco_trading/",
+      "relevance_score": 15
+    },
+    {
+      "id": "reddit_worldnews_2",
+      "source": "Reddit r/worldnews",
+      "timestamp": "2026-03-24T02:03:50",
+      "title": "Taco trading",
+      "url": "https://reddit.com/r/BreakingPoints/comments/1s26poo/taco_trading/",
+      "relevance_score": 15
+    },
+    {
+      "id": "reddit_oil_2",
+      "source": "Reddit r/oil",
+      "timestamp": "2026-03-24T02:03:50",
+      "title": "Taco trading",
+      "url": "https://reddit.com/r/BreakingPoints/comments/1s26poo/taco_trading/",
+      "relevance_score": 15
+    },
+    {
+      "id": "reddit_politics_1",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:04:52",
+      "title": "Volume in stock and oil futures surged minutes before Trump's market-turning post [CNBC]",
+      "url": "https://reddit.com/r/stocks/comments/1s26q8r/volume_in_stock_and_oil_futures_surged_minutes/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_politics_3",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T01:58:25",
+      "title": "\ud83c\udf05 Morning Update | 24 March 2026",
+      "url": "https://reddit.com/r/NordFX/comments/1s26mc5/morning_update_24_march_2026/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_worldnews_1",
+      "source": "Reddit r/worldnews",
+      "timestamp": "2026-03-24T02:04:52",
+      "title": "Volume in stock and oil futures surged minutes before Trump's market-turning post [CNBC]",
+      "url": "https://reddit.com/r/stocks/comments/1s26q8r/volume_in_stock_and_oil_futures_surged_minutes/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_worldnews_3",
+      "source": "Reddit r/worldnews",
+      "timestamp": "2026-03-24T01:58:25",
+      "title": "\ud83c\udf05 Morning Update | 24 March 2026",
+      "url": "https://reddit.com/r/NordFX/comments/1s26mc5/morning_update_24_march_2026/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_oil_1",
+      "source": "Reddit r/oil",
+      "timestamp": "2026-03-24T02:04:52",
+      "title": "Volume in stock and oil futures surged minutes before Trump's market-turning post [CNBC]",
+      "url": "https://reddit.com/r/stocks/comments/1s26q8r/volume_in_stock_and_oil_futures_surged_minutes/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_oil_3",
+      "source": "Reddit r/oil",
+      "timestamp": "2026-03-24T01:58:25",
+      "title": "\ud83c\udf05 Morning Update | 24 March 2026",
+      "url": "https://reddit.com/r/NordFX/comments/1s26mc5/morning_update_24_march_2026/",
+      "relevance_score": 10
+    },
+    {
+      "id": "reddit_politics_0",
+      "source": "Reddit r/politics",
+      "timestamp": "2026-03-24T02:08:31",
+      "title": "Iran is in an internal battle between Doves and Hawks",
+      "url": "https://reddit.com/r/IRstudies/comments/1s26sgb/iran_is_in_an_internal_battle_between_doves_and/",
+      "relevance_score": 0
+    }
+  ],
+  "summary": {
+    "total_items_collected": 18,
+    "collection_time": "2026-03-24T02:12:07.365539",
+    "sources_active": 4
+  }
+}
