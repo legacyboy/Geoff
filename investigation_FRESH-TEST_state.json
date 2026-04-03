@@ -22,8 +22,19 @@
       "description": "Parse MFT entries",
       "status": "pending",
       "added_at": "2026-04-03T12:13:35.786153"
+    },
+    {
+      "index": 2,
+      "module": "file_carver",
+      "function": "verify_hash",
+      "params": {
+        "file_path": "/evidence/FRESH-TEST/disk.img"
+      },
+      "description": "Verify hash",
+      "status": "pending",
+      "added_at": "2026-04-03T12:13:35.807122"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:13:35.786162"
+  "last_updated": "2026-04-03T12:13:35.807130"
 }
