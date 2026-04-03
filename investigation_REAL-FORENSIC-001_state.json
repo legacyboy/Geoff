@@ -46,8 +46,17 @@
         "partition": "/tmp/nist_test_disk.dd"
       },
       "description": "List files in partition",
-      "status": "pending",
-      "added_at": "2026-04-03T12:30:39.835904"
+      "status": "completed",
+      "added_at": "2026-04-03T12:30:39.835904",
+      "completed_at": "2026-04-03T12:30:39.942308",
+      "result": {
+        "tool": "fls",
+        "partition": "/tmp/nist_test_disk.dd",
+        "files": [],
+        "raw_output": "Error: Cannot determine file system type\n",
+        "count": 0,
+        "timestamp": "2026-04-03T12:30:39.942300"
+      }
     },
     {
       "index": 3,
@@ -62,6 +71,6 @@
       "added_at": "2026-04-03T12:30:39.854349"
     }
   ],
-  "current_step": 2,
-  "last_updated": "2026-04-03T12:30:39.907932"
+  "current_step": 3,
+  "last_updated": "2026-04-03T12:30:39.942310"
 }
