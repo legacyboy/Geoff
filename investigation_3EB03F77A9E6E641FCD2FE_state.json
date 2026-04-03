@@ -22,8 +22,10 @@
         "investigation_id": "3EB03F77A9E6E641FCD2FE"
       },
       "description": "Parse Master File Table entries",
-      "status": "pending",
-      "committed": false
+      "status": "completed",
+      "committed": false,
+      "result": "Parsed 3 MFT entries",
+      "completed_at": "2026-04-03T12:03:19.031997"
     },
     {
       "index": 2,
@@ -72,6 +74,6 @@
       "committed": false
     }
   ],
-  "current_step": 1,
-  "last_updated": "2026-04-03T12:03:19.017942"
+  "current_step": 2,
+  "last_updated": "2026-04-03T12:03:19.031999"
 }
