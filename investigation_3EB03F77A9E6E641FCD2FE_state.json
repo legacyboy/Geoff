@@ -62,8 +62,10 @@
         "investigation_id": "3EB03F77A9E6E641FCD2FE"
       },
       "description": "Generate forensic timeline",
-      "status": "pending",
-      "committed": false
+      "status": "completed",
+      "committed": false,
+      "result": "Timeline generated with 3 events",
+      "completed_at": "2026-04-03T12:03:19.045200"
     },
     {
       "index": 5,
@@ -78,6 +80,6 @@
       "committed": false
     }
   ],
-  "current_step": 4,
-  "last_updated": "2026-04-03T12:03:19.041066"
+  "current_step": 5,
+  "last_updated": "2026-04-03T12:03:19.045201"
 }
