@@ -11,8 +11,19 @@
       "description": "Initialize MFT structure",
       "status": "pending",
       "added_at": "2026-04-03T12:13:35.752747"
+    },
+    {
+      "index": 1,
+      "module": "mft",
+      "function": "parse_mft",
+      "params": {
+        "investigation_id": "FRESH-TEST"
+      },
+      "description": "Parse MFT entries",
+      "status": "pending",
+      "added_at": "2026-04-03T12:13:35.786153"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:13:35.752757"
+  "last_updated": "2026-04-03T12:13:35.786162"
 }
