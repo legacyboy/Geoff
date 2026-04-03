@@ -106,10 +106,19 @@
         "partition": "/tmp/nps-2008-jean.E01"
       },
       "description": "Generate MAC timeline from file system",
-      "status": "pending",
-      "added_at": "2026-04-03T12:44:14.891270"
+      "status": "completed",
+      "added_at": "2026-04-03T12:44:14.891270",
+      "error": "module 'forensic_tools' has no attribute 'timeline'",
+      "completed_at": "2026-04-03T12:44:46.998323",
+      "result": {
+        "tool": "fls-timeline",
+        "partition": "/tmp/nps-2008-jean.E01",
+        "entries": 0,
+        "timeline": [],
+        "timestamp": "2026-04-03T12:44:46.998315"
+      }
     }
   ],
-  "current_step": 5,
-  "last_updated": "2026-04-03T12:44:17.903681"
+  "current_step": 6,
+  "last_updated": "2026-04-03T12:44:46.998325"
 }
