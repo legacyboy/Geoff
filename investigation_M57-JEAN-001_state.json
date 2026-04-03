@@ -34,8 +34,19 @@
       "description": "Analyze NTFS file system details",
       "status": "pending",
       "added_at": "2026-04-03T12:44:14.834793"
+    },
+    {
+      "index": 3,
+      "module": "forensic_tools",
+      "function": "fls",
+      "params": {
+        "partition": "/tmp/nps-2008-jean.E01"
+      },
+      "description": "List all files and directories (recursive)",
+      "status": "pending",
+      "added_at": "2026-04-03T12:44:14.853584"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:44:14.834800"
+  "last_updated": "2026-04-03T12:44:14.853592"
 }
