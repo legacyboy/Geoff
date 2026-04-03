@@ -11,8 +11,19 @@
       "description": "Analyze disk image: /home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence",
       "status": "pending",
       "added_at": "2026-04-03T14:11:14.620092"
+    },
+    {
+      "index": 1,
+      "module": "forensic_tools",
+      "function": "extract_timeline",
+      "params": {
+        "image_path": "/home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence"
+      },
+      "description": "Extract filesystem timeline",
+      "status": "pending",
+      "added_at": "2026-04-03T14:11:14.658594"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T14:11:14.620101"
+  "last_updated": "2026-04-03T14:11:14.658608"
 }
