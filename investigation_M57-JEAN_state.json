@@ -1,0 +1,18 @@
+{
+  "investigation_id": "M57-JEAN",
+  "steps": [
+    {
+      "index": 0,
+      "module": "forensic_tools",
+      "function": "analyze_image",
+      "params": {
+        "image_path": "/home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence"
+      },
+      "description": "Analyze disk image: /home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence",
+      "status": "pending",
+      "added_at": "2026-04-03T14:11:14.620092"
+    }
+  ],
+  "current_step": 0,
+  "last_updated": "2026-04-03T14:11:14.620101"
+}
