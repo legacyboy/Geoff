@@ -64,8 +64,17 @@
         "partition": "/tmp/nps-2008-jean.E01"
       },
       "description": "List all files and directories (recursive)",
-      "status": "pending",
-      "added_at": "2026-04-03T12:44:14.853584"
+      "status": "completed",
+      "added_at": "2026-04-03T12:44:14.853584",
+      "completed_at": "2026-04-03T12:44:17.882759",
+      "result": {
+        "tool": "fls",
+        "partition": "/tmp/nps-2008-jean.E01",
+        "files": [],
+        "raw_output": "Error: Cannot determine file system type\n",
+        "count": 0,
+        "timestamp": "2026-04-03T12:44:17.882749"
+      }
     },
     {
       "index": 4,
@@ -91,6 +100,6 @@
       "added_at": "2026-04-03T12:44:14.891270"
     }
   ],
-  "current_step": 3,
-  "last_updated": "2026-04-03T12:44:17.829691"
+  "current_step": 4,
+  "last_updated": "2026-04-03T12:44:17.882761"
 }
