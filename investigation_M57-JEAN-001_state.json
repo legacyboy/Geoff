@@ -1,0 +1,18 @@
+{
+  "investigation_id": "M57-JEAN-001",
+  "steps": [
+    {
+      "index": 0,
+      "module": "forensic_tools",
+      "function": "mmls",
+      "params": {
+        "disk_image": "/tmp/nps-2008-jean.E01"
+      },
+      "description": "Analyze partition table \u2014 identify file systems",
+      "status": "pending",
+      "added_at": "2026-04-03T12:44:14.797068"
+    }
+  ],
+  "current_step": 0,
+  "last_updated": "2026-04-03T12:44:14.797076"
+}
