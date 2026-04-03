@@ -9,8 +9,15 @@
         "disk_image": "/tmp/nps-2008-jean.E01"
       },
       "description": "Analyze partition table \u2014 identify file systems",
-      "status": "pending",
-      "added_at": "2026-04-03T12:44:14.797068"
+      "status": "completed",
+      "added_at": "2026-04-03T12:44:14.797068",
+      "completed_at": "2026-04-03T12:44:14.929286",
+      "result": {
+        "tool": "mmls",
+        "disk": "/tmp/nps-2008-jean.E01",
+        "output": "DOS Partition Table\nOffset Sector: 0\nUnits are in 512-byte sectors\n\n      Slot      Start        End          Length       Description\n000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)\n001:  -------   0000000000   0000000062   0000000063   Unallocated\n002:  000:000   0000000063   0020948759   0020948697   NTFS / exFAT (0x07)\n003:  -------   0020948760   0020971519   0000022760   Unallocated\n",
+        "timestamp": "2026-04-03T12:44:14.929277"
+      }
     },
     {
       "index": 1,
@@ -70,6 +77,6 @@
       "added_at": "2026-04-03T12:44:14.891270"
     }
   ],
-  "current_step": 0,
-  "last_updated": "2026-04-03T12:44:14.891278"
+  "current_step": 1,
+  "last_updated": "2026-04-03T12:44:14.929289"
 }
