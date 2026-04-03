@@ -67,10 +67,20 @@
         "output_dir": "/tmp/REAL-FORENSIC-001_carved"
       },
       "description": "Carve deleted files with PhotoRec",
-      "status": "pending",
-      "added_at": "2026-04-03T12:30:39.854349"
+      "status": "completed",
+      "added_at": "2026-04-03T12:30:39.854349",
+      "completed_at": "2026-04-03T12:30:39.966504",
+      "result": {
+        "tool": "photorec",
+        "disk": "/tmp/nist_test_disk.dd",
+        "output_dir": "/tmp/REAL-FORENSIC-001_carved",
+        "files_recovered": 0,
+        "files": [],
+        "returncode": 1,
+        "timestamp": "2026-04-03T12:30:39.966498"
+      }
     }
   ],
-  "current_step": 3,
-  "last_updated": "2026-04-03T12:30:39.942310"
+  "current_step": 4,
+  "last_updated": "2026-04-03T12:30:39.966506"
 }
