@@ -11,8 +11,20 @@
       "description": "Analyze partition table with SleuthKit mmls",
       "status": "pending",
       "added_at": "2026-04-03T12:30:39.799589"
+    },
+    {
+      "index": 1,
+      "module": "forensic_tools",
+      "function": "calculate_hash",
+      "params": {
+        "file_path": "/tmp/nist_test_disk.dd",
+        "algorithm": "sha256"
+      },
+      "description": "Calculate SHA256 hash of disk image",
+      "status": "pending",
+      "added_at": "2026-04-03T12:30:39.818168"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:30:39.799594"
+  "last_updated": "2026-04-03T12:30:39.818177"
 }
