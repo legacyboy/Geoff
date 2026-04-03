@@ -33,10 +33,12 @@
         "file_path": "/evidence/FRESH-TEST/disk.img"
       },
       "description": "Verify hash",
-      "status": "pending",
-      "added_at": "2026-04-03T12:13:35.807122"
+      "status": "completed",
+      "added_at": "2026-04-03T12:13:35.807122",
+      "completed_at": "2026-04-03T12:13:35.850179",
+      "result": "Hash verified: /evidence/FRESH-TEST/disk.img"
     }
   ],
-  "current_step": 2,
-  "last_updated": "2026-04-03T12:13:35.827727"
+  "current_step": 3,
+  "last_updated": "2026-04-03T12:13:35.850187"
 }
