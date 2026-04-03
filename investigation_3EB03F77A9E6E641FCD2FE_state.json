@@ -1,0 +1,77 @@
+{
+  "investigation_id": "3EB03F77A9E6E641FCD2FE",
+  "steps": [
+    {
+      "index": 0,
+      "module": "mft",
+      "function": "autopsy",
+      "params": {
+        "investigation_id": "3EB03F77A9E6E641FCD2FE"
+      },
+      "description": "Initialize investigation and create MFT structure",
+      "status": "completed",
+      "committed": false,
+      "result": "Investigation 3EB03F77A9E6E641FCD2FE initialized",
+      "completed_at": "2026-04-03T12:03:19.017940"
+    },
+    {
+      "index": 1,
+      "module": "mft",
+      "function": "parse_mft",
+      "params": {
+        "investigation_id": "3EB03F77A9E6E641FCD2FE"
+      },
+      "description": "Parse Master File Table entries",
+      "status": "pending",
+      "committed": false
+    },
+    {
+      "index": 2,
+      "module": "file_carver",
+      "function": "verify_hash",
+      "params": {
+        "file_path": "/evidence/3EB03F77A9E6E641FCD2FE/disk.img"
+      },
+      "description": "Verify evidence integrity",
+      "status": "pending",
+      "committed": false
+    },
+    {
+      "index": 3,
+      "module": "file_carver",
+      "function": "carve_deleted",
+      "params": {
+        "investigation_id": "3EB03F77A9E6E641FCD2FE",
+        "disk_image": "/evidence/3EB03F77A9E6E641FCD2FE/disk.img"
+      },
+      "description": "Carve deleted files from disk image",
+      "status": "pending",
+      "committed": false
+    },
+    {
+      "index": 4,
+      "module": "mft",
+      "function": "generate_timeline",
+      "params": {
+        "investigation_id": "3EB03F77A9E6E641FCD2FE"
+      },
+      "description": "Generate forensic timeline",
+      "status": "pending",
+      "committed": false
+    },
+    {
+      "index": 5,
+      "module": "mft",
+      "function": "export_report",
+      "params": {
+        "investigation_id": "3EB03F77A9E6E641FCD2FE",
+        "format": "json"
+      },
+      "description": "Export investigation report",
+      "status": "pending",
+      "committed": false
+    }
+  ],
+  "current_step": 1,
+  "last_updated": "2026-04-03T12:03:19.017942"
+}
