@@ -46,8 +46,15 @@
         "partition": "/tmp/nps-2008-jean.E01"
       },
       "description": "Analyze NTFS file system details",
-      "status": "pending",
-      "added_at": "2026-04-03T12:44:14.834793"
+      "status": "completed",
+      "added_at": "2026-04-03T12:44:14.834793",
+      "completed_at": "2026-04-03T12:44:17.829689",
+      "result": {
+        "tool": "fsstat",
+        "partition": "/tmp/nps-2008-jean.E01",
+        "output": "Error: Cannot determine file system type\n",
+        "timestamp": "2026-04-03T12:44:17.829680"
+      }
     },
     {
       "index": 3,
@@ -84,6 +91,6 @@
       "added_at": "2026-04-03T12:44:14.891270"
     }
   ],
-  "current_step": 2,
-  "last_updated": "2026-04-03T12:44:17.773744"
+  "current_step": 3,
+  "last_updated": "2026-04-03T12:44:17.829691"
 }
