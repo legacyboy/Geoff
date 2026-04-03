@@ -1,0 +1,23 @@
+{
+  "_description": "Manual Trump statement entries - add new entries here when you see relevant posts",
+  "_instructions": [
+    "Add new entries to the 'entries' array",
+    "timestamp: ISO format (e.g., '2026-03-24T15:30:00')",
+    "content: The full statement text",
+    "sentiment: 'bullish', 'bearish', or 'neutral'",
+    "impact: 1-5 (1=minor, 5=critical market impact)"
+  ],
+  "entries": [
+    {
+      "id": 1,
+      "timestamp": "2026-03-24T15:30:00",
+      "content": "Example: We will be releasing oil from the Strategic Petroleum Reserve immediately to combat high prices.",
+      "sentiment": "bearish",
+      "impact": 4,
+      "source": "Truth Social",
+      "url": "https://truthsocial.com/@realDonaldTrump/posts/...",
+      "keywords": ["spr", "release", "oil", "prices"],
+      "engagement": {"reblogs": 15000, "favourites": 25000}
+    }
+  ]
+}

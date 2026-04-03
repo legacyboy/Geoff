@@ -1,0 +1,92 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Manual ALL IOCs
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+STEP 1: Extracting ALL IOCs from the email
+======================================================================
+[*] Extracting ALL domains...
+[+] Domains extracted: 
+            mail.icicleinnovations.mail
+            ×
+        
+            core.icicleinnovations.mail
+            ×
+        
+            523.555.RENO
+            ×
+        ...
+[*] Extracting ALL IPs...
+[+] IPs extracted: 
+            172.16.254.1
+            ×
+        
+            10.0.0.5
+            ×
+        
+            192.168.1.1
+            ×
+        ...
+[*] Extracting ALL URLs...
+[+] URLs extracted: 
+            https://icicleinnovations.mail/renovation-planner.exe
+            ×
+        
+            https://icicleinnovations.mail/upload_photos
+            ×
+        ...
+[*] Extracting ALL emails...
+[+] Emails extracted: 
+            sales@icicleinnovations.mail
+            ×
+        
+            residents@dosisneighborhood.corp
+            ×
+        
+            holiday2025-kitchen@dosisneighborhood.corp
+            ...
+
+[*] Switching to Defang & Report tab...
+[+] On Defang & Report tab
+
+======================================================================
+STEP 3: Entering SED command
+======================================================================
+
+[*] Entering SED: s/\./[.]/g; s/@/[@]/g; s/http/hxxp/g; s/:\/\//[:\/\/]/g
+[*] Clicking Apply...
+[+] SED applied
+
+======================================================================
+DEFANGED IOCs
+======================================================================
+[*] Count: 12
+[*] Preview:
+Domains (3)mail[.]icicleinnovations[.]mailcore[.]icicleinnovations[.]mail523[.]555[.]RENOIP Addresses (3)172[.]16[.]254[.]110[.]0[.]0[.]5192[.]168[.]1[.]1URLs (2)hxxps[:\/\/]icicleinnovations[.]mail/renovation-planner[.]exehxxps[:\/\/]icicleinnovations[.]mail/upload_photosEmail Addresses (4)sales[@]icicleinnovations[.]mailresidents[@]dosisneighborhood[.]corpholiday2025-kitchen[@]dosisneighborhood[.]corpinfo[@]icicleinnovations[.]mail
+
+======================================================================
+STEP 4: Submitting
+======================================================================
+
+[*] Clicking Send to Security Team...
+[+] Clicked Send
+[*] Alert: 🚨 ⚠️ Network Notice! '10[.]0[.]0[.]5' belongs to our trusted network - please exclude legitimate assets from IOC reports! ⚠️ Communication Alert! 'residents[@]dosisneighborhood[.]corp' is an internal Dosis Neighborhood email address - please don't report our own staff emails as threats (unless they are confirmed compromised)! Security Alert! You're missing some domains! The CHI Team needs all domains properly defanged to secure Dosis Neighborhood! Kitchen Alert! You've included domains that don't need defanging - the network security systems are getting confused! System Error! Those extra IP addresses are making our security scanners malfunction! Critical Alert! Missing malicious URLs mean residents might click on dangerous links! Connection Issue! Those unusual URLs are causing the security monitoring to fail! Inbox Overflow! Those extra email addresses are flooding the secure communications system! 🚨Check your domains, IPs, URLs, emails and try again! Dosis Neighborhood is counting on you!
+
+======================================================================
+STEP 5: Verifying
+======================================================================
+
+[!] Not complete yet
+
+[+] Done

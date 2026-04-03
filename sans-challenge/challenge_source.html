@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dosis Neighborhood SOC - Phishing Triage Station</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+    <header>
+        <div class="wip-banner">
+            <i class="fas fa-tools"></i> <strong>WORK IN PROGRESS:</strong> This SOC tool is still under development. Some features, regex patterns, and SED commands may not work as expected. Analysts must identify and resolve any issues encountered.
+        </div>
+        <div class="header-content">
+            <div class="logo">
+                <i class="fas fa-shield-alt"></i>
+                <h1>Dosis Neighborhood SOC</h1>
+                <i class="fas fa-search"></i>
+            </div>
+            <p>Counter Hack Security Operations Center - Phishing Threat Analysis Station <span class="holiday-tag">🎅 Protecting our Neighbors ❄️</span></p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="left-panel">
+            <div class="panel-header">
+                <h2><i class="fas fa-envelope-open-text"></i> Email Viewer</h2>
+                <div class="email-actions">
+                    <button id="highlight-iocs" title="Toggle IOC Highlighting"><i class="fas fa-highlighter"></i></button>
+                    <button id="copy-email" title="Copy Email Content"><i class="fas fa-copy"></i></button>
+                </div>
+            </div>
+            <div class="email-container">
+                <pre id="eml-content">From: &#34;Icicle Innovations&#34; &lt;sales@icicleinnovations.mail&gt;
+To: &#34;Neighborhood Watch&#34; &lt;residents@dosisneighborhood.corp&gt;
+Subject: 🎄 URGENT: Holiday Kitchen Makeover - Smart Home Integration! 🎄
+Date: Wed, 25 Dec 2025 09:15:33 -0500
+Message-ID: &lt;holiday2025-kitchen@dosisneighborhood.corp&gt;
+MIME-Version: 1.0
+Content-Type: text/plain; charset=&#34;UTF-8&#34;
+X-Mailer: KitchenAlert v2.025
+Received: from mail.icicleinnovations.mail (172.16.254.1) by dosisneighborhood.corp (10.0.0.5) with SMTP;
+         Wed, 25 Dec 2025 09:15:28 -0500
+Received: from core.icicleinnovations.mail (192.168.1.1) by mail.icicleinnovations.mail (172.16.254.1);
+         Wed, 25 Dec 2025 09:15:22 -0500
+
+Dear Valued Dosis Neighborhood Residents,
+
+🚨 IMMEDIATE ACTION REQUIRED 🚨
+
+Our elite team of Sunny&#39;s kitchen renovation specialists have detected some SERIOUSLY outdated kitchen setups in your neighborhood! It appears that certain homes are still using legacy appliances without proper smart home integration - like non-IoT fridges that can&#39;t automatically order milk, or microwaves that don&#39;t sync with your meal planning apps! 
+
+While this sounds like a delightfully festive renovation opportunity (and totally not a security assessment), we need you to:
+
+1) Download our FREE Kitchen Renovation Planner™ with built-in security features (totally legit, we promise!):
+   https://icicleinnovations.mail/renovation-planner.exe
+   
+2) Upload high-resolution photos of your current kitchen to our secure design portal (we need to see ALL angles for proper renovation planning):
+   https://icicleinnovations.mail/upload_photos
+
+For instant help with any kitchen renovation questions, contact our 24/7 design hotline at 523.555.0100 or our renovation specialists at 523.555.0101.
+
+Remember: If your old appliances start acting up during the assessment, it&#39;s probably just excitement about their upcoming upgrades! But please document any issues with photos.
+
+Stay merry (and consider smart upgrades),
+Icicle Innovations 
+Chief Kitchen Design Specialist
+📞 523.555.RENO
+info@icicleinnovations.mail
+
+P.S. - Has anyone else noticed their kitchen cabinets mysteriously rearranging themselves overnight? We can fix that with proper smart storage solutions!</pre>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <h2><i class="fas fa-exclamation-triangle"></i> Threat Intelligence Analysis</h2>
+
+            <div class="tabs">
+                <button class="tab-button active" data-tab="extract-tab">Extract IOCs (Step 1)</button>
+                <button class="tab-button" data-tab="defang-tab">Defang & Report (Step 2)</button>
+                <button class="tab-button" data-tab="reference-tab">Reference</button>
+            </div>
+
+            <div id="extract-tab" class="tab-content active">
+                <div class="regex-section">
+                    <h3><i class="fas fa-search"></i> Extract IOCs</h3>
+                    
+                    <!-- Add this new info box explaining IOC extraction importance -->
+                    <div class="mission-box">
+                        <div class="mission-content">
+                            <div class="mission-header">
+                                <h4>🚨 Step Objective: Extract IOCs 🚨</h4>
+                                <button class="mission-toggle" id="mission-toggle" title="Toggle Alert Details">
+                                    <i class="fas fa-chevron-up"></i>
+                                </button>
+                            </div>
+                            <div class="mission-details" id="mission-details">
+                                <p>This phishing email may be connected to the mysterious Gnome activities reported throughout our neighborhood! Extracting IOCs (Indicators of Compromise) is essential to protect the Counter Hack Crew and identify the threat actors behind this campaign. Your mission:</p>
+                                <ul class="mission-steps">
+                                    <li>Extract all suspicious domains, IPs, URLs, and email addresses</li>
+                                </ul>
+                                <p>Use the tabs below to extract each IOC type from the email. Be sure not to include legitimate assets!</p>
+                                <p class="mission-urgency">⏰ Time is critical – the attackers might be planning something bigger!</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Existing pattern info box -->
+                    <div class="pattern-info-box">
+                        <i class="fas fa-info-circle"></i> When you change a regex pattern and extract again, previous results will be replaced with new matches.
+                    </div>
+                    
+                    <!-- IOC Type Tabs -->
+                    <div class="ioc-type-tabs">
+                        <button class="ioc-tab active" data-ioc-type="domains">Domains</button>
+                        <button class="ioc-tab" data-ioc-type="ips">IP Addresses</button>
+                        <button class="ioc-tab" data-ioc-type="urls">URLs</button>
+                        <button class="ioc-tab" data-ioc-type="emails">Email Addresses</button>
+                    </div>
+                    
+                    <!-- Domains Panel -->
+                    <div class="ioc-type-panel active" id="domains-panel">
+                        <!-- Add explanation box for domains -->
+                        <div class="ioc-explanation domain">
+                            <h5><i class="fas fa-info-circle"></i> What are Domains?</h5>
+                            <p>Domains are human-readable web addresses (like example.com) that map to IP addresses. They often indicate the source or destination of malicious activity.</p>
+                            <p class="reference-note">See the <a href="#" class="tab-link" data-tab="reference-tab">Reference tab</a> for more regex patterns and help.</p>
+                        </div>
+                        
+                        <form id="domain-form" class="search-form">
+                            <label for="domain-regex">Domain Pattern:</label>
+                            <div class="input-group">
+                                <input type="text" id="domain-regex" value="Enter Regex Pattern" placeholder="Enter domain regex pattern">
+                                <button type="submit" class="action-button"><i class="fas fa-globe"></i> Extract</button>
+                            </div>
+                        </form>
+                        <div class="result-container">
+                            <div class="result-header">
+                                <h4>Domains</h4>
+                                <span class="count-badge" id="domain-count">0</span>
+                            </div>
+                            <div class="selected-list" id="selected-domains-list">
+                                <p class="empty-message">No domains extracted yet</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- IPs Panel -->
+                    <div class="ioc-type-panel" id="ips-panel">
+                        <!-- Add explanation box for IPs -->
+                        <div class="ioc-explanation ip">
+                            <h5><i class="fas fa-info-circle"></i> What are IP Addresses?</h5>
+                            <p>IP addresses are numerical labels (like 192.168.1.1) that identify devices on a network. Malicious IPs may host command & control servers or malware.</p>
+                            <p class="reference-note">See the <a href="#" class="tab-link" data-tab="reference-tab">Reference tab</a> for more regex patterns and help.</p>
+                        </div>
+                        
+                        <form id="ip-form" class="search-form">
+                            <label for="ip-regex">IP Address Pattern:</label>
+                            <div class="input-group">
+                                <input type="text" id="ip-regex" value="Enter Regex Pattern" placeholder="Enter IP regex pattern">
+                                <button type="submit" class="action-button"><i class="fas fa-network-wired"></i> Extract</button>
+                            </div>
+                        </form>
+                        <div class="result-container">
+                            <div class="result-header">
+                                <h4>IP Addresses</h4>
+                                <span class="count-badge" id="ip-count">0</span>
+                            </div>
+                            <div class="selected-list" id="selected-ips-list">
+                                <p class="empty-message">No IP addresses extracted yet</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- URLs Panel -->
+                    <div class="ioc-type-panel" id="urls-panel">
+                        <!-- Add explanation box for URLs -->
+                        <div class="ioc-explanation url">
+                            <h5><i class="fas fa-info-circle"></i> What are URLs?</h5>
+                            <p>URLs are web addresses (like http://example.com/path) that point to specific resources. Malicious URLs often lead to phishing sites or malware downloads.</p>
+                            <p class="reference-note">See the <a href="#" class="tab-link" data-tab="reference-tab">Reference tab</a> for more regex patterns and help.</p>
+                        </div>
+                        
+                        <form id="url-form" class="search-form">
+                            <label for="url-regex">URL Pattern:</label>
+                            <div class="input-group">
+                                <input type="text" id="url-regex" value="Enter Regex Pattern" placeholder="Enter URL regex pattern">
+                                <button type="submit" class="action-button"><i class="fas fa-link"></i> Extract</button>
+                            </div>
+                        </form>
+                        <div class="result-container">
+                            <div class="result-header">
+                                <h4>URLs</h4>
+                                <span class="count-badge" id="url-count">0</span>
+                            </div>
+                            <div class="selected-list" id="selected-urls-list">
+                                <p class="empty-message">No URLs extracted yet</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Emails Panel -->
+                    <div class="ioc-type-panel" id="emails-panel">
+                        <!-- Add explanation box for emails -->
+                        <div class="ioc-explanation email">
+                            <h5><i class="fas fa-info-circle"></i> What are Email Addresses?</h5>
+                            <p>Email addresses (like user@example.com) identify senders and recipients. In security analysis, they can reveal phishing campaign sources or targets.</p>
+                            <p class="reference-note">See the <a href="#" class="tab-link" data-tab="reference-tab">Reference tab</a> for more regex patterns and help.</p>
+                        </div>
+                        
+                        <form id="email-form" class="search-form">
+                            <label for="email-regex">Email Address Pattern:</label>
+                            <div class="input-group">
+                                <input type="text" id="email-regex" value="Enter Regex Pattern" placeholder="Enter email regex pattern">
+                                <button type="submit" class="action-button"><i class="fas fa-at"></i> Extract</button>
+                            </div>
+                        </form>
+                        <div class="result-container">
+                            <div class="result-header">
+                                <h4>Email Addresses</h4>
+                                <span class="count-badge" id="email-count">0</span>
+                            </div>
+                            <div class="selected-list" id="selected-emails-list">
+                                <p class="empty-message">No email addresses extracted yet</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Remove Regex Resources from here as they're now in the Reference tab -->
+                </div>
+            </div>
+
+            <div id="defang-tab" class="tab-content">
+                <div class="defang-section">
+                    <h3><i class="fas fa-shield-alt"></i> Defang Selected IOCs</h3>
+
+                    <!-- Add this new info box explaining the importance of defanging -->
+                    <div class="mission-box">
+                        <div class="mission-content">
+                            <div class="mission-header">
+                                <h4>🚨 Step Objective: Defang IOCs 🚨</h4>
+                                <button class="mission-toggle" id="mission-toggle-step2" title="Toggle Alert Details">
+                                    <i class="fas fa-chevron-up"></i>
+                                </button>
+                            </div>
+                            <div class="mission-details" id="mission-details-step2">
+                                <p>Defanging IOCs (Indicators of Compromise) is crucial to ensure that malicious content cannot be accidentally activated. This phishing campaign may be connected to the recent Gnome activities! Your mission:</p>
+                                <ul class="mission-steps">
+                                    <li>Replace dots/periods with [.]</li>
+                                    <li>Replace @ in email addresses with [@]</li>
+                                    <li>Replace http with hxxp in URLs</li>
+                                    <li>Replace :// with [://] in URLs</li>
+                                    <li>Submit the defanged IOCs to the Counter Hack Security Team</li>
+                                </ul>
+                                <p class="mission-urgency">⏰ Act fast – we don't know who is behind this phishing campaign!</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- IOC Summary Box with Updated IDs -->
+                    <div class="ioc-summary-box">
+                        <h4>Selected IOCs</h4>
+                        <div class="selected-summary">
+                            <div class="summary-item">
+                                <span>Domains:</span>
+                                <span id="domains-count-summary" class="summary-count">0</span>
+                            </div>
+                            <div class="summary-item">
+                                <span>IPs:</span>
+                                <span id="ips-count-summary" class="summary-count">0</span>
+                            </div>
+                            <div class="summary-item">
+                                <span>URLs:</span>
+                                <span id="urls-count-summary" class="summary-count">0</span>
+                            </div>
+                            <div class="summary-item">
+                                <span>Emails:</span>
+                                <span id="emails-count-summary" class="summary-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Quick Defang Buttons -->
+                    <div class="quick-defang">
+                        <p class="quick-label">Quick Defang:</p>
+                        <div class="quick-defang-buttons">
+                            <button id="defang-all-dots" class="quick-defang-button">
+                                <i class="fas fa-dot-circle"></i> . → [.]
+                            </button>
+                            <button id="defang-at" class="quick-defang-button">
+                                <i class="fas fa-at"></i> @ → [@]
+                            </button>
+                            <button id="defang-http" class="quick-defang-button">
+                                <i class="fas fa-globe"></i> HTTP → HXXP
+                            </button>
+                            <button id="defang-protocol" class="quick-defang-button">
+                                <i class="fas fa-link"></i> :// → [://]
+                            </button>
+                            <button id="defang-standard" class="quick-defang-button secondary-button wip-button">
+                                <i class="fas fa-shield-alt"></i> Apply All Defanging (WIP)
+                            </button>
+                        </div>
+                    </div>
+
+                    <form id="defang-form">
+                        <label for="defang-sed">Custom SED Command(s):</label>
+                        <div class="input-group">
+                            <input type="text" id="defang-sed" value="s/\./[.]/g" placeholder="E.g., s/\./[.]/g; s/@/[@]/g">
+                            <button type="submit" class="action-button"><i class="fas fa-magic"></i> Apply</button>
+                        </div>
+                        <div class="sed-help">
+                            <i class="fas fa-info-circle"></i> Use SED format like <code>s/\./[.]/g</code> to replace dots with [.]. Chain multiple commands with semicolons: <code>s/\./[.]/g; s/@/[@]/g</code>
+                        </div>
+                    </form>
+                    
+                    <div class="result-container">
+                        <div class="result-header">
+                            <h4>Defanged IOCs</h4>
+                            <div class="header-actions">
+                                <span class="count-badge" id="defanged-count">0</span>
+                                <button id="copy-all-defanged" class="small-action-button" title="Copy All"><i class="fas fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div id="defanged-list">
+                            <p class="empty-message">No defanged IOCs yet</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Report Preview Section - Merged from Submit Tab -->
+                    <div class="report-preview-section">
+                        <h4><i class="fas fa-clipboard-check"></i> Threat Intelligence Report Preview</h4>
+                        <p class="info-text">Review your defanged IOCs before submitting to the Counter Hack Security Team</p>
+                    </div>
+                    
+                    <!-- Submit Actions & Clear - Consolidated from Submit Tab -->
+                    <div class="action-buttons submit-actions">
+                        <button id="send-iocs" class="primary-button"><i class="fas fa-paper-plane"></i> Send to Security Team</button>
+                        <button id="clear-btn" class="danger-button"><i class="fas fa-trash-alt"></i> Clear All</button>
+                    </div>
+                    
+                    <div id="alert" class="alert"></div>
+                </div>
+            </div>
+
+            <!-- New Reference Tab -->
+            <div id="reference-tab" class="tab-content">
+                <div class="reference-section">
+                    <h3><i class="fas fa-book"></i> Reference Materials</h3>
+                    
+                    <div class="reference-category">
+                        <h4><i class="fas fa-search"></i> Regular Expressions</h4>
+                        
+                        <div class="reference-links">
+                            <h5>Helpful Resources</h5>
+                            <a href="https://regex101.com/" target="_blank" class="resource-link">
+                                <i class="fas fa-external-link-alt"></i> Regex101: Build & Test Regex
+                            </a>
+                            <a href="https://regexr.com/" target="_blank" class="resource-link">
+                                <i class="fas fa-external-link-alt"></i> RegExr: Learn, Build & Test
+                            </a>
+                            <a href="https://www.regular-expressions.info/quickstart.html" target="_blank" class="resource-link">
+                                <i class="fas fa-external-link-alt"></i> Regex Quick Start Guide
+                            </a>
+                            <a href="https://gchq.github.io/CyberChef/#recipe=Defang_IP_Addresses()Defang_URL(true,true,true,'Valid%20domains%20and%20full%20URLs')&input=MS4xLjEuMQpodHRwczovL2djaHEuZ2l0aHViLmlvCmdjaHEuZ2l0aHViLmlv" target="_blank" class="resource-link">
+                                <i class="fas fa-external-link-alt"></i> CyberChef: Defang IOCs
+                            </a>
+                        </div>
+                        
+                        <div class="common-patterns reference-patterns">
+                            <h5>Common IOC Patterns</h5>
+                            <div class="pattern-item">
+                                <span class="pattern-name">IPv4 Addresses:</span>
+                                <code>\d{1,3}\.\d{1,3}\.\d{1,3}</code>
+                                <button class="copy-pattern" data-pattern="\d{1,3}\.\d{1,3}\.\d{1,3}" data-target="ip-regex" title="Copy"><i class="fas fa-copy"></i></button>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Domains:</span>
+                                <code>[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+</code>
+                                <button class="copy-pattern" data-pattern="[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+" data-target="domain-regex" title="Copy"><i class="fas fa-copy"></i></button>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Email Addresses:</span>
+                                <code>\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b</code>
+                                <button class="copy-pattern" data-pattern="\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b" data-target="email-regex" title="Copy"><i class="fas fa-copy"></i></button>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">URLs:</span>
+                                <code>http://[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/[^\s]*)?</code>
+                                <button class="copy-pattern" data-pattern="http://[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/[^\s]*)?" data-target="url-regex" title="Copy"><i class="fas fa-copy"></i></button>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">MD5 Hashes:</span>
+                                <code>\b[a-fA-F0-9]{32}\b</code>
+                                <button class="copy-pattern" data-pattern="\b[a-fA-F0-9]{32}\b" title="Copy"><i class="fas fa-copy"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="reference-divider"></div>
+                    
+                    <div class="reference-category">
+                        <h4><i class="fas fa-shield-alt"></i> SED Commands for Defanging</h4>
+                        
+                        <div class="reference-links">
+                            <h5>What is SED?</h5>
+                            <p class="reference-text">
+                                SED (Stream Editor) is a command-line utility that parses and transforms text. 
+                                In security, we often use it to "defang" potentially malicious content using the format: <code>s/pattern/replacement/g</code>
+                            </p>
+                            <p class="reference-text">
+                                SED uses forward slashes (/) as delimiters, so you need to escape any slashes in your pattern or replacement with a backslash: <code>\/</code>
+                            </p>
+                        </div>
+                        
+                        <div class="common-patterns reference-patterns">
+                            <h5>Common Defanging Techniques</h5>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Replace dots with [.]:</span>
+                                <code>s/\./[.]/g</code>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Replace @ with [@]:</span>
+                                <code>s/@/[@]/g</code>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Replace :// with [://]:</span>
+                                <code>s/:\//[://]/g</code>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Replace http with hxxp:</span>
+                                <code>s/http/hxxp/g</code>
+                            </div>
+                            <div class="pattern-item">
+                                <span class="pattern-name">Multiple commands:</span>
+                                <code>s/\./[.]/g; s/@/[@]/g</code>
+                            </div>
+                        </div>
+                        
+                        <!-- Add tips for correct SED syntax -->
+                        <div class="sed-tips">
+                            <h5>Tips for SED Commands</h5>
+                            <ul class="tips-list">
+                                <li>Forward slashes (/) in your pattern need to be escaped with a backslash: <code>\/</code></li>
+                                <li>Dots (.) have special meaning in regex and need to be escaped to match literal dots: <code>\.</code></li>
+                                <li>Separate multiple commands with semicolons: <code>s/a/b/g; s/c/d/g</code></li>
+                                <li>The <code>g</code> flag after the last slash means "global" - replace all occurrences</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Remove the Quick Tips Floating Panel -->
+    </div>
+
+    <footer>
+        <p>🛡️ Dosis Neighborhood SOC v2025.1 | Counter Hack Security Operations | Protecting the Community Since 2015 | 🎅 Holiday Security Division ❄️
+        </p>
+    </footer>
+
+    <!-- IOC Report Modal -->
+    <div class="modal" id="report-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-content">
+                    <img src="/static/img/logo.png" alt="North Pole SOC Logo" class="report-logo">
+                    <h2>Dosis Neighborhood SOC</h2>
+                    <h3>Phishing IOC Report</h3>
+                    <div class="report-metadata">
+                        <div class="report-meta-item">
+                            <span>Report ID:</span>
+                            <span>DOSIS-SOC-<span id="report-id"></span></span>
+                        </div>
+                        <div class="report-meta-item">
+                            <span>Date:</span>
+                            <span id="report-date"></span>
+                        </div>
+                        <div class="report-meta-item">
+                            <span>Analyst:</span>
+                            <span>CHI Analyst</span>
+                        </div>
+                        <div class="report-meta-item">
+                            <span>Status:</span>
+                            <span class="report-status success">COMPLETED</span>
+                        </div>
+                    </div>
+                </div>
+                <span class="close-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="report-section-header">
+                    <i class="fas fa-file-alt"></i> Incident Summary
+                </div>
+                <div class="report-summary">
+                    <p>A phishing email was detected targeting the Dosis Neighborhood operations. The email contained malicious links and attempted to trick recipients into downloading malware. All indicators of compromise have been successfully defanged and logged.</p>
+                </div>
+                
+                <div class="report-section-header">
+                    <i class="fas fa-shield-alt"></i> Defanged Indicators of Compromise
+                </div>
+                
+                <div class="report-iocs-container">
+                    <!-- Will be populated with the submitted IOCs -->
+                </div>
+                
+                <div class="report-section-header">
+                    <i class="fas fa-tasks"></i> Actions Taken
+                </div>
+                <ul class="report-actions">
+                    <li>All IOCs have been defanged using proper security techniques</li>
+                    <li>Indicators added to the North Pole threat intelligence platform</li>
+                    <li>Security blocks deployed to all endpoints</li>
+                    <li>Email filtering rules updated to catch similar phishing attempts</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-button" id="close-report">Close Report</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Resource ID Required Modal -->
+    <div class="modal" id="id-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-header-content">
+                    <h2>Resource ID Required</h2>
+                </div>
+                <span class="close-id-modal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="error-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="id-message">
+                    <h3>Missing Required Parameter</h3>
+                    <p>The <code>id</code> parameter is required to use this application.</p>
+                    <p>Please ensure you're accessing this page with a valid resource ID.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="primary-button close-id-modal">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+    <script src="/static/js/debug-helpers.js"></script>
+</body>
+</html>

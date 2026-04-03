@@ -1,0 +1,85 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - ONLY Malicious IOCs
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+STEP 1: Extracting ONLY malicious IOCs
+======================================================================
+[*] Extracting domains (icicleinnovations.mail only)...
+[+] Domains: icicleinnovations.mail
+            ×
+[*] Extracting IPs (icicleinnovations only)...
+[+] IPs: 172.16.254.1
+            ×
+        
+            192.168.1.1
+            ×
+[*] Extracting URLs (icicleinnovations.mail only)...
+[+] URLs: https://icicleinnovations.mail/renovation-planner.exe
+            ×
+        
+            https://icicleinnovations.mail/upload_photos
+            ×
+[*] Extracting emails (icicleinnovations.mail only)...
+[+] Emails: sales@icicleinnovations.mail
+            ×
+        
+            info@icicleinnovations.mail
+            ×
+
+[*] Switching to Defang & Report tab...
+[+] On Defang & Report tab
+
+======================================================================
+STEP 3: Entering SED command
+======================================================================
+
+[*] Entering SED: s/\./[.]/g; s/@/[@]/g; s/http/hxxp/g; s/:\/\//[:\/\/]/g
+[*] Clicking Apply...
+[+] SED applied
+
+======================================================================
+DEFANGED IOCs
+======================================================================
+[*] Count: 7
+[*] Preview:
+Domains (1)icicleinnovations[.]mailIP Addresses (2)172[.]16[.]254[.]1192[.]168[.]1[.]1URLs (2)hxxps[:\/\/]icicleinnovations[.]mail/renovation-planner[.]exehxxps[:\/\/]icicleinnovations[.]mail/upload_photosEmail Addresses (2)sales[@]icicleinnovations[.]mailinfo[@]icicleinnovations[.]mail
+
+======================================================================
+STEP 4: Submitting
+======================================================================
+
+[*] Clicking Send to Security Team...
+[+] Clicked Send
+[*] Alert: 🚨 Security Alert! You're missing some domains! The CHI Team needs all domains properly defanged to secure Dosis Neighborhood! Critical Alert! Missing malicious URLs mean residents might click on dangerous links! Connection Issue! Those unusual URLs are causing the security monitoring to fail! 🚨Check your domains, URLs and try again! Dosis Neighborhood is counting on you!
+
+======================================================================
+STEP 5: Verifying
+======================================================================
+
+[!] Not complete yet
+[*] Checking text: Home
+Story
+Map
+Objectives
+Items
+Hints
+Achievements
+Settings
+Achievements
+Congratulations! You spoke with Lynn Schifano!
+Tweet This!
+Holiday Hack Orientation
+
+[+] Done

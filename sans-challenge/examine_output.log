@@ -1,0 +1,130 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Examine Challenge Text
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+EXAMINING CHALLENGE TEXT
+======================================================================
+
+[*] Page text:
+
+ WORK IN PROGRESS: This SOC tool is still under development. Some features, regex patterns, and SED commands may not work as expected. Analysts must identify and resolve any issues encountered.
+Dosis Neighborhood SOC
+
+Counter Hack Security Operations Center - Phishing Threat Analysis Station 🎅 Protecting our Neighbors ❄️
+
+ Email Viewer
+From: "Icicle Innovations" <sales@icicleinnovations.mail>
+To: "Neighborhood Watch" <residents@dosisneighborhood.corp>
+Subject: 🎄 URGENT: Holiday Kitchen Makeover - Smart Home Integration! 🎄
+Date: Wed, 25 Dec 2025 09:15:33 -0500
+Message-ID: <holiday2025-kitchen@dosisneighborhood.corp>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+X-Mailer: KitchenAlert v2.025
+Received: from mail.icicleinnovations.mail (172.16.254.1) by dosisneighborhood.corp (10.0.0.5) with SMTP;
+         Wed, 25 Dec 2025 09:15:28 -0500
+Received: from core.icicleinnovations.mail (192.168.1.1) by mail.icicleinnovations.mail (172.16.254.1);
+         Wed, 25 Dec 2025 09:15:22 -0500
+
+Dear Valued Dosis Neighborhood Residents,
+
+🚨 IMMEDIATE ACTION REQUIRED 🚨
+
+Our elite team of Sunny's kitchen renovation specialists have detected some SERIOUSLY outdated kitchen setups in your neighborhood! It appears that certain homes are still using legacy appliances without proper smart home integration - like non-IoT fridges that can't automatically order milk, or microwaves that don't sync with your meal planning apps! 
+
+While this sounds like a delightfully festive renovation opportunity (and totally not a security assessment), we need you to:
+
+1) Download our FREE Kitchen Renovation Planner™ with built-in security features (totally legit, we promise!):
+   https://icicleinnovations.mail/renovation-planner.exe
+   
+2) Upload high-resolution photos of your current kitchen to our secure design portal (we need to see ALL angles for proper renovation planning):
+   https://icicleinnovations.mail/upload_photos
+
+For instant help with any kitchen renovation questions, contact our 24/7 design hotline at 523.555.0100 or our renovation specialists at 523.555.0101.
+
+Remember: If your old appliances start acting up during the assessment, it's probably just excitement about their upcoming upgrades! But please document any issues with photos.
+
+Stay merry (and consider smart upgrades),
+Icicle Innovations 
+Chief Kitchen Design Specialist
+📞 523.555.RENO
+info@icicleinnovations.mail
+
+P.S. - Has anyone else noticed their kitchen cabinets mysteriously rearranging themselves overnight? We can fix that with proper smart storage solutions!
+ Threat Intelligence Analysis
+EXTRACT IOCS (STEP 1)
+DEFANG & REPORT (STEP 2)
+REFERENCE
+ Extract IOCs
+🚨 Step Objective: Extract IOCs 🚨
+
+This phishing email may be connected to the mysterious Gnome activities reported throughout our neighborhood! Extracting IOCs (Indicators of Compromise) is essential to protect the Counter Hack Crew and identify the threat actors behind this campaign. Your mission:
+
+Extract all suspicious domains, IPs, URLs, and email addresses
+
+Use the tabs below to extract each IOC type from the email. Be sure not to include legitimate assets!
+
+⏰ Time is critical – the attackers might be planning something bigger!
+
+When you change a regex pattern and extract again, previous results will be replaced with new matches.
+DOMAINS
+IP ADDRESSES
+URLS
+EMAIL ADDRESSES
+What are Domains?
+
+Domains are human-readable web addresses (like example.com) that map to IP addresses. They often indicate the source or destination of malicious activity.
+
+See the Reference tab for more regex patterns and help.
+
+Domain Pattern:
+EXTRACT
+Domains
+0
+
+No domains extracted yet
+
+🛡️ Dosis Neighborhood SOC v2025.1 | Counter Hack Security Operations | Protecting the Community Since 2015 | 🎅 Holiday Security Division ❄️
+
+======================================================================
+
+[*] Found 2 URLs:
+  - https://icicleinnovations.mail/renovation-planner.exe
+  - https://icicleinnovations.mail/upload_photos
+
+[*] Found 13 domains (raw):
+  - core.icicleinnovations.mail
+  - mail.icicleinnovations.mail
+  - example.com
+  - 523.555.RENO
+  - icicleinnovations.mail
+  - dosisneighborhood.corp
+  - renovation-planner.exe
+
+[*] Found 4 IPs:
+  - 172.16.254.1
+  - 10.0.0.5
+  - 192.168.1.1
+  - 172.16.254.1
+
+[*] Found 4 emails:
+  - sales@icicleinnovations.mail
+  - residents@dosisneighborhood.corp
+  - holiday2025-kitchen@dosisneighborhood.corp
+  - info@icicleinnovations.mail
+
+[+] Saved to challenge_content.json
+
+[+] Done

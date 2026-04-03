@@ -1,1 +1,105 @@
-[]
+[
+  {
+    "id": "red_sea_houthi",
+    "timestamp": "2026-03-24T14:57:19.681119",
+    "event_type": "conflict_escalation",
+    "source": "Maritime Security",
+    "title": "Red Sea Shipping Disruptions",
+    "description": "Houthi attacks on commercial shipping in Red Sea/Bab el-Mandeb",
+    "impact_level": 4,
+    "regions_affected": [
+      "red_sea",
+      "yemen"
+    ],
+    "oil_market_impact": {
+      "supply_risk": 8000000
+    },
+    "sentiment": "bullish",
+    "keywords": [
+      "houthi",
+      "red_sea",
+      "shipping",
+      "bab_el_mandeb"
+    ],
+    "verified": false,
+    "sources_confirmed": 1
+  },
+  {
+    "id": "ukraine_russia_ongoing",
+    "timestamp": "2026-03-24T14:57:19.681114",
+    "event_type": "conflict_escalation",
+    "source": "GDELT/News",
+    "title": "Russia-Ukraine Conflict",
+    "description": "Ongoing conflict affecting Russian oil exports and sanctions regime",
+    "impact_level": 4,
+    "regions_affected": [
+      "russia",
+      "ukraine",
+      "europe"
+    ],
+    "oil_market_impact": {
+      "supply_risk": 5000000
+    },
+    "sentiment": "bullish",
+    "keywords": [
+      "russia",
+      "ukraine",
+      "sanctions",
+      "oil",
+      "export",
+      "war"
+    ],
+    "verified": false,
+    "sources_confirmed": 1
+  },
+  {
+    "id": "middle_east_tensions",
+    "timestamp": "2026-03-24T14:57:19.681118",
+    "event_type": "conflict_escalation",
+    "source": "Regional Monitor",
+    "title": "Middle East Tensions",
+    "description": "Elevated tensions in Strait of Hormuz region affecting shipping",
+    "impact_level": 3,
+    "regions_affected": [
+      "middle_east",
+      "iran",
+      "saudi_arabia"
+    ],
+    "oil_market_impact": {
+      "supply_risk": 21000000
+    },
+    "sentiment": "bullish",
+    "keywords": [
+      "iran",
+      "hormuz",
+      "shipping",
+      "tanker"
+    ],
+    "verified": false,
+    "sources_confirmed": 1
+  },
+  {
+    "id": "opec_baseline_20260324",
+    "timestamp": "2026-03-24T14:57:19.679906",
+    "event_type": "opec_decision",
+    "source": "OPEC",
+    "title": "OPEC+ Production Policy",
+    "description": "Current production cuts of 2.2M bpd extended through June 2024",
+    "impact_level": 2,
+    "regions_affected": [
+      "middle_east",
+      "global"
+    ],
+    "oil_market_impact": {
+      "type": "price_reference"
+    },
+    "sentiment": "neutral",
+    "keywords": [
+      "opec",
+      "production",
+      "price"
+    ],
+    "verified": false,
+    "sources_confirmed": 1
+  }
+]

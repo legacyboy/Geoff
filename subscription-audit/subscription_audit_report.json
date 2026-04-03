@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-03-28T18:40:54.940887",
+  "summary": {
+    "total_transactions_analyzed": 27,
+    "saas_services_found": 27,
+    "recurring_services": 7,
+    "estimated_monthly_spend": 504.39,
+    "estimated_annual_spend": 6052.68,
+    "duplicate_categories": 0
+  },
+  "recurring_services": [
+    {
+      "service": "ZOOM",
+      "avg_monthly_cost": 149.9,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 449.70000000000005
+    },
+    {
+      "service": "FIGMA",
+      "avg_monthly_cost": 135.0,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 405.0
+    },
+    {
+      "service": "SLACK",
+      "avg_monthly_cost": 87.5,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 262.5
+    },
+    {
+      "service": "NOTION",
+      "avg_monthly_cost": 48.0,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 144.0
+    },
+    {
+      "service": "GITHUB",
+      "avg_monthly_cost": 44.0,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 132.0
+    },
+    {
+      "service": "VERCEL",
+      "avg_monthly_cost": 20.0,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 60.0
+    },
+    {
+      "service": "CALENDLY",
+      "avg_monthly_cost": 19.99,
+      "transaction_count": 3,
+      "frequency": "quarterly",
+      "total_spent": 59.97
+    }
+  ],
+  "duplicates": [],
+  "recommendations": [
+    {
+      "type": "unused",
+      "priority": "medium",
+      "message": "OPENAI: Only seen once \u2014 verify if still needed",
+      "potential_savings": "$45.67/month"
+    },
+    {
+      "type": "unused",
+      "priority": "medium",
+      "message": "OPENAI: Only seen once \u2014 verify if still needed",
+      "potential_savings": "$52.34/month"
+    },
+    {
+      "type": "unused",
+      "priority": "medium",
+      "message": "OPENAI: Only seen once \u2014 verify if still needed",
+      "potential_savings": "$38.91/month"
+    },
+    {
+      "type": "unused",
+      "priority": "medium",
+      "message": "AWS: Only seen once \u2014 verify if still needed",
+      "potential_savings": "$234.56/month"
+    },
+    {
+      "type": "unused",
+      "priority": "medium",
+      "message": "AWS: Only seen once \u2014 verify if still needed",
+      "potential_savings": "$198.43/month"
+    }
+  ],
+  "pricing_intel": [
+    {
+      "service": "SLACK",
+      "current_cost": 87.5,
+      "market_range": "$7.25-15",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    },
+    {
+      "service": "NOTION",
+      "current_cost": 48.0,
+      "market_range": "$8-15",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    },
+    {
+      "service": "ZOOM",
+      "current_cost": 149.9,
+      "market_range": "$13.99-19.99",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    },
+    {
+      "service": "GITHUB",
+      "current_cost": 44.0,
+      "market_range": "$4-21",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    },
+    {
+      "service": "FIGMA",
+      "current_cost": 135.0,
+      "market_range": "$12-45",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    },
+    {
+      "service": "CALENDLY",
+      "current_cost": 19.99,
+      "market_range": "$10-16",
+      "suggestion": "May be overpaying \u2014 market rate is per user/month"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <title>WeTTy - The Web Terminal Emulator</title>
+    <link rel="stylesheet" href="/assets/css/styles.css" />
+<link rel="stylesheet" href="/assets/css/options.css" />
+<link rel="stylesheet" href="/assets/css/overlay.css" />
+<link rel="stylesheet" href="/assets/css/terminal.css" />
+  </head>
+  <body>
+    <div id="overlay">
+      <div class="error">
+        <div id="msg"></div>
+        <input type="button" onclick="location.reload();" value="reconnect" />
+      </div>
+    </div>
+    <div id="terminal"></div>
+    <script type="module" src="/client/wetty.js"></script>
+    <script src="/client/shared/conduit.js"></script>
+  </body>
+</html>

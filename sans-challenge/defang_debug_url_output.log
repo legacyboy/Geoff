@@ -1,0 +1,42 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Debug URL Extraction
+======================================================================
+
+[*] Logging in...
+[*] Entering game...
+[*] Enabling CTF mode...
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Switched to iframe
+
+[*] Extracting URLs with different patterns...
+
+[Test 1] Broad URL pattern...
+Extracted URLs: 
+            https://icicleinnovations.mail/renovation-planner.exe
+            ×
+        
+            https://icicleinnovations.mail/upload_photos
+            ×
+        
+
+[Test 2] Specific URL pattern...
+Extracted URLs: 
+            https://icicleinnovations.mail/renovation-planner.exe
+            ×
+        
+            https://icicleinnovations.mail/upload_photos
+            ×
+        
+
+[Test 3] Exact URL pattern...
+Extracted URLs: 
+            https://icicleinnovations.mail/renovation-planner.exe
+            ×
+        
+            https://icicleinnovations.mail/upload_photos
+            ×
+        
+
+
+[+] Done

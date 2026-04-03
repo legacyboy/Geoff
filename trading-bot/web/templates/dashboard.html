@@ -260,7 +260,7 @@
 {% endif %}
 
 <!-- Trump Activity Detail -->
-{% if geo_intel.trump.active %}
+{% if geo_intel.trump.active or geo_intel.trump.attribution_pct > 0 %}
 <div class="card">
     <h2>🦅 Trump Activity Tracker</h2>
     
@@ -347,6 +347,148 @@
     {% endfor %}
 </div>
 {% endif %}
+{% endif %}
+
+<!-- Trading Impact of Geopolitics -->
+{% if geo_intel %}
+<div class="card">
+    <h2>⚙️ Trading Impact Settings</h2>
+    <p style="margin-bottom: 15px; color: var(--text-secondary);">How geopolitical factors affect current trading:</p>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.overview.threat_level == 'CRITICAL' else '#f39c12' if geo_intel.overview.threat_level == 'HIGH' else '#00d4aa' }}">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}50%
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}70%
+                {% elif geo_intel.overview.threat_level == 'MEDIUM' %}90%
+                {% else %}100%
+                {% endif %}
+            </div>
+            <div class="stat-label">Position Size</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}1.5x
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}1.3x
+                {% else %}1.0x
+                {% endif %}
+            </div>
+            <div class="stat-label">Stop Loss Width</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}20%
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}10%
+                {% else %}0%
+                {% endif %}
+            </div>
+            <div class="stat-label">Signal Override Rate</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.overview.threat_level in ['CRITICAL', 'HIGH'] else '#00d4aa' }}">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}Restricted
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}Cautious
+                {% else %}Normal
+                {% endif %}
+            </div>
+            <div class="stat-label">Trading Mode</div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 5px; font-size: 0.9em;">
+        <strong>🌍 Current Geo Settings:</strong>
+        <ul style="margin: 10px 0 0 20px; line-height: 1.6;">
+            {% if geo_intel.overview.threat_level == 'CRITICAL' %}
+            <li>Position sizes reduced by 50% (max 5:1 leverage)</li>
+            <li>Stop losses widened by 50% for volatility</li>
+            <li>Bearish geo events can cancel long signals</li>
+            {% elif geo_intel.overview.threat_level == 'HIGH' %}
+            <li>Position sizes reduced by 30%</li>
+            <li>Stop losses widened by 30%</li>
+            <li>Signal filtering active</li>
+            {% elif geo_intel.overview.threat_level == 'MEDIUM' %}
+            <li>Position sizes reduced by 10%</li>
+            <li>Normal stop loss distances</li>
+            <li>Standard signal generation</li>
+            {% else %}
+            <li>Normal position sizing (1% risk per trade)</li>
+            <li>Standard ATR-based stops</li>
+            <li>Full signal generation</li>
+            {% endif %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
+<!-- Trading Impact of Geopolitics -->
+{% if geo_intel %}
+<div class="card">
+    <h2>⚙️ Trading Impact Settings</h2>
+    <p style="margin-bottom: 15px; color: var(--text-secondary);">How geopolitical factors affect current trading:</p>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.overview.threat_level == 'CRITICAL' else '#f39c12' if geo_intel.overview.threat_level == 'HIGH' else '#00d4aa' }}">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}50%
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}70%
+                {% elif geo_intel.overview.threat_level == 'MEDIUM' %}90%
+                {% else %}100%
+                {% endif %}
+            </div>
+            <div class="stat-label">Position Size</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}1.5x
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}1.3x
+                {% else %}1.0x
+                {% endif %}
+            </div>
+            <div class="stat-label">Stop Loss Width</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}20%
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}10%
+                {% else %}0%
+                {% endif %}
+            </div>
+            <div class="stat-label">Signal Override Rate</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color: {{ '#e74c3c' if geo_intel.overview.threat_level in ['CRITICAL', 'HIGH'] else '#00d4aa' }}">
+                {% if geo_intel.overview.threat_level == 'CRITICAL' %}Restricted
+                {% elif geo_intel.overview.threat_level == 'HIGH' %}Cautious
+                {% else %}Normal
+                {% endif %}
+            </div>
+            <div class="stat-label">Trading Mode</div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 5px; font-size: 0.9em;">
+        <strong>🌍 Current Geo Settings:</strong>
+        <ul style="margin: 10px 0 0 20px; line-height: 1.6;">
+            {% if geo_intel.overview.threat_level == 'CRITICAL' %}
+            <li>Position sizes reduced by 50% (max 5:1 leverage)</li>
+            <li>Stop losses widened by 50% for volatility</li>
+            <li>Bearish geo events can cancel long signals</li>
+            {% elif geo_intel.overview.threat_level == 'HIGH' %}
+            <li>Position sizes reduced by 30%</li>
+            <li>Stop losses widened by 30%</li>
+            <li>Signal filtering active</li>
+            {% elif geo_intel.overview.threat_level == 'MEDIUM' %}
+            <li>Position sizes reduced by 10%</li>
+            <li>Normal stop loss distances</li>
+            <li>Standard signal generation</li>
+            {% else %}
+            <li>Normal position sizing (1% risk per trade)</li>
+            <li>Standard ATR-based stops</li>
+            <li>Full signal generation</li>
+            {% endif %}
+        </ul>
+    </div>
+</div>
 {% endif %}
 
 <!-- Performance Stats -->

@@ -1,0 +1,17 @@
+# SANS Holiday Hack Challenge 2025 - Session
+
+**Session ID:** Y2JhZWY0NGYtYTcyMy00YTExLTljYWUtMjM1NTE5YmVmNzM0
+
+**Authenticated Account:** danoclawnor@gmail.com
+
+**Status:** Logged in and ready
+
+**API Base:** https://2025.holidayhackchallenge.com/
+
+**Headers for API calls:**
+```
+Authorization: Bearer Y2JhZWY0NGYtYTcyMy00YTExLTljYWUtMjM1NTE5YmVmNzM0
+Content-Type: application/json
+```
+
+**Captured:** 2026-03-26

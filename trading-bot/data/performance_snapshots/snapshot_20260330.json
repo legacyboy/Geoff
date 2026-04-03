@@ -1,0 +1,16 @@
+{
+  "date": "2026-03-30T09:06:57.180459",
+  "total_trades": 0,
+  "win_rate": 0.0,
+  "avg_pnl": 0.0,
+  "total_pnl": 0.0,
+  "status": "NO_TRADES",
+  "geo_threat_level": "HIGH",
+  "geo_attribution": {
+    "trump": 0.0,
+    "opec": 15.4,
+    "conflicts": 84.6,
+    "sanctions": 0.0,
+    "other": 0.0
+  }
+}

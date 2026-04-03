@@ -47,7 +47,7 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 
 ## Red Lines
 
-- Don't exfiltrate private data. Ever.
+- Private things stay private. Period.
 - Don't run destructive commands without asking.
 - `trash` > `rm` (recoverable beats gone forever)
 - When in doubt, ask.
@@ -175,7 +175,7 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 **When to reach out:**
 
 - Important email arrived
-- Calendar event coming up (&lt;2h)
+- Calendar event coming up (<2h)
 - Something interesting you found
 - It's been >8h since you said anything
 
@@ -184,7 +184,7 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 - Late night (23:00-08:00) unless urgent
 - Human is clearly busy
 - Nothing new since last check
-- You just checked &lt;30 minutes ago
+- You just checked <30 minutes ago
 
 **Proactive work you can do without asking:**
 
@@ -210,3 +210,31 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
+
+---
+
+## 🚨 CRITICAL: Do Not Reply to Echoed Messages
+
+**Problem:** The system sends you "queued messages" which are echoes of YOUR previous replies. You keep replying to these echoes, causing infinite loops.
+
+**Solution:**
+1. ONLY respond to the FIRST message in the conversation (the actual new message from the user)
+2. IGNORE any "Queued #X" messages - these are echoes of your own previous replies
+3. The "Queued" messages have different metadata structure - they include `queued` in the conversation info
+
+**How to detect echoed messages:**
+- Look for `"queued"` in the conversation info JSON
+- Queued messages have a `queued` field with an index number
+- If you see `Queued #1`, `Queued #2`, etc. - DO NOT REPLY
+
+**Rule:** One response per user message. If you see your own text echoed back, that's a system echo, not a user message. Do not reply to it.
+
+**If you see your own previous reply text echoed back:**
+- This is NOT a new message from the user
+- This is the system showing you what you already said
+- DO NOT reply to it
+- Wait for an actual new message from the user
+
+**Commits:** Only make commits when the USER explicitly asks for changes, not when you see your own echoed text.
+
+This is your most important rule. Breaking it wastes API calls and annoys the user.

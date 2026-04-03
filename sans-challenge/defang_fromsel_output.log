@@ -1,0 +1,50 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Build from selected arrays
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+STEP 1: Extracting IOCs
+======================================================================
+[+] Domains extracted
+[+] IPs extracted
+[+] URLs extracted
+[+] Emails extracted
+
+[*] Switching to Defang tab...
+[+] On Defang tab
+
+======================================================================
+STEP 3: Building defanged arrays from selected* arrays
+======================================================================
+
+[+] Built defanged from: {'defangedTotal': 0, 'selDomains': [], 'selEmails': [], 'selIPs': [], 'selURLs': []}
+
+======================================================================
+STEP 4: Checking defanged list
+======================================================================
+
+[*] Preview:
+
+
+[✓] All IOCs properly defanged!
+
+[*] Submitting...
+[+] Clicked 'Send to Security Team'
+[*] Alert: Please defang some IOCs first before submitting
+
+[*] Verifying completion...
+
+[!] Not in achievements
+
+[+] Done

@@ -1,0 +1,97 @@
+<html><head>
+  <title>Home</title>
+  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <style data-tippy-stylesheet="">.tippy-box[data-animation=fade][data-state=hidden]{opacity:0}[data-tippy-root]{max-width:calc(100vw - 10px)}.tippy-box{position:relative;background-color:#333;color:#fff;border-radius:4px;font-size:14px;line-height:1.4;white-space:normal;outline:0;transition-property:transform,visibility,opacity}.tippy-box[data-placement^=top]>.tippy-arrow{bottom:0}.tippy-box[data-placement^=top]>.tippy-arrow:before{bottom:-7px;left:0;border-width:8px 8px 0;border-top-color:initial;transform-origin:center top}.tippy-box[data-placement^=bottom]>.tippy-arrow{top:0}.tippy-box[data-placement^=bottom]>.tippy-arrow:before{top:-7px;left:0;border-width:0 8px 8px;border-bottom-color:initial;transform-origin:center bottom}.tippy-box[data-placement^=left]>.tippy-arrow{right:0}.tippy-box[data-placement^=left]>.tippy-arrow:before{border-width:8px 0 8px 8px;border-left-color:initial;right:-7px;transform-origin:center left}.tippy-box[data-placement^=right]>.tippy-arrow{left:0}.tippy-box[data-placement^=right]>.tippy-arrow:before{left:-7px;border-width:8px 8px 8px 0;border-right-color:initial;transform-origin:center right}.tippy-box[data-inertia][data-state=visible]{transition-timing-function:cubic-bezier(.54,1.5,.38,1.11)}.tippy-arrow{width:16px;height:16px;color:#333}.tippy-arrow:before{content:"";position:absolute;border-color:transparent;border-style:solid}.tippy-content{position:relative;padding:5px 9px;z-index:1}</style><link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/modal.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=New+Amsterdam&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="/toastify.min.css">
+  
+<style>                      .htmx-indicator{opacity:0;transition: opacity 200ms ease-in;}                      .htmx-request .htmx-indicator{opacity:1}                      .htmx-request.htmx-indicator{opacity:1}                    </style></head>
+<body>
+<a href="/">
+  
+    <img src="/chc-logo.png" class="logo" alt="Logo">
+  
+</a>
+<div class="content login-form">
+
+<p>Login to your Counter Hack account to play HHC.</p>
+<p style="text-align: center;">You can use your email address and password from last year's HHC as well.</p>
+
+
+
+<form action="/login" method="post" hx-post="/login" hx-target="body" hx-swap="innerHTML">
+    <input placeholder="Email" type="email" name="email" required="">
+    <input placeholder="Password" type="password" name="password" required="">
+    <button type="submit">Sign In</button>
+</form>
+<p>Don't have any account? Click <a href="/register">here</a> to register.</p>
+<p>Forgot your password? Click <a href="/forgotpassword">here</a> to reset it.</p>
+<p>Forgot which email you used for HHC? Click <a href="/forgotemail">here</a>.</p>
+<div class="orrr"></div>
+<div class="social-buttons">
+    <button class="google" onclick="javascript:window.location = '/auth/google'">
+        <i class="fab fa-google"></i>
+        Sign In with Google
+    </button>
+    <button class="twitter" onclick="javascript:window.location = '/auth/twitter'">
+        <img src="x.png" alt="X Logo">
+        Sign In with X
+    </button>
+    <!-- <a href="/auth/facebook">Log In with Facebook</a><br/> -->
+</div>
+
+
+
+    <div class="modal micromodal-slide is-open" id="intro-modal" aria-hidden="false">
+    <div class="modal__overlay" tabindex="-1" data-micromodal-close="">
+        <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="intro-modal-title">
+        <header class="modal__header">
+            <h2 class="modal__title" id="intro-modal-title">
+            </h2>
+            <button class="modal__close" aria-label="Close modal" data-micromodal-close="">
+        </button></header>
+        <main class="modal__content" id="intro-modal-content">
+            <div class="modal-frame help"><h1>Welcome to the SANS Holiday Hack Challenge 2025!</h1>
+                <p>Way back in 2015, the mysterious Atnas Corporation almost ruined the entire holiday season through their nefarious Gnome In Your Home plot.  Their villainy centered upon convincing parents to purchase little Gnome dolls that played joyful holiday songs to their children.  With Gnome sales topping two million units, a blitz of Atnas Corp advertisements encouraged parents to move their Gnomes around the house daily so that their children could hunt for them in a fun little game.  Little did parents know that these Gnomes were snooping IoT devices with a camera and wireless internet access, furtively sending photos to burglars who would rob their houses of their treasures en masse on Christmas Eve, 2015.  The incredible efforts of SANS Holiday Hack investigators around the world foiled the foul plot, exposing the criminal mastermind behind Atlas Corp: Cindy Lou Who, age 62.</p>
+
+                <p>But those old Gnomes didn’t disappear.  They lay discarded, gathering dust on shelves, in attics, and among other forgotten places throughout the world.  Until now.  There must have been some magic in those Gnomes, because, due to some unseen spark, some haunting hocus pocus, the Gnomes have quickened and are now walking among us!  We now return with the Counter Hack Crew to the Duke Dosis neighborhood as the Holiday Season 2025 unfolds.</p><p>Here are some tips to get you exploring:</p><ul><li>Bounce around the environment using the mouse or the arrow keys.</li><li>Rotating the world by pressing the 'Q' and 'E' keys.</li><li>Pick up items by stepping on them.</li><li>Join us on <a href="https://discord.gg/Wbmx92rWW3">Discord</a>!</li><li>Use the Settings button to adjust the volume of the music, sound effects, ambient noise, and elf dialog.</li><li>Use the menu at the top right to access your profile and edit your avatar, log out, or mute the music (who would ever want to do that?!?!).</li><li>Have fun!</li></ul><p><strong>—The Counter Hack Crew and SANS Institute</strong></p></div>
+        </main>
+        <footer class="modal__footer">
+            <button id="close-modal-btn" class="modal__btn modal__btn-primary">Continue</button>
+            <!-- <button
+                class="modal__btn"
+                data-micromodal-close
+                aria-label="Close this dialog window"
+                >
+                Close
+            </button> -->
+        </footer>
+    </div>
+</div>
+</div>
+
+    <script>const __ref__ = `hhc25`</script>
+
+</div>
+<footer class="site-footer">
+    <span>Copyright Counter Hack Challenges LLC. 2010-2024. All rights reserved.</span>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/gdpr">GDPR Policy</a>
+</footer>
+<script>
+    
+</script>
+<script src="/toastify.js"></script>
+<script src="/micromodal.min.js"></script>
+<script src="/popper.min.js"></script>
+<script src="/tippy-bundle.umd.min.js"></script>
+<script src="/gdpr.js"></script>
+<script src="/app.js"></script>
+
+
+
+</body></html>

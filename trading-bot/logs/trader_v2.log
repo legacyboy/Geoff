@@ -1,25 +1,2052 @@
-2026-03-24 01:12:50,897 - INFO - Oil Trader v2 initialized: WTI Crude Oil (XTI_USD) - 5min timeframe
-2026-03-24 01:12:59,779 - INFO - Oil Trader v2 initialized: WTI Crude Oil (XTI_USD) - 5min timeframe
-2026-03-24 01:12:59,779 - INFO - Starting v2 trader: 300s intervals
-2026-03-24 01:12:59,959 - ERROR - Failed to get oil price
-2026-03-24 01:15:01,131 - ERROR - Failed to get oil price
-2026-03-24 01:20:00,750 - ERROR - Failed to get oil price
-2026-03-24 01:25:01,380 - ERROR - Failed to get oil price
-2026-03-24 01:30:00,553 - ERROR - Failed to get oil price
-2026-03-24 01:35:00,754 - ERROR - Failed to get oil price
-2026-03-24 01:40:01,925 - ERROR - Failed to get oil price
-2026-03-24 01:45:01,755 - ERROR - Failed to get oil price
-2026-03-24 01:50:01,508 - ERROR - Failed to get oil price
-2026-03-24 01:55:00,710 - ERROR - Failed to get oil price
-2026-03-24 02:00:00,902 - ERROR - Failed to get oil price
-2026-03-24 02:05:01,575 - ERROR - Failed to get oil price
-2026-03-24 02:10:01,174 - ERROR - Failed to get oil price
-2026-03-24 02:15:00,951 - ERROR - Failed to get oil price
-2026-03-24 02:20:01,580 - ERROR - Failed to get oil price
-2026-03-24 02:25:00,744 - ERROR - Failed to get oil price
-2026-03-24 02:30:02,737 - ERROR - Failed to get oil price
-2026-03-24 02:35:00,895 - ERROR - Failed to get oil price
-2026-03-24 02:40:01,513 - ERROR - Failed to get oil price
-2026-03-24 02:45:00,734 - ERROR - Failed to get oil price
-2026-03-24 02:50:00,954 - ERROR - Failed to get oil price
-2026-03-24 02:55:01,130 - ERROR - Failed to get oil price
+============================================================
+🛢️  Oil Trader v2.0 - Risk-Managed CFD Trading
+============================================================
+Asset: WTI Crude Oil (WTICO_USD)
+Timeframe: 300s (5-minute candles)
+Risk per trade: 1.0%
+Max leverage: 5.0:1
+Daily loss limit: 5.0%
+Paper trading: True
+============================================================
+
+🛢️  [22:55:42] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 258s...
+
+🛢️  [23:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [00:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 297s...
+
+🛢️  [00:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [00:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [00:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [00:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [00:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [00:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $105.47 | ATR: $0.597 | Trend: down
+📈 5m Change: -0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [00:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $105.93 | ATR: $0.597 | Trend: down
+📈 5m Change: 0.44%
+✅ SELL 16 WTICO_USD @ 105.93
+   Stop: 106.53 | Target: 104.74
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [00:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $105.96 | ATR: $0.597 | Trend: down
+📈 5m Change: 0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [00:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.06 | ATR: $0.594 | Trend: neutral
+📈 5m Change: 0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [00:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.49 | ATR: $0.594 | Trend: neutral
+📈 5m Change: 0.41%
+✅ BUY 16 WTICO_USD @ 106.49
+   Stop: 105.89 | Target: 107.68
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [00:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.47 | ATR: $0.594 | Trend: up
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.86 | ATR: $0.577 | Trend: up
+📈 5m Change: 0.36%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.90 | ATR: $0.574 | Trend: up
+📈 5m Change: 0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.21 | ATR: $0.556 | Trend: up
+📈 5m Change: 0.29%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.40 | ATR: $0.556 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.10 | ATR: $0.575 | Trend: up
+📈 5m Change: -0.28%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.91 | ATR: $0.589 | Trend: up
+📈 5m Change: -0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.08 | ATR: $0.589 | Trend: up
+📈 5m Change: 0.16%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.28 | ATR: $0.587 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.39 | ATR: $0.570 | Trend: up
+📈 5m Change: 0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.18 | ATR: $0.585 | Trend: up
+📈 5m Change: -0.20%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [01:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.34 | ATR: $0.586 | Trend: up
+📈 5m Change: 0.15%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [01:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.19 | ATR: $0.597 | Trend: up
+📈 5m Change: -0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.84 | ATR: $0.622 | Trend: up
+📈 5m Change: -0.32%
+✅ BUY 16 WTICO_USD @ 106.84
+   Stop: 106.22 | Target: 108.08
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [02:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.02 | ATR: $0.622 | Trend: up
+📈 5m Change: 0.16%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.01 | ATR: $0.622 | Trend: up
+📈 5m Change: -0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [02:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.98 | ATR: $0.624 | Trend: neutral
+📈 5m Change: -0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $106.96 | ATR: $0.625 | Trend: neutral
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.43 | ATR: $0.625 | Trend: neutral
+📈 5m Change: 0.43%
+✅ BUY 15 WTICO_USD @ 107.43
+   Stop: 106.80 | Target: 108.68
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [02:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.38 | ATR: $0.607 | Trend: neutral
+📈 5m Change: -0.05%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.39 | ATR: $0.594 | Trend: neutral
+📈 5m Change: 0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [02:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.29 | ATR: $0.601 | Trend: up
+📈 5m Change: -0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.16 | ATR: $0.610 | Trend: up
+📈 5m Change: -0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.05 | ATR: $0.618 | Trend: neutral
+📈 5m Change: -0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [02:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.31 | ATR: $0.603 | Trend: neutral
+📈 5m Change: 0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [03:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.00 | ATR: $0.626 | Trend: neutral
+📈 5m Change: -0.29%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.57 | ATR: $0.618 | Trend: neutral
+📈 5m Change: 0.53%
+✅ BUY 16 WTICO_USD @ 107.57
+   Stop: 106.95 | Target: 108.80
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [03:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.59 | ATR: $0.593 | Trend: neutral
+📈 5m Change: 0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [03:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.65 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.76 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.78 | ATR: $0.592 | Trend: up
+📈 5m Change: 0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.61 | ATR: $0.602 | Trend: up
+📈 5m Change: -0.15%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [03:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.53 | ATR: $0.608 | Trend: up
+📈 5m Change: -0.08%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.72 | ATR: $0.604 | Trend: up
+📈 5m Change: 0.17%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.94 | ATR: $0.605 | Trend: up
+📈 5m Change: 0.21%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [03:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.90 | ATR: $0.600 | Trend: up
+📈 5m Change: -0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [03:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.89 | ATR: $0.593 | Trend: up
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [04:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.04 | ATR: $0.585 | Trend: up
+📈 5m Change: 0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [04:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.13 | ATR: $0.585 | Trend: up
+📈 5m Change: 0.08%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [04:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.12 | ATR: $0.563 | Trend: up
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [04:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $107.92 | ATR: $0.575 | Trend: up
+📈 5m Change: -0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [04:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.03 | ATR: $0.575 | Trend: up
+📈 5m Change: 0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [04:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.09 | ATR: $0.575 | Trend: up
+📈 5m Change: 0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [04:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.19 | ATR: $0.575 | Trend: up
+📈 5m Change: 0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [04:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.63 | ATR: $0.576 | Trend: up
+📈 5m Change: 0.40%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [04:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.70 | ATR: $0.564 | Trend: up
+📈 5m Change: 0.07%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [04:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.82 | ATR: $0.559 | Trend: up
+📈 5m Change: 0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [04:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.58 | ATR: $0.577 | Trend: up
+📈 5m Change: -0.22%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [04:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.41 | ATR: $0.589 | Trend: up
+📈 5m Change: -0.16%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.44 | ATR: $0.586 | Trend: up
+📈 5m Change: 0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.46 | ATR: $0.586 | Trend: up
+📈 5m Change: 0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [05:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.79 | ATR: $0.586 | Trend: up
+📈 5m Change: 0.31%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.75 | ATR: $0.589 | Trend: up
+📈 5m Change: -0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [05:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.76 | ATR: $0.589 | Trend: up
+📈 5m Change: 0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.68 | ATR: $0.580 | Trend: up
+📈 5m Change: -0.07%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [05:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.00 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.30%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [05:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.17 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.16%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.11 | ATR: $0.586 | Trend: up
+📈 5m Change: -0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [05:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.86 | ATR: $0.605 | Trend: up
+📈 5m Change: -0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [05:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.12 | ATR: $0.605 | Trend: up
+📈 5m Change: 0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [05:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.27 | ATR: $0.605 | Trend: up
+📈 5m Change: 0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [06:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.22 | ATR: $0.592 | Trend: up
+📈 5m Change: -0.05%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.31 | ATR: $0.580 | Trend: up
+📈 5m Change: 0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.42 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [06:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.50 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.07%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.63 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.12%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [06:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.48 | ATR: $0.590 | Trend: up
+📈 5m Change: -0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.99 | ATR: $0.591 | Trend: up
+📈 5m Change: 0.46%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [06:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.02 | ATR: $0.585 | Trend: up
+📈 5m Change: 0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.22 | ATR: $0.586 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [06:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.20 | ATR: $0.587 | Trend: up
+📈 5m Change: -0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [06:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.27 | ATR: $0.583 | Trend: up
+📈 5m Change: 0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [06:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.31 | ATR: $0.565 | Trend: up
+📈 5m Change: 0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [07:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.63 | ATR: $0.566 | Trend: up
+📈 5m Change: 0.29%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [07:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.61 | ATR: $0.568 | Trend: up
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [07:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.94 | ATR: $0.564 | Trend: up
+📈 5m Change: 0.30%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [07:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.16 | ATR: $0.565 | Trend: up
+📈 5m Change: 0.20%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [07:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.36 | ATR: $0.566 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [07:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.34 | ATR: $0.639 | Trend: up
+📈 5m Change: -0.92%
+✅ BUY 15 WTICO_USD @ 110.34
+   Stop: 109.70 | Target: 111.62
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [07:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.96 | ATR: $0.643 | Trend: up
+📈 5m Change: 0.56%
+✅ BUY 15 WTICO_USD @ 110.96
+   Stop: 110.31 | Target: 112.24
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 298s...
+
+🛢️  [07:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.48 | ATR: $0.633 | Trend: up
+📈 5m Change: 0.47%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [07:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.73 | ATR: $0.633 | Trend: up
+📈 5m Change: 0.22%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [07:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.38 | ATR: $0.640 | Trend: up
+📈 5m Change: 0.58%
+✅ BUY 15 WTICO_USD @ 112.38
+   Stop: 111.74 | Target: 113.66
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [07:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.02 | ATR: $0.647 | Trend: up
+📈 5m Change: 0.57%
+✅ BUY 15 WTICO_USD @ 113.02
+   Stop: 112.37 | Target: 114.31
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [07:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.34 | ATR: $0.646 | Trend: up
+📈 5m Change: 0.29%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [08:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.90 | ATR: $0.648 | Trend: up
+📈 5m Change: 0.49%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [08:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.15 | ATR: $0.703 | Trend: up
+📈 5m Change: -0.66%
+✅ BUY 14 WTICO_USD @ 113.15
+   Stop: 112.44 | Target: 114.55
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [08:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.02 | ATR: $0.712 | Trend: up
+📈 5m Change: -0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [08:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $114.22 | ATR: $0.757 | Trend: up
+📈 5m Change: 1.06%
+✅ BUY 13 WTICO_USD @ 114.22
+   Stop: 113.46 | Target: 115.73
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [08:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.91 | ATR: $0.780 | Trend: up
+📈 5m Change: -0.27%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [08:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $114.45 | ATR: $0.781 | Trend: up
+📈 5m Change: 0.47%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [08:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.51 | ATR: $0.849 | Trend: up
+📈 5m Change: -0.82%
+✅ BUY 11 WTICO_USD @ 113.51
+   Stop: 112.66 | Target: 115.21
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [08:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.83 | ATR: $0.826 | Trend: up
+📈 5m Change: -0.60%
+✅ BUY 12 WTICO_USD @ 112.83
+   Stop: 112.00 | Target: 114.48
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [08:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.86 | ATR: $0.856 | Trend: up
+📈 5m Change: 0.91%
+✅ BUY 11 WTICO_USD @ 113.86
+   Stop: 113.00 | Target: 115.57
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [08:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $114.06 | ATR: $0.857 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [08:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.69 | ATR: $0.955 | Trend: up
+📈 5m Change: -1.20%
+✅ BUY 10 WTICO_USD @ 112.69
+   Stop: 111.73 | Target: 114.60
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [08:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.21 | ATR: $0.983 | Trend: up
+📈 5m Change: -0.42%
+✅ BUY 10 WTICO_USD @ 112.21
+   Stop: 111.23 | Target: 114.18
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.82 | ATR: $1.005 | Trend: neutral
+📈 5m Change: -0.35%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [09:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.28 | ATR: $1.004 | Trend: down
+📈 5m Change: 0.41%
+✅ SELL 9 WTICO_USD @ 112.28
+   Stop: 113.28 | Target: 110.27
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [09:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.56 | ATR: $1.055 | Trend: down
+📈 5m Change: -0.64%
+✅ SELL 9 WTICO_USD @ 111.56
+   Stop: 112.62 | Target: 109.45
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.36 | ATR: $1.017 | Trend: down
+📈 5m Change: 0.71%
+✅ SELL 9 WTICO_USD @ 112.36
+   Stop: 113.38 | Target: 110.32
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.85 | ATR: $1.043 | Trend: down
+📈 5m Change: -0.45%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [09:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.54 | ATR: $1.021 | Trend: down
+📈 5m Change: -0.28%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [09:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.84 | ATR: $0.998 | Trend: down
+📈 5m Change: 0.28%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [09:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.27 | ATR: $1.036 | Trend: down
+📈 5m Change: -0.51%
+✅ SELL 9 WTICO_USD @ 111.27
+   Stop: 112.31 | Target: 109.20
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.87 | ATR: $1.140 | Trend: down
+📈 5m Change: -2.16%
+✅ SELL 8 WTICO_USD @ 108.87
+   Stop: 110.01 | Target: 106.59
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $108.47 | ATR: $1.118 | Trend: down
+📈 5m Change: -0.36%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [09:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.95 | ATR: $1.150 | Trend: down
+📈 5m Change: 1.36%
+✅ SELL 8 WTICO_USD @ 109.95
+   Stop: 111.10 | Target: 107.65
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [09:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.80 | ATR: $1.160 | Trend: down
+📈 5m Change: -0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [10:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.65 | ATR: $1.071 | Trend: down
+📈 5m Change: -0.13%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [10:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.56 | ATR: $1.042 | Trend: down
+📈 5m Change: -0.08%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.64 | ATR: $1.013 | Trend: down
+📈 5m Change: 0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [10:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $109.89 | ATR: $1.013 | Trend: down
+📈 5m Change: 0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.19 | ATR: $0.961 | Trend: down
+📈 5m Change: 0.28%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.13 | ATR: $0.971 | Trend: down
+📈 5m Change: 0.85%
+✅ SELL 10 WTICO_USD @ 111.13
+   Stop: 112.10 | Target: 109.19
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [10:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $110.90 | ATR: $0.952 | Trend: down
+📈 5m Change: -0.21%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.34 | ATR: $0.929 | Trend: neutral
+📈 5m Change: 0.39%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.73 | ATR: $0.929 | Trend: up
+📈 5m Change: 0.35%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [10:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.94 | ATR: $0.889 | Trend: up
+📈 5m Change: 0.18%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [10:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.37 | ATR: $0.718 | Trend: up
+📈 5m Change: 0.39%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [10:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.53 | ATR: $0.691 | Trend: up
+📈 5m Change: 0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [11:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.31 | ATR: $0.641 | Trend: up
+📈 5m Change: -0.19%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [11:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.12 | ATR: $0.645 | Trend: up
+📈 5m Change: -0.17%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [11:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.09 | ATR: $0.637 | Trend: up
+📈 5m Change: -0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [11:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.53 | ATR: $0.632 | Trend: up
+📈 5m Change: 0.39%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [11:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.80 | ATR: $0.633 | Trend: up
+📈 5m Change: 0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [11:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.81 | ATR: $0.634 | Trend: up
+📈 5m Change: 0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [11:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.58 | ATR: $0.651 | Trend: up
+📈 5m Change: -0.21%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [11:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.97 | ATR: $0.668 | Trend: up
+📈 5m Change: -0.54%
+✅ BUY 14 WTICO_USD @ 111.97
+   Stop: 111.30 | Target: 113.30
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [11:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.03 | ATR: $0.651 | Trend: up
+📈 5m Change: 0.05%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [11:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.46 | ATR: $0.652 | Trend: up
+📈 5m Change: 0.39%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [11:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.85 | ATR: $0.695 | Trend: up
+📈 5m Change: -0.54%
+✅ BUY 14 WTICO_USD @ 111.85
+   Stop: 111.16 | Target: 113.24
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [11:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.52 | ATR: $0.719 | Trend: neutral
+📈 5m Change: -0.30%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.90 | ATR: $0.719 | Trend: neutral
+📈 5m Change: 0.34%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.64 | ATR: $0.738 | Trend: down
+📈 5m Change: -0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.57 | ATR: $0.727 | Trend: down
+📈 5m Change: -0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [12:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.30 | ATR: $0.731 | Trend: down
+📈 5m Change: -0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.70 | ATR: $0.730 | Trend: down
+📈 5m Change: 0.36%
+✅ SELL 13 WTICO_USD @ 111.70
+   Stop: 112.43 | Target: 110.24
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [12:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.67 | ATR: $0.732 | Trend: down
+📈 5m Change: -0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.93 | ATR: $0.731 | Trend: down
+📈 5m Change: 0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [12:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.28 | ATR: $0.731 | Trend: down
+📈 5m Change: 0.31%
+✅ SELL 13 WTICO_USD @ 112.28
+   Stop: 113.01 | Target: 110.81
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [12:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.33 | ATR: $0.714 | Trend: neutral
+📈 5m Change: 0.05%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [12:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.30 | ATR: $0.674 | Trend: neutral
+📈 5m Change: -0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.77 | ATR: $0.674 | Trend: up
+📈 5m Change: 0.42%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [12:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.48 | ATR: $0.695 | Trend: up
+📈 5m Change: -0.26%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.52 | ATR: $0.652 | Trend: up
+📈 5m Change: 0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.16 | ATR: $0.653 | Trend: up
+📈 5m Change: -0.32%
+✅ BUY 15 WTICO_USD @ 112.16
+   Stop: 111.51 | Target: 113.47
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 300s...
+
+🛢️  [13:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.62 | ATR: $0.654 | Trend: up
+📈 5m Change: 0.40%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.74 | ATR: $0.635 | Trend: up
+📈 5m Change: 0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [13:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.66 | ATR: $0.636 | Trend: up
+📈 5m Change: -0.07%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $113.01 | ATR: $0.618 | Trend: up
+📈 5m Change: 0.31%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [13:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.36 | ATR: $0.665 | Trend: up
+📈 5m Change: -0.58%
+✅ BUY 15 WTICO_USD @ 112.36
+   Stop: 111.69 | Target: 113.68
+   Risk: 1% risk rule: $10.00 risk
+⏱️  Next cycle in 299s...
+
+🛢️  [13:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.50 | ATR: $0.663 | Trend: up
+📈 5m Change: 0.13%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.38 | ATR: $0.671 | Trend: up
+📈 5m Change: -0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.13 | ATR: $0.689 | Trend: up
+📈 5m Change: -0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.16 | ATR: $0.689 | Trend: neutral
+📈 5m Change: 0.03%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [13:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.89 | ATR: $0.706 | Trend: down
+📈 5m Change: -0.24%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.93 | ATR: $0.706 | Trend: down
+📈 5m Change: 0.04%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.94 | ATR: $0.684 | Trend: down
+📈 5m Change: 0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.78 | ATR: $0.696 | Trend: down
+📈 5m Change: -0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $111.99 | ATR: $0.670 | Trend: down
+📈 5m Change: 0.19%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.24 | ATR: $0.670 | Trend: down
+📈 5m Change: 0.23%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.15 | ATR: $0.677 | Trend: down
+📈 5m Change: -0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.33 | ATR: $0.671 | Trend: down
+📈 5m Change: 0.17%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.48 | ATR: $0.671 | Trend: neutral
+📈 5m Change: 0.13%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.32 | ATR: $0.636 | Trend: neutral
+📈 5m Change: -0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.31 | ATR: $0.638 | Trend: neutral
+📈 5m Change: -0.01%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [14:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.38 | ATR: $0.630 | Trend: neutral
+📈 5m Change: 0.07%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [14:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.36 | ATR: $0.614 | Trend: neutral
+📈 5m Change: -0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.26 | ATR: $0.621 | Trend: neutral
+📈 5m Change: -0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.32 | ATR: $0.602 | Trend: up
+📈 5m Change: 0.05%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.55 | ATR: $0.602 | Trend: up
+📈 5m Change: 0.21%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.64 | ATR: $0.602 | Trend: up
+📈 5m Change: 0.08%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [15:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.46 | ATR: $0.604 | Trend: up
+📈 5m Change: -0.16%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [15:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.58 | ATR: $0.604 | Trend: up
+📈 5m Change: 0.10%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.51 | ATR: $0.609 | Trend: up
+📈 5m Change: -0.06%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.61 | ATR: $0.602 | Trend: up
+📈 5m Change: 0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.63 | ATR: $0.602 | Trend: up
+📈 5m Change: 0.02%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [15:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.46 | ATR: $0.614 | Trend: up
+📈 5m Change: -0.15%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [15:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.62 | ATR: $0.603 | Trend: up
+📈 5m Change: 0.14%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [15:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.74 | ATR: $0.601 | Trend: up
+📈 5m Change: 0.11%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.601 | Trend: up
+📈 5m Change: 0.09%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.599 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [16:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.593 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [16:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.580 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [16:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.581 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.576 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.576 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [16:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.576 | Trend: up
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [16:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [17:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [17:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [17:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [17:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [17:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 295s...
+
+🛢️  [17:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [18:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [18:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 298s...
+
+🛢️  [18:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [18:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [18:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [18:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [18:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [19:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [19:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [19:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [19:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [19:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [20:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [20:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+2026-04-02 21:04:01,773 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 21:04:01,773 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 21:26:16,856 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 21:26:16,856 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 21:31:53,767 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 21:31:53,767 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 22:27:55,940 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 22:28:00,473 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 22:28:00,473 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 22:28:33,764 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 22:28:33,764 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 22:32:30,750 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 22:32:30,750 - INFO - Starting v2 trader: 300s intervals
+2026-04-02 22:37:43,237 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-02 22:37:43,237 - INFO - Starting v2 trader: 300s intervals
+============================================================
+🛢️  Oil Trader v2.0 - Risk-Managed CFD Trading
+============================================================
+Asset: WTI Crude Oil (WTICO_USD)
+Timeframe: 300s (5-minute candles)
+Risk per trade: 1.0%
+Max leverage: 5.0:1
+Daily loss limit: 5.0%
+Paper trading: True
+============================================================
+
+🛢️  [22:37:43] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 137s...
+
+🛢️  [22:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [22:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [22:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [22:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:00:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [23:40:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:45:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:50:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [23:55:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+2026-04-03 00:00:00,335 - INFO - New trading day - reset daily stats
+2026-04-03 00:00:00,632 - INFO - New trading day - reset daily stats
+
+🛢️  [00:00:00] Oil Trading v2 - 5min Cycle
+2026-04-03 00:00:00,923 - INFO - New trading day - reset daily stats
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 299s...
+
+🛢️  [00:05:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+⚠️  No signal generated (insufficient data)
+⏱️  Next cycle in 300s...
+
+🛢️  [00:10:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [00:15:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [00:20:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [00:25:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+
+🛢️  [00:30:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 299s...
+
+🛢️  [00:35:00] Oil Trading v2 - 5min Cycle
+✅ Risk Check: OK
+📊 Price: $112.84 | ATR: $0.564 | Trend: neutral
+📈 5m Change: 0.00%
+⏸️  HOLD: no_setup
+⏱️  Next cycle in 300s...
+2026-04-03 00:41:21,025 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
+2026-04-03 00:41:21,025 - INFO - Starting v2 trader: 300s intervals

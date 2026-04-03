@@ -1,0 +1,85 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Direct Path
+======================================================================
+
+[*] Step 1: Logging in...
+[+] Logged in
+
+[*] Step 2: Entering game...
+[+] In game
+
+[*] Step 3: Going to Settings → CTF Mode...
+[+] CTF Mode activated
+
+[*] Step 4: Going to Objectives → Open Terminal...
+[*] Found 1 objectives
+  - Its All About Defang
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+
+[*] Step 5: Switching to terminal iframe...
+[*] Found 1 iframes
+[+] Switched to iframe
+
+======================================================================
+STEP 6: Extracting IOCs
+======================================================================
+
+[*] Email loaded: 2212 chars
+
+[*] Extracting domains...
+[+] Domains extracted
+[*] Extracting IPs...
+[+] IPs extracted
+[*] Extracting URLs...
+[+] URLs extracted
+[*] Extracting emails...
+[+] Emails extracted
+
+[*] Step 7: Switching to Defang tab...
+[+] On Defang tab
+
+======================================================================
+STEP 8: Applying defang transformations
+======================================================================
+
+[+] Clicked '. → [.]' button
+[+] Clicked '@ → [@]' button
+[+] Clicked 'HTTP → HXXP' button
+[+] Clicked ':// → [://]' button
+[+] All defang buttons clicked
+
+======================================================================
+STEP 9: Verifying defanged list
+======================================================================
+
+[*] Has items: True
+[*] Preview: Domains (3)icicleinnovations.mailmail.icicleinnovations.mailcore.icicleinnovations.mailIP Addresses (2)172.16.254.1192.168.1.1URLs (2)https[://]icicleinnovations.mail/renovation-planner.exehttps[://]icicleinnovations.mail/upload_photosEmail Addresses (2)sales@icicleinnovations.mailinfo@icicleinnovations.mail
+
+[!] WARNING: Still has unescaped dots!
+[!] WARNING: Still has unescaped @!
+
+[*] Step 10: Submitting...
+[+] Clicked 'Send to Security Team'
+[*] Alert: Kitchen Alert! Some IOCs don't look properly defanged. Check for dots and @ symbols!
+
+[+] Screenshot saved
+
+[*] Step 11: Verifying completion...
+
+[!] Challenge NOT in achievements
+[*] Achievements page text:
+Home
+Story
+Map
+Objectives
+Items
+Hints
+Achievements
+Settings
+Achievements
+Congratulations! You spoke with Lynn Schifano!
+Tweet This!
+Holiday Hack Orientation
+
+[+] Done

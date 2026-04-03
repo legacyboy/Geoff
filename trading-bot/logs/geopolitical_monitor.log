@@ -43,3 +43,389 @@
 2026-03-24 02:56:28,222 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
 2026-03-24 02:56:28,223 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
 2026-03-24 02:56:28,223 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:01:28,224 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:01:28,224 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:01:28,225 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:06:28,225 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:06:28,226 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:06:28,226 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:11:28,227 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:11:28,229 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:11:28,230 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:16:28,230 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:16:28,231 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:16:28,231 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:21:28,232 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:21:28,233 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:21:28,235 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:26:28,236 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:26:28,237 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:26:28,238 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:31:28,239 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:31:28,240 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:31:28,240 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:36:28,241 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:36:28,242 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:36:28,244 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:41:28,245 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:41:28,246 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:41:28,247 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:46:28,248 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:46:28,248 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:46:28,248 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:51:28,249 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:51:28,249 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:51:28,250 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 03:56:28,251 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:56:28,252 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 03:56:28,253 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:01:28,255 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:01:28,256 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:01:28,257 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:06:28,257 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:06:28,258 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:06:28,258 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:11:28,258 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:11:28,259 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:11:28,259 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:16:28,259 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:16:28,260 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:16:28,260 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:21:28,260 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:21:28,261 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:21:28,261 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:26:28,261 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:26:28,262 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:26:28,262 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:31:28,263 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:31:28,264 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:31:28,266 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:36:28,268 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:36:28,269 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:36:28,270 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:41:28,271 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:41:28,272 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:41:28,273 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:46:28,275 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:46:28,276 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:46:28,277 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:51:28,278 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:51:28,279 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:51:28,280 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 04:56:28,280 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:56:28,281 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 04:56:28,281 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:01:28,282 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:01:28,283 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:01:28,284 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:06:28,286 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:06:28,287 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:06:28,288 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:11:28,289 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:11:28,290 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:11:28,292 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:16:28,293 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:16:28,294 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:16:28,296 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:21:28,296 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:21:28,296 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:21:28,297 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:26:28,297 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:26:28,297 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:26:28,298 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:31:28,299 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:31:28,300 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:31:28,301 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:36:28,302 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:36:28,303 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:36:28,305 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:41:28,306 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:41:28,307 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:41:28,309 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:46:28,310 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:46:28,311 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:46:28,312 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:51:28,314 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:51:28,315 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:51:28,316 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 05:56:28,316 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:56:28,317 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 05:56:28,317 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:01:28,317 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:01:28,318 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:01:28,318 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:06:28,318 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:06:28,318 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:06:28,319 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:11:28,320 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:11:28,321 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:11:28,322 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:16:28,324 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:16:28,325 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:16:28,326 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:21:28,327 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:21:28,327 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:21:28,327 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:26:28,328 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:26:28,329 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:26:28,339 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:31:28,340 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:31:28,341 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:31:28,342 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:36:28,344 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:36:28,345 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:36:28,346 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:41:28,348 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:41:28,349 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:41:28,350 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:46:28,351 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:46:28,352 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:46:28,353 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:51:28,354 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:51:28,354 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:51:28,354 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 06:56:28,355 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:56:28,355 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 06:56:28,355 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:01:28,356 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:01:28,356 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:01:28,356 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:06:28,357 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:06:28,358 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:06:28,360 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:11:28,361 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:11:28,362 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:11:28,363 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:16:28,364 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:16:28,365 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:16:28,367 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:21:28,367 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:21:28,367 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:21:28,368 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:26:28,369 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:26:28,370 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:26:28,371 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:31:28,372 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:31:28,372 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:31:28,372 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:36:28,373 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:36:28,374 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:36:28,376 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:41:28,377 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:41:28,378 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:41:28,379 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:46:28,381 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:46:28,382 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:46:28,383 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:51:28,384 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:51:28,385 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:51:28,387 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 07:56:28,387 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:56:28,387 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 07:56:28,388 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:01:28,389 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:01:28,390 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:01:28,391 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:06:28,393 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:06:28,394 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:06:28,395 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:11:28,397 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:11:28,398 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:11:28,399 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:16:28,399 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:16:28,400 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:16:28,400 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:21:28,400 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:21:28,401 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:21:28,401 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:26:28,401 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:26:28,402 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:26:28,402 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:31:28,402 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:31:28,403 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:31:28,403 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:36:28,404 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:36:28,405 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:36:28,406 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:41:28,407 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:41:28,407 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:41:28,407 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:46:28,408 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:46:28,408 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:46:28,408 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:51:28,410 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:51:28,411 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:51:28,412 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 08:56:28,413 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:56:28,414 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 08:56:28,416 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:01:28,417 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:01:28,418 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:01:28,419 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:06:28,421 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:06:28,422 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:06:28,423 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:11:28,423 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:11:28,424 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:11:28,424 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:16:28,425 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:16:28,425 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:16:28,425 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:21:28,427 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:21:28,428 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:21:28,429 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:26:28,430 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:26:28,431 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:26:28,433 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:31:28,434 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:31:28,435 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:31:28,436 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:36:28,437 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:36:28,437 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:36:28,437 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:41:28,438 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:41:28,438 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:41:28,439 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:46:28,440 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:46:28,441 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:46:28,442 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:51:28,444 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:51:28,445 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:51:28,446 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 09:56:28,448 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:56:28,449 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 09:56:28,450 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:01:28,451 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:01:28,451 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:01:28,460 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:06:28,460 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:06:28,469 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:06:28,470 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:11:28,471 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:11:28,472 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:11:28,473 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:16:28,475 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:16:28,476 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:16:28,477 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:21:28,477 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:21:28,477 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:21:28,478 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:26:28,479 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:26:28,480 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:26:28,481 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:31:28,482 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:31:28,484 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:31:28,485 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:36:28,485 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:36:28,486 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:36:28,486 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:41:28,487 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:41:28,488 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:41:28,489 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:46:28,490 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:46:28,490 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:46:28,490 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:51:28,490 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:51:28,491 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:51:28,491 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 10:56:28,491 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:56:28,492 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 10:56:28,492 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:01:28,493 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 11:01:28,494 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 11:01:28,495 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:06:28,497 - ERROR - Error fetching Truth Social: [Errno 2] No such file or directory: 'curl'
+2026-03-24 11:06:28,498 - ERROR - Error checking OPEC: [Errno 2] No such file or directory: 'curl'
+2026-03-24 11:06:28,499 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:07:51,487 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:08:19,444 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:12:51,908 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:13:19,799 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:15:56,096 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:16:47,849 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:20:56,870 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:21:48,511 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:25:57,633 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:26:49,187 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:30:58,371 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:31:49,876 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:35:59,048 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:36:50,523 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:40:59,674 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:41:51,190 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:46:00,392 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:46:51,847 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:51:01,070 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:51:52,614 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:56:01,761 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 11:56:53,445 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:01:02,465 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:01:54,207 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:06:03,225 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:06:55,018 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:11:03,905 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:11:55,714 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:16:04,657 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:16:56,411 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:21:05,372 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:21:57,160 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:26:06,027 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:26:57,918 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:31:06,687 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:31:58,623 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:36:07,475 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:36:59,356 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:41:08,106 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:42:00,030 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:46:08,854 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:47:00,763 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:51:09,612 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:52:01,426 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:56:10,416 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 12:57:02,177 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:01:11,131 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:02:02,822 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:06:11,903 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:07:03,467 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:11:12,692 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:12:04,099 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:16:13,520 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:17:04,875 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:21:14,306 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:22:05,561 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:26:15,008 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:27:06,311 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:31:15,777 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:32:07,008 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:36:16,423 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:37:07,741 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:41:17,197 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:42:08,456 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:46:17,822 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:47:09,330 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:51:18,658 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:52:10,067 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:56:19,311 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 13:57:10,815 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:01:20,058 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:02:11,499 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:06:20,672 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:07:12,222 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:11:21,403 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:12:12,948 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:16:22,212 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:17:13,917 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:21:23,089 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:22:14,869 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:26:23,766 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:27:15,584 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:31:24,628 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:32:16,278 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:36:25,322 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:37:16,940 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:41:26,037 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:42:17,685 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:46:26,765 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:47:18,373 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:52:19,009 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json
+2026-03-24 14:57:19,681 - INFO - Intelligence report saved: /home/claw/.openclaw/workspace/trading-bot/data/geopolitical/intelligence.json

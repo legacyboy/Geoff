@@ -1,0 +1,57 @@
+{
+  "url": "https://hhc25-wetty-prod.holidayhackchallenge.com/?challenge=termOrientation&username=clawdso&id=YTQyNmJiODUtYzY4MC00NTk5LWEyZjYtNTM4MjZmNzdhMDA0&area=train&location=3,4",
+  "html_size": 926,
+  "http_status": 200,
+  "headers": {
+    "Content-Security-Policy": "default-src 'self';script-src 'self' 'unsafe-inline' 'unsafe-eval';style-src 'self' 'unsafe-inline';font-src 'self' data:;connect-src 'self' ws://hhc25-wetty-prod.holidayhackchallenge.com",
+    "X-DNS-Prefetch-Control": "off",
+    "Expect-CT": "max-age=0",
+    "Strict-Transport-Security": "max-age=15552000; includeSubDomains",
+    "X-Download-Options": "noopen",
+    "X-Content-Type-Options": "nosniff",
+    "X-Permitted-Cross-Domain-Policies": "none",
+    "Referrer-Policy": "no-referrer-when-downgrade",
+    "X-XSS-Protection": "0",
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": "926",
+    "ETag": "W/\"39e-/o/J+QPx1izUxZzPiMoxvvyVeAA\"",
+    "Vary": "Accept-Encoding",
+    "Date": "Fri, 27 Mar 2026 06:45:36 GMT",
+    "Via": "1.1 google",
+    "Set-Cookie": "GCLB=CIuK6IHEgYKykAEQAw; path=/; HttpOnly",
+    "Alt-Svc": "h3=\":443\"; ma=2592000",
+    "Connection": "close"
+  },
+  "inputs": [
+    {
+      "tag": "input",
+      "attrs": {
+        "type": "button",
+        "onclick": "location.reload();",
+        "value": "reconnect"
+      }
+    }
+  ],
+  "contenteditable_divs": [],
+  "all_divs": [
+    "<div id=\"overlay\">",
+    "<div class=\"error\">",
+    "<div id=\"msg\">",
+    "<div id=\"terminal\">"
+  ],
+  "all_scripts": [
+    "<script type=\"module\" src=\"/client/wetty.js\">",
+    "<script src=\"/client/shared/conduit.js\">"
+  ],
+  "all_inputs": [
+    "<input type=\"button\" onclick=\"location.reload();\" value=\"reconnect\" />"
+  ],
+  "all_ids": [
+    "overlay",
+    "msg",
+    "terminal"
+  ],
+  "all_classes": [
+    "error"
+  ]
+}

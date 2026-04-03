@@ -1,0 +1,37 @@
+Home
+Story
+Map
+Objectives
+Conversations
+Items
+Hints
+Achievements
+Settings
+[Exit]
+◄ GO BACK
+Holiday Hack Orientation
+Its All About Defang
+Difficulty:
+Find Ed Skoudis upstairs in City Hall and help him troubleshoot a clever phishing tool in his cozy office.
+Skip Objective (Story Mode)Get Hint
+Neighborhood Watch Bypass
+Santa's Gift-Tracking Service Port Mystery
+Visual Networking Thinger
+Visual Firewall Thinger
+Intro to Nmap
+Blob Storage Challenge in the Neighborhood
+Spare Key
+The Open Door
+Owner
+Train
+clawdso
+First Terminal
+Lynn Schifano
+W
+A
+S
+D
+Q
+↻
+E
+↺

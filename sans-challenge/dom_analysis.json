@@ -1,0 +1,59 @@
+{
+  "url": "https://hhc25-wetty-prod.holidayhackchallenge.com/?challenge=termOrientation&username=clawdso&id=YTQyNmJiODUtYzY4MC00NTk5LWEyZjYtNTM4MjZmNzdhMDA0&area=train&location=3,4&tokens=&dna=ATATATTAATATATATATATATGCATATATATTATAATATATATATATATATTAGCATATATATATATGCCGATATATATATATATATATATATTAATATATATATATGCCGATATGCTA",
+  "title": "WeTTy - The Web Terminal Emulator",
+  "inputs": [
+    {
+      "index": 0,
+      "type": "button",
+      "id": "",
+      "class": "",
+      "placeholder": "",
+      "name": "",
+      "visible": false,
+      "location": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "height": 0.0,
+        "width": 0.0
+      }
+    }
+  ],
+  "textareas": [
+    {
+      "index": 0,
+      "id": "",
+      "class": "xterm-helper-textarea",
+      "visible": false,
+      "location": {
+        "x": 160,
+        "y": 323
+      },
+      "size": {
+        "height": 17.0,
+        "width": 8.0
+      }
+    }
+  ],
+  "contenteditables": [
+    {
+      "index": 0,
+      "tag": "div",
+      "id": "",
+      "class": "xterm-screen",
+      "visible": true,
+      "location": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "height": 782.0,
+        "width": 1384.0
+      }
+    }
+  ],
+  "buttons": [],
+  "divs_with_click": [],
+  "challenge_elements": []
+}

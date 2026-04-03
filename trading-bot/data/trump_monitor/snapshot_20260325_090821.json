@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-03-25T09:08:21.293345",
+  "new_posts": 20,
+  "oil_relevant": 2,
+  "signals": [
+    {
+      "id": 18,
+      "content": "A very Happy Thanksgiving salutation to all of our Great American Citizens and Patriots who have bee...",
+      "impact": 61,
+      "sentiment": "bullish",
+      "urgency": "high",
+      "signal": "LONG_OIL",
+      "keywords": [
+        "domestic"
+      ]
+    }
+  ],
+  "top_posts": [
+    {
+      "id": 18,
+      "content": "A very Happy Thanksgiving salutation to all of our Great American Citizens and Patriots who have bee...",
+      "impact": 61,
+      "sentiment": "bullish",
+      "urgency": "high",
+      "signal": "LONG_OIL",
+      "keywords": [
+        "domestic"
+      ]
+    },
+    {
+      "id": 11,
+      "content": "Merry Christmas to all, including the Radical Left Scum that is doing everything possible to destroy...",
+      "impact": 44,
+      "sentiment": "neutral",
+      "urgency": "high",
+      "signal": "MONITOR",
+      "keywords": [
+        "tariffs"
+      ]
+    }
+  ]
+}

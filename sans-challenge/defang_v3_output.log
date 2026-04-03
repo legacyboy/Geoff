@@ -1,0 +1,76 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Solution v3
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+STEP 1: Extracting IOCs
+======================================================================
+[*] Extracting domains...
+[+] Domains extracted
+[*] Extracting IPs...
+[+] IPs extracted
+[*] Extracting URLs...
+[+] URLs extracted
+[*] Extracting emails...
+[+] Emails extracted
+
+[*] Switching to Defang & Report tab...
+[+] On Defang & Report tab
+
+======================================================================
+STEP 3: Trying different SED approach
+======================================================================
+
+[*] Entering SED: s/\./[.]/g; s/@/[@]/g; s/http/hxxp/g
+[*] Clicking Apply...
+[+] SED applied
+
+======================================================================
+STEP 4: Checking defanged IOCs
+======================================================================
+
+[*] Defanged preview:
+Domains (3)icicleinnovations[.]mailmail[.]icicleinnovations[.]mailcore[.]icicleinnovations[.]mailIP Addresses (2)172[.]16[.]254[.]1192[.]168[.]1[.]1URLs (2)hxxps://icicleinnovations[.]mail/renovation-planner[.]exehxxps://icicleinnovations[.]mail/upload_photosEmail Addresses (2)sales[@]icicleinnovations[.]mailinfo[@]icicleinnovations[.]mail
+
+[*] Total items: 9
+
+======================================================================
+STEP 5: Sending to Security Team
+======================================================================
+
+[*] Clicking Send to Security Team...
+[+] Clicked Send
+[*] Alert: 🚨 Critical Alert! Missing malicious URLs mean residents might click on dangerous links! Connection Issue! Those unusual URLs are causing the security monitoring to fail! 🚨Check your URLs and try again! Dosis Neighborhood is counting on you!
+
+======================================================================
+STEP 6: Verifying completion
+======================================================================
+
+
+[!] Not in achievements yet
+[*] Achievements text:
+Home
+Story
+Map
+Objectives
+Items
+Hints
+Achievements
+Settings
+Achievements
+Congratulations! You spoke with Lynn Schifano!
+Tweet This!
+Holiday Hack Orientation
+
+[+] Done

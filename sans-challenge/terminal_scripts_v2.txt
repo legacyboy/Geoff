@@ -1,0 +1,5 @@
+\n=== SCRIPT 8 ===\nwindow.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-F6ZZNPR5E5');\n\n

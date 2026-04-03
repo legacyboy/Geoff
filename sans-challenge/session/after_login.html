@@ -1,0 +1,67 @@
+<!DOCTYPE html><html><head>
+  <title>Home</title>
+  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <style data-tippy-stylesheet="">.tippy-box[data-animation=fade][data-state=hidden]{opacity:0}[data-tippy-root]{max-width:calc(100vw - 10px)}.tippy-box{position:relative;background-color:#333;color:#fff;border-radius:4px;font-size:14px;line-height:1.4;white-space:normal;outline:0;transition-property:transform,visibility,opacity}.tippy-box[data-placement^=top]>.tippy-arrow{bottom:0}.tippy-box[data-placement^=top]>.tippy-arrow:before{bottom:-7px;left:0;border-width:8px 8px 0;border-top-color:initial;transform-origin:center top}.tippy-box[data-placement^=bottom]>.tippy-arrow{top:0}.tippy-box[data-placement^=bottom]>.tippy-arrow:before{top:-7px;left:0;border-width:0 8px 8px;border-bottom-color:initial;transform-origin:center bottom}.tippy-box[data-placement^=left]>.tippy-arrow{right:0}.tippy-box[data-placement^=left]>.tippy-arrow:before{border-width:8px 0 8px 8px;border-left-color:initial;right:-7px;transform-origin:center left}.tippy-box[data-placement^=right]>.tippy-arrow{left:0}.tippy-box[data-placement^=right]>.tippy-arrow:before{left:-7px;border-width:8px 8px 8px 0;border-right-color:initial;transform-origin:center right}.tippy-box[data-inertia][data-state=visible]{transition-timing-function:cubic-bezier(.54,1.5,.38,1.11)}.tippy-arrow{width:16px;height:16px;color:#333}.tippy-arrow:before{content:"";position:absolute;border-color:transparent;border-style:solid}.tippy-content{position:relative;padding:5px 9px;z-index:1}</style><link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/modal.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=New+Amsterdam&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="/toastify.min.css">
+  
+<style>                      .htmx-indicator{opacity:0;transition: opacity 200ms ease-in;}                      .htmx-request .htmx-indicator{opacity:1}                      .htmx-request.htmx-indicator{opacity:1}                    </style></head>
+<body>
+<a href="/">
+  
+    <img src="/chc-logo.png" class="logo" alt="Logo">
+  
+</a>
+<div class="content login-form">
+
+<p>Login to your Counter Hack account to play HHC.</p>
+<p style="text-align: center;">You can use your email address and password from last year's HHC as well.</p>
+
+
+
+<form action="/login" method="post" hx-post="/login" hx-target="body" hx-swap="innerHTML">
+    <input placeholder="Email" type="email" name="email" required="" style="">
+    <input placeholder="Password" type="password" name="password" required="" style="">
+    <button type="submit">Sign In</button>
+</form>
+<p>Don't have any account? Click <a href="/register">here</a> to register.</p>
+<p>Forgot your password? Click <a href="/forgotpassword">here</a> to reset it.</p>
+<p>Forgot which email you used for HHC? Click <a href="/forgotemail">here</a>.</p>
+<div class="orrr"></div>
+<div class="social-buttons">
+    <button class="google" onclick="javascript:window.location = '/auth/google'">
+        <i class="fab fa-google"></i>
+        Sign In with Google
+    </button>
+    <button class="twitter" onclick="javascript:window.location = '/auth/twitter'">
+        <img src="x.png" alt="X Logo">
+        Sign In with X
+    </button>
+    <!-- <a href="/auth/facebook">Log In with Facebook</a><br/> -->
+</div>
+
+
+
+</div>
+<footer class="site-footer">
+    <span>Copyright Counter Hack Challenges LLC. 2010-2024. All rights reserved.</span>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/gdpr">GDPR Policy</a>
+</footer>
+<script>
+    
+</script>
+<script src="/toastify.js"></script>
+<script src="/micromodal.min.js"></script>
+<script src="/popper.min.js"></script>
+<script src="/tippy-bundle.umd.min.js"></script>
+<script src="/gdpr.js"></script>
+<script src="/app.js"></script>
+
+
+
+</body></html>

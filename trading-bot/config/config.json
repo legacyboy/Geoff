@@ -1,7 +1,15 @@
 {
   "trading_interval_seconds": 300,
-  "trading_assets": ["XTI_USD", "XBR_USD"],
-  "asset_names": {"XTI_USD": "WTI Crude Oil", "XBR_USD": "Brent Crude Oil"},
+  "trading_asset": "WTICO_USD",
+  "trading_assets": ["WTICO_USD", "BCO_USD", "USD_CAD", "USD_NOK", "EUR_CAD", "AUD_USD"],
+  "asset_names": {
+    "WTICO_USD": "WTI Crude Oil",
+    "BCO_USD": "Brent Crude Oil",
+    "USD_CAD": "USD/CAD (oil-correlated)",
+    "USD_NOK": "USD/NOK (oil-correlated)",
+    "EUR_CAD": "EUR/CAD (oil-correlated)",
+    "AUD_USD": "AUD/USD (commodity-linked)"
+  },
   "risk_level": "controlled",
   "web_port": 8443,
   "data_retention_days": 30,
@@ -9,6 +17,8 @@
   "oanda_account_type": "practice",
   "oanda_account_id": "101-002-38876987-001",
   "account_balance": 1000.0,
+  "max_position_units": 20,
+  "dry_run": true,
   "default_units": 10,
   "learning_mode": true,
   "paper_trading": true,
@@ -20,5 +30,8 @@
   "max_leverage": 5.0,
   "max_daily_loss_pct": 0.05,
   "atr_periods": 14,
-  "consecutive_loss_limit": 3
+  "consecutive_loss_limit": 3,
+  "close_before_market_close": true,
+  "market_close_time_utc": "22:00",
+  "market_close_buffer_minutes": 30
 }

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "connect.sid",
+    "value": "s%3Au1E2mPJolviEJGqo-LMSpmMUEo-3B7uR.coqocPIJMHf%2FfxqalGgDsdG5q9jWViabvAbOrsWrw%2BA",
+    "domain": "account.counterhack.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga",
+    "value": "GA1.1.647221378.1774559278",
+    "domain": ".holidayhackchallenge.com",
+    "path": "/",
+    "expires": 1809119278.050149,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_F6ZZNPR5E5",
+    "value": "GS2.1.s1774559278$o1$g0$t1774559278$j60$l0$h0",
+    "domain": ".holidayhackchallenge.com",
+    "path": "/",
+    "expires": 1809119278.056573,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  }
+]

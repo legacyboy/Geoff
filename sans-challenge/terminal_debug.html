@@ -1,0 +1,77 @@
+<html><head>
+  <title>Dashboard</title>
+  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <style data-tippy-stylesheet="">.tippy-box[data-animation=fade][data-state=hidden]{opacity:0}[data-tippy-root]{max-width:calc(100vw - 10px)}.tippy-box{position:relative;background-color:#333;color:#fff;border-radius:4px;font-size:14px;line-height:1.4;white-space:normal;outline:0;transition-property:transform,visibility,opacity}.tippy-box[data-placement^=top]>.tippy-arrow{bottom:0}.tippy-box[data-placement^=top]>.tippy-arrow:before{bottom:-7px;left:0;border-width:8px 8px 0;border-top-color:initial;transform-origin:center top}.tippy-box[data-placement^=bottom]>.tippy-arrow{top:0}.tippy-box[data-placement^=bottom]>.tippy-arrow:before{top:-7px;left:0;border-width:0 8px 8px;border-bottom-color:initial;transform-origin:center bottom}.tippy-box[data-placement^=left]>.tippy-arrow{right:0}.tippy-box[data-placement^=left]>.tippy-arrow:before{border-width:8px 0 8px 8px;border-left-color:initial;right:-7px;transform-origin:center left}.tippy-box[data-placement^=right]>.tippy-arrow{left:0}.tippy-box[data-placement^=right]>.tippy-arrow:before{left:-7px;border-width:8px 8px 8px 0;border-right-color:initial;transform-origin:center right}.tippy-box[data-inertia][data-state=visible]{transition-timing-function:cubic-bezier(.54,1.5,.38,1.11)}.tippy-arrow{width:16px;height:16px;color:#333}.tippy-arrow:before{content:"";position:absolute;border-color:transparent;border-style:solid}.tippy-content{position:relative;padding:5px 9px;z-index:1}</style><link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/modal.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <link href="https://fonts.googleapis.com/css2?family=New+Amsterdam&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="/toastify.min.css">
+  <!-- see if locals.metaData exists. if so, loop through each item in the array and create tags  -->
+  
+<style>                      .htmx-indicator{opacity:0;transition: opacity 200ms ease-in;}                      .htmx-request .htmx-indicator{opacity:1}                      .htmx-request.htmx-indicator{opacity:1}                    </style></head>
+<body>
+    <div class="header">
+      <a href="/">
+        
+          <img src="chc-logo.png" class="logo" alt="Logo">
+        
+      </a>
+      <nav>
+        <a href="/" class="header-nav">Dashboard</a>
+        <a href="/profile" class="header-nav">Profile</a>  
+        <a href="/logout" class="header-nav">Log Out</a>
+      </nav>
+    </div>
+<div class="content ">
+
+
+
+
+<div class="product hhc25">
+    <div class="info">
+        <span><strong>Username:</strong> clawdso</span>
+        <span><strong>Cohort:</strong>
+            
+                <a href="/cohort?app=hhc25">Join or Create a Cohort</a>
+            
+        </span>
+        
+<span class="scoreboard-visibility scoreboard-visibility-hhc25"><strong>Visible on scoreboard:</strong> 
+    
+        <span style="color: green;">Yes</span>
+    
+    <button class="toggle-visibility-btn" hx-post="/setvisibility" hx-vals="{&quot;app&quot;: &quot;hhc25&quot;}" hx-swap="outerHTML" hx-target=".scoreboard-visibility-hhc25">Toggle</button>
+</span>
+        <button class="launch-btn" onclick="launchHHC25()">Play Now!</button>
+    </div>
+</div>
+
+
+
+
+
+<!--  -->
+
+</div>
+<footer class="site-footer">
+    <span>Copyright Counter Hack Challenges LLC. 2010-2024. All rights reserved.</span>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/gdpr">GDPR Policy</a>
+</footer>
+<script>
+    
+        const __USER__ = `clawdso`;
+    
+</script>
+<script src="/toastify.js"></script>
+<script src="/micromodal.min.js"></script>
+<script src="/popper.min.js"></script>
+<script src="/tippy-bundle.umd.min.js"></script>
+<script src="/gdpr.js"></script>
+<script src="/app.js"></script>
+
+
+
+</body></html>

@@ -17,10 +17,17 @@ import json
 import logging
 import os
 import requests
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
+
+# Add workspace to path for search module
+sys.path.insert(0, '/home/claw/.openclaw/workspace')
+sys.path.insert(0, str(Path(__file__).parent))
+from search_module import web_search
+from performance_tracker import PerformanceTracker
 
 # Configuration paths
 BASE_DIR = Path(__file__).parent.parent
@@ -150,6 +157,12 @@ class RiskManager:
             units = 1
             explanation += " (minimum size)"
         
+        # Maximum position size based on starting capital and max position setting
+        max_position_units = getattr(self, 'max_position_units', None)
+        if max_position_units and units > max_position_units:
+            units = max_position_units
+            explanation += f" (max position: {max_position_units} units)"
+        
         return units, explanation
 
 
@@ -201,10 +214,36 @@ class OilTraderV2:
             account_balance=self.config.get('account_balance', 1000.0)
         )
         
+        # Performance tracker
+        self.performance_tracker = PerformanceTracker()
+        
         # Trade state
         self.open_positions = {}  # Track open positions
         
         self.logger.info(f'Oil Trader v2 initialized: {self.asset_name} ({self.asset}) - 5min timeframe')
+        
+        # Market close settings (to avoid overnight fees)
+        self.close_before_market_close = self.config.get('close_before_market_close', True)
+        self.market_close_utc = self.config.get('market_close_time_utc', '22:00')  # 5 PM EST
+        self.market_close_buffer = self.config.get('market_close_buffer_minutes', 30)
+    
+    def should_close_for_market_close(self) -> bool:
+        """Check if we should close positions before market close to avoid overnight fees."""
+        if not self.close_before_market_close:
+            return False
+        
+        now = datetime.utcnow()
+        close_hour, close_minute = map(int, self.market_close_utc.split(':'))
+        
+        # Calculate market close time with buffer
+        close_time = now.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0)
+        close_time -= timedelta(minutes=self.market_close_buffer)
+        
+        # Check if we're within the close window (from buffer time until actual close)
+        if close_time <= now < close_time + timedelta(minutes=self.market_close_buffer):
+            return True
+        
+        return False
     
     def get_account_balance(self) -> float:
         """Get current account balance."""
@@ -361,12 +400,17 @@ class OilTraderV2:
         return None
     
     def save_paper_trade(self, trade: dict):
-        """Save paper trade."""
+        """Save paper trade to file and database."""
         try:
+            # Save to file for backup
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = PAPER_DIR / f'v2_paper_{timestamp}.json'
             with open(filename, 'w') as f:
                 json.dump(trade, f, indent=2)
+            
+            # Also track in performance database
+            self.performance_tracker.add_trade(trade)
+            
         except Exception as e:
             self.logger.error(f'Error saving paper trade: {e}')
     
@@ -432,30 +476,44 @@ class OilTraderV2:
         if not open_pos:
             # ENTRY LOGIC - trend following with pullback
             if trend == 'up':
-                # Buy dips in uptrend
-                if price_change_pct < -1.0:  # 1% pullback in uptrend
+                # Buy dips in uptrend (LOWERED THRESHOLDS for more trades)
+                if price_change_pct < -0.3:  # Was -1.0% - Earlier entries
                     signal['action'] = 'buy'
                     signal['reason'] = 'dip_in_uptrend'
                     signal['stop_loss'] = current_price - sl_distance
                     signal['take_profit'] = current_price + tp_distance
                     
-                elif price_change_pct > 1.5:  # Strong momentum
+                elif price_change_pct > 0.5:  # Was 1.5% - Capture smaller momentum
                     signal['action'] = 'buy'
                     signal['reason'] = 'momentum_breakout'
                     signal['stop_loss'] = current_price - sl_distance
                     signal['take_profit'] = current_price + tp_distance
                     
             elif trend == 'down':
-                # Short rallies in downtrend
-                if price_change_pct > 1.0:  # 1% bounce in downtrend
+                # Short rallies in downtrend (LOWERED THRESHOLDS for more trades)
+                if price_change_pct > 0.3:  # Was 1.0% - Earlier short entries
                     signal['action'] = 'sell'
                     signal['reason'] = 'bounce_in_downtrend'
                     signal['stop_loss'] = current_price + sl_distance
                     signal['take_profit'] = current_price - tp_distance
                     
-                elif price_change_pct < -1.5:  # Strong breakdown
+                elif price_change_pct < -0.5:  # Was -1.5% - More aggressive shorts
                     signal['action'] = 'sell'
                     signal['reason'] = 'breakdown'
+                    signal['stop_loss'] = current_price + sl_distance
+                    signal['take_profit'] = current_price - tp_distance
+            
+            elif trend == 'neutral':
+                # TRADE NEUTRAL - breakout in either direction (AGGRESSIVE ENTRY)
+                if price_change_pct > 0.4:  # Any upward momentum in neutral
+                    signal['action'] = 'buy'
+                    signal['reason'] = 'neutral_breakout_up'
+                    signal['stop_loss'] = current_price - sl_distance
+                    signal['take_profit'] = current_price + tp_distance
+                    
+                elif price_change_pct < -0.4:  # Any downward momentum in neutral
+                    signal['action'] = 'sell'
+                    signal['reason'] = 'neutral_breakout_down'
                     signal['stop_loss'] = current_price + sl_distance
                     signal['take_profit'] = current_price - tp_distance
             

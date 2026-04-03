@@ -1,0 +1,67 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - SED APPROACH
+======================================================================
+
+[*] Step 1: Logging in...
+[+] Logged in
+
+[*] Step 2: Entering game...
+[+] In game
+
+[*] Step 3: Enabling CTF mode...
+[+] CTF mode enabled
+
+[*] Step 4: Opening defang terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+
+[*] Step 5: Switching to iframe...
+[+] Switched to iframe
+
+======================================================================
+STEP 6: Extracting IOCs using regex forms
+======================================================================
+
+[*] Extracting domains...
+[*] Extracting IPs...
+[*] Extracting URLs...
+[*] Extracting emails...
+[+] All IOCs extracted
+
+======================================================================
+STEP 7: Switching to Defang tab
+======================================================================
+
+[+] On Defang tab
+
+======================================================================
+STEP 8: Applying SED defang command
+======================================================================
+
+[*] Entered SED command: s/\./[.]/g; s/@/[@]/g; s/http/hxxp/g; s/:\/\//[://]/g
+[+] Applied SED command
+======================================================================
+STEP 9: Verifying defanged list
+======================================================================
+
+[*] Defanged list: 0 items
+[*] Preview: Domains (6)icicleinnovations[.]maildosisneighborhood[.]corpmail[.]icicleinnovationscore[.]icicleinnovationsrenovation-planner[.]exe555[.]RENOIP Addresses (3)172[.]16[.]254[.]110[.]0[.]0[.]5192[.]168[.]1[.]1URLs (2)hxxps[://]icicleinnovations[.]mail/renovation-planner[.]exehxxps[://]icicleinnovations
+
+======================================================================
+STEP 10: Submitting to Security Team
+======================================================================
+
+[*] Send button enabled: True
+[+] Clicked 'Send to Security Team'
+[*] Alert: 🚨 ⚠️ Security Reminder! 'dosisneighborhood[.]corp' is a legitimate Dosis Neighborhood asset - we shouldn't report our own infrastructure as threats! ⚠️ Network Notice! '10[.]0[.]0[.]5' belongs to our trusted network - please exclude legitimate assets from IOC reports! ⚠️ Communication Alert! 'residents[@]dosisneighborhood[.]corp' is an internal Dosis Neighborhood email address - please don't report our own staff emails as threats (unless they are confirmed compromised)! Security Alert! You're missing some domains! The CHI Team needs all domains properly defanged to secure Dosis Neighborhood! Kitchen Alert! You've included domains that don't need defanging - the network security systems are getting confused! System Error! Those extra IP addresses are making our security scanners malfunction! Inbox Overflow! Those extra email addresses are flooding the secure communications system! 🚨Check your domains, IPs, emails and try again! Dosis Neighborhood is counting on you!
+
+[+] Screenshot saved
+
+======================================================================
+STEP 12: Verifying completion
+======================================================================
+
+
+[!] Challenge NOT in achievements
+
+[+] Done

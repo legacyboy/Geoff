@@ -1,0 +1,21 @@
+{
+  "timestamp": "2026-03-25T09:08:21.294463",
+  "trigger": "trump_statement",
+  "factor_score": 81,
+  "level": "critical",
+  "action": "LONG_OIL_NOW",
+  "sentiment": "bullish",
+  "rationale": "Trump Factor 81/100 (CRITICAL) | Sentiment: bullish (strength: 0.58) | Supply constraint stance = bullish pressure",
+  "source_post": {
+    "content": "A very Happy Thanksgiving salutation to all of our Great American Citizens and Patriots who have been so nice in allowing our Country to be divided, disrupted, carved up, murdered, beaten, mugged, and",
+    "impact": 61,
+    "urgency": "high",
+    "url": ""
+  },
+  "recommended_trade": {
+    "direction": "LONG",
+    "symbol": "WTICO_USD",
+    "units": 100,
+    "confidence": 0.85
+  }
+}

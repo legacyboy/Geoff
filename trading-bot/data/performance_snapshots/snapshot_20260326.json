@@ -1,0 +1,23 @@
+{
+  "date": "2026-03-26T09:06:43.807574",
+  "total_trades": 1,
+  "wins": 0,
+  "losses": 1,
+  "win_rate": 0.0,
+  "avg_win": 0,
+  "avg_loss": 0.0,
+  "total_pnl": 0.0,
+  "avg_pnl": 0.0,
+  "max_win": 0,
+  "max_loss": 0.0,
+  "sharpe_ratio": 0.0,
+  "status": "ACTIVE",
+  "geo_threat_level": "HIGH",
+  "geo_attribution": {
+    "trump": 0.0,
+    "opec": 15.4,
+    "conflicts": 84.6,
+    "sanctions": 0.0,
+    "other": 0.0
+  }
+}

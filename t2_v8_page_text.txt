@@ -1,0 +1,25 @@
+Home
+Story
+Map
+Objectives
+Conversations
+Items
+Hints
+Achievements
+Settings
+[Exit]
+◄ GO BACK
+ACT I
+The Counter Hack crew is in the Neighborhood festively preparing for the holidays when they are suddenly overrun by lively Gnomes in Your Home! There must have been some magic in those Gnomes, because, due to some unseen spark, some haunting hocus pocus, they have come to life and are now scurrying around the Neighborhood.
+Train
+clawdso
+First Terminal
+Lynn Schifano
+W
+A
+S
+D
+Q
+↻
+E
+↺

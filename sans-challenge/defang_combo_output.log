@@ -1,0 +1,61 @@
+======================================================================
+SANS HHC 2025 - Defang Challenge - Combined Approach
+======================================================================
+
+[*] Logging in...
+[+] Logged in
+[*] Entering game...
+[+] In game
+[*] Enabling CTF mode...
+[+] CTF mode enabled
+[*] Opening terminal...
+[+] Opened: Its All About Defang
+[+] Terminal loaded
+[+] Switched to iframe
+
+======================================================================
+STEP 1: Extracting IOCs
+======================================================================
+[+] Domains extracted
+[+] IPs extracted
+[+] URLs extracted
+[+] Emails extracted
+
+[*] Switching to Defang tab...
+[+] On Defang tab
+
+======================================================================
+STEP 3: SED for dots and @
+======================================================================
+
+[*] Entering SED command for dots and @...
+[+] Dots and @ defanged
+
+======================================================================
+STEP 4: Quick defang buttons for protocol
+======================================================================
+
+[*] Clicking HTTP → HXXP button...
+[+] HTTP defanged
+[*] Clicking :// → [://] button...
+[+] Protocol defanged
+
+======================================================================
+STEP 5: Checking defanged list
+======================================================================
+
+[*] Defanged list:
+Domains (3)icicleinnovations.mailmail.icicleinnovations.mailcore.icicleinnovations.mailIP Addresses (2)172.16.254.1192.168.1.1URLs (2)https[://]icicleinnovations.mail/renovation-planner.exehttps[://]icicleinnovations.mail/upload_photosEmail Addresses (2)sales@icicleinnovations.mailinfo@icicleinnovations.mail
+
+[!] Still has unescaped dots
+[!] Still has unescaped @
+
+[*] Submitting...
+[+] Clicked 'Send to Security Team'
+[*] Alert: Kitchen Alert! Some IOCs don't look properly defanged. Check for dots and @ symbols!
+
+[*] Verifying completion...
+
+[!] Not in achievements
+
+[+] Done
