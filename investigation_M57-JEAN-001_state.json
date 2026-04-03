@@ -11,8 +11,20 @@
       "description": "Analyze partition table \u2014 identify file systems",
       "status": "pending",
       "added_at": "2026-04-03T12:44:14.797068"
+    },
+    {
+      "index": 1,
+      "module": "forensic_tools",
+      "function": "calculate_hash",
+      "params": {
+        "file_path": "/tmp/nps-2008-jean.E01",
+        "algorithm": "sha256"
+      },
+      "description": "Verify disk image integrity (SHA256)",
+      "status": "pending",
+      "added_at": "2026-04-03T12:44:14.816038"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:44:14.797076"
+  "last_updated": "2026-04-03T12:44:14.816046"
 }
