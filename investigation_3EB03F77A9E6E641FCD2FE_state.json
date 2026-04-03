@@ -47,7 +47,9 @@
         "disk_image": "/evidence/3EB03F77A9E6E641FCD2FE/disk.img"
       },
       "description": "Carve deleted files from disk image",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-04-03T12:08:31.771510",
+      "result": "Carved files from image"
     },
     {
       "index": 4,
@@ -71,6 +73,6 @@
       "status": "pending"
     }
   ],
-  "current_step": 3,
-  "last_updated": "2026-04-03T12:08:31.752691"
+  "current_step": 4,
+  "last_updated": "2026-04-03T12:08:31.771517"
 }
