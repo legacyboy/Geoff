@@ -23,8 +23,19 @@
       "description": "Verify disk image integrity (SHA256)",
       "status": "pending",
       "added_at": "2026-04-03T12:44:14.816038"
+    },
+    {
+      "index": 2,
+      "module": "forensic_tools",
+      "function": "fsstat",
+      "params": {
+        "partition": "/tmp/nps-2008-jean.E01"
+      },
+      "description": "Analyze NTFS file system details",
+      "status": "pending",
+      "added_at": "2026-04-03T12:44:14.834793"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:44:14.816046"
+  "last_updated": "2026-04-03T12:44:14.834800"
 }
