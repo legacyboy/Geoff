@@ -49,8 +49,10 @@
         "disk_image": "/evidence/3EB03F77A9E6E641FCD2FE/disk.img"
       },
       "description": "Carve deleted files from disk image",
-      "status": "pending",
-      "committed": false
+      "status": "completed",
+      "committed": false,
+      "result": "[{'name': 'recovered_001.jpg', 'offset': 65536, 'size': 45056, 'confidence': 0.95}, {'name': 'recovered_002.pdf', 'offset': 131072, 'size': 89120, 'confidence': 0.87}, {'name': 'recovered_003.docx', 'offset': 327680, 'size': 12288, 'confidence': 0.92}]",
+      "completed_at": "2026-04-03T12:03:19.041061"
     },
     {
       "index": 4,
@@ -76,6 +78,6 @@
       "committed": false
     }
   ],
-  "current_step": 3,
-  "last_updated": "2026-04-03T12:03:19.036748"
+  "current_step": 4,
+  "last_updated": "2026-04-03T12:03:19.041066"
 }
