@@ -45,8 +45,20 @@
       "description": "List all files and directories (recursive)",
       "status": "pending",
       "added_at": "2026-04-03T12:44:14.853584"
+    },
+    {
+      "index": 4,
+      "module": "forensic_tools",
+      "function": "photorec",
+      "params": {
+        "disk_image": "/tmp/nps-2008-jean.E01",
+        "output_dir": "/tmp/M57-JEAN-001_carved"
+      },
+      "description": "Carve deleted files with PhotoRec",
+      "status": "pending",
+      "added_at": "2026-04-03T12:44:14.872721"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:44:14.853592"
+  "last_updated": "2026-04-03T12:44:14.872729"
 }
