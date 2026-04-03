@@ -72,9 +72,11 @@
         "format": "json"
       },
       "description": "Export investigation report",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-04-03T12:08:31.810100",
+      "result": "Report exported"
     }
   ],
-  "current_step": 5,
-  "last_updated": "2026-04-03T12:08:31.790906"
+  "current_step": 6,
+  "last_updated": "2026-04-03T12:08:31.810107"
 }
