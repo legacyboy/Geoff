@@ -1884,3 +1884,59 @@ This collection represents a diverse exploration of single-mechanic Tetris-inspi
 
 **Tetris DNA:** Falling blocks + wave frequency + resonance matching + harmonic clearing
 
+---
+
+### 329. **PEEL** — Layer Strip (2026-04-03 17:00 UTC)
+**Mechanic:** Blocks descend with 2-3 peelable layers. Swipe up before placing to "peel" off a layer, reducing the block's size to fit tight gaps. Each peel shrinks the block but also reduces its point value. Peel strategically to squeeze into impossible spaces, or keep layers intact for maximum scoring. Complete rows to "restore" all peeled blocks back to full layers.
+
+**Why it's addictive:**
+- Satisfying peel animation (layers separating like an onion)
+- "Just small enough" size optimization
+- Risk/reward: fit vs score
+- Emergency peel moments save the game
+- Restoration feels like renewal
+
+**Tetris DNA:** Falling blocks + layer removal + size manipulation + strategic peeling
+
+---
+
+### 330. **BOUNCE** — Trampoline Stack (2026-04-03 17:00 UTC)
+**Mechanic:** The playfield floor is a trampoline. Blocks don't stop on impact—they BOUNCE back up with momentum. Tap to "dampen" the bounce and settle the block, or let it bounce higher to reach upper gaps. Chain bounces to climb the stack vertically. Too many bounces without damping and the block escapes off-screen. Complete rows to "stabilize" the trampoline, reducing bounce height temporarily.
+
+**Why it's addictive:**
+- Satisfying trampoline physics (boing effect)
+- Vertical placement strategy
+- "Catch the bounce" timing
+- Escape tension creates urgency
+- Stabilization moments feel controlled
+
+**Tetris DNA:** Falling blocks + bounce physics + vertical placement + damping control
+
+---
+
+### 331. **GLIDE** — Air Drift (2026-04-03 17:30 UTC)
+**Mechanic:** Blocks don't fall straight down—they GLIDE through invisible air currents. Swipe left/right to steer the block as it drifts downward. Catch updrafts to slow descent; steer into downdrafts to speed up. Navigate around obstacles and thread through narrow gaps in the stack. Complete rows to "clear the air," removing all currents for 5 seconds of straight drops.
+
+**Why it's addictive:**
+- Satisfying air current physics (sailing-like drift)
+- Steering precision challenge
+- "Catch the updraft" timing moments
+- Current reading becomes a skill
+- Clear air moments feel liberating
+
+**Tetris DNA:** Falling blocks + air currents + steering control + draft navigation
+
+---
+
+### 332. **STICK** — Velcro Connect (2026-04-03 17:30 UTC)
+**Mechanic:** Blocks have velcro-like surfaces on specific sides. When velcro sides touch, they STICK permanently. Other sides are smooth and slide past each other. Rotate blocks so velcro faces the right direction to build rigid structures. Smooth sides allow for repositioning. Complete rows to "restick" all connections, reinforcing the entire stack.
+
+**Why it's addictive:**
+- Satisfying velcro "rip" sound when separating
+- Strategic side orientation puzzle
+- Building rigid vs flexible structures
+- "Will it stick?" anticipation
+- Restick moments solidify chaos
+
+**Tetris DNA:** Falling blocks + directional adhesion + velcro mechanics + structural planning
+

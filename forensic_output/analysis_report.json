@@ -1,0 +1,18 @@
+{
+  "disk_image": "--help",
+  "started": "2026-04-03T12:29:02.064497",
+  "steps": [
+    {
+      "tool": "mmls",
+      "disk": "--help",
+      "output": "Error: mmls: invalid option -- '-'\nUnknown argument\nusage: mmls [-i imgtype] [-b dev_sector_size] [-o imgoffset] [-BrvV] [-aAmM] [-t vstype] image [images]\n\t-t vstype: The type of volume system (use '-t list' for list of supported types)\n\t-i imgtype: The format of the image file (use '-i list' for list supported types)\n\t-b dev_sector_size: The size (in bytes) of the device sectors\n\t-o imgoffset: Offset to the start of the volume that contains the partition system (in sectors)\n\t-B: print the rounded length in bytes\n\t-r: recurse and look for other partition tables in partitions (DOS Only)\n\t-v: verbose output\n\t-V: print the version\nUnless any of these are specified, all volume types are shown\n\t-a: Show allocated volumes\n\t-A: Show unallocated volumes\n\t-m: Show metadata volumes\n\t-M: Hide metadata volumes\n",
+      "timestamp": "2026-04-03T12:29:02.081911"
+    },
+    {
+      "file": "--help",
+      "algorithm": "sha256",
+      "error": "[Errno 2] No such file or directory: '--help'",
+      "timestamp": "2026-04-03T12:29:02.081956"
+    }
+  ]
+}

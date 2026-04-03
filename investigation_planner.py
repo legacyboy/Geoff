@@ -121,7 +121,13 @@ class InvestigationPlanner:
         func_name = step['function']
         params = step.get('params', {})
         
-        # Import and run (simulated)
+        # Import forensic_tools if needed
+        if module_name == 'forensic_tools':
+            import forensic_tools
+            func = getattr(forensic_tools, func_name)
+            return func(**params)
+        
+        # Legacy mock modules (for backwards compatibility)
         if module_name == 'mft':
             if func_name == 'autopsy':
                 return f"Initialized MFT for {params.get('investigation_id', self.investigation_id)}"
