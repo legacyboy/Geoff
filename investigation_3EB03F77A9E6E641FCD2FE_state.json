@@ -34,7 +34,9 @@
         "expected_hash": "sha256:abc123..."
       },
       "description": "Verify evidence integrity",
-      "status": "pending"
+      "status": "completed",
+      "completed_at": "2026-04-03T12:08:31.752684",
+      "result": "Hash verified: /evidence/3EB03F77A9E6E641FCD2FE/disk.img"
     },
     {
       "index": 3,
@@ -69,6 +71,6 @@
       "status": "pending"
     }
   ],
-  "current_step": 2,
-  "last_updated": "2026-04-03T12:08:31.733912"
+  "current_step": 3,
+  "last_updated": "2026-04-03T12:08:31.752691"
 }
