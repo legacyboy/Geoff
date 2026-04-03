@@ -23,8 +23,19 @@
       "description": "Calculate SHA256 hash of disk image",
       "status": "pending",
       "added_at": "2026-04-03T12:30:39.818168"
+    },
+    {
+      "index": 2,
+      "module": "forensic_tools",
+      "function": "fls",
+      "params": {
+        "partition": "/tmp/nist_test_disk.dd"
+      },
+      "description": "List files in partition",
+      "status": "pending",
+      "added_at": "2026-04-03T12:30:39.835904"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T12:30:39.818177"
+  "last_updated": "2026-04-03T12:30:39.835911"
 }
