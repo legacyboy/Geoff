@@ -22,8 +22,19 @@
       "description": "Extract filesystem timeline",
       "status": "pending",
       "added_at": "2026-04-03T14:11:14.658594"
+    },
+    {
+      "index": 2,
+      "module": "forensic_tools",
+      "function": "carve_files",
+      "params": {
+        "image_path": "/home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence"
+      },
+      "description": "Carve deleted/recovered files",
+      "status": "pending",
+      "added_at": "2026-04-03T14:11:14.680376"
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T14:11:14.658608"
+  "last_updated": "2026-04-03T14:11:14.680388"
 }
