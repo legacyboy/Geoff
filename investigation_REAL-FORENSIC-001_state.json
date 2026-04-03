@@ -9,8 +9,15 @@
         "disk_image": "/tmp/nist_test_disk.dd"
       },
       "description": "Analyze partition table with SleuthKit mmls",
-      "status": "pending",
-      "added_at": "2026-04-03T12:30:39.799589"
+      "status": "completed",
+      "added_at": "2026-04-03T12:30:39.799589",
+      "completed_at": "2026-04-03T12:30:39.879423",
+      "result": {
+        "tool": "mmls",
+        "disk": "/tmp/nist_test_disk.dd",
+        "output": "Error: ",
+        "timestamp": "2026-04-03T12:30:39.879415"
+      }
     },
     {
       "index": 1,
@@ -48,6 +55,6 @@
       "added_at": "2026-04-03T12:30:39.854349"
     }
   ],
-  "current_step": 0,
-  "last_updated": "2026-04-03T12:30:39.854357"
+  "current_step": 1,
+  "last_updated": "2026-04-03T12:30:39.879426"
 }
