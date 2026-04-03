@@ -1,0 +1,18 @@
+{
+  "investigation_id": "REAL-FORENSIC-001",
+  "steps": [
+    {
+      "index": 0,
+      "module": "forensic_tools",
+      "function": "mmls",
+      "params": {
+        "disk_image": "/tmp/nist_test_disk.dd"
+      },
+      "description": "Analyze partition table with SleuthKit mmls",
+      "status": "pending",
+      "added_at": "2026-04-03T12:30:39.799589"
+    }
+  ],
+  "current_step": 0,
+  "last_updated": "2026-04-03T12:30:39.799594"
+}
