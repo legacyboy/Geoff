@@ -1,0 +1,53 @@
+{
+  "analysis": {
+    "actors": [],
+    "ttps": [
+      "persistence",
+      "execution",
+      "privilege escalation",
+      "lateral movement",
+      "exfiltration"
+    ],
+    "tools": [
+      "CurrentControlSet",
+      "Shadow Copy deletion",
+      "Shadow copy deletion"
+    ],
+    "indicators": [],
+    "mitre_mappings": [],
+    "extracted_at": "2026-04-03T14:19:45.514278"
+  },
+  "timeline": [
+    {
+      "phase": "Execution",
+      "tactic": "execution",
+      "tools": [],
+      "mitre_techniques": []
+    },
+    {
+      "phase": "Persistence",
+      "tactic": "persistence",
+      "tools": [],
+      "mitre_techniques": []
+    },
+    {
+      "phase": "Privilege Escalation",
+      "tactic": "privilege escalation",
+      "tools": [],
+      "mitre_techniques": []
+    },
+    {
+      "phase": "Lateral Movement",
+      "tactic": "lateral movement",
+      "tools": [],
+      "mitre_techniques": []
+    },
+    {
+      "phase": "Exfiltration",
+      "tactic": "exfiltration",
+      "tools": [],
+      "mitre_techniques": []
+    }
+  ],
+  "generated_at": "2026-04-03T14:19:45.515396"
+}

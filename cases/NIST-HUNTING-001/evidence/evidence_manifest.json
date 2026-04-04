@@ -1,0 +1,23 @@
+{
+  "case_id": "NIST-HUNTING-001",
+  "title": "NIST Cyber Threat Hunting Investigation",
+  "description": "Analysis of threat taxonomy and TTPs from cyber threat data",
+  "evidence_items": [
+    {
+      "id": "EVIDENCE-001",
+      "type": "threat_taxonomy",
+      "path": "/home/claw/.openclaw/workspace/forensics/threat_taxonomy.md",
+      "description": "Cyber threat actor taxonomy and TTPs",
+      "hash": "pending"
+    },
+    {
+      "id": "EVIDENCE-002", 
+      "type": "investigation_logs",
+      "path": "/home/claw/.openclaw/workspace/cases/NIST-HUNTING-001/logs/",
+      "description": "Investigation activity logs"
+    }
+  ],
+  "investigator": "Geoff",
+  "start_time": "2026-04-03T19:15:00Z",
+  "status": "in_progress"
+}

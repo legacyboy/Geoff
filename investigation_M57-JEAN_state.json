@@ -9,8 +9,9 @@
         "image_path": "/home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence"
       },
       "description": "Analyze disk image: /home/claw/.openclaw/workspace/sans-challenge/M57-Jean/Evidence",
-      "status": "pending",
-      "added_at": "2026-04-03T14:11:14.620092"
+      "status": "failed",
+      "added_at": "2026-04-03T14:11:14.620092",
+      "error": "module 'forensic_tools' has no attribute 'analyze_image'"
     },
     {
       "index": 1,
@@ -36,5 +37,5 @@
     }
   ],
   "current_step": 0,
-  "last_updated": "2026-04-03T14:11:14.680388"
+  "last_updated": "2026-04-03T14:12:06.913269"
 }

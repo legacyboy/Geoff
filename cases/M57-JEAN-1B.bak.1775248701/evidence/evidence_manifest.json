@@ -1,0 +1,38 @@
+{
+  "case_id": "M57-JEAN-1B",
+  "title": "M57-Jean Corporate Espionage Investigation",
+  "scenario": "Corporate data exfiltration from senior executive laptop",
+  "background": "Confidential employee salary spreadsheet leaked to competitor. Only existed on Jean's laptop.",
+  "objectives": [
+    "Determine how data was stolen",
+    "Identify evidence of exfiltration",
+    "Assess if Jean was hacked or complicit",
+    "Timeline reconstruction of events"
+  ],
+  "suspects": [
+    {
+      "name": "Jean",
+      "role": "Senior Executive, M57.Biz",
+      "claim": "Hacked - no knowledge of data theft"
+    }
+  ],
+  "evidence_items": [
+    {
+      "id": "EVIDENCE-001",
+      "type": "disk_image",
+      "name": "nps-2008-jean.E01",
+      "description": "Jean's laptop disk image (EnCase format)",
+      "location": "To be downloaded",
+      "status": "pending"
+    }
+  ],
+  "investigator": "Geoff",
+  "start_time": "2026-04-03T19:24:00Z",
+  "status": "in_progress",
+  "priority": "HIGH",
+  "indicators": [
+    "Confidential spreadsheet exfiltration",
+    "Employee salary data breach",
+    "Competitor website posting"
+  ]
+}

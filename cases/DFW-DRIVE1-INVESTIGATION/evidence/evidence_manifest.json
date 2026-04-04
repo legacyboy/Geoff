@@ -1,0 +1,27 @@
+{
+  "case_id": "DFW-DRIVE1-INVESTIGATION",
+  "title": "Digital Forensics Workbook - Drive 1 Investigation",
+  "description": "Forensic analysis of drive1.E01 from Digital Forensics Workbook Chapter 4",
+  "source": "http://www.digitalforensicsworkbook.com/data-sets",
+  "evidence_items": [
+    {
+      "id": "EVIDENCE-001",
+      "type": "disk_image",
+      "name": "drive1.E01",
+      "description": "Chapter 4 forensic disk image",
+      "md5": "2ccfa510ee28712b01544594f4fad721",
+      "sha1": "2baa0524e34a684e615061829b21d6b33cd906f8",
+      "download_url": "http://www.digitalforensicsworkbook.com/drive1.E01",
+      "status": "pending_download"
+    }
+  ],
+  "investigator": "Geoff",
+  "start_time": "2026-04-03T19:26:00Z",
+  "status": "pending_evidence",
+  "objectives": [
+    "Verify evidence integrity",
+    "Analyze file system",
+    "Extract artifacts",
+    "Generate findings report"
+  ]
+}

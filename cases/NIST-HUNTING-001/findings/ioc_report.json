@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-04-03T14:19:45.537049",
+  "total_iocs": 2,
+  "by_type": {
+    "hashes": 0,
+    "ips": 0,
+    "domains": 2,
+    "urls": 0,
+    "emails": 0,
+    "file_paths": 0,
+    "registry_keys": 0,
+    "mutant_names": 0,
+    "mutexes": 0
+  },
+  "by_severity": {
+    "critical": 0,
+    "high": 2,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "critical_iocs": [],
+  "high_iocs": [
+    {
+      "type": "domain",
+      "value": "ntuser.dat",
+      "reason": "observed_domain"
+    },
+    {
+      "type": "domain",
+      "value": "setupapi.log",
+      "reason": "observed_domain"
+    }
+  ],
+  "all_iocs": {
+    "hashes": [],
+    "ips": [],
+    "domains": [
+      {
+        "value": "ntuser.dat",
+        "ioc_type": "domain"
+      },
+      {
+        "value": "setupapi.log",
+        "ioc_type": "domain"
+      }
+    ],
+    "urls": [],
+    "emails": [],
+    "file_paths": [],
+    "registry_keys": [],
+    "mutant_names": [],
+    "mutexes": []
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "case_id": "SYNTHETIC-BREACH-2024",
+  "title": "Web Server Data Breach Investigation",
+  "description": "Company web server suspected breach - customer data exfiltrated",
+  "incident_date": "2024-04-01",
+  "investigator": "Geoff",
+  "start_time": "2026-04-03T19:30:00Z",
+  "status": "in_progress",
+  "evidence_items": [
+    {
+      "id": "EVIDENCE-001",
+      "type": "auth_logs",
+      "path": "/logs/auth.log",
+      "description": "SSH authentication logs showing suspicious login patterns"
+    },
+    {
+      "id": "EVIDENCE-002",
+      "type": "web_logs",
+      "path": "/logs/apache_access.log",
+      "description": "Apache access logs showing large data exports"
+    },
+    {
+      "id": "EVIDENCE-003",
+      "type": "bash_history",
+      "path": "/files/bash_history",
+      "description": "Bash history from compromised backup_svc account"
+    }
+  ],
+  "questions": [
+    "How did the attacker gain initial access?",
+    "What data was exfiltrated?",
+    "What is the attacker's infrastructure?",
+    "What user accounts were compromised?",
+    "Timeline of the breach"
+  ]
+}

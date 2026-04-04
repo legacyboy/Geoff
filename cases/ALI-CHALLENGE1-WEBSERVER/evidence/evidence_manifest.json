@@ -1,0 +1,36 @@
+{
+  "case_id": "ALI-CHALLENGE1-WEBSERVER",
+  "title": "Ali Hadi DFIR Challenge #1 - Web Server Breach",
+  "description": "A company's web server has been breached through their website. System image and memory dump available for analysis.",
+  "source": "https://www.ashemery.com/dfir.html",
+  "investigator": "Geoff",
+  "start_time": "2026-04-03T19:27:00Z",
+  "status": "pending_evidence",
+  "objectives": [
+    "Identify attack type(s) performed",
+    "Find added user accounts",
+    "Locate attacker artifacts and tools",
+    "Identify installed software",
+    "Analyze shellcode via memory forensics",
+    "Create timeline of events",
+    "Formulate case hypothesis"
+  ],
+  "evidence_items": [
+    {
+      "id": "EVIDENCE-001",
+      "type": "system_image",
+      "name": "webserver_image",
+      "description": "Forensic image of compromised web server",
+      "download_url": "https://archive.org/download/ali-dfir-challenge1",
+      "status": "pending_download"
+    },
+    {
+      "id": "EVIDENCE-002",
+      "type": "memory_dump",
+      "name": "webserver_memory",
+      "description": "Memory dump of running system at time of breach",
+      "download_url": "https://archive.org/download/ali-dfir-challenge1",
+      "status": "pending_download"
+    }
+  ]
+}

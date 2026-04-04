@@ -1,0 +1,5 @@
+# STIX 2.1 IOC Export
+# Generated: 2026-04-03T14:19:45.537257
+
+domain,ntuser.dat,high
+domain,setupapi.log,high

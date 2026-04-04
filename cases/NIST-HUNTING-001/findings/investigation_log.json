@@ -1,0 +1,30 @@
+{
+  "case_id": "NIST-HUNTING-001",
+  "title": "NIST Cyber Threat Hunting Investigation",
+  "started_at": "2026-04-03T14:19:45.460498",
+  "investigator": "Geoff",
+  "steps": [
+    {
+      "step": 1,
+      "name": "Evidence Collection & Verification",
+      "status": "completed",
+      "timestamp": "2026-04-03T14:19:45.498004",
+      "output": ""
+    },
+    {
+      "step": 2,
+      "name": "Threat Taxonomy Analysis",
+      "status": "completed",
+      "timestamp": "2026-04-03T14:19:45.517935",
+      "output": "[ANALYZING] Threat taxonomy: /home/claw/.openclaw/workspace/forensics/threat_taxonomy.md\n\n[RESULTS]\n  Tools identified: 3\n  TTPs found: 5\n  MITRE mappings: 0\n  Indicators: 0\n\n[THREAT TIMELINE]\n  1. Execution\n  2. Persistence\n  3. Privilege Escalation\n  4. Lateral Movement\n  5. Exfiltration\n\n[SAVED] Analysis written to: /home/claw/.openclaw/workspace/cases/NIST-HUNTING-001/findings/threat_analysis.json\n"
+    },
+    {
+      "step": 3,
+      "name": "IOC Extraction & Classification",
+      "status": "completed",
+      "timestamp": "2026-04-03T14:19:45.539891",
+      "output": "[EXTRACTING] IOCs from: /home/claw/.openclaw/workspace/forensics/threat_taxonomy.md\n\n[IOC SUMMARY]\n  domains: 2\n\n[CLASSIFICATION]\n  HIGH: 2 IOCs\n    - domain: ntuser.dat...\n    - domain: setupapi.log...\n\n[SAVED] IOC report: /home/claw/.openclaw/workspace/cases/NIST-HUNTING-001/findings/ioc_report.json\n[SAVED] STIX format: /home/claw/.openclaw/workspace/cases/NIST-HUNTING-001/findings/iocs.stix\n"
+    }
+  ],
+  "completed_at": "2026-04-03T14:19:45.539897"
+}

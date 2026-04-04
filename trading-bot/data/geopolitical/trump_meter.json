@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-03T17:08:44.490782+00:00",
+  "timestamp": "2026-04-03T21:11:44.190213+00:00",
   "trump_meter": 8.2,
   "level": "MAXIMUM CHAOS",
   "description": "Peak Trump activity. Major policy announcements or conflicts.",
@@ -12,7 +12,7 @@
     "market_tweets": 1.7,
     "geopolitical_comments": 1.5
   },
-  "last_updated": "2026-04-03T17:08:44.490790+00:00",
+  "last_updated": "2026-04-03T21:11:44.190221+00:00",
   "history": [
     {
       "timestamp": "2026-04-01T00:47:43.477046+00:00",
@@ -271,6 +271,21 @@
     },
     {
       "timestamp": "2026-04-03T17:08:44.490782+00:00",
+      "meter": 8.2,
+      "level": "MAXIMUM CHAOS"
+    },
+    {
+      "timestamp": "2026-04-03T19:09:38.260682+00:00",
+      "meter": 8.2,
+      "level": "MAXIMUM CHAOS"
+    },
+    {
+      "timestamp": "2026-04-03T20:12:23.347524+00:00",
+      "meter": 8.2,
+      "level": "MAXIMUM CHAOS"
+    },
+    {
+      "timestamp": "2026-04-03T21:11:44.190213+00:00",
       "meter": 8.2,
       "level": "MAXIMUM CHAOS"
     }

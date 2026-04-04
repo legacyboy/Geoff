@@ -1,55 +1,60 @@
 {
-  "timestamp": "2026-04-03T15:26:12.667432+00:00",
+  "timestamp": "2026-04-03T21:00:10.126674+00:00",
   "summary": {
     "threat_level": "CRITICAL",
-    "primary_risk": "Iran war: India\u2019s Qatar LNG imports crash 93%, triggering supply scramble, price spike",
-    "secondary_risk": "War Helps Boost an African Nation\u2019s Gas Price Over $14 a Gallon",
+    "primary_risk": "Stocks Bounce Back From Early Losses",
+    "secondary_risk": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
     "market_impact": "Elevated",
-    "last_updated": "2026-04-03T15:26:12.667435+00:00",
+    "last_updated": "2026-04-03T21:00:10.126677+00:00",
     "data_source": "NewsAPI (Live)"
   },
   "key_events": [
     {
-      "event": "Iran war: India\u2019s Qatar LNG imports crash 93%, triggering supply scramble, price spike",
+      "event": "Stocks Bounce Back From Early Losses",
       "source": "NewsAPI",
       "impact": "See details in full report"
     },
     {
-      "event": "War Helps Boost an African Nation\u2019s Gas Price Over $14 a Gallon",
+      "event": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
       "source": "NewsAPI",
       "impact": "See details in full report"
     },
     {
-      "event": "ONE SHEET: Trump\u2019s Speech Falls Flat, NBC and MS NOW\u2019s Talent War, and Liberation Day at One",
+      "event": "US Burned 14 Years of Missiles in 30 Days",
+      "source": "NewsAPI",
+      "impact": "See details in full report"
+    },
+    {
+      "event": "Trump\u2019s Updated 'Special Book': More Attacks on Digital, Climate, and Health Policies | Common Dreams",
       "source": "NewsAPI",
       "impact": "See details in full report"
     }
   ],
   "recent_articles": [
     {
-      "title": "Iran war: India\u2019s Qatar LNG imports crash 93%, triggering supply scramble, price spike",
-      "source": "Livemint",
+      "title": "\u201cIt\u2019s a New World. It\u2019s the Same Constitution.\u201d",
+      "source": "Slate Magazine",
       "category": "Oil & Energy"
     },
     {
-      "title": "Top 5 High-Yield ASX 200 Dividend Stocks April 2026 Offer Income Amid RBA Rate Volatility",
-      "source": "Ibtimes.com.au",
+      "title": "Stocks Bounce Back From Early Losses",
+      "source": "Newser",
       "category": "Oil & Energy"
     },
     {
-      "title": "Pain at the gas pumps? That's nothing compared to the damage this fuel shock can do",
-      "source": "Financial Post",
+      "title": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
+      "source": "CNBC",
       "category": "Oil & Energy"
     },
     {
-      "title": "War Helps Boost an African Nation\u2019s Gas Price Over $14 a Gallon",
-      "source": "Financial Post",
+      "title": "High Gas Prices? No Worries, Just Use More Ethanol",
+      "source": "CleanTechnica",
       "category": "Oil & Energy"
     },
     {
-      "title": "ONE SHEET: Trump\u2019s Speech Falls Flat, NBC and MS NOW\u2019s Talent War, and Liberation Day at One",
-      "source": "Mediaite",
-      "category": "Trump & Trade"
+      "title": "US Burned 14 Years of Missiles in 30 Days",
+      "source": "Trendytechtribe.com",
+      "category": "Oil & Energy"
     }
   ],
   "trading_implications": {

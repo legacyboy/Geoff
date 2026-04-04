@@ -1,0 +1,13 @@
+192.168.1.100 - - [01/Apr/2024:08:20:11 +0000] "GET /login HTTP/1.1" 200 4523
+192.168.1.100 - admin [01/Apr/2024:08:23:46 +0000] "POST /login HTTP/1.1" 302 -
+192.168.1.100 - admin [01/Apr/2024:08:24:12 +0000] "GET /dashboard HTTP/1.1" 200 8921
+10.0.0.50 - - [01/Apr/2024:09:15:10 +0000] "GET /admin/config HTTP/1.1" 401 412
+10.0.0.50 - - [01/Apr/2024:09:15:15 +0000] "GET /admin/config HTTP/1.1" 401 412
+10.0.0.50 - - [01/Apr/2024:09:15:20 +0000] "GET /admin/config HTTP/1.1" 401 412
+10.0.0.50 - admin [01/Apr/2024:09:16:05 +0000] "GET /admin/config HTTP/1.1" 200 3421
+10.0.0.50 - admin [01/Apr/2024:09:16:45 +0000] "POST /admin/users/add HTTP/1.1" 200 89
+10.0.0.50 - admin [01/Apr/2024:09:17:50 +0000] "POST /admin/users/add HTTP/1.1" 200 89
+10.0.0.50 - backup_svc [01/Apr/2024:09:45:15 +0000] "GET /api/data/export HTTP/1.1" 200 104857600
+185.220.101.47 - backup_svc [01/Apr/2024:10:02:25 +0000] "POST /upload HTTP/1.1" 200 256
+185.220.101.47 - backup_svc [01/Apr/2024:10:15:40 +0000] "GET /api/data/customers HTTP/1.1" 200 52428800
+185.220.101.47 - backup_svc [01/Apr/2024:10:22:50 +0000] "POST /upload/large HTTP/1.1" 200 128
