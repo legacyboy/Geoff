@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+set timeout 60
+set user "fabht"
+set password "fabht"
+set ip "127.0.0.1"
+set port "2223"
+
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "ps aux | grep gclient | grep -v grep; df -h ~/chromium"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

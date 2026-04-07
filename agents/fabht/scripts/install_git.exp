@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+set timeout 60
+set user "fabht"
+set password "fabht"
+set ip "127.0.0.1"
+set port "2223"
+
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "echo 'fabht' | sudo -S apt-get update && echo 'fabht' | sudo -S apt-get install -y git"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

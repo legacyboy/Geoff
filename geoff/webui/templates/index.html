@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geoff - Digital Forensics Investigator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #58a6ff;
+            font-size: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1::before {
+            content: "🔍";
+        }
+
+        .subtitle {
+            color: #8b949e;
+            margin-top: 5px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .panel h2 {
+            font-size: 1rem;
+            color: #f0f6fc;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel h2::before {
+            content: "⚙️";
+        }
+
+        .panel.config h2::before { content: "⚙️"; }
+        .panel.upload h2::before { content: "📁"; }
+        .panel.cases h2::before { content: "📋"; }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: #8b949e;
+            margin-bottom: 5px;
+        }
+
+        input[type="text"],
+        input[type="url"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 0.9rem;
+        }
+
+        input[type="file"] {
+            padding: 6px;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #238636;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2ea043;
+        }
+
+        button.secondary {
+            background: #1f6feb;
+        }
+
+        button.secondary:hover {
+            background: #388bfd;
+        }
+
+        button:disabled {
+            background: #484f58;
+            cursor: not-allowed;
+        }
+
+        .upload-area {
+            border: 2px dashed #30363d;
+            border-radius: 6px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .upload-area:hover {
+            border-color: #58a6ff;
+        }
+
+        .upload-area.dragover {
+            border-color: #58a6ff;
+            background: rgba(88, 166, 255, 0.1);
+        }
+
+        .upload-area p {
+            color: #8b949e;
+            font-size: 0.9rem;
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .chat-container {
+            flex: 1;
+            min-height: 400px;
+        }
+
+        .chat-messages {
+            height: 400px;
+            overflow-y: auto;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background: #1f6feb;
+            margin-left: auto;
+            color: white;
+        }
+
+        .message.geoff {
+            background: #21262d;
+            border: 1px solid #30363d;
+        }
+
+        .message .sender {
+            font-size: 0.75rem;
+            color: #8b949e;
+            margin-bottom: 5px;
+        }
+
+        .message.user .sender {
+            color: rgba(255,255,255,0.7);
+        }
+
+        .chat-input {
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input input {
+            flex: 1;
+        }
+
+        .case-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .case-item {
+            padding: 10px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .case-item:hover {
+            border-color: #58a6ff;
+        }
+
+        .case-item.active {
+            border-color: #238636;
+        }
+
+        .case-item .case-id {
+            font-weight: 500;
+            color: #f0f6fc;
+        }
+
+        .case-item .case-status {
+            font-size: 0.8rem;
+            color: #8b949e;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: #30363d;
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .progress-bar .fill {
+            height: 100%;
+            background: #238636;
+            transition: width 0.3s;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-badge.active {
+            background: rgba(35, 134, 54, 0.2);
+            color: #3fb950;
+        }
+
+        .status-badge.completed {
+            background: rgba(88, 166, 255, 0.2);
+            color: #58a6ff;
+        }
+
+        .status-badge.pending {
+            background: rgba(139, 148, 158, 0.2);
+            color: #8b949e;
+        }
+
+        .findings-panel {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .finding-item {
+            padding: 10px;
+            border-bottom: 1px solid #30363d;
+            cursor: pointer;
+        }
+
+        .finding-item:hover {
+            background: #0d1117;
+        }
+
+        .finding-item:last-child {
+            border-bottom: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #8b949e;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .tab.active {
+            background: #238636;
+            border-color: #238636;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .evidence-path {
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #8b949e;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Geoff</h1>
+            <p class="subtitle">Autonomous Digital Forensics Investigator</p>
+        </header>
+
+        <div class="grid">
+            <div class="sidebar">
+                <!-- Configuration Panel -->
+                <div class="panel config">
+                    <h2>Configuration</h2>
+                    <div class="form-group">
+                        <label>Ollama Host</label>
+                        <input type="url" id="ollamaHost" value="{{ config.ollama_host }}" placeholder="http://localhost:11434">
+                    </div>
+                    <div class="form-group">
+                        <label>Cloud Ollama URL (optional)</label>
+                        <input type="url" id="cloudOllama" value="{{ config.cloud_ollama or '' }}" placeholder="https://ollama.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Default Model</label>
+                        <select id="defaultModel">
+                            <option value="deepseek-v3.2:cloud" {% if config.default_model == 'deepseek-v3.2:cloud' %}selected{% endif %}>DeepSeek V3.2 (Cloud)</option>
+                            <option value="gemma3.4:cloud" {% if config.default_model == 'gemma3.4:cloud' %}selected{% endif %}>Gemma 3.4 (Cloud)</option>
+                            <option value="llama3.1:8b" {% if config.default_model == 'llama3.1:8b' %}selected{% endif %}>Llama 3.1 8B (Local)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Evidence Storage Path</label>
+                        <input type="text" id="evidencePath" value="{{ config.evidence_path }}" placeholder="/path/to/evidence">
+                    </div>
+                    <button onclick="saveConfig()">Save Configuration</button>
+                </div>
+
+                <!-- Upload Panel -->
+                <div class="panel upload">
+                    <h2>Upload Evidence</h2>
+                    <div class="upload-area" id="uploadArea">
+                        <p>Drag & drop files here<br>or click to browse</p>
+                        <input type="file" id="fileInput" style="display: none;" multiple>
+                    </div>
+                    <div class="evidence-path" id="uploadStatus">
+                        No files uploaded
+                    </div>
+                </div>
+
+                <!-- Cases Panel -->
+                <div class="panel cases">
+                    <h2>Investigations</h2>
+                    <div class="case-list" id="caseList">
+                        <div class="empty-state">No investigations yet</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="main-content">
+                <!-- Chat Panel -->
+                <div class="panel chat-container">
+                    <div class="tabs">
+                        <div class="tab active" onclick="switchTab('chat')">Chat</div>
+                        <div class="tab" onclick="switchTab('findings')">Findings</div>
+                        <div class="tab" onclick="switchTab('status')">Status</div>
+                    </div>
+
+                    <div class="tab-content active" id="chatTab">
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="message geoff">
+                                <div class="sender">Geoff</div>
+                                <div class="content">Hello! I'm Geoff, your digital forensics investigator. Upload evidence or start a new investigation to begin.</div>
+                            </div>
+                        </div>
+                        <div class="chat-input">
+                            <input type="text" id="chatInput" placeholder="Type your message..." onkeypress="if(event.key==='Enter')sendMessage()">
+                            <button onclick="sendMessage()">Send</button>
+                        </div>
+                    </div>
+
+                    <div class="tab-content" id="findingsTab">
+                        <div class="findings-panel" id="findingsPanel">
+                            <div class="empty-state">No findings yet. Start an investigation to see results.</div>
+                        </div>
+                    </div>
+
+                    <div class="tab-content" id="statusTab">
+                        <div id="statusPanel">
+                            <div class="empty-state">Select an investigation to view status</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentCase = null;
+        let uploadedFiles = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadCases();
+            setupUpload();
+        });
+
+        // Configuration
+        async function saveConfig() {
+            const config = {
+                ollama_host: document.getElementById('ollamaHost').value,
+                cloud_ollama: document.getElementById('cloudOllama').value || null,
+                default_model: document.getElementById('defaultModel').value,
+                evidence_path: document.getElementById('evidencePath').value
+            };
+
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    addMessage('system', 'Configuration saved successfully');
+                }
+            } catch (err) {
+                addMessage('system', 'Error saving configuration: ' + err.message);
+            }
+        }
+
+        // Upload handling
+        function setupUpload() {
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+
+            uploadArea.addEventListener('click', () => fileInput.click());
+            
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                handleFiles(e.dataTransfer.files);
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+        }
+
+        async function handleFiles(files) {
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append('file', file);
+            }
+            if (currentCase) {
+                formData.append('case_id', currentCase);
+            }
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    uploadedFiles.push(data);
+                    document.getElementById('uploadStatus').innerHTML = 
+                        `Uploaded: ${data.filename} (${formatBytes(data.size)})<br>Case ID: ${data.case_id}`;
+                    currentCase = data.case_id;
+                    addMessage('system', `Evidence uploaded: ${data.filename}`);
+                    addMessage('geoff', `Case ${data.case_id} created. Ready to begin investigation.`);
+                    loadCases();
+                }
+            } catch (err) {
+                addMessage('system', 'Upload error: ' + err.message);
+            }
+        }
+
+        // Chat
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage('user', message);
+            input.value = '';
+
+            if (!currentCase) {
+                addMessage('geoff', 'Please upload evidence first to create a case.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, case_id: currentCase })
+                });
+                const data = await response.json();
+                addMessage('geoff', data.message);
+            } catch (err) {
+                addMessage('system', 'Error: ' + err.message);
+            }
+        }
+
+        function addMessage(sender, content) {
+            const container = document.getElementById('chatMessages');
+            const div = document.createElement('div');
+            div.className = `message ${sender}`;
+            div.innerHTML = `<div class="sender">${sender === 'user' ? 'You' : sender === 'system' ? 'System' : 'Geoff'}</div><div class="content">${content}</div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Cases
+        async function loadCases() {
+            try {
+                const response = await fetch('/api/cases');
+                const cases = await response.json();
+                const container = document.getElementById('caseList');
+                
+                if (cases.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No investigations yet</div>';
+                    return;
+                }
+
+                container.innerHTML = cases.map(c => `
+                    <div class="case-item ${c.id === currentCase ? 'active' : ''}" onclick="selectCase('${c.id}')">
+                        <div class="case-id">${c.id}</div>
+                        <div class="case-status">
+                            <span class="status-badge ${c.status}">${c.status}</span>
+                            ${c.progress}% complete
+                        </div>
+                        <div class="progress-bar">
+                            <div class="fill" style="width: ${c.progress}%"></div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Error loading cases:', err);
+            }
+        }
+
+        async function selectCase(caseId) {
+            currentCase = caseId;
+            document.querySelectorAll('.case-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            
+            try {
+                const response = await fetch(`/api/cases/${caseId}`);
+                const data = await response.json();
+                
+                // Update findings tab
+                const findingsPanel = document.getElementById('findingsPanel');
+                if (data.findings.length === 0) {
+                    findingsPanel.innerHTML = '<div class="empty-state">No findings yet</div>';
+                } else {
+                    findingsPanel.innerHTML = data.findings.map(f => `
+                        <div class="finding-item" onclick="viewFinding('${caseId}', '${f}')">
+                            📄 ${f}
+                        </div>
+                    `).join('');
+                }
+
+                // Update status tab
+                const statusPanel = document.getElementById('statusPanel');
+                const completed = data.state.steps.filter(s => s.completed).length;
+                statusPanel.innerHTML = `
+                    <h3>Case: ${caseId}</h3>
+                    <p>Status: <span class="status-badge ${data.state.status}">${data.state.status}</span></p>
+                    <p>Progress: ${completed}/${data.state.steps.length} steps (${data.state.progress_pct}%)</p>
+                    <p>Last Updated: ${data.state.last_updated}</p>
+                    <h4 style="margin-top: 15px;">Steps:</h4>
+                    ${data.state.steps.map(s => `
+                        <div style="padding: 8px; border-bottom: 1px solid #30363d;">
+                            ${s.completed ? '✓' : '○'} ${s.description}
+                        </div>
+                    `).join('')}
+                `;
+
+                addMessage('system', `Switched to case: ${caseId}`);
+            } catch (err) {
+                addMessage('system', 'Error loading case: ' + err.message);
+            }
+        }
+
+        async function viewFinding(caseId, filename) {
+            window.open(`/api/cases/${caseId}/findings/${filename}`, '_blank');
+        }
+
+        // Tabs
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        // Utils
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Refresh cases periodically
+        setInterval(loadCases, 30000);
+    </script>
+</body>
+</html>

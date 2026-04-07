@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+set timeout 3600
+set user "fabht"
+set password "fabht"
+set ip "127.0.0.1"
+set port "2223"
+
+# 1. Install depot_tools
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "mkdir -p ~/depot_tools && git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git ~/depot_tools && echo 'export PATH=\$PATH:~/depot_tools' >> ~/.bashrc"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof
+
+# 2. Run fetch chromium in the background using nohup
+# I use bash -c to ensure the PATH is correctly exported for the nohup command
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash -c 'export PATH=\$PATH:~/depot_tools && mkdir -p ~/chromium && cd ~/chromium && nohup fetch chromium > sync_log.txt 2>&1 & echo Process started'"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+set timeout 1800
+set user "fabht"
+set password "fabht"
+set ip "127.0.0.1"
+set port "2223"
+
+# Install GDB, LLDB, and RR
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "echo 'fabht' | sudo -S apt-get update && echo 'fabht' | sudo -S apt-get install -y gdb lldb rr python3-pip"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof
+
+# Install Volatility 3
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "pip3 install volatility3"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

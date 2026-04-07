@@ -1,0 +1,28 @@
+#!/usr/bin/expect -f
+set timeout 1200
+set user "fabht"
+set password "fabht"
+set ip "127.0.0.1"
+set port "2223"
+set script_path "/home/claw/.openclaw/workspace/agents/fabht/scripts/setup_vm_base.sh"
+set remote_path "/tmp/setup_vm_base.sh"
+
+# 1. Transfer the script
+spawn scp -o "StrictHostKeyChecking=no" -P $port $script_path $user@$ip:$remote_path
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof
+
+# 2. Execute the script
+# Use a double-quote around the command to ensure it's sent as one string
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "chmod +x $remote_path && sudo -S $remote_path"
+expect {
+    "*password:*" { send "$password\r" }
+    "*password for $user:*" { send "$password\r" }
+}
+# The sudo -S command will prompt for the password immediately after ssh login
+expect {
+    "*password for $user:*" { send "$password\r" }
+}
+expect eof
