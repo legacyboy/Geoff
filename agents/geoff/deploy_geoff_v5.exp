@@ -1,0 +1,48 @@
+#!/usr/bin/expect -f
+set timeout 1200
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# Step 1: Write the setup script using a simple here-doc a bit more carefully
+# We will split the script into smaller chunks or use a more robust method
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "cat > ~/setup-geoff.sh"
+expect {
+    "*password:*" { send "$password\r" }
+}
+
+send "#!/bin/bash\n"
+send "echo \"=== STARTING GEOFF DEPLOYMENT ===\"\n"
+send "sudo apt-get update -y\n"
+send "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\n"
+send "sudo apt-get install -y nodejs git curl\n"
+send "curl -fsSL https://ollama.com/install.sh | sh\n"
+send "npm install -g openclaw\n"
+send "mkdir -p ~/.geoff/ui ~/.geoff/evidence\n"
+send "sudo ln -sf /media/sf_evidence ~/geoff-evidence\n"
+send "sudo usermod -a -G vboxsf \$USER\n"
+send "mkdir -p ~/geoff_playbooks\n"
+send "cd ~/geoff_playbooks\n"
+send "rm -rf .git\n"
+send "git clone ~/geoff_playbooks.git .\n"
+send "cat > ~/.geoff/start.sh << 'EOF_S'\n"
+send "#!/bin/bash\n"
+send "export PATH=\"\$HOME/.npm-global/bin:\$HOME/.local/bin:\$PATH\"\n"
+send "nohup node -e \"const http = require('http'); http.createServer((req, res) => { res.writeHead(200); res.end('Geoff Engine Active'); }).listen(8080, () => console.log('Geoff Server running on 8080'));\" > /tmp/geoff-ui.log 2>&1 &\n"
+send "echo \"Geoff Engine started on http://localhost:8080\"\n"
+send "EOF_S\n"
+send "chmod +x ~/.geoff/start.sh\n"
+send "~/.geoff/start.sh\n"
+send "echo \"=== DEPLOYMENT COMPLETE ===\"\n"
+send "\x04" 
+expect eof
+
+# Step 2: Execute the script
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash ~/setup-geoff.sh"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect {
+    "=== DEPLOYMENT COMPLETE ==="
+}

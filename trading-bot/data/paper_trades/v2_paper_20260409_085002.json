@@ -1,0 +1,12 @@
+{
+  "time": "2026-04-09T08:50:02.520692",
+  "instrument": "WTICO_USD",
+  "asset_name": "WTI Crude Oil",
+  "units": 16,
+  "side": "buy",
+  "price": 100.503,
+  "status": "paper_filled",
+  "atr": 0.6069610714285726,
+  "stop_loss": 99.91103892857143,
+  "take_profit": 101.73192214285714
+}

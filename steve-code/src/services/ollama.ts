@@ -23,10 +23,7 @@ export interface OllamaResponse {
 }
 
 export class OllamaService {
-  private baseUrl: string;
-
-  constructor(baseUrl: string = 'http://localhost:11434') {
-    this.baseUrl = baseUrl;
+  constructor(public baseUrl: string = 'http://localhost:11434') {
   }
 
   async *chat(options: OllamaOptions): AsyncGenerator<string, void, unknown> {

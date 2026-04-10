@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+set timeout 1200
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# Step 1: SCP
+spawn scp -P $port -o "StrictHostKeyChecking=no" /home/claw/.openclaw/workspace/agents/geoff/deploy_geoff.sh $user@$ip:~/deploy_geoff.sh
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect {
+    -re ".*100%.*" 
+}
+# Instead of eof, we just wait for the command to complete
+sleep 2
+
+# Step 2: SSH
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash ~/deploy_geoff.sh"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect {
+    "=== DEPLOYMENT COMPLETE ==="
+}

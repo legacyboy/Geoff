@@ -6,6 +6,7 @@
   "main": "dist/main.js",
   "scripts": {
     "start": "node dist/main.js",
+    "server": "tsc && node dist/server.js",
     "dev": "tsc --watch",
     "build": "tsc",
     "setup:models": "node scripts/setup.js",

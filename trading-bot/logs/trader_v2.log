@@ -2051,3 +2051,31 @@ Paper trading: True
 2026-04-03 00:41:21,025 - INFO - Oil Trader v2 initialized: WTI Crude Oil (WTICO_USD) - 5min timeframe
 2026-04-03 00:41:21,025 - INFO - Starting v2 trader: 300s intervals
 2026-04-04 00:00:00,104 - INFO - New trading day - reset daily stats
+2026-04-05 00:00:00,536 - INFO - New trading day - reset daily stats
+2026-04-06 00:00:00,042 - INFO - New trading day - reset daily stats
+2026-04-07 00:00:00,716 - INFO - New trading day - reset daily stats
+2026-04-07 00:20:05,643 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-07 00:20:05,643 - ERROR - Failed to get oil price
+2026-04-07 00:25:00,646 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-07 00:25:00,646 - ERROR - Failed to get oil price
+2026-04-08 00:00:00,951 - INFO - New trading day - reset daily stats
+2026-04-09 00:00:00,234 - INFO - New trading day - reset daily stats
+2026-04-09 09:35:20,246 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 09:35:20,246 - ERROR - Failed to get oil price
+2026-04-09 17:15:20,647 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 17:15:20,647 - ERROR - Failed to get oil price
+2026-04-09 17:35:20,683 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 17:35:20,683 - ERROR - Failed to get oil price
+2026-04-09 17:40:20,695 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 17:40:20,696 - ERROR - Failed to get oil price
+2026-04-09 18:05:25,115 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 18:05:25,119 - ERROR - Failed to get oil price
+2026-04-09 18:10:20,160 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 18:10:20,160 - ERROR - Failed to get oil price
+2026-04-09 18:15:20,191 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 18:15:20,191 - ERROR - Failed to get oil price
+2026-04-09 18:20:10,697 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 18:20:10,697 - ERROR - Failed to get oil price
+2026-04-09 18:40:20,326 - ERROR - Error getting price: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-002-38876987-001/pricing?instruments=WTICO_USD (Caused by NameResolutionError("HTTPSConnection(host='api-fxpractice.oanda.com', port=443): Failed to resolve 'api-fxpractice.oanda.com' ([Errno -3] Temporary failure in name resolution)"))
+2026-04-09 18:40:20,326 - ERROR - Failed to get oil price
+2026-04-10 00:00:00,165 - INFO - New trading day - reset daily stats

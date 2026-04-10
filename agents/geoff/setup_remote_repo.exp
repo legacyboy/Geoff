@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 30
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# 1. Wipe any existing git repo in the target folder to ensure a clean state
+# 2. Initialize a bare repository for pushing
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "rm -rf ~/geoff_playbooks.git && mkdir -p ~/geoff_playbooks.git && cd ~/geoff_playbooks.git && git init --bare"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

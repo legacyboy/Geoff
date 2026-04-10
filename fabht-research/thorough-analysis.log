@@ -1,0 +1,41 @@
+=== CHROME VRP THOROUGH ANALYSIS ===
+Date: Tue 07 Apr 2026 10:36:51 PM CDT
+
+Analyzing: controller.cc
+  -> Saved to analysis-controller.txt
+Analyzing: dxgi_helpers.cc
+  -> Saved to analysis-dxgi_helpers.txt
+Analyzing: ephemeron-remembered-set.cc
+  -> Saved to analysis-ephemeron-remembered-set.txt
+Analyzing: gpu_disk_cache_type_mojom_traits.cc
+  -> Saved to analysis-gpu_disk_cache_type_mojom_traits.txt
+Analyzing: int64-lowering.cc
+  -> Saved to analysis-int64-lowering.txt
+Analyzing: local-heap.cc
+  -> Saved to analysis-local-heap.txt
+Analyzing: main.cc
+  -> Saved to analysis-main.txt
+Analyzing: network_delegate_error_observer_unittest.cc
+  -> Saved to analysis-network_delegate_error_observer_unittest.txt
+Analyzing: node_proxy.cc
+  -> Saved to analysis-node_proxy.txt
+Analyzing: polling_proxy_config_service.cc
+  -> Saved to analysis-polling_proxy_config_service.txt
+Analyzing: proxy_host_matching_rules.cc
+  -> Saved to analysis-proxy_host_matching_rules.txt
+Analyzing: select-lowering.cc
+  -> Saved to analysis-select-lowering.txt
+Analyzing: shared_image_pool_id_mojom_traits.cc
+  -> Saved to analysis-shared_image_pool_id_mojom_traits.txt
+Analyzing: spaces.cc
+  -> Saved to analysis-spaces.txt
+Analyzing: state-values-utils.cc
+  -> Saved to analysis-state-values-utils.txt
+Analyzing: switches.cc
+  -> Saved to analysis-switches.txt
+Analyzing: test_utils.cc
+  -> Saved to analysis-test_utils.txt
+Analyzing: unit_tests.cc
+  -> Saved to analysis-unit_tests.txt
+
+Analysis complete. Review findings in: /home/claw/.openclaw/workspace/fabht-research/findings/

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geoff - DFIR Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🦊 Geoff</h1>
+            <p>Digital Forensics & Incident Response AI Assistant</p>
+        </header>
+        
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="chat">💬 Chat</button>
+            <button class="tab-btn" data-tab="evidence">📁 Evidence</button>
+            <button class="tab-btn" data-tab="config">⚙️ Config</button>
+        </div>
+        
+        <div id="chat" class="tab-content active">
+            <div class="chat-box" id="chat-box"></div>
+            <div class="input-area">
+                <input type="text" id="message-input" placeholder="Ask Geoff about your forensic case...">
+                <button id="send-btn">Send</button>
+            </div>
+        </div>
+        
+        <div id="evidence" class="tab-content">
+            <h2>Evidence Upload</h2>
+            <div class="upload-area">
+                <input type="file" id="evidence-file" multiple>
+                <label for="evidence-file">📁 Select Files</label>
+                <p>Drag & drop or click to upload evidence</p>
+            </div>
+            <div class="evidence-location">
+                <label>Evidence Storage:</label>
+                <input type="text" value="~/evidence" readonly>
+            </div>
+        </div>
+        
+        <div id="config" class="tab-content">
+            <h2>Configuration</h2>
+            <div class="config-section">
+                <label>Model Mode:</label>
+                <select id="model-mode">
+                    <option value="local">Local (Ollama)</option>
+                    <option value="cloud">Cloud (Gemini)</option>
+                </select>
+            </div>
+            <div class="config-section">
+                <label>Auth Token:</label>
+                <input type="password" id="auth-token" placeholder="Enter token">
+            </div>
+            <button id="save-config">Save Configuration</button>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

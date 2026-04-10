@@ -1,0 +1,17 @@
+#!/usr/bin/expect -f
+set timeout 1200
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# Read the script content locally
+set script_content [exec cat /home/claw/.openclaw/workspace/agents/geoff/deploy_geoff.sh]
+
+# Push the script via SSH stdin and execute it immediately
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash -s"
+expect {
+    "*password:*" { send "$password\r" }
+}
+send "$script_content\r"
+expect "=== DEPLOYMENT COMPLETE ==="

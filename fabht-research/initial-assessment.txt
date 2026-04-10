@@ -1,0 +1,23 @@
+/home/fabht/chromium/src/v8
+/home/fabht/chromium/src/sandbox
+/home/fabht/chromium/src/mojo
+/home/fabht/chromium/src/content
+/home/fabht/chromium/src/net
+/home/fabht/chromium/src/gpu
+/home/fabht/chromium/src/third_party/ffmpeg
+=== CHROMIUM SOURCE ANALYSIS ===
+
+HIGH-VALUE TARGETS:
+  [CRITICAL] V8 JavaScript Engine
+  [CRITICAL] Sandbox
+  [CRITICAL] Mojo IPC
+  [HIGH] Content Module
+  [HIGH] Networking
+  [HIGH] GPU/Graphics
+  [HIGH] FFmpeg (media parsing)
+
+SOURCE SIZE:
+29G	/home/fabht/chromium/src
+
+NEXT: Searching for security TODOs and FIXMEs...
+Analysis started: Tue Apr  7 10:13:28 PM CDT 2026

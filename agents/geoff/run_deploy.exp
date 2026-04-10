@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+set timeout 1200
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# Upload the script
+spawn scp -P $port -o "StrictHostKeyChecking=no" /home/claw/.openclaw/workspace/agents/geoff/deploy_geoff.sh $user@$ip:~/deploy_geoff.sh
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof
+
+# Execute the script
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash ~/deploy_geoff.sh"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

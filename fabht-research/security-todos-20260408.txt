@@ -1,0 +1,13 @@
+v8/src/compiler/js-graph.cc:  // This CHECK is security critical, we should never observe a hole
+v8/src/compiler/load-elimination.cc:    // TODO(turbofan): Compute the intersection.
+v8/src/compiler/load-elimination.cc:    // TODO(turbofan): Compute the intersection.
+v8/src/compiler/load-elimination.cc:    // TODO(turbofan): Compute the intersection.
+v8/src/compiler/load-elimination.cc:        // TODO(turbofan): We should insert a {TypeGuard} for the intersection
+v8/src/compiler/turboshaft/late-load-elimination-reducer.cc:        // being that missing such a case would be a security issue, and it
+v8/src/compiler/turboshaft/wasm-revec-reducer.cc:    // TODO(yolanda): Support other intersect PackNode e.g. overlapped loads.
+v8/src/compiler/backend/loong64/code-generator-loong64.cc:// TODO(LOONG_dev): remove second dbar?
+v8/src/compiler/backend/loong64/code-generator-loong64.cc:// TODO(LOONG_dev): remove second dbar?
+v8/src/compiler/backend/loong64/code-generator-loong64.cc:// TODO(LOONG_dev): remove second dbar?
+v8/src/compiler/backend/loong64/code-generator-loong64.cc:// TODO(LOONG_dev): remove second dbar?
+v8/src/compiler/backend/loong64/code-generator-loong64.cc:// TODO(LOONG_dev): remove second dbar?
+v8/src/compiler/backend/arm64/instruction-selector-arm64.cc:    // TODO(arm): Support consecutive Simd128 parameters.

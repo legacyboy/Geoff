@@ -1,0 +1,81 @@
+# PB-SIFT-002: Ransomware Indicators Playbook
+## Ransomware Indicators — Static Image Analysis
+
+**Objective:** High-fidelity detection and analysis of ransomware activity within a digital forensic image using the SIFT Workstation toolset.
+
+---
+
+### Phase 1 — Evidence Integrity
+- [ ] **Hash Verification:** Verify hash of all evidence against chain of custody.
+- [ ] **Integrity Check:** Flag any mismatch before proceeding.
+
+---
+
+### Phase 2 — Memory Analysis
+- [ ] **Process Enumeration:** Enumerate processes — flag anything spawning mass file I/O or encryption-related API calls.
+- [ ] **Command Line Audit:** Check command lines — flag `vssadmin`, `wbadmin`, `bcdedit`, `wmic shadowcopy` usage.
+- [ ] **Injection Detection:** Check for injected code regions — ransomware commonly injects into legitimate processes.
+- [ ] **Network State:** Enumerate network connections — flag outbound to TOR exit nodes or unknown C2 infrastructure.
+- [ ] **String Search:** Look for ransom note strings in memory regions.
+
+---
+
+### Phase 3 — Super Timeline
+- [ ] **Timeline Construction:** Build full timeline across all artifact sources.
+- [ ] **Mass Modification:** Flag mass file modification events — large volume of files changed in a short window is a primary indicator.
+- [ ] **Extension Changes:** Flag file extension changes — original extensions replaced or appended with unknown extensions.
+- [ ] **Shadow Copy Audit:** Flag VSS / shadow copy deletion — near-universal ransomware behavior, treat as **CRITICAL**.
+- [ ] **Recovery Sabotage:** Flag `bcdedit` or `wbadmin` execution — disabling recovery environment or backup deletion.
+- [ ] **Patient Zero Identification:** Correlate first encrypted file timestamp back to initial access vector (email, RDP, download).
+
+---
+
+### Phase 4 — Disk Artifacts
+- [ ] **Ransom Note Search:** Check for ransom notes on disk — flag any `.txt`, `.html`, `.hta` files dropped in multiple directories.
+- [ ] **MFT Analysis:** Check for mass file rename or extension append events in MFT.
+- [ ] **Execution History (Prefetch):** Flag execution of known ransomware droppers or encryptors.
+- [ ] **Persistence Check:** Check autoruns — flag persistence mechanisms that may re-trigger encryption on reboot.
+- [ ] **Backup Sabotage:** Check for deletion of backup-related binaries or configuration files.
+- [ ] **Tool Staging:** Check for tools staged prior to encryption — `psexec`, `cobalt strike`, `anydesk`, `atera` — indicates human-operated ransomware.
+
+---
+
+### Phase 5 — Event Log Analysis
+- [ ] **Log Tampering:** Flag log clearing events (EID 1102 / 104) — **CRITICAL**, common pre-encryption step.
+- [ ] **Shadow Copy Deletion:** Flag VSS deletion via `vssadmin` or `wmic` (EID 4688 if process auditing enabled).
+- [ ] **Access Vector:** Flag RDP logons from unusual sources (EID 4624 logon type 10) — common initial access.
+- [ ] **Lateral Deployment:** Flag service creation used to deploy ransomware laterally (EID 7045).
+- [ ] **File Access Audit:** Flag bulk file access events if object auditing is enabled.
+- [ ] **Privilege Escalation:** Flag account privilege escalation prior to encryption window (EID 4672).
+
+---
+
+### Phase 6 — YARA Scan
+- [ ] **Family Identification:** Scan disk artifacts against ransomware-specific rulesets (LockBit, BlackCat, Akira, Royal, etc.).
+- [ ] **Memory Scan:** Scan carved memory for encryption key material or ransom note templates.
+- [ ] **Hit Documentation:** Flag any hits — note family name and confidence level.
+
+---
+
+### Phase 7 — Encryption Scope Assessment
+- [ ] **Impact Mapping:** Enumerate all files with unknown or appended extensions.
+- [ ] **Directory Audit:** Identify which directories and drives were impacted.
+- [ ] **Exclusion Analysis:** Identify any files explicitly excluded (e.g., `Windows\System32` to keep system bootable).
+- [ ] **Encryption Method:** Check for partial encryption — some families encrypt only the first N bytes for speed.
+- [ ] **Lateral Spread:** Note whether network shares or mapped drives show encryption.
+
+---
+
+### Phase 8 — Network IOC Extraction
+- [ ] **IOC Harvesting:** Extract all IPs, domains, and URLs from disk image.
+- [ ] **Darknet Analysis:** Flag any `.onion` addresses — ransom payment or negotiation sites.
+- [ ] **Threat Intel Enrichment:** Enrich all IOCs against threat intel (VT, AbuseIPDB, internal blocklist).
+- [ ] **Exfiltration Check:** Flag exfiltration artifacts — ransomware groups commonly exfiltrate before encrypting (double extortion).
+
+---
+
+### Phase 9 — Score & Report
+- [ ] **Aggregation:** Aggregate all flags into findings report.
+- [ ] **Family Identification:** Identify ransomware family if possible based on YARA, note style, and extension pattern.
+- [ ] **Attack Timeline:** Establish attack timeline — initial access $\rightarrow$ privilege escalation $\rightarrow$ lateral movement $\rightarrow$ encryption.
+- [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.

@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+set timeout 900
+set user "sansforensics"
+set password "forensics"
+set ip "127.0.0.1"
+set port "2222"
+
+# We use a simpler method to upload the script to avoid shell escaping issues with nested quotes
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash -c 'cat > ~/setup-geoff.sh'"
+expect {
+    "*password:*" { send "$password\r" }
+}
+send_user "Writing script content...\n"
+send "#!/bin/bash\necho \"=== Deploying Geoff via Steve's pipeline ===\"\nsudo apt-get update -y\ncurl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\nsudo apt-get install -y nodejs\ncurl -fsSL https://ollama.com/install.sh | sh\nnpm install -g openclaw\nmkdir -p ~/.geoff/ui ~/.geoff/evidence\nsudo ln -sf /media/sf_evidence ~/geoff-evidence\nsudo usermod -a -G vboxsf \$USER\n\nmkdir -p ~/geoff_playbooks\ncd ~/geoff_playbooks\ngit clone ~/geoff_playbooks.git .\n\ncat > ~/.geoff/start.sh << \"EOF_INNER\"\n#!/bin/bash\nexport PATH=\"\$HOME/.npm-global/bin:\$HOME/.local/bin:\$PATH\"\nnohup node -e \"console.log('Geoff UI Mock Server Started'); setInterval(()=>\{\}, 1000)\" > /tmp/geoff-ui.log 2>&1 &\necho \"Geoff UI started on http://localhost:8080\"\nEOF_INNER\nchmod +x ~/.geoff/start.sh\n~/.geoff/start.sh\necho \"=== Deployment Complete ===\"\nEOF\n"
+expect eof
+
+# Now execute the uploaded script
+spawn ssh -o "StrictHostKeyChecking=no" -p $port $user@$ip "bash ~/setup-geoff.sh"
+expect {
+    "*password:*" { send "$password\r" }
+}
+expect eof

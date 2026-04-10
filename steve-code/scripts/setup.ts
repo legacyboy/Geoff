@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { spawn } from 'child_process';
 import { promisify } from 'util';
+import { exec } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import { mkdir } from 'fs/promises';
@@ -38,7 +39,7 @@ async function pullModel(model: string): Promise<void> {
 }
 
 async function setup() {
-  console.log('🦊 Steve Code Setup\n');
+  console.log('🦊 Geoff Setup\n');
   
   // Check Ollama
   console.log('Checking Ollama...');
@@ -69,9 +70,19 @@ async function setup() {
       console.error(`⚠️ Failed to pull ${model.name}: ${error}`);
     }
   }
+
+  // Set up Web UI
+  console.log('Setting up Web UI server...');
+  try {
+    await execAsync('npm run build');
+    console.log('✓ Project built successfully');
+  } catch (e) {
+    console.error('⚠️ Build failed, but the server might still run if dist exists.');
+  }
   
   console.log('\n🦊 Setup complete!');
-  console.log('   Run: bun run start');
+  console.log('   Run: npm run server');
+  console.log('   Web UI will be available at http://localhost:3000');
 }
 
 setup().catch(console.error);

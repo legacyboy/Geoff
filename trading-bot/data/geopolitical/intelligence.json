@@ -1,65 +1,34 @@
 {
-  "timestamp": "2026-04-03T21:00:10.126674+00:00",
-  "summary": {
-    "threat_level": "CRITICAL",
-    "primary_risk": "Stocks Bounce Back From Early Losses",
-    "secondary_risk": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
-    "market_impact": "Elevated",
-    "last_updated": "2026-04-03T21:00:10.126677+00:00",
-    "data_source": "NewsAPI (Live)"
-  },
-  "key_events": [
+  "timestamp": "2026-04-06T13:00:43.629236+00:00",
+  "threat_level": "CRITICAL",
+  "primary_risk": "Iran-Israel conflict / Strait of Hormuz closure",
+  "position_sizing": "Reduce to 25% of normal (CRITICAL + Trump MAXIMUM CHAOS)",
+  "recent_findings": [
     {
-      "event": "Stocks Bounce Back From Early Losses",
-      "source": "NewsAPI",
-      "impact": "See details in full report"
+      "source": "2026 Strait of Hormuz crisis",
+      "url": "https://en.wikipedia.org/wiki/2026_Strait_of_Hormuz_crisis",
+      "summary": "On 28 February 2026, the United States and Israel initiated coordinated airstrikes on Iran under Operation Epic Fury, targeting military facilities, nuclear ..."
     },
     {
-      "event": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
-      "source": "NewsAPI",
-      "impact": "See details in full report"
+      "source": "Iran rejects temporary ceasefire, as Trump sets deadline for ...",
+      "url": "https://www.cnn.com/2026/04/06/world/live-news/iran-war-us-trump-oil",
+      "summary": "President Donald Trump appeared to set a Tuesday deadline for Iran to reopen the Strait of Hormuz, following a profanity-laced message ..."
     },
     {
-      "event": "US Burned 14 Years of Missiles in 30 Days",
-      "source": "NewsAPI",
-      "impact": "See details in full report"
+      "source": "IRGC says Strait of Hormuz will 'never' revert to pre-war state",
+      "url": "https://abcnews.com/International/live-updates/iran-live-updates-casualties-reported-missile-strikes-israel/?id=131757074",
+      "summary": "Iran live updates: IRGC says Strait of Hormuz will 'never' revert to pre-war state. Iranian missile and drone fire continues across the region."
     },
     {
-      "event": "Trump\u2019s Updated 'Special Book': More Attacks on Digital, Climate, and Health Policies | Common Dreams",
-      "source": "NewsAPI",
-      "impact": "See details in full report"
+      "source": "Tracking the Impact of the Trump Tariffs & Trade War",
+      "url": "https://taxfoundation.org/research/all/federal/trump-tariffs-trade-war/",
+      "summary": "The 2026 Trump tariffs amount to an average tax increase per US household of $700 and have not meaningfully altered the trade deficit."
+    },
+    {
+      "source": "Trump tariffs fall, but trade war impacts linger",
+      "url": "https://www.cnbc.com/2026/04/03/trump-tariffs-trade-war-impact.html",
+      "summary": "Trump tariff fallout: Some industries grapple with lingering effects one year later ; Daily effective U.S. tariff rate. March 2025\u2013April 2026"
     }
   ],
-  "recent_articles": [
-    {
-      "title": "\u201cIt\u2019s a New World. It\u2019s the Same Constitution.\u201d",
-      "source": "Slate Magazine",
-      "category": "Oil & Energy"
-    },
-    {
-      "title": "Stocks Bounce Back From Early Losses",
-      "source": "Newser",
-      "category": "Oil & Energy"
-    },
-    {
-      "title": "Brent oil spot price for actual cargo soars to $141, highest level since 2008 financial crisis",
-      "source": "CNBC",
-      "category": "Oil & Energy"
-    },
-    {
-      "title": "High Gas Prices? No Worries, Just Use More Ethanol",
-      "source": "CleanTechnica",
-      "category": "Oil & Energy"
-    },
-    {
-      "title": "US Burned 14 Years of Missiles in 30 Days",
-      "source": "Trendytechtribe.com",
-      "category": "Oil & Energy"
-    }
-  ],
-  "trading_implications": {
-    "oil_volatility": "High",
-    "position_sizing": "Reduce to 50%",
-    "recommendation": "Cautious trading"
-  }
+  "search_sources": 6
 }

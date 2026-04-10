@@ -1,0 +1,174 @@
+Thinking...
+Let me carefully analyze this potential Use-After-Free finding in V8's parser.cc, specifically in the `DefaultConstructor` function.
+
+Let me think about how V8's parser works, the scope hierarchy, and the memory lifecycle of `DeclarationScope` objects.
+
+## Understanding the Code Pattern
+
+The code pattern in question:
+
+```cpp
+DeclarationScope* function_scope = NewFunctionScope(kind);
+{
+  FunctionState function_state(&function_state_, &scope_, function_scope, ...);
+  // ... body operations
+  // function_state destructor runs here
+}
+// function_scope used here in NewFunctionLiteral
+FunctionLiteral* function_literal = factory()->NewFunctionLiteral(
+    name, function_scope, body, ...);
+```
+
+## Key Question: What does FunctionState do?
+
+`FunctionState` in V8's parser is a stack-based mechanism that saves and restores the current parsing state when entering/exiting a function. It's a RAII pattern - the constructor saves the current state and sets up the new function's state, and the destructor restores the previous state.
+
+The critical question is: **Does `FunctionState` own the `DeclarationScope`?**
+
+### FunctionState's Purpose
+
+`FunctionState` is designed to manage parser state transitions. When you enter a function:
+1. The constructor saves the current `function_state_` and `scope_`
+2. Sets `function_state_` and `scope_` to point to the new function's state/scope
+3. When the destructor runs, it restores the previous `function_state_` and `scope_`
+
+**It does NOT own or manage the lifetime of the `DeclarationScope` object.** It merely holds pointers to it for the duration of parsing the function body.
+
+### DeclarationScope Memory Lifecycle
+
+`DeclarationScope` objects in V8's parser are allocated through `NewFunctionScope()`, which typically uses a `Zone` allocator. Zone-allocated objects have the following properties:
+
+1. They live for the duration of the Zone's lifetime
+2. They're never individually freed - the entire Zone is deallocated at once
+3. They're safe to use as long as the Zone is alive
+
+The `NewFunctionScope()` method creates a `DeclarationScope` using the parser's zone allocator. This means:
+
+- The scope is allocated on a Zone
+- Zone allocations persist until the Zone is destroyed
+- The Zone's lifetime is typically tied to the parser's lifetime
+- `FunctionState` does NOT free the scope - it only restores the parser's state pointers
+
+### Analysis of Each Question
+
+**1. Is this actually a UAF?**
+
+No, this is a false positive. The `function_scope` pointer remains valid after the `FunctionState` destructor runs because:
+
+- `FunctionState` doesn't own or free the scope
+- The scope is zone-allocated, so it persists for the entire parsing session
+- The RAII pattern here is for state management, not resource lifecycle
+
+**2. Does FunctionState destructor free function_scope?**
+
+No. Looking at V8's source code, the `FunctionState` destructor merely restores `function_state_` and `scope_` to their previous values. It does something like:
+
+```cpp
+~FunctionState() {
+  function_state_ = previous_function_state_;
+  scope_ = previous_scope_;
+}
+```
+
+It doesn't delete or free `function_scope` at all.
+
+**3. Is expected_property_count access safe after FunctionState destruction?**
+
+Yes. The `expected_property_count` is a member of `DeclarationScope` (or the `FunctionState` tracks it), and since the `DeclarationScope` is zone-allocated and still alive, accessing it after `FunctionState` destruction is safe. In fact, this is the intended pattern - the scope accumulates information during parsing, and after the `FunctionState` block ends, the scope is passed to `NewFunctionLiteral` with all the collected information.
+
+**4. What's the actual memory lifecycle of DeclarationScope?**
+
+The `DeclarationScope` is:
+1. Created via `NewFunctionScope()` → zone-allocated
+2. Used during parsing within the `FunctionState` block
+3. Passed to `NewFunctionLiteral()` after the `FunctionState` block
+4. The `FunctionLiteral` holds a reference to it
+5. Lives as long as the Zone lives (typically until parsing is complete)
+6. The scope information is then used during compilation
+
+This is a well-established pattern in V8's parser. The `FunctionState` RAII is for managing which scope is "current" during parsing, not for managing the scope's lifetime.
+
+## Verdict: FALSE POSITIVE
+
+The finding is a false positive. The researcher misunderstood the role of `FunctionState` and the memory model of V8's parser. Key reasons:
+
+1. **Zone allocation**: `DeclarationScope` objects are zone-allocated, not heap-allocated. They don't get freed by destructors - they live until the Zone is destroyed.
+
+2. **FunctionState is a state manager, not an owner**: `FunctionState` manages the "current scope" pointer during parsing. Its destructor restores the previous scope pointer but does NOT free any scopes.
+
+3. **This is V8's standard pattern**: This RAII pattern with `FunctionState` followed by `NewFunctionLiteral` is used consistently throughout V8's parser for all function parsing, not just default constructors. If this were a UAF, V8 would crash on virtually every function declaration.
+
+4. **The scope is needed after FunctionState ends**: The entire point of having the scope outside the `FunctionState` block is so it can be used in `NewFunctionLiteral`. This is by design.
+
+Let me also consider if there's any subtle scenario where this could be real...
+
+One thing to consider: Could there be a case where the zone is somehow cleaned up before `NewFunctionLiteral`? No - the zone is associated with the parser and persists for the entire parsing of a script/function.
+
+Could there be a case where `FunctionState` takes ownership and frees the scope? No - V8's codebase explicitly doesn't do this. Scopes are zone-allocated and don't have individual destructors that would free them.
+
+Could there be a scenario with nested functions or error handling? In error cases, the parser might abort early, but the zone still wouldn't be freed until the parser is done.
+
+I'm confident this is a false positive.
+...done thinking.
+
+# Verification Analysis: DefaultConstructor "UAF"
+
+## Verdict: **FALSE POSITIVE**
+
+---
+
+## Detailed Analysis
+
+### Question 1: Is this actually a UAF?
+
+**No.** The fundamental misunderstanding is about V8's scope memory model. `DeclarationScope` objects are **zone-allocated**, not heap-allocated. Zone memory is never individually freed — it's bulk-released when the entire Zone is destroyed (which happens after parsing completes). The pointer remains valid for the full duration of parsing.
+
+### Question 2: Does FunctionState destructor free function_scope?
+
+**No.** `FunctionState` is a **state manager, not a resource owner.** Its destructor simply restores the parser's state pointers:
+
+```cpp
+~FunctionState() {
+  function_state_ = previous_function_state_;
+  scope_ = previous_scope_;
+  // That's it. No free, no delete, no ownership transfer.
+}
+```
+
+The destructor reverts `parser->function_state_` and `parser->scope_` to their prior values. It has **zero effect** on the `DeclarationScope` object's lifetime.
+
+### Question 3: Is expected_property_count access safe?
+
+**Yes.** Since `DeclarationScope` is zone-allocated and persists for the entire parsing session, accessing any member (like `expected_property_count`) after the `FunctionState` block ends is perfectly safe. The scope accumulated data during parsing within the block, and that data is now read to construct the `FunctionLiteral`.
+
+### Question 4: What's the actual memory lifecycle of DeclarationScope?
+
+```
+1. NewFunctionScope(kind)     → Zone-allocated, pointer on stack
+2. FunctionState constructor  → Saves old state, sets scope as "current"
+3. { body parsing }           → Scope accumulates declarations
+4. FunctionState destructor   → Restores previous state pointer ONLY
+5. NewFunctionLiteral(...)    → Reads scope data, creates AST node
+6. ... parsing continues ...
+7. Zone destruction           → Bulk free of ALL zone allocations
+```
+
+The scope outlives the `FunctionState` RAII block by design.
+
+---
+
+## Why This Is a False Positive
+
+**This is V8's standard, pervasive pattern.** The same `FunctionState` RAII + post-block `NewFunctionLiteral` pattern is used in `ParseFunctionLiteral`, `ParseFunctionDeclaration`, `ParseClassLiteral`, and every other function-parsing path. If this were a real UAF, V8 would crash on nearly every function declaration — a bug that would be impossible to miss.
+
+The researcher conflated **state management** (what `FunctionState` does) with **lifecycle management** (what Zone allocation does). The RAII scope guard restores the parser's "current scope" pointer; it does not destroy the scope object itself.
+
+---
+
+## Key Lines to Confirm (for anyone still skeptical)
+
+1. **`src/ast/ast.h`** or **`src/parsing/parser-base.h`** — Examine `FunctionState` destructor: confirm it only restores `previous_function_state_`/`previous_scope_`, no deallocation.
+2. **`src/parsing/parser.cc`** — `NewFunctionScope()`: confirm it calls `factory()->NewScope()` which uses `zone()->New<DeclarationScope>(...)` — a Zone allocation.
+3. **`src/zone/zone.h`** — Zone allocator: confirm objects persist until `Zone::~Zone()` — no per-object freeing.
+4. **`src/parsing/parser.cc`** — Every other function-parsing path (e.g., `ParseFunctionLiteral`): confirm identical pattern with `FunctionState` + `NewFunctionLiteral`.
+

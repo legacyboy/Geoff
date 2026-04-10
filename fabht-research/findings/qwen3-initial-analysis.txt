@@ -1,0 +1,31 @@
+**Vulnerability Analysis Report: Int64Lowering Pass in V8 TurboFan (`int64-lowering.cc`)**  
+**Analyst:** fabht-researcher-1  
+**Target:** Chromium/V8 TurboFan JIT — 32-bit arch-specific `Int64Lowering` pass  
+**Code Section Reviewed:** `LowerGraph()`, `GetReturnIndexAfterLowering()`, `GetReturnCountAfterLowering()`
+
+---
+
+### 🔍 Summary
+
+After comprehensive review of the `Int64Lowering` pass (used on 32-bit architectures to lower 64-bit operations into 32-bit equivalents), **no exploitable vulnerability was found** in the presented code segment.
+
+However, we identified a **critical logic flaw** in `GetReturnIndexAfterLowering()` that, *if combined with specific call descriptor inputs*, could lead to **out-of-bounds writes** during the lowering phase — but only under very constrained, currently untriggerable conditions. The flaw itself is not directly exploitable as-is.
+
+We also highlight **the risk of type confusion during Phi lowering** (due to reliance on `PreparePhiReplacement()` — not shown in snippet), which is a known vector for JIT vulnerabilities in TurboFan.
+
+---
+
+## ✅ 1. `GetReturnIndexAfterLowering()` — Integer Overflow / Index Miscomputation
+
+### 📍 Location:
+```cpp
+int GetReturnIndexAfterLowering(const CallDescriptor* call_descriptor,
+                                int old_index) {
+  int result = old_index;
+  for (int i = 0; i < old_index; i++) {
+    if (call_descriptor->GetReturnType(i).representation() ==
+        MachineRepresentation::kWord64) {
+      result++;  // ↑ Increment for each 64-bit return type
+    }
+  }
+  return result
