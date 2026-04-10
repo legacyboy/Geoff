@@ -114,11 +114,15 @@ class ContextManager:
 # Initialize global context manager
 context_manager = ContextManager()
 
+# Configuration - MUST be defined before ActionLogger
+EVIDENCE_BASE_DIR = os.environ.get('GEOFF_EVIDENCE_PATH', "/home/sansforensics/evidence-storage/evidence")
+CASES_WORK_DIR = os.environ.get('GEOFF_CASES_PATH', "/home/sansforensics/evidence-storage/cases")
+
 # Git Action Logger for audit trail - uses environment variable for path
 def git_commit_action(message: str, base_path: str = None):
     """Git commit for audit trail"""
     if base_path is None:
-        base_path = os.environ.get('GEOFF_GIT_DIR', '/home/sansforensics/geoff-git')
+        base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
     
     try:
         # Configure git if not already set
@@ -140,7 +144,7 @@ class ActionLogger:
     
     def __init__(self, log_dir: str = None):
         if log_dir is None:
-            log_dir = os.environ.get('GEOFF_LOGS_DIR', '/home/sansforensics/geoff-logs')
+            log_dir = os.environ.get('GEOFF_LOGS_DIR', CASES_WORK_DIR + '/logs')
         self.log_dir = Path(log_dir)
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -176,8 +180,7 @@ action_logger = ActionLogger()
 app = Flask(__name__)
 CORS(app)
 
-# Configuration
-EVIDENCE_BASE_DIR = os.environ.get('GEOFF_EVIDENCE_PATH', "/home/sansforensics/evidence-storage/cases")
+# Configuration already defined above (lines 118-119)
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://192.168.1.31:11434")
 LLM_MODEL = os.environ.get('GEOFF_MODEL', "qwen3-coder-next:cloud")
@@ -238,63 +241,42 @@ INVESTIGATION_SCHEMA = {
     }
 }
 
-GEOFF_PROMPT = """You are Geoff, a digital forensics investigator who chats about evidence findings.
+GEOFF_PROMPT = """You are G.E.O.F.F. (Git-backed Evidence Operations Forensic Framework), a professional digital forensics investigation system.
 
-You have access to the complete SIFT forensics toolkit with 100% coverage:
+Your role is to conduct thorough, systematic forensic analysis using established methodologies and the complete SIFT toolkit.
 
-**Disk Forensics (SleuthKit):**
-- Partition analysis (mmls)
-- File system stats (fsstat)
-- File listing (fls)
-- File extraction (icat)
-- Inode analysis (istat, ils)
+**Available Forensic Capabilities:**
 
-**Memory Forensics (Volatility):**
-- Process lists (pslist)
-- Network connections (netscan)
-- Malware detection (malfind)
-- Registry scanning
-- Process dumping
+*Disk Forensics (SleuthKit):* Partition analysis, filesystem statistics, file listing/extraction, inode analysis
 
-**Malware Detection (YARA):**
-- Signature scanning
-- Directory scanning
+*Memory Forensics (Volatility):* Process enumeration, network connections, malware detection, registry analysis, memory dumping
 
-**IOC Extraction (strings):**
-- String extraction
-- URL/IP/email detection
-- Registry path extraction
+*Malware Detection (YARA):* Signature-based scanning, directory-wide detection
 
-**Windows Registry (RegRipper):**
-- Hive parsing
-- UserAssist (program execution)
-- ShellBags (folder access)
-- USB device history
-- Autoruns/Startup
-- Services
-- Mounted devices
+*IOC Extraction:* String analysis, URL/IP/email extraction, registry artifact identification
 
-**Timeline Analysis (Plaso):**
-- Timeline creation (log2timeline)
-- Timeline sorting (psort)
-- Super timeline generation
+*Windows Registry Analysis (RegRipper):* Hive parsing, execution history, folder access, USB device tracking, persistence mechanisms, service enumeration
 
-**Network Forensics:**
-- PCAP analysis (tshark)
-- TCP flow extraction
-- HTTP traffic analysis
-- DNS extraction
+*Timeline Analysis (Plaso):* Temporal event reconstruction, super timeline generation
 
-**Log Analysis:**
-- Windows Event Logs (EVTX)
-- Syslog parsing
-- Authentication event extraction
+*Network Forensics:* PCAP analysis, flow reconstruction, protocol extraction
 
-**Mobile Forensics:**
-- iOS backup analysis
-- Android data analysis
+*Log Analysis:* Windows Event Log parsing, authentication analysis, syslog examination
 
-Keep it conversational. Don't give orders or numbered instructions. Just talk about what you see and let the user decide what to do next. Be helpful but not bossy."""
+*Mobile Forensics:* iOS backup analysis, Android data extraction
+
+**Operational Protocol:**
+- Respond with clear, technical accuracy
+- When instructed to investigate, execute systematically without unnecessary clarification
+- Report findings with supporting evidence
+- Maintain chain of custody through git-backed validation
+- Cite specific tools and artifacts examined
+
+**Response Standards:**
+- Professional, objective tone
+- Evidence-based conclusions
+- Clear identification of IOCs and suspicious activity
+- Structured reporting suitable for legal documentation"""
 
 def call_llm(user_message, context=""):
     """Call Ollama LLM"""
@@ -416,7 +398,41 @@ def detect_tool_request(message: str) -> dict:
     if any(word in message_lower for word in ['android', 'mobile']):
         return {'module': 'mobile', 'function': 'analyze_android', 'params': {}}
     
+    # Investigation trigger - full playbook execution
+    if any(word in message_lower for word in ['investigate', 'full analysis', 'run playbooks', 'systematic analysis']):
+        return {'module': 'orchestrator', 'function': 'run_full_investigation', 'params': {}}
+    
     return None
+
+def run_full_investigation(case_name: str, evidence_path: str = None):
+    """Spawn background investigation worker for case"""
+    import subprocess
+    
+    # Spawn background worker
+    worker_cmd = [
+        'python3', 
+        '/home/claw/.openclaw/workspace/geoff-private/src/geoff_investigation_worker.py',
+        case_name
+    ]
+    if evidence_path:
+        worker_cmd.append(evidence_path)
+    
+    # Start in background, detached
+    subprocess.Popen(
+        worker_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True
+    )
+    
+    # Return immediate acknowledgment
+    return {
+        "status": "started",
+        "case": case_name,
+        "message": f"Investigation initiated for case: {case_name}",
+        "progress_file": f"{CASES_WORK_DIR}/{case_name}/investigation_status.json",
+        "note": "Background investigation running. Status updates via cron every 3 minutes."
+    }
 
 def get_evidence_recursive(path, prefix=""):
     """Recursively get all files and folders"""
@@ -718,12 +734,11 @@ HTML_TEMPLATE = """
     <div class="tabs">
         <div class="tab active" onclick="showTab('chat')">💬 Chat</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
-        <div class="tab" onclick="showTab('tools')">🛠️ Tools</div>
     </div>
     
     <div id="chat" class="content active">
         <div id="chat-content">
-            <div class="message system">Hey! I'm Geoff. What case should we look at? I can also run forensic tools like SleuthKit, Volatility, YARA, and strings analysis.</div>
+            <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.\n\nAwaiting investigation directive. Provide case name or evidence path to begin systematic analysis.\n\nAvailable: 32 forensic functions across 9 specialist modules.\nPlaybook library: 18 PB-SIFT investigation protocols.</div>
         </div>
         <div class="chat-input-area">
             <input type="text" id="chat-input" placeholder="e.g., Run mmls on the narcos disk image..." onkeypress="if(event.key==='Enter') sendChat()">
@@ -737,12 +752,6 @@ HTML_TEMPLATE = """
         </div>
     </div>
     
-    <div id="tools" class="content">
-        <div id="tools-content">
-            <div class="loading">Loading tools...</div>
-        </div>
-    </div>
-    
     <script>
         function showTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -750,7 +759,6 @@ HTML_TEMPLATE = """
             event.target.classList.add('active');
             document.getElementById(tab).classList.add('active');
             if(tab === 'evidence') loadEvidence();
-            if(tab === 'tools') loadTools();
         }
         
         function addMessage(text, type) {
@@ -913,28 +921,33 @@ def chat():
         
         # If tool request detected, run it
         if tool_request and case_match:
-            # Find evidence file from context
-            case_path = Path(EVIDENCE_BASE_DIR) / case_match
-            # Look for disk images or memory dumps
-            for ext in ['.E01', '.dd', '.raw', '.mem', '.img']:
-                matches = list(case_path.rglob(f'*{ext}'))
-                if matches:
-                    evidence_file = str(matches[0])
-                    break
-            
-            if evidence_file:
-                tool_request['params']['disk_image'] = evidence_file
-                if 'partition' in tool_request['function']:
-                    tool_request['params']['partition'] = evidence_file
-            
-            # Run the tool
-            step = {
-                'module': tool_request['module'],
-                'function': tool_request['function'],
-                'params': tool_request['params'],
-                'status': 'running'
-            }
-            tool_result = orchestrator.run_playbook_step('chat-session', step)
+            # Full investigation - run all playbooks
+            if tool_request['function'] == 'run_full_investigation':
+                tool_result = run_full_investigation(case_match, evidence_file if 'evidence_file' in locals() else None)
+            else:
+                # Single tool execution
+                # Find evidence file from context
+                case_path = Path(EVIDENCE_BASE_DIR) / case_match
+                # Look for disk images or memory dumps
+                for ext in ['.E01', '.dd', '.raw', '.mem', '.img']:
+                    matches = list(case_path.rglob(f'*{ext}'))
+                    if matches:
+                        evidence_file = str(matches[0])
+                        break
+                
+                if evidence_file:
+                    tool_request['params']['disk_image'] = evidence_file
+                    if 'partition' in tool_request['function']:
+                        tool_request['params']['partition'] = evidence_file
+                
+                # Run the tool
+                step = {
+                    'module': tool_request['module'],
+                    'function': tool_request['function'],
+                    'params': tool_request['params'],
+                    'status': 'running'
+                }
+                tool_result = orchestrator.run_playbook_step('chat-session', step)
         
         # Build optimized context using ContextManager
         case_info = ""
@@ -1107,7 +1120,8 @@ def critic_summary(investigation_id):
 
 if __name__ == '__main__':
     print(f'Geoff DFIR on port {PORT}')
-    print(f'Evidence: {EVIDENCE_BASE_DIR}')
+    print(f'Evidence source: {EVIDENCE_BASE_DIR}')
+    print(f'Cases work dir: {CASES_WORK_DIR}')
     print(f'Ollama: {OLLAMA_URL}')
     print(f'Model: {LLM_MODEL}')
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

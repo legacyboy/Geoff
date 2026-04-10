@@ -1,0 +1,60 @@
+# G.E.O.F.F. Investigation Cron Configuration
+# Place in OpenClaw crontab for status updates
+
+# Check investigation status every 3 minutes
+*/3 * * * * cd /home/claw/.openclaw/workspace && /usr/bin/python3 -c "
+import os
+import json
+from pathlib import Path
+
+CASES_DIR = '/home/sansforensics/evidence-storage/cases'
+
+# Scan all cases for active investigations
+for case_dir in Path(CASES_DIR).iterdir():
+    if case_dir.is_dir():
+        status_file = case_dir / 'investigation_status.json'
+        if status_file.exists():
+            try:
+                with open(status_file) as f:
+                    status = json.load(f)
+                
+                # Only report if running
+                if status.get('status') == 'running':
+                    case = status.get('case', 'unknown')
+                    phase = status.get('phase', 'unknown')
+                    tool = status.get('current_tool', 'unknown')
+                    progress = status.get('progress_percent', 0)
+                    elapsed = status.get('elapsed_seconds', 0) / 60  # minutes
+                    
+                    msg = f'G.E.O.F.F. Investigation Update: {case}\nPhase: {phase}\nTool: {tool}\nProgress: {progress}%\nElapsed: {elapsed:.1f} minutes'
+                    print(msg)
+            except:
+                pass
+"
+
+# Check for completed investigations every 5 minutes
+*/5 * * * * cd /home/claw/.openclaw/workspace && /usr/bin/python3 -c "
+import os
+import json
+from pathlib import Path
+
+CASES_DIR = '/home/sansforensics/evidence-storage/cases'
+
+for case_dir in Path(CASES_DIR).iterdir():
+    if case_dir.is_dir():
+        status_file = case_dir / 'investigation_status.json'
+        if status_file.exists():
+            try:
+                with open(status_file) as f:
+                    status = json.load(f)
+                
+                # Report completion once
+                if status.get('status') == 'complete':
+                    case = status.get('case', 'unknown')
+                    elapsed = status.get('elapsed_seconds', 0) / 60
+                    
+                    msg = f'G.E.O.F.F. Investigation Complete: {case}\nTotal Time: {elapsed:.1f} minutes\nStatus: All phases completed successfully'
+                    print(msg)
+            except:
+                pass
+"
