@@ -1,10 +1,10 @@
 {
-  "started": "2026-04-09T20:28:00Z",
+  "started": "2026-04-10T17:28:00Z",
   "sources_total": 19,
-  "sources_processed": 19,
-  "last_processed": "https://ctftime.org/",
+  "sources_processed": 10,
+  "last_processed": "https://github.com/tim-barc/ctf_writeups",
   "errors": [
-    "https://medium.com/@ahmedkhalifa8474hh/ctf-cit-dfir-write-ups-494e4fc00f13 (410 Deleted)",
-    "https://github.com/Y2d1337/CyberDefenders (404 Not Found)"
+    "https://cellebrite.com/en/i-beg-to-dfir-episode-30-decoding-ctf-2024/ - Landing page provided no writeup content, only a webinar registration/description.",
+    "https://medium.com/@ahmedkhalifa8474hh/ctf-cit-dfir-write-ups-494e4fc00f13 - 410 Deleted by author"
   ]
 }

@@ -114,9 +114,12 @@ class ContextManager:
 # Initialize global context manager
 context_manager = ContextManager()
 
-# Git Action Logger for audit trail
-def git_commit_action(message: str, base_path: str = "/home/claw/.openclaw/workspace/geoff-private"):
+# Git Action Logger for audit trail - uses environment variable for path
+def git_commit_action(message: str, base_path: str = None):
     """Git commit for audit trail"""
+    if base_path is None:
+        base_path = os.environ.get('GEOFF_GIT_DIR', '/home/sansforensics/geoff-git')
+    
     try:
         # Configure git if not already set
         subprocess.run(['git', 'config', 'user.email'], cwd=base_path, capture_output=True, check=True)
@@ -135,9 +138,18 @@ def git_commit_action(message: str, base_path: str = "/home/claw/.openclaw/works
 class ActionLogger:
     """Logger for all Geoff actions with git integration"""
     
-    def __init__(self, log_dir: str = "/home/claw/.openclaw/workspace/geoff-private/logs"):
+    def __init__(self, log_dir: str = None):
+        if log_dir is None:
+            log_dir = os.environ.get('GEOFF_LOGS_DIR', '/home/sansforensics/geoff-logs')
         self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+        except:
+            # Fallback to temp if permission denied
+            import tempfile
+            self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
+            self.log_dir.mkdir(exist_ok=True)
+        
         self.action_log = self.log_dir / f"actions_{datetime.now().strftime('%Y%m')}.jsonl"
     
     def log(self, action_type: str, details: dict, commit: bool = True):
