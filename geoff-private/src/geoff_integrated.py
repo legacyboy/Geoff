@@ -17,6 +17,7 @@ from flask_cors import CORS
 
 from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, YARA_Specialist, STRINGS_Specialist
 from sift_specialists_extended import ExtendedOrchestrator
+from geoff_critic import GeoffCritic, ValidationPipeline
 
 # Context Window Management
 class ContextManager:
@@ -171,6 +172,10 @@ LLM_MODEL = os.environ.get('GEOFF_MODEL', "qwen3-coder-next:cloud")
 
 # Initialize extended orchestrator with 100% coverage
 orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
+
+# Initialize Critic for validation
+geoff_critic = GeoffCritic(OLLAMA_URL, LLM_MODEL)
+validation_pipeline = ValidationPipeline(orchestrator, geoff_critic)
 
 # Shared JSON Schema for investigation steps
 INVESTIGATION_SCHEMA = {
@@ -964,13 +969,32 @@ def chat():
         result = {'response': response}
         if tool_result:
             result['tool_result'] = tool_result
+            
+            # Validate tool output with Critic
+            print(f"[CRITIC] Validating {tool_request['module']}.{tool_request['function']}...")
+            validation = geoff_critic.validate_tool_output(
+                f"{tool_request['module']}.{tool_request['function']}",
+                tool_request['params'],
+                json.dumps(tool_result),
+                response  # Geoff's analysis
+            )
+            result['critic_validation'] = validation
+            result['critic_approved'] = validation.get('valid', False)
+            
+            # Commit validation to git
+            geoff_critic.commit_validation(
+                case_match or 'unknown',
+                validation
+            )
+            
             # Log tool execution
             action_logger.log('TOOL_EXECUTION', {
                 'module': tool_request['module'],
                 'function': tool_request['function'],
                 'case': case_match,
                 'evidence_file': evidence_file,
-                'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}"
+                'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}",
+                'critic_valid': validation.get('valid', False)
             })
         
         return jsonify(result)
@@ -1030,6 +1054,43 @@ def run_tool():
             'error': str(e),
             'description': f"API {module}.{function} failed"
         })
+        return jsonify({'status': 'error', 'error': str(e)})
+
+@app.route('/critic/validate', methods=['POST'])
+def critic_validate():
+    """Manually trigger critic validation"""
+    try:
+        data = request.json
+        tool_name = data.get('tool_name')
+        tool_output = data.get('tool_output')
+        geoff_analysis = data.get('geoff_analysis')
+        investigation_id = data.get('investigation_id', 'manual')
+        
+        if not all([tool_name, tool_output, geoff_analysis]):
+            return jsonify({'error': 'Missing required fields: tool_name, tool_output, geoff_analysis'}), 400
+        
+        # Run validation
+        validation = geoff_critic.validate_tool_output(
+            tool_name,
+            {},
+            tool_output,
+            geoff_analysis
+        )
+        
+        # Commit to git
+        geoff_critic.commit_validation(investigation_id, validation)
+        
+        return jsonify(validation)
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)})
+
+@app.route('/critic/summary/<investigation_id>', methods=['GET'])
+def critic_summary(investigation_id):
+    """Get validation summary for investigation"""
+    try:
+        summary = geoff_critic.get_validation_summary(investigation_id)
+        return jsonify(summary)
+    except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)})
 
 if __name__ == '__main__':
