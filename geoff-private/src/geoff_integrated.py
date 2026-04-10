@@ -6,6 +6,7 @@ Geoff DFIR - Integrated with SIFT Tool Specialists
 import os
 import json
 import sys
+import subprocess
 sys.path.insert(0, '/home/claw/.openclaw/workspace/geoff-private/src')
 
 import requests
@@ -16,6 +17,148 @@ from flask_cors import CORS
 
 from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, YARA_Specialist, STRINGS_Specialist
 from sift_specialists_extended import ExtendedOrchestrator
+
+# Context Window Management
+class ContextManager:
+    """Manages LLM context window to prevent overflow while keeping relevant info"""
+    
+    # qwen3-coder-next:cloud has 32K context window
+    # Reserve 8K for response + system overhead
+    MAX_CONTEXT_TOKENS = 24000  # ~96KB of text (4 chars per token estimate)
+    
+    def __init__(self):
+        self.conversation_history = []  # Store last N exchanges for context
+        self.max_history_turns = 5
+    
+    def estimate_tokens(self, text: str) -> int:
+        """Rough token estimation: ~4 characters per token"""
+        return len(text) // 4
+    
+    def truncate_text(self, text: str, max_tokens: int) -> str:
+        """Truncate text to fit within token limit"""
+        estimated_tokens = self.estimate_tokens(text)
+        if estimated_tokens <= max_tokens:
+            return text
+        
+        # Calculate max characters
+        max_chars = max_tokens * 4
+        
+        # Keep beginning and end, truncate middle
+        if len(text) > max_chars:
+            half = max_chars // 2
+            return text[:half] + "\n...[truncated for context]...\n" + text[-half:]
+        return text
+    
+    def build_context(self, system_prompt: str, case_info: str, tool_info: str, 
+                     user_message: str, evidence_files: list = None) -> str:
+        """Build optimized context that fits within limits"""
+        
+        # Start with system prompt
+        parts = [system_prompt]
+        used_tokens = self.estimate_tokens(system_prompt)
+        
+        # Add case info with truncation for large file lists
+        if evidence_files and len(evidence_files) > 50:
+            # Summarize large file lists
+            file_summary = f"Case has {len(evidence_files)} items. Key items:\n"
+            file_summary += "\n".join(evidence_files[:30])
+            file_summary += f"\n...[and {len(evidence_files) - 30} more files]"
+            case_info = file_summary
+        
+        case_tokens = self.estimate_tokens(case_info)
+        if used_tokens + case_tokens < self.MAX_CONTEXT_TOKENS * 0.6:
+            parts.append(case_info)
+            used_tokens += case_tokens
+        else:
+            # Truncate case info
+            parts.append(self.truncate_text(case_info, 
+                       int((self.MAX_CONTEXT_TOKENS - used_tokens) * 0.3)))
+            used_tokens = self.estimate_tokens("\n".join(parts))
+        
+        # Add conversation history (recent exchanges)
+        if self.conversation_history:
+            history_text = "Recent conversation:\n"
+            for turn in self.conversation_history[-self.max_history_turns:]:
+                history_text += f"User: {turn['user'][:200]}\n"
+                history_text += f"Geoff: {turn['geoff'][:200]}\n"
+            
+            history_tokens = self.estimate_tokens(history_text)
+            if used_tokens + history_tokens < self.MAX_CONTEXT_TOKENS * 0.8:
+                parts.append(history_text)
+                used_tokens += history_tokens
+        
+        # Add tool info (shorter, always fits)
+        remaining_tokens = self.MAX_CONTEXT_TOKENS - used_tokens
+        if remaining_tokens > 500:
+            parts.append(tool_info)
+        
+        return "\n\n".join(parts)
+    
+    def add_exchange(self, user_msg: str, geoff_response: str):
+        """Add exchange to conversation history"""
+        self.conversation_history.append({
+            'user': user_msg,
+            'geoff': geoff_response,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        # Keep only recent history
+        if len(self.conversation_history) > self.max_history_turns * 2:
+            self.conversation_history = self.conversation_history[-self.max_history_turns:]
+    
+    def clear_history(self):
+        """Clear conversation history (e.g., new case)"""
+        self.conversation_history = []
+
+# Initialize global context manager
+context_manager = ContextManager()
+
+# Git Action Logger for audit trail
+def git_commit_action(message: str, base_path: str = "/home/claw/.openclaw/workspace/geoff-private"):
+    """Git commit for audit trail"""
+    try:
+        # Configure git if not already set
+        subprocess.run(['git', 'config', 'user.email'], cwd=base_path, capture_output=True, check=True)
+    except:
+        # Set default git config
+        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=base_path, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=base_path, capture_output=True)
+    
+    try:
+        subprocess.run(['git', 'add', '.'], cwd=base_path, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', f"[GEOFF-ACTION] {message}"], cwd=base_path, capture_output=True)
+        print(f"[GIT] Committed: {message}")
+    except:
+        pass  # Git not available or nothing to commit
+
+class ActionLogger:
+    """Logger for all Geoff actions with git integration"""
+    
+    def __init__(self, log_dir: str = "/home/claw/.openclaw/workspace/geoff-private/logs"):
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.action_log = self.log_dir / f"actions_{datetime.now().strftime('%Y%m')}.jsonl"
+    
+    def log(self, action_type: str, details: dict, commit: bool = True):
+        """Log an action with optional git commit"""
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'action_type': action_type,
+            'details': details
+        }
+        
+        # Append to JSONL file
+        with open(self.action_log, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+        
+        # Git commit for audit trail
+        if commit:
+            git_commit_action(f"{action_type}: {details.get('description', 'action')}")
+        
+        return entry
+
+# Initialize global action logger
+action_logger = ActionLogger()
 
 app = Flask(__name__)
 CORS(app)
@@ -739,34 +882,28 @@ def chat():
         # Detect if user wants to run a tool
         tool_request = detect_tool_request(user_msg)
         tool_result = None
-        
-        # Build context
-        context_parts = []
+        evidence_file = None
         
         # Check if user mentions a case
         cases = get_all_cases()
         case_match = None
+        files = []
         for case_name in cases.keys():
             if case_name.lower() in user_msg.lower():
                 case_match = case_name
+                files = cases[case_name]
                 break
         
-        if case_match:
-            files = cases[case_match]
-            context_parts.append(f"Case '{case_match}' has {len(files)} items")
-        
         # If tool request detected, run it
-        if tool_request:
+        if tool_request and case_match:
             # Find evidence file from context
-            evidence_file = None
-            if case_match:
-                case_path = Path(EVIDENCE_BASE_DIR) / case_match
-                # Look for disk images or memory dumps
-                for ext in ['.E01', '.dd', '.raw', '.mem', '.img']:
-                    matches = list(case_path.rglob(f'*{ext}'))
-                    if matches:
-                        evidence_file = str(matches[0])
-                        break
+            case_path = Path(EVIDENCE_BASE_DIR) / case_match
+            # Look for disk images or memory dumps
+            for ext in ['.E01', '.dd', '.raw', '.mem', '.img']:
+                matches = list(case_path.rglob(f'*{ext}'))
+                if matches:
+                    evidence_file = str(matches[0])
+                    break
             
             if evidence_file:
                 tool_request['params']['disk_image'] = evidence_file
@@ -781,22 +918,64 @@ def chat():
                 'status': 'running'
             }
             tool_result = orchestrator.run_playbook_step('chat-session', step)
-            context_parts.append(f"Tool {tool_request['module']}.{tool_request['function']} was executed.")
         
-        # Add available tools info
-        context_parts.append("Available forensic tools: SleuthKit (mmls, fls, fsstat), Volatility (memory analysis), YARA (malware scanning), strings (IOC extraction)")
+        # Build optimized context using ContextManager
+        case_info = ""
+        if case_match:
+            case_info = f"Case '{case_match}' has {len(files)} items.\n" + "\n".join(files)
         
-        context = "\n".join(context_parts)
+        tool_info = """Available forensic tools:
+- SleuthKit: mmls (partition), fls (list files), fsstat (filesystem), icat (extract), istat/ils (inodes)
+- Volatility: process list, network scan, malware find, registry scan, process dump
+- YARA: signature scan, directory scan
+- Strings: extract IOCs (URLs, IPs, emails, registry paths)
+- Registry: hive parsing, UserAssist, ShellBags, USB history, autoruns, services
+- Timeline: log2timeline (create), psort (sort), super timeline
+- Network: pcap analysis, tcpflow, HTTP extraction
+- Logs: EVTX parsing, syslog analysis
+- Mobile: iOS backup, Android data"""
+        
+        # Build optimized context
+        context = context_manager.build_context(
+            GEOFF_PROMPT,
+            case_info,
+            tool_info,
+            user_msg,
+            files if case_match else []
+        )
+        
+        # Log the chat action
+        action_logger.log('CHAT', {
+            'user_message': user_msg,
+            'case': case_match,
+            'tool_executed': tool_request['module'] + '.' + tool_request['function'] if tool_request else None,
+            'description': f"Chat with {case_match or 'no case'}"
+        })
         
         # Call LLM
         response = call_llm(user_msg, context)
         
+        # Add to conversation history (with truncation for large responses)
+        context_manager.add_exchange(
+            user_msg[:500],  # Truncate long user messages
+            response[:1000]  # Truncate long responses
+        )
+        
         result = {'response': response}
         if tool_result:
             result['tool_result'] = tool_result
+            # Log tool execution
+            action_logger.log('TOOL_EXECUTION', {
+                'module': tool_request['module'],
+                'function': tool_request['function'],
+                'case': case_match,
+                'evidence_file': evidence_file,
+                'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}"
+            })
         
         return jsonify(result)
     except Exception as e:
+        action_logger.log('ERROR', {'error': str(e), 'user_message': user_msg})
         return jsonify({'response': f'Error: {str(e)}'})
 
 @app.route('/cases', methods=['GET'])
@@ -818,6 +997,14 @@ def run_tool():
         function = data.get('function')
         params = data.get('params', {})
         
+        # Log the tool execution request
+        action_logger.log('TOOL_API_CALL', {
+            'module': module,
+            'function': function,
+            'params': params,
+            'description': f"API call to run {module}.{function}"
+        })
+        
         step = {
             'module': module,
             'function': function,
@@ -826,8 +1013,23 @@ def run_tool():
         }
         
         result = orchestrator.run_playbook_step('api-call', step)
+        
+        # Log successful execution
+        action_logger.log('TOOL_API_SUCCESS', {
+            'module': module,
+            'function': function,
+            'result_status': result.get('status'),
+            'description': f"API {module}.{function} completed"
+        })
+        
         return jsonify(result)
     except Exception as e:
+        action_logger.log('TOOL_API_ERROR', {
+            'module': module,
+            'function': function,
+            'error': str(e),
+            'description': f"API {module}.{function} failed"
+        })
         return jsonify({'status': 'error', 'error': str(e)})
 
 if __name__ == '__main__':
