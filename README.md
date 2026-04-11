@@ -117,19 +117,25 @@ cd validations/
 - Ollama (for LLM)
 - SIFT Tools (SleuthKit, Volatility3, YARA, etc.)
 
-### Installation
+### Installation (Public Repo - when available)
 ```bash
-git clone <repository>
-cd geoff-private/
-pip install -r requirements.txt
+curl -fsSL https://raw.githubusercontent.com/legacyboy/Geoff/main/installer/install.sh | bash
+```
 
-# Set environment variables (optional)
+### Installation (Private Repo - current)
+```bash
+git clone https://github.com/legacyboy/Geoff.git
+cd Geoff/installer
+./install.sh
+```
+
+### Manual Setup (Advanced)
+```bash
+pip install -r requirements.txt
 export GEOFF_EVIDENCE_PATH="/path/to/evidence"
 export GEOFF_PORT=8080
 export OLLAMA_URL="http://localhost:11434"
 export GEOFF_MODEL="qwen3-coder-next:cloud"
-
-# Run
 python src/geoff_integrated.py
 ```
 

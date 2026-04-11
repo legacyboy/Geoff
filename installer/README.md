@@ -2,16 +2,20 @@
 
 A self-hosted AI assistant with a custom web UI, powered by Ollama and OpenClaw.
 
-## Quick Start
+## Quick Start (Public Repo)
 
 ```bash
 # One-command install
 curl -fsSL https://raw.githubusercontent.com/legacyboy/Geoff/main/installer/install.sh | bash
+```
 
-# Or download and run
-git clone https://github.com/yourusername/geoff.git
-cd geoff
-bash install.sh
+## Quick Start (Private Repo - Current)
+
+```bash
+# Clone and install
+git clone https://github.com/legacyboy/Geoff.git
+cd Geoff/installer
+./install.sh
 ```
 
 ## Features
