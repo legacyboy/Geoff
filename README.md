@@ -131,8 +131,20 @@ cd validations/
 ## Quick Start
 
 ### Requirements
+
+**Pinned Versions for Forensic Repeatability:**
+
+| Component | Version/Digest | Purpose |
+|-----------|---------------|---------|
+| **Ollama binary** | v0.6.5 | Local LLM inference engine |
+| **Ollama model** | gemma3:4b (digest: `aeda25e63ebd`) | Default Geoff model |
+| **Geoff** | v0.1.0 | DFIR investigation framework |
+
+These exact versions ensure identical behavior across installations for chain of custody and evidence integrity.
+
+**System Requirements:**
 - Python 3.10+
-- Ollama (for LLM)
+- Ollama (versions pinned above)
 - SIFT Tools (SleuthKit, Volatility3, YARA, etc.)
 
 ### Installation (Public Repo - when available)

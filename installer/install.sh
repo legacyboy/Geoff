@@ -2,12 +2,32 @@
 
 # Geoff Installer - One-command setup for Geoff AI Assistant
 # Usage: curl -fsSL https://.../install.sh | bash
+#
+# FORENSIC VERSION DOCUMENTATION
+# ==============================
+# For reproducibility and chain of custody, the following exact versions are used:
+#
+# Component          | Version/Digest                          | Source
+# -------------------|-----------------------------------------|----------------------------------
+# Ollama binary      | v0.6.5                                  | GitHub releases (ollama/ollama)
+# Model: gemma3:4b   | aeda25e63ebd (manifest digest)          | ollama.com/library/gemma3
+# Ollama binary hash | SHA256 from release checksums           | ollama-linux-amd64.tgz.sha256sum
+#
+# These pinned versions ensure identical Ollama binary and model weights
+# across installations for forensic repeatability and evidence integrity.
+#
+# Verification:
+# - Ollama version check: ollama --version
+# - Model digest check:  ollama list gemma3:4b
+#
 
 set -e
 
 GEOFF_VERSION="0.1.0"
 INSTALL_DIR="${HOME}/.geoff"
 OLLAMA_VERSION="0.6.5"
+OLLAMA_MODEL="gemma3:4b"
+OLLAMA_MODEL_DIGEST="aeda25e63ebd"
 GEOFF_USER="${USER}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
