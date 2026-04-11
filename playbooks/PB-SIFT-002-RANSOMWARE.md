@@ -79,3 +79,44 @@
 - [ ] **Family Identification:** Identify ransomware family if possible based on YARA, note style, and extension pattern.
 - [ ] **Attack Timeline:** Establish attack timeline — initial access $\rightarrow$ privilege escalation $\rightarrow$ lateral movement $\rightarrow$ encryption.
 - [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.
+
+---
+
+## Appendix A: Advanced Ransomware Analysis (CTF Enhanced)
+
+### A.1 — Weaponized Archive Detection (CVE-2023-38831)
+- [ ] **Archive Analysis:** Inspect downloaded archives (ZIP, RAR, 7z) for double-extension files.
+- [ ] **WinRAR Exploit Detection:** Flag archives containing files with trailing spaces or malicious file extensions masquerading as benign (e.g., `lottery.exe ` disguised as `lottery.pdf.exe`).
+- [ ] **Masquerading Check:** Check for file icons inconsistent with extensions (e.g., PDF icon on executable).
+- [ ] **Extraction Path Analysis:** Review extracted file paths in temp directories for suspicious executables.
+
+### A.2 — PyInstaller Ransomware Analysis
+- [ ] **PyInstaller Detection:** Flag executables packed with PyInstaller (look for `PYZ-00.pyz`, `struct` file signatures).
+- [ ] **Extraction:** Use `pyinstxtractor` to extract Python bytecode from PyInstaller executables.
+- [ ] **Decompilation:** Use `uncompyle6` or `pycdc` to decompile extracted `.pyc` files to source code.
+- [ ] **Source Analysis:** Review decompiled Python for:
+    - Encryption algorithms (AES, ChaCha20)
+    - Hardcoded IV values (e.g., `b'urfuckedmogambro'`)
+    - Key generation logic (random, time-based, hostname-based)
+    - File target extensions and paths
+    - Ransom note generation
+
+### A.3 — Encryption Key Recovery
+- [ ] **Key Material Hunt:** Search memory and temp directories for encryption keys:
+    - `vol.py windows.filescan.FileScan` to find temporary files
+    - Check `C:\Users\<user>\AppData\Local\Temp\` for key files
+    - Search for files with high entropy (potential key material)
+- [ ] **AES Key Extraction:** If key found in temp file, extract and convert to hex for decryption.
+- [ ] **Memory Key Recovery:** Search process memory for 32-byte random values (AES-256 keys) using `vol.py windows.memmap.Memmap`.
+- [ ] **Decryption Testing:** Attempt decryption of sample encrypted file with recovered key before full recovery.
+
+### A.4 — USB HID Keylog Analysis
+- [ ] **PCAP Review:** Analyze `keylog.pcapng` or similar USB keyboard traffic captures.
+- [ ] **HID Data Extraction:** Export USB HID data from packets (tshark: `usb.data_flag == 0` and `usb.capdata`).
+- [ ] **Keystroke Decoding:** Use PUK tool or custom scripts to decode HID keystroke scancodes to ASCII.
+- [ ] **Password Recovery:** Reconstruct typed passwords, credentials, or secret messages from keystroke sequences.
+
+### A.5 — Steganography Detection
+- [ ] **SpamMimic Detection:** Flag suspicious "spam-like" text in documents or emails that may be steganographic.
+- [ ] **Text Decoding:** Use SpamMimic decoder or similar tools to reveal hidden messages in seemingly random text.
+- [ ] **Email Attachment Analysis:** Check email attachments for embedded data using steganographic techniques.

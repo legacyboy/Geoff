@@ -104,5 +104,38 @@
     - **T1189:** Drive-by Compromise
     - **T1199:** Trusted Relationship Abuse
 - [ ] **Patient Zero Confirmation:** Confirm patient zero — host, user account, delivery mechanism, and timestamp.
-- [ ] **Narrative Reconstruction:** Establish full initial access narrative — delivery $\rightarrow$ execution $\rightarrow$ first action on objective.
+- [ ] **Narrative Reconstruction:** Establish full initial access narrative — delivery → execution → first action on objective.
 - [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.
+
+---
+
+## Appendix A: Web Server Compromise Analysis (CTF Enhanced)
+
+### A.1 — Web Server Log Analysis
+- [ ] **Access Log Review:** Check `/var/log/apache2/access.log` or `/inetpub/logs/` for attack patterns.
+- [ ] **SQL Injection Detection:** Flag SQLmap user-agents (`sqlmap/1.0`), SQLi payloads (`' OR 1=1--`, `UNION SELECT`), and `INTO OUTFILE` attempts.
+- [ ] **XSS Detection:** Flag `<script>`, `eval(`, `document.cookie`, and `window.name` payloads in GET/POST parameters.
+- [ ] **LFI/RFI Detection:** Flag path traversal attempts (`../../../etc/passwd`, `php://filter`), file inclusion of system files.
+- [ ] **Web Shell Upload:** Flag POST requests to upload endpoints with PHP/ASPX/JSP file extensions.
+- [ ] **Command Injection:** Flag command execution patterns (`;whoami`, `|nc`, `` `id` ``) in HTTP parameters.
+
+### A.2 — Web Shell Artifact Detection
+- [ ] **File Discovery:** Scan web directories (`/var/www/`, `/inetpub/wwwroot/`) for web shells.
+- [ ] **Known Shell Signatures:** Detect common web shells by filename pattern:
+    - `cmd.aspx`, `shell.aspx`, `webshell.php`, `c99.php`, `r57.php`
+    - Files with `cmd` parameter handlers
+    - Files containing `eval()`, `assert()`, `base64_decode()`
+- [ ] **Timestomping:** Flag web files with creation times inconsistent with system install dates.
+- [ ] **Content Analysis:** Use `strings` to extract indicators from suspected web shell files.
+
+### A.3 — XAMPP/DVWA Specific Indicators
+- [ ] **Installation Detection:** Flag XAMPP (`xampp-control.exe`), DVWA (`dvwa/`), or similar vulnerable web apps.
+- [ ] **Default Credentials:** Check for unchanged default passwords in web application databases.
+- [ ] **Security Level:** DVWA stores security level in cookie or session — check for `security=low` settings.
+- [ ] **Database Exploitation:** Check MySQL logs for unauthorized `SELECT INTO OUTFILE` or file write operations.
+
+### A.4 — Web Exploitation Chain Reconstruction
+- [ ] **Attack Timeline:** Reconstruct sequence: Initial request → Exploitation → Web shell upload → Command execution.
+- [ ] **Attacker IP:** Extract source IP from logs (e.g., `192.168.56.102` in CTF scenarios).
+- [ ] **File Upload Path:** Identify where uploaded files were written (e.g., `/uploads/`, `/temp/`).
+- [ ] **Post-Exploitation:** Document commands executed via web shell (check access logs for `?cmd=` parameters).

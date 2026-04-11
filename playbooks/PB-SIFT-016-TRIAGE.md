@@ -34,7 +34,31 @@
 
 ---
 
-### Phase 3 — Evidence Compatibility Matrix
+### Phase 3 — Memory-First Rapid Analysis (CTF Technique)
+When memory dump available, perform quick-win analysis before deep disk forensics:
+- [ ] **Process Snapshot:** Run `vol.py windows.pslist.PsList` to get active process list.
+- [ ] **Parent-Child Mapping:** Identify process trees; flag processes with unusual parents (e.g., `powershell.exe` under `winword.exe`).
+- [ ] **Network State:** Run `vol.py windows.netscan.NetScan` to capture established connections at acquisition time.
+- [ ] **Command Line History:** Run `vol.py windows.cmdline.CmdLine` to see command-line arguments (reveals encoded PowerShell, suspicious paths).
+- [ ] **User Activity:** Run `vol.py windows.registry.userassist.UserAssist` to find recently executed programs.
+- [ ] **Credential Extraction:** If suspicious privileged processes found, run `vol.py windows.hashdump.Hashdump`.
+- [ ] **Suspicious Process Memory:** Flag processes with:
+    - No legitimate parent (PPID = 0 except system processes)
+    - Network connections to uncommon ports
+    - Command lines with encoded commands (Base64, -enc, -encodedcommand)
+    - Recently executed but not in standard locations
+- [ ] **Memory Hash Validation:** Calculate MD5 of suspicious process memory dumps for IoC matching.
+- [ ] **Acquisition Time Correlation:** Compare memory acquisition timestamp with `windows.info.Info` to detect VM snapshot attacks.
+
+**Memory-First Pivot Indicators:**
+- Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **PB-SIFT-008** priority.
+- RDP/remote access tools (`mstsc.exe`, `AnyDesk.exe`) → **PB-SIFT-003** priority.
+- Credential access (`mimikatz.exe`, `lsass.exe` dumping) → **PB-SIFT-004** priority.
+- LOLBins with encoded commands (`powershell.exe`, `cmd.exe`, `certutil.exe`) → **PB-SIFT-007** priority.
+
+---
+
+### Phase 4 — Evidence Compatibility Matrix
 Validate required evidence before queuing playbooks:
 
 | Playbook | Disk Image | Memory | Logs | Network |
@@ -72,6 +96,12 @@ Perform quick pattern scans to pivot priority:
 - [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains $\rightarrow$ Priority: **PB-SIFT-007**.
 - [ ] **Lateral Movement:** Flag lateral movement tools $\rightarrow$ Priority: **PB-SIFT-003**.
 - [ ] **Mobile:** Flag mobile device connection $\rightarrow$ Add **PB-SIFT-015**.
+- [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter $\rightarrow$ Priority: **PB-SIFT-008, 001**.
+- [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts $\rightarrow$ Priority: **PB-SIFT-008, 010**.
+- [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads $\rightarrow$ Priority: **PB-SIFT-008**.
+- [ ] **LFI Exploitation (CTF):** Flag file inclusion attempts (/etc/hosts, /windows/system32/drivers/etc/hosts) $\rightarrow$ Priority: **PB-SIFT-008, 010**.
+- [ ] **RDP Enablement (CTF):** Flag `netsh` commands enabling remotedesktop in cmdscan output $\rightarrow$ Priority: **PB-SIFT-003**.
+- [ ] **Malicious File Upload (CTF):** Flag PHP uploaders, files with version checks (e.g., PHP 4.1.0), suspicious temp paths $\rightarrow$ Priority: **PB-SIFT-001, 008**.
 
 ---
 
