@@ -25,6 +25,7 @@ These playbooks provide a deterministic, phase-based methodology for hunting spe
 | **PB-SIFT-015** | Mobile Device Artifacts | iOS/Android backup analysis, spyware detection, and mobile-host connection artifacts. | ✅ Active |
 | **PB-SIFT-016** | Triage Prioritization | Meta-playbook for case intake, evidence scoring, and weighted execution planning. | ✅ Active |
 | **PB-SIFT-017** | Cross-Image Correlation | Multi-host analysis to reconstruct attack paths and calculate blast radius. | ✅ Active |
+| **PB-SIFT-018** | REMnux Malware Analysis | Static malware analysis using REMnux tools (die, peframe, pdfid, radare2, etc.). | ✅ Active |
 
 ---
 
