@@ -133,8 +133,8 @@ class InvestigationWorker:
                     "mmls_partition_table.txt"
                 )
                 results_summary.append({"tool": "mmls", "result": result})
-                self.git_commit(f"Added mmls output for {self.case_name}")
-                
+                self.git_commit(f"[TOOL] mmls executed for {self.case_name}")
+
                 # Run fsstat
                 self.update_status("DISK_FORENSICS", "fsstat", "running", 10)
                 result = self.run_tool_and_save(
@@ -143,7 +143,8 @@ class InvestigationWorker:
                     "fsstat_filesystem.txt"
                 )
                 results_summary.append({"tool": "fsstat", "result": result})
-                
+                self.git_commit(f"[TOOL] fsstat executed for {self.case_name}")
+
                 # Run fls (list files)
                 self.update_status("DISK_FORENSICS", "fls", "running", 15)
                 result = self.run_tool_and_save(
@@ -152,6 +153,7 @@ class InvestigationWorker:
                     "fls_file_listing.txt"
                 )
                 results_summary.append({"tool": "fls", "result": result})
+                self.git_commit(f"[TOOL] fls executed for {self.case_name}")
             
             # Phase 2: STRING EXTRACTION (always works)
             self.update_status("IOC_EXTRACTION", "strings", "running", 30)
@@ -162,9 +164,11 @@ class InvestigationWorker:
                     "strings_output.txt"
                 )
                 results_summary.append({"tool": "strings", "result": result})
+                self.git_commit(f"[TOOL] strings executed for {self.case_name}")
                 
                 # Extract IOCs from strings
                 self.extract_iocs_from_strings()
+                self.git_commit(f"[ANALYSIS] IOCs extracted for {self.case_name}")
             
             # Phase 3: MEMORY FORENSICS (if memory dump)
             self.update_status("MEMORY_FORENSICS", "volatility", "running", 50)
@@ -176,7 +180,8 @@ class InvestigationWorker:
                     "volatility_pslist.txt"
                 )
                 results_summary.append({"tool": "volatility_pslist", "result": result})
-            
+                self.git_commit(f"[TOOL] volatility executed for {self.case_name}")
+
             # Phase 4: YARA SCAN (if rules available)
             self.update_status("MALWARE_DETECTION", "yara", "running", 70)
             if evidence_file:
@@ -186,11 +191,12 @@ class InvestigationWorker:
                     "yara_scan.txt"
                 )
                 results_summary.append({"tool": "yara", "result": result})
-            
+                self.git_commit(f"[TOOL] yara executed for {self.case_name}")
+
             # Phase 5: Generate summary report
             self.update_status("REPORT_GENERATION", "summary", "running", 90)
             self.generate_summary_report(results_summary)
-            self.git_commit(f"Investigation complete for {self.case_name}")
+            self.git_commit(f"[REPORT] Investigation summary generated for {self.case_name}")
             
             # Final status
             self.update_status("COMPLETE", "investigation", "complete", 100,
