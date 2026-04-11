@@ -14,6 +14,8 @@
     ╚═══════════════════════════════════════════════════════════════╝
 ```
 
+> *"Follow every thread"*
+
 **Your digital forensics colleague with comprehensive tool coverage and built-in quality assurance.**
 
 ---
