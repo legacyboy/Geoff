@@ -1,7 +1,7 @@
 {
-  "started": "2026-04-10T21:32:00Z",
+  "started": "2026-04-10T22:34:00Z",
   "sources_total": 19,
-  "sources_processed": 7,
-  "last_processed": "https://github.com/tim-barc/ctf_writeups",
-  "errors": ["https://medium.com/@ahmedkhalifa8474hh/ctf-cit-dfir-write-ups-494e4fc00f13 (410 Deleted)"]
+  "sources_processed": 6,
+  "last_processed": "https://0xsh3rl0ck.github.io/ctf-writeup/Africa-DFIR-2021-CTF-Week-2/",
+  "errors": []
 }

@@ -270,6 +270,18 @@ class InvestigationWorker:
     def git_commit(self, message: str):
         """Commit changes to git with error handling"""
         try:
+            # Set git identity (required for commits)
+            subprocess.run(
+                ['git', 'config', 'user.email', 'geoff@dfir.local'],
+                cwd=self.case_dir,
+                capture_output=True
+            )
+            subprocess.run(
+                ['git', 'config', 'user.name', 'Geoff DFIR'],
+                cwd=self.case_dir,
+                capture_output=True
+            )
+            
             # Configure git to trust this directory
             subprocess.run(
                 ['git', 'config', '--local', 'safe.directory', str(self.case_dir)],
@@ -300,7 +312,10 @@ class InvestigationWorker:
                     capture_output=True,
                     text=True
                 )
-                print(f"[GIT] Committed: {message}")
+                if result.returncode == 0:
+                    print(f"[GIT] Committed: {message}")
+                else:
+                    print(f"[GIT ERROR] Commit failed: {result.stderr}")
             else:
                 print(f"[GIT] Nothing to commit for: {message}")
                 
