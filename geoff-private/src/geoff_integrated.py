@@ -405,14 +405,39 @@ def detect_tool_request(message: str) -> dict:
     return None
 
 def run_full_investigation(case_name: str, evidence_path: str = None):
-    """Spawn background investigation worker for case"""
+    """Spawn background investigation worker for case with timestamped directory"""
     import subprocess
+    from datetime import datetime
     
-    # Spawn background worker
+    # Create timestamped case directory: cases/<case_name>_YYYYMMDD_HHMMSS/
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    case_work_dir = f"{case_name}_{timestamp}"
+    case_work_path = Path(CASES_WORK_DIR) / case_work_dir
+    case_work_path.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize git repo in case directory
+    git_dir = case_work_path / ".git"
+    if not git_dir.exists():
+        subprocess.run(['git', 'init'], cwd=case_work_path, capture_output=True)
+        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, capture_output=True)
+        # Add safe.directory to allow commits from any process
+        subprocess.run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
+        # Also set local safe.directory
+        subprocess.run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
+    
+    # Create subdirectories
+    (case_work_path / "logs").mkdir(exist_ok=True)
+    (case_work_path / "output").mkdir(exist_ok=True)
+    (case_work_path / "reports").mkdir(exist_ok=True)
+    (case_work_path / "timeline").mkdir(exist_ok=True)
+    
+    # Spawn background worker with work directory
     worker_cmd = [
         'python3', 
-        '/home/claw/.openclaw/workspace/geoff-private/src/geoff_investigation_worker.py',
-        case_name
+        '/home/sansforensics/geoff_worker.py',
+        case_name,
+        str(case_work_path)
     ]
     if evidence_path:
         worker_cmd.append(evidence_path)
@@ -429,9 +454,10 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     return {
         "status": "started",
         "case": case_name,
+        "work_directory": str(case_work_path),
         "message": f"Investigation initiated for case: {case_name}",
-        "progress_file": f"{CASES_WORK_DIR}/{case_name}/investigation_status.json",
-        "note": "Background investigation running. Status updates via cron every 3 minutes."
+        "progress_file": str(case_work_path / "investigation_status.json"),
+        "note": "Background investigation running. Progress updates every 10 seconds."
     }
 
 def get_evidence_recursive(path, prefix=""):
@@ -804,11 +830,64 @@ HTML_TEMPLATE = """
                 if(data.tool_result) {
                     addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
                 }
+                // If investigation started, begin polling
+                if(data.investigation_started) {
+                    addMessage('Investigation started for: ' + data.case_name + '\\nPolling progress every 10 seconds...', 'system');
+                    pollInvestigationStatus(data.case_name);
+                }
             } catch(e) {
                 const chat = document.getElementById('chat-content');
                 chat.removeChild(chat.lastChild);
                 addMessage('Error: ' + e.message, 'system');
             }
+        }
+        
+        let investigationPollInterval = null;
+        
+        async function pollInvestigationStatus(caseName) {
+            // Clear any existing poll
+            if(investigationPollInterval) {
+                clearInterval(investigationPollInterval);
+            }
+            
+            const poll = async () => {
+                try {
+                    const res = await fetch('/investigation/status/' + caseName);
+                    if(res.ok) {
+                        const status = await res.json();
+                        
+                        if(status.status === 'complete') {
+                            addMessage(
+                                '**Investigation Complete**\\n' +
+                                'Case: ' + status.case + '\\n' +
+                                'Progress: 100%\\n' +
+                                'Total Time: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
+                                'system'
+                            );
+                            clearInterval(investigationPollInterval);
+                        } else if(status.status === 'running') {
+                            addMessage(
+                                '**Investigation Progress**\\n' +
+                                'Case: ' + status.case + '\\n' +
+                                'Phase: ' + status.phase + '\\n' +
+                                'Tool: ' + status.current_tool + '\\n' +
+                                'Progress: ' + status.progress_percent + '%\\n' +
+                                'Elapsed: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
+                                'system'
+                            );
+                        } else if(status.status === 'error') {
+                            addMessage('Investigation Error: ' + (status.details?.error || 'Unknown error'), 'system');
+                            clearInterval(investigationPollInterval);
+                        }
+                    }
+                } catch(e) {
+                    console.error('Poll error:', e);
+                }
+            };
+            
+            // Poll immediately and then every 10 seconds
+            poll();
+            investigationPollInterval = setInterval(poll, 10000);
         }
         
         async function loadEvidence() {
@@ -949,6 +1028,22 @@ def chat():
                 }
                 tool_result = orchestrator.run_playbook_step('chat-session', step)
         
+        # If investigation was started, return that status immediately (skip LLM)
+        if tool_request and tool_request['function'] == 'run_full_investigation' and tool_result:
+            result = {
+                'response': f"**G.E.O.F.F. Investigation Initiated**\n\n" +
+                           f"Case: {tool_result.get('case', case_match)}\n" +
+                           f"Work Directory: {tool_result.get('work_directory', 'N/A')}\n" +
+                           f"Progress File: {tool_result.get('progress_file', 'N/A')}\n\n" +
+                           f"{tool_result.get('note', '')}\n\n" +
+                           f"The investigation is now running in the background. " +
+                           f"Progress updates will appear every 10 seconds.",
+                'tool_result': tool_result,
+                'investigation_started': True,
+                'case_name': tool_result.get('case', case_match)
+            }
+            return jsonify(result)
+        
         # Build optimized context using ContextManager
         case_info = ""
         if case_match:
@@ -995,32 +1090,38 @@ def chat():
         if tool_result:
             result['tool_result'] = tool_result
             
-            # Validate tool output with Critic
-            print(f"[CRITIC] Validating {tool_request['module']}.{tool_request['function']}...")
-            validation = geoff_critic.validate_tool_output(
-                f"{tool_request['module']}.{tool_request['function']}",
-                tool_request['params'],
-                json.dumps(tool_result),
-                response  # Geoff's analysis
-            )
-            result['critic_validation'] = validation
-            result['critic_approved'] = validation.get('valid', False)
+            # Check if this was an investigation start
+            if isinstance(tool_result, dict) and tool_result.get('status') == 'started':
+                result['investigation_started'] = True
+                result['case_name'] = tool_result.get('case', case_match)
             
-            # Commit validation to git
-            geoff_critic.commit_validation(
-                case_match or 'unknown',
-                validation
-            )
-            
-            # Log tool execution
-            action_logger.log('TOOL_EXECUTION', {
-                'module': tool_request['module'],
-                'function': tool_request['function'],
-                'case': case_match,
-                'evidence_file': evidence_file,
-                'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}",
-                'critic_valid': validation.get('valid', False)
-            })
+            # Validate tool output with Critic (skip for investigation - it's async)
+            if tool_request and tool_request['function'] != 'run_full_investigation':
+                print(f"[CRITIC] Validating {tool_request['module']}.{tool_request['function']}...")
+                validation = geoff_critic.validate_tool_output(
+                    f"{tool_request['module']}.{tool_request['function']}",
+                    tool_request['params'],
+                    json.dumps(tool_result),
+                    response  # Geoff's analysis
+                )
+                result['critic_validation'] = validation
+                result['critic_approved'] = validation.get('valid', False)
+                
+                # Commit validation to git
+                geoff_critic.commit_validation(
+                    case_match or 'unknown',
+                    validation
+                )
+                
+                # Log tool execution
+                action_logger.log('TOOL_EXECUTION', {
+                    'module': tool_request['module'],
+                    'function': tool_request['function'],
+                    'case': case_match,
+                    'evidence_file': evidence_file,
+                    'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}",
+                    'critic_valid': validation.get('valid', False)
+                })
         
         return jsonify(result)
     except Exception as e:
@@ -1117,6 +1218,20 @@ def critic_summary(investigation_id):
         return jsonify(summary)
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)})
+
+@app.route('/investigation/status/<case_name>', methods=['GET'])
+def get_investigation_status(case_name):
+    """Get status of background investigation for polling"""
+    try:
+        status_file = Path(CASES_WORK_DIR) / case_name / "investigation_status.json"
+        if status_file.exists():
+            with open(status_file) as f:
+                status = json.load(f)
+            return jsonify(status)
+        else:
+            return jsonify({'status': 'not_found', 'case': case_name}), 404
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 if __name__ == '__main__':
     print(f'Geoff DFIR on port {PORT}')
