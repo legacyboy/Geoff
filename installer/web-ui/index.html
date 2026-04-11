@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geoff Installer UI</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f6;
+            --sidebar-color: #ffffff;
+            --primary-color: #4a90e2;
+            --text-color: #333;
+            --border-color: #ddd;
+            --chat-user-bg: #e1f5fe;
+            --chat-bot-bg: #fff;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        /* Sidebar Styles */
+        #sidebar {
+            width: 320px;
+            background-color: var(--sidebar-color);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        h2 { font-size: 1.2rem; margin-bottom: 20px; color: var(--primary-color); }
+        h3 { font-size: 1rem; margin-top: 20px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 0.85rem; margin-bottom: 5px; font-weight: 600; }
+        .form-group input { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid var(--border-color); 
+            border-radius: 4px; 
+            box-sizing: border-box;
+        }
+
+        #upload-area {
+            border: 2px dashed var(--border-color);
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            margin-bottom: 15px;
+        }
+        #upload-area:hover { border-color: var(--primary-color); }
+        #file-input { display: none; }
+
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: 600;
+        }
+        .btn:hover { opacity: 0.9; }
+
+        /* Main Content / Chat Styles */
+        #main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            position: relative;
+        }
+
+        #chat-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 15px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .user-message {
+            align-self: flex-end;
+            background-color: var(--chat-user-bg);
+            border-bottom-right-radius: 2px;
+            color: #0d47a1;
+        }
+        .bot-message {
+            align-self: flex-start;
+            background-color: var(--chat-bot-bg);
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 2px;
+        }
+
+        #input-area {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+        }
+
+        #user-input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            outline: none;
+        }
+
+        #user-input:focus { border-color: var(--primary-color); }
+    </style>
+</head>
+<body>
+
+    <aside id="sidebar">
+        <h2>Geoff Settings</h2>
+        
+        <section>
+            <h3>Ollama Configuration</h3>
+            <div class="form-group">
+                <label for="ollama-url">Cloud Ollama Endpoint</label>
+                <input type="text" id="ollama-url" placeholder="http://127.0.0.1:11434">
+            </div>
+            <div class="form-group">
+                <label for="ollama-model">Model Name</label>
+                <input type="text" id="ollama-model" placeholder="deepseek-v3">
+            </div>
+        </section>
+
+        <section>
+            <h3>Evidence & Storage</h3>
+            <div class="form-group">
+                <label for="evidence-path">Evidence Location</label>
+                <input type="text" id="evidence-path" placeholder="/home/claw/evidence">
+            </div>
+            
+            <h3>Upload Evidence</h3>
+            <div id="upload-area" onclick="document.getElementById('file-input').click()">
+                <p>Click or Drag files here</p>
+                <input type="file" id="file-input" multiple onchange="handleFileUpload(this)">
+            </div>
+            <div id="file-list" style="font-size: 0.75rem; color: #666; margin-bottom: 10px;"></div>
+        </section>
+
+        <button class="btn" onclick="saveSettings()">Save Configuration</button>
+    </aside>
+
+    <main id="main-content">
+        <div id="chat-window">
+            <div class="message bot-message">Hello! I'm Geoff. How can I help you today?</div>
+        </div>
+        <div id="input-area">
+            <input type="text" id="user-input" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
+            <button class="btn" style="width: auto;" onclick="sendMessage()">Send</button>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = '/api'; // Assuming backend is served from /api
+
+        async function saveSettings() {
+            const settings = {
+                ollamaUrl: document.getElementById('ollama-url').value,
+                ollamaModel: document.getElementById('ollama-model').value,
+                evidencePath: document.getElementById('evidence-path').value,
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                if (response.ok) alert('Settings saved successfully!');
+            } catch (e) {
+                console.error('Failed to save settings', e);
+                alert('Error saving settings. (Backend might be offline)');
+            }
+        }
+
+        async function handleFileUpload(input) {
+            const files = input.files;
+            const list = document.getElementById('file-list');
+            list.innerHTML = '';
+
+            for (let file of files) {
+                list.innerHTML += `<div>📄 ${file.name}</div>`;
+                
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch(`${API_BASE}/upload`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    if (response.ok) {
+                        appendMessage('bot', `Uploaded ${file.name} successfully.`);
+                    }
+                } catch (e) {
+                    console.error('Upload failed', e);
+                }
+            }
+        }
+
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage('user', text);
+            input.value = '';
+
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await response.json();
+                appendMessage('bot', data.reply || 'I encountered an error processing that.');
+            } catch (e) {
+                appendMessage('bot', 'Connection Error: I cannot reach the backend logic right now.');
+            }
+        }
+
+        function appendMessage(sender, text) {
+            const win = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = `message ${sender}-message`;
+            div.textContent = text;
+            win.appendChild(div);
+            win.scrollTop = win.scrollHeight;
+        }
+
+        // Load existing settings on start
+        async function loadSettings() {
+            try {
+                const response = await fetch(`${API_BASE}/settings`);
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('ollama-url').value = data.ollamaUrl || '';
+                    document.getElementById('ollama-model').value = data.ollamaModel || '';
+                    document.getElementById('evidence-path').value = data.evidencePath || '';
+                }
+            } catch (e) {
+                console.log('No settings found or backend offline.');
+            }
+        }
+
+        window.onload = loadSettings;
+    </script>
+</body>
+</html>
