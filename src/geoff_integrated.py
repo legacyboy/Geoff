@@ -183,7 +183,47 @@ CORS(app)
 # Configuration already defined above (lines 118-119)
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
-LLM_MODEL = os.environ.get('GEOFF_MODEL', "qwen3-coder-next:cloud")
+# Geoff Manager Model (DeepSeek R1 70B - main orchestrator)
+# Local: deepseek-r1:70b | Cloud: deepseek-r1 (via API)
+LLM_MODEL = os.environ.get('GEOFF_MODEL', "deepseek-r1:70b")
+
+# Cloud mode toggle - set GEOFF_CLOUD=true to use cloud models
+GEOFF_CLOUD = os.environ.get('GEOFF_CLOUD', "false").lower() == "true"
+
+# Cloud API Configuration
+# User must provide their own API keys - no hardcoded credentials
+CLOUD_CONFIG = {
+    "enabled": GEOFF_CLOUD,
+    "manager": {
+        "provider": os.environ.get('GEOFF_CLOUD_MANAGER_PROVIDER', 'deepseek'),
+        "model": os.environ.get('GEOFF_CLOUD_MANAGER_MODEL', 'deepseek-r1'),
+        "api_key": os.environ.get('DEEPSEEK_API_KEY', ''),  # User provides
+        "base_url": os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')
+    },
+    "forensicator": {
+        "provider": os.environ.get('GEOFF_CLOUD_FORENSICATOR_PROVIDER', 'openrouter'),
+        "model": os.environ.get('GEOFF_CLOUD_FORENSICATOR_MODEL', 'qwen/qwen-2.5-coder-32b-instruct'),
+        "api_key": os.environ.get('OPENROUTER_API_KEY', ''),  # User provides
+        "base_url": os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+    },
+    "critic": {
+        "provider": os.environ.get('GEOFF_CLOUD_CRITIC_PROVIDER', 'openrouter'),
+        "model": os.environ.get('GEOFF_CLOUD_CRITIC_MODEL', 'qwen/qwen-3-30b'),
+        "api_key": os.environ.get('OPENROUTER_API_KEY', ''),  # Can reuse same key
+        "base_url": os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
+    }
+}
+
+# Validate cloud config
+if GEOFF_CLOUD:
+    missing_keys = []
+    if not CLOUD_CONFIG["manager"]["api_key"]:
+        missing_keys.append("DEEPSEEK_API_KEY")
+    if not CLOUD_CONFIG["forensicator"]["api_key"]:
+        missing_keys.append("OPENROUTER_API_KEY")
+    if missing_keys:
+        print(f"[WARNING] Cloud mode enabled but missing API keys: {', '.join(missing_keys)}")
+        print("[INFO] Set via environment variables or cloud config UI")
 
 # Initialize extended orchestrator with 100% coverage
 orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
@@ -278,8 +318,60 @@ Your role is to conduct thorough, systematic forensic analysis using established
 - Clear identification of IOCs and suspicious activity
 - Structured reporting suitable for legal documentation"""
 
+def call_cloud_llm(provider_config, user_message, context=""):
+    """Call cloud LLM API (DeepSeek, OpenRouter, etc.)"""
+    try:
+        full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+        
+        headers = {
+            "Authorization": f"Bearer {provider_config['api_key']}",
+            "Content-Type": "application/json"
+        }
+        
+        # Add OpenRouter-specific headers
+        if "openrouter" in provider_config['base_url']:
+            headers["HTTP-Referer"] = "https://github.com/legacyboy/Geoff"
+            headers["X-Title"] = "G.E.O.F.F. DFIR"
+        
+        payload = {
+            "model": provider_config['model'],
+            "messages": [
+                {"role": "system", "content": GEOFF_PROMPT},
+                {"role": "user", "content": context + "\n\n" + user_message}
+            ],
+            "temperature": 0.8,
+            "max_tokens": 4096
+        }
+        
+        response = requests.post(
+            f"{provider_config['base_url']}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        elif response.status_code == 401:
+            return "[ERROR] Authentication failed. Please check your API key in cloud settings."
+        else:
+            return f"[ERROR] Cloud API returned {response.status_code}: {response.text[:200]}"
+            
+    except Exception as e:
+        print(f"[CLOUD LLM] Error: {e}")
+        return "[ERROR] Cloud service unavailable. Check your connection and API configuration."
+
 def call_llm(user_message, context=""):
-    """Call Ollama LLM"""
+    """Call LLM - local Ollama or cloud based on GEOFF_CLOUD setting"""
+    
+    if GEOFF_CLOUD:
+        # Use cloud Manager model
+        if not CLOUD_CONFIG["manager"]["api_key"]:
+            return "[ERROR] Cloud mode enabled but DEEPSEEK_API_KEY not set. Please configure cloud settings."
+        return call_cloud_llm(CLOUD_CONFIG["manager"], user_message, context)
+    
+    # Local Ollama mode
     try:
         full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
         response = requests.post(
