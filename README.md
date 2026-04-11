@@ -14,7 +14,7 @@
     ╚═══════════════════════════════════════════════════════════════╝
 ```
 
-**Your digital forensics colleague with 100% tool coverage and built-in quality assurance.**
+**Your digital forensics colleague with comprehensive tool coverage and built-in quality assurance.**
 
 ---
 
@@ -29,7 +29,7 @@ G.E.O.F.F. is a conversational DFIR (Digital Forensics and Incident Response) pl
 
 ---
 
-## 100% Tool Coverage
+## Tool Coverage
 
 | Category | Tools | Functions |
 |----------|-------|-----------|
@@ -44,6 +44,24 @@ G.E.O.F.F. is a conversational DFIR (Digital Forensics and Incident Response) pl
 | **Mobile** | iLEAPP-style | iOS backup, Android data analysis |
 
 **Total: 32 functions across 9 specialist modules**
+
+### REMnux Tool Coverage
+
+G.E.O.F.F. integrates REMnux malware analysis tools:
+
+| Category | Tools | Purpose |
+|----------|-------|---------|
+| **Static Analysis** | `die`, `exiftool`, `peframe`, `upx` | Binary identification, metadata, PE structure, unpacking |
+| **Dynamic Analysis** | `fakedns`, `inetsim`, `wireshark` | Network simulation, traffic capture |
+| **Memory Forensics** | `vol.py`, `rekall` | Memory dump analysis |
+| **Network Analysis** | `wireshark`, `tcpflow`, `ngrep` | PCAP inspection, flow reconstruction |
+| **Malware Detection** | `clamav`, `yara` | Signature-based detection, custom rules |
+| **Web Analysis** | `js-beautify`, `burp` | JavaScript deobfuscation, web proxy |
+| **Document Analysis** | `pdfid`, `pdf-parser`, `oledump` | PDF and Office document inspection |
+| **Crypto** | `ssdeep`, `hashdeep` | Fuzzy hashing, file integrity |
+| **Utilities** | `radare2`, `gdb` | Disassembly, debugging |
+
+**Total: 15+ REMnux tools integrated**
 
 ---
 
