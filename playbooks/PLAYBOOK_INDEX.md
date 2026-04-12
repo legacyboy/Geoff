@@ -26,6 +26,7 @@ These playbooks provide a deterministic, phase-based methodology for hunting spe
 | **PB-SIFT-016** | Triage Prioritization | Meta-playbook for case intake, evidence scoring, and weighted execution planning. | ✅ Active |
 | **PB-SIFT-017** | Cross-Image Correlation | Multi-host analysis to reconstruct attack paths and calculate blast radius. | ✅ Active |
 | **PB-SIFT-018** | REMnux Malware Analysis | Static malware analysis using REMnux tools (die, peframe, pdfid, radare2, etc.). | ✅ Active |
+| **PB-SIFT-019** | Malware Analysis SOP | Systematic malware analysis covering entry vector, static/dynamic analysis, and reporting. | ✅ Active |
 
 ---
 
