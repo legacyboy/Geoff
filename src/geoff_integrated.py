@@ -30,15 +30,18 @@ class ContextManager:
     
     # qwen3-coder-next:cloud has 32K context window
     # Reserve 8K for response + system overhead
-    MAX_CONTEXT_TOKENS = 24000  # ~96KB of text (4 chars per token estimate)
+    MAX_CONTEXT_TOKENS = 24000  # ~76KB of text (3.2 chars per token for high-entropy forensic data)
+    
+    # Use 3.2 chars/token for high-entropy forensic data and code (more accurate than 4)
+    CHARS_PER_TOKEN = 3.2
     
     def __init__(self):
         self.conversation_history = []  # Store last N exchanges for context
         self.max_history_turns = 5
     
     def estimate_tokens(self, text: str) -> int:
-        """Rough token estimation: ~4 characters per token"""
-        return len(text) // 4
+        """Token estimation: ~3.2 characters per token for high-entropy forensic data"""
+        return int(len(text) / self.CHARS_PER_TOKEN)
     
     def truncate_text(self, text: str, max_tokens: int) -> str:
         """Truncate text to fit within token limit"""

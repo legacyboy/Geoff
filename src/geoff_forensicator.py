@@ -18,16 +18,20 @@ import sys
 # Local: qwen2.5-coder:32b | Cloud: qwen2.5-coder (via API)
 FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b")
 
-def call_forensicator_llm(prompt: str, ollama_url: str = "http://localhost:11434") -> str:
+OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
+
+def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
     """Call Forensicator LLM for tool understanding"""
+    url = ollama_url or OLLAMA_URL_DEFAULT
+    url = ollama_url or OLLAMA_URL_DEFAULT
     try:
         response = requests.post(
-            f"{ollama_url}/api/generate",
+            f"{url}/api/generate",
             json={
                 "model": FORENSICATOR_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.1}  # Low temp for precision
+                "options": {"temperature": 0.1}
             },
             timeout=120
         )
@@ -47,8 +51,8 @@ class ForensicatorAgent:
     - Self-validates output before returning
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, ollama_url: str = None):
+        self.ollama_url = ollama_url or OLLAMA_URL_DEFAULT
         self.execution_log = []
         
     def execute_task(self, instruction: str, evidence_path: str = None) -> Dict[str, Any]:

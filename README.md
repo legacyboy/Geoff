@@ -57,23 +57,23 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 
 **Total: 32 functions across 9 specialist modules**
 
-### REMnux Tool Coverage
+### REMnux Tool Coverage Status
 
-GEOFF integrates REMnux malware analysis tools:
+GEOFF is designed to work with REMnux malware analysis tools. Current integration status:
 
-| Category | Tools | Purpose |
-|----------|-------|---------|
-| **Static Analysis** | `die`, `exiftool`, `peframe`, `upx` | Binary identification, metadata, PE structure, unpacking |
-| **Dynamic Analysis** | `fakedns`, `inetsim`, `wireshark` | Network simulation, traffic capture |
-| **Memory Forensics** | `vol.py`, `rekall` | Memory dump analysis |
-| **Network Analysis** | `wireshark`, `tcpflow`, `ngrep` | PCAP inspection, flow reconstruction |
-| **Malware Detection** | `clamav`, `yara` | Signature-based detection, custom rules |
-| **Web Analysis** | `js-beautify`, `burp` | JavaScript deobfuscation, web proxy |
-| **Document Analysis** | `pdfid`, `pdf-parser`, `oledump` | PDF and Office document inspection |
-| **Crypto** | `ssdeep`, `hashdeep` | Fuzzy hashing, file integrity |
-| **Utilities** | `radare2`, `gdb` | Disassembly, debugging |
+| Category | Tools | Purpose | Status |
+|----------|-------|---------|--------|
+| **Static Analysis** | `die`, `exiftool`, `peframe`, `upx` | Binary identification, metadata, PE structure, unpacking | 🛠️ Requires REMnux Install |
+| **Dynamic Analysis** | `fakedns`, `inetsim`, `wireshark` | Network simulation, traffic capture | 🛠️ Requires REMnux Install |
+| **Memory Forensics** | `vol.py`, `rekall` | Memory dump analysis | ✅ Via Volatility3 (built-in) |
+| **Network Analysis** | `wireshark`, `tcpflow`, `ngrep` | PCAP inspection, flow reconstruction | ✅ Via tshark/tcpflow (built-in) |
+| **Malware Detection** | `clamav`, `yara` | Signature-based detection, custom rules | ✅ Via YARA (built-in) |
+| **Web Analysis** | `js-beautify`, `burp` | JavaScript deobfuscation, web proxy | 🛠️ Requires REMnux Install |
+| **Document Analysis** | `pdfid`, `pdf-parser`, `oledump` | PDF and Office document inspection | 🛠️ Requires REMnux Install |
+| **Crypto** | `ssdeep`, `hashdeep` | Fuzzy hashing, file integrity | 🛠️ Requires REMnux Install |
+| **Utilities** | `radare2`, `gdb` | Disassembly, debugging | 🛠️ Requires REMnux Install |
 
-**Total: 15+ REMnux tools integrated**
+**Note:** GEOFF provides 32 built-in forensic functions. REMnux tools provide additional specialized analysis when installed on the SIFT workstation.
 
 ---
 

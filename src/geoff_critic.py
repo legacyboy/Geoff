@@ -30,9 +30,9 @@ class GeoffCritic:
     - Ensures quality standards before git commit
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434", 
+    def __init__(self, ollama_url: str = None, 
                  model: str = "qwen3-coder-next:cloud"):
-        self.ollama_url = ollama_url
+        self.ollama_url = ollama_url or os.environ.get('OLLAMA_URL', 'http://localhost:11434')
         self.model = model
         self.validation_log = []
         
