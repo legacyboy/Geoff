@@ -7,6 +7,7 @@ import os
 import json
 import sys
 import subprocess
+import tempfile
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -123,14 +124,35 @@ class ContextManager:
 context_manager = ContextManager()
 
 # Configuration - MUST be defined before ActionLogger
-EVIDENCE_BASE_DIR = os.environ.get('GEOFF_EVIDENCE_PATH', "/home/sansforensics/evidence-storage/evidence")
-CASES_WORK_DIR = os.environ.get('GEOFF_CASES_PATH', "/home/sansforensics/evidence-storage/cases")
+def _resolve_dir(env_var, default_path, fallback_subdir):
+    """Resolve a directory path, falling back to temp if default is not writable."""
+    path = os.environ.get(env_var, default_path)
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return path
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
+        Path(fallback).mkdir(parents=True, exist_ok=True)
+        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
+        return fallback
+
+EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
+                               "/home/sansforensics/evidence-storage/evidence",
+                               "geoff-evidence")
+CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
+                             "/home/sansforensics/evidence-storage/cases",
+                             "geoff-cases")
 
 # Git Action Logger for audit trail - uses environment variable for path
 def git_commit_action(message: str, base_path: str = None):
     """Git commit for audit trail"""
     if base_path is None:
         base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
+    
+    # Ensure base_path exists
+    if not os.path.isdir(base_path):
+        return  # Can't git commit if directory doesn't exist
     
     try:
         # Configure git if not already set
@@ -158,7 +180,7 @@ class ActionLogger:
             self.log_dir.mkdir(parents=True, exist_ok=True)
         except:
             # Fallback to temp if permission denied
-            import tempfile
+            # tempfile already imported at top
             self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
             self.log_dir.mkdir(exist_ok=True)
         
@@ -446,7 +468,13 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     case_work_dir = f"{case_name}_{timestamp}"
     case_work_path = Path(CASES_WORK_DIR) / case_work_dir
-    case_work_path.mkdir(parents=True, exist_ok=True)
+    try:
+        case_work_path.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        case_work_path = Path(tempfile.gettempdir()) / "geoff-cases" / case_work_dir
+        case_work_path.mkdir(parents=True, exist_ok=True)
+        print(f"[GEOFF] Case work dir fallback: {case_work_path}")
     
     # Initialize git repo in case directory
     git_dir = case_work_path / ".git"
@@ -753,7 +781,13 @@ def find_evil(evidence_dir: str) -> dict:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     case_name = evidence_path.name
     case_work_dir = Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}"
-    case_work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        case_work_dir.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        case_work_dir = Path(tempfile.gettempdir()) / "geoff-cases" / f"{case_name}_findevil_{timestamp}"
+        case_work_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
     (case_work_dir / "output").mkdir(exist_ok=True)
     (case_work_dir / "reports").mkdir(exist_ok=True)
     (case_work_dir / "validations").mkdir(exist_ok=True)
