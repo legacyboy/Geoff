@@ -180,17 +180,28 @@ setup_geoff() {
         cd "$HOME/.geoff/ui"
         npm install 2>/dev/null || npm install ws 2>/dev/null || echo "  Warning: Could not install npm dependencies"
     else
-        echo "  Copying UI from workspace..."
-        cp -r "/home/claw/.openclaw/workspace/geoff-installer/web-ui" "$HOME/.geoff/ui"
+        echo "  Downloading UI from GitHub..."
+        cd /tmp
+        rm -rf /tmp/Geoff-ui-download 2>/dev/null || true
+        git clone --depth 1 https://github.com/legacyboy/Geoff.git /tmp/Geoff-ui-download 2>/dev/null || {
+            echo "  ERROR: Failed to download UI from GitHub"
+            echo "  Creating basic UI structure..."
+            mkdir -p "$HOME/.geoff/ui/public"
+            echo '<!DOCTYPE html><html><head><title>G.E.O.F.F.</title></head><body><h1>G.E.O.F.F. - Evidence Operations Forensic Framework</h1><p>Status: Running</p><p>Motto: "Follow every thread"</p></body></html>' > "$HOME/.geoff/ui/public/index.html"
+        }
+        if [[ -d /tmp/Geoff-ui-download/installer/ui ]]; then
+            cp -r /tmp/Geoff-ui-download/installer/ui/* "$HOME/.geoff/ui/"
+            rm -rf /tmp/Geoff-ui-download
+        elif [[ -d /tmp/Geoff-ui-download/web-ui ]]; then
+            cp -r /tmp/Geoff-ui-download/web-ui/* "$HOME/.geoff/ui/"
+            rm -rf /tmp/Geoff-ui-download
+        fi
         
-        # Install dependencies for the new UI
-        cd "$HOME/.geoff/ui"
-        npm install 2>/dev/null || echo "  Warning: npm install failed"
-        npm run build 2>/dev/null || echo "  Warning: npm build failed"
-        
-        # Install backend dependencies
-        cd "$HOME/.geoff/ui/backend"
-        pip install fastapi uvicorn httpx pydantic 2>/dev/null || echo "  Warning: backend pip install failed"
+        # Install dependencies if package.json exists
+        if [[ -f "$HOME/.geoff/ui/package.json" ]]; then
+            cd "$HOME/.geoff/ui"
+            npm install 2>/dev/null || echo "  Warning: npm install failed"
+        fi
     fi
     
     # Create Geoff config (YAML)
