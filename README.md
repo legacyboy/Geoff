@@ -388,3 +388,5 @@ Your digital forensics colleague. Still pronounced "Geoff."
 ---
 
 *Built for DFIR professionals who need 100% tool coverage with built-in quality assurance.*
+
+<!-- test comment: direct push to main verified 2026-04-12 -->
