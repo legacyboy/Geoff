@@ -404,24 +404,45 @@ class LOG_Specialist:
     """Specialist for log file analysis"""
     
     def parse_evtx(self, evtx_file: str, event_ids: Optional[List[int]] = None) -> Dict[str, Any]:
-        """Parse Windows EVTX files"""
+        """Parse Windows EVTX files - SECURE implementation"""
         try:
-            # Try to use python-evtx if available
-            result = subprocess.run(
-                ['python3', '-c', f'''
+            # SECURITY FIX: Pass filename as argument, not in f-string
+            # This prevents command injection via malicious filenames
+            import tempfile
+            
+            # Create a temporary script file instead of inline
+            script_content = '''
 import json
+import sys
+import os
+
+evtx_file = sys.argv[1] if len(sys.argv) > 1 else None
+if not evtx_file or not os.path.exists(evtx_file):
+    print(json.dumps({"error": "Invalid or missing EVTX file"}))
+    sys.exit(1)
+
 try:
     from evtx import PyEvtxParser
-    parser = PyEvtxParser("{evtx_file}")
+    parser = PyEvtxParser(evtx_file)
     events = []
     for record in parser.records():
         events.append(json.loads(record["data"]))
     print(json.dumps(events[:100]))
 except Exception as e:
-    print(json.dumps({{"error": str(e)}}))
-                '''],
-                capture_output=True, text=True, timeout=120
-            )
+    print(json.dumps({"error": str(e)}))
+'''
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                f.write(script_content)
+                temp_script = f.name
+            
+            try:
+                result = subprocess.run(
+                    ['python3', temp_script, evtx_file],
+                    capture_output=True, text=True, timeout=120
+                )
+            finally:
+                os.unlink(temp_script)  # Clean up temp file
             
             events = json.loads(result.stdout) if result.stdout else []
             

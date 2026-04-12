@@ -257,6 +257,47 @@ export GEOFF_MANAGER_MODEL="deepseek-r1:70b"
 └──────┘└────┘└────┘└────┘└─────┘└────┘└────┘└─────┘
 ```
 
+### Investigation State Validation
+
+GEOFF uses a shared JSON Schema to validate investigation steps across all agents:
+
+```json
+{
+  "type": "object",
+  "required": ["investigation_id", "steps", "current_step"],
+  "properties": {
+    "investigation_id": {"type": "string"},
+    "case_name": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "current_step": {"type": "integer", "minimum": 0},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "module", "function", "status"],
+        "properties": {
+          "index": {"type": "integer"},
+          "module": {"type": "string"},
+          "function": {"type": "string"},
+          "params": {"type": "object"},
+          "status": {"type": "string", "enum": ["pending", "running", "completed", "failed"]},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "result": {"type": "object"}
+        }
+      }
+    }
+  }
+}
+```
+
+This schema ensures:
+- **Cross-agent consistency** - All agents use same investigation structure
+- **State validation** - Required fields prevent incomplete investigations
+- **Reproducibility** - Complete audit trail of every step
+- **Error recovery** - Failed steps tracked with full context
+
 ---
 
 ## Training
