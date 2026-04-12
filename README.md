@@ -33,6 +33,7 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 ```
 
 **Key Capabilities:**
+- **Find evil and malicious activity** using playbooks as investigation guides
 - **32 forensic functions** across 9 specialist modules
 - **Double validation** (Forensicator self-check + Critic review)
 - **Git-backed** every action committed for reproducibility
