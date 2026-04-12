@@ -1,4 +1,4 @@
-# G.E.O.F.F.
+# GEOFF
 ## Git-backed Evidence Operations Forensic Framework
 
 ```
@@ -10,19 +10,17 @@
     ║  ╚██████╔╝███████╗╚██████╔╝██║     ██║                        ║
     ║   ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝                        ║
     ║                                                               ║
-    ║   Git-backed Evidence Operations Forensic Framework          ║
+    ║        "Follow every thread"                                  ║
     ╚═══════════════════════════════════════════════════════════════╝
 ```
-
-> *"Follow every thread"*
 
 **Your digital forensics colleague with comprehensive tool coverage and built-in quality assurance.**
 
 ---
 
-## What is G.E.O.F.F.?
+## What is GEOFF?
 
-G.E.O.F.F. is a conversational DFIR (Digital Forensics and Incident Response) platform that:
+GEOFF is a conversational DFIR (Digital Forensics and Incident Response) platform that:
 
 - **Chats** about evidence like a colleague would
 - **Runs** 32 forensic functions across 9 specialist modules
@@ -49,7 +47,7 @@ G.E.O.F.F. is a conversational DFIR (Digital Forensics and Incident Response) pl
 
 ### REMnux Tool Coverage
 
-G.E.O.F.F. integrates REMnux malware analysis tools:
+GEOFF integrates REMnux malware analysis tools:
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
@@ -202,7 +200,7 @@ python src/geoff_integrated.py
 
 ```
 ┌─────────────────────────────────────────────┐
-│           G.E.O.F.F. Web Interface          │
+│           GEOFF Web Interface          │
 │  (Flask + Chat + Evidence Browser)           │
 └──────────────────┬──────────────────────────┘
                    │
@@ -234,7 +232,7 @@ python src/geoff_integrated.py
 
 ## Training
 
-G.E.O.F.F. includes CTF training data:
+GEOFF includes CTF training data:
 - 27 writeup files from 29 sources
 - Memory, disk, network, malware forensics
 - Real-world scenarios and methodologies
@@ -249,7 +247,7 @@ MIT License - See LICENSE file
 
 ## The Name
 
-**G.E.O.F.F.** = **Git-backed Evidence Operations Forensic Framework**
+**GEOFF** = **Git-backed Evidence Operations Forensic Framework**
 
 Your digital forensics colleague. Still pronounced "Geoff."
 
