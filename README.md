@@ -33,7 +33,7 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 ```
 
 **Key Capabilities:**
-- **Find evil and malicious activity** using playbooks as investigation guides
+- **Find Evil** — point at an evidence directory, auto-run playbooks, find evil with no prompting
 - **32 forensic functions** across 9 specialist modules
 - **Double validation** (Forensicator self-check + Critic review)
 - **Git-backed** every action committed for reproducibility
@@ -93,6 +93,62 @@ Geoff Tool Execution → Critic Validation → Git Commit
 - False positives (benign flagged as suspicious)
 - Missed findings (critical items overlooked)
 - IOC verification (confirms extracted IOCs exist)
+
+---
+
+## Find Evil
+
+**One endpoint. Zero prompting. Full auto-triage.**
+
+```
+curl -X POST http://localhost:8080/find-evil \
+  -H 'Content-Type: application/json' \
+  -d '{"evidence_dir": "/path/to/evidence"}'
+```
+
+Find Evil is GEOFF's autonomous investigation mode. Point it at a directory of evidence and it:
+
+1. **Inventories** every artifact — disk images, memory dumps, pcaps, logs, registry hives, mobile backups
+2. **Classifies** the OS and incident type via rapid indicator triage
+3. **Selects** the right playbooks automatically (ransomware → PB-SIFT-002, web shell → PB-SIFT-008, etc.)
+4. **Executes** each playbook step through the 9 specialist modules
+5. **Validates** every result through the Critic pipeline
+6. **Reports** a unified findings report with severity ratings, evidence scores, and critic approval
+
+**What triggers each playbook:**
+
+| Evidence / Indicator | Playbook(s) | Severity |
+|:---|:---|:---|
+| Ransom notes, encrypted extensions | PB-SIFT-002, PB-SIFT-008 | CRITICAL |
+| Credential dumping tools, LSASS access | PB-SIFT-004, PB-SIFT-003 | HIGH |
+| Lateral movement tools (PsExec, WMI) | PB-SIFT-003, PB-SIFT-005 | HIGH |
+| Persistence (autoruns, scheduled tasks) | PB-SIFT-005, PB-SIFT-001 | HIGH |
+| Exfiltration (cloud sync, bulk staging) | PB-SIFT-006, PB-SIFT-009 | HIGH |
+| Anti-forensics (log clearing, timestomping) | PB-SIFT-010, PB-SIFT-001 | HIGH |
+| Web shells, SQLi payloads | PB-SIFT-008, PB-SIFT-001 | HIGH |
+| LOLBin abuse (certutil, mshta, rundll32) | PB-SIFT-007, PB-SIFT-001 | MEDIUM |
+| Linux image detected | PB-SIFT-012 | HIGH |
+| macOS image detected | PB-SIFT-013 | HIGH |
+| Mobile backup detected | PB-SIFT-015 | HIGH |
+| Multiple disk images | PB-SIFT-017 | HIGH |
+| Any disk image present | PB-SIFT-001 | (baseline) |
+
+**API Reference:**
+
+```
+GET  /find-evil          → Usage info + supported playbooks
+POST /find-evil          → Run Find Evil
+     Body: {"evidence_dir": "/path/to/evidence"}
+     Response: Full report (inventory, classification, findings, critic summary)
+```
+
+**Response includes:**
+- `evil_found` — boolean, true if CRITICAL/HIGH indicators detected
+- `severity_distribution` — counts by severity level
+- `evidence_score` — 0.0–1.0 quality score
+- `critic_approval_pct` — percentage of results Critic-validated
+- `findings_detail` — per-step results with critic validation
+- `case_work_dir` — path to the full case directory with git-backed audit trail
 
 ---
 
@@ -207,6 +263,14 @@ export GEOFF_MANAGER_MODEL="deepseek-r1:70b"
 ---
 
 ## Usage
+
+**Find Evil (Autonomous):**
+```
+curl -X POST http://localhost:8080/find-evil \
+  -H 'Content-Type: application/json' \
+  -d '{"evidence_dir": "/path/to/evidence"}'
+```
+No prompting. Just results.
 
 **Chat with Geoff:**
 ```

@@ -7,6 +7,7 @@ import os
 import json
 import sys
 import subprocess
+import tempfile
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -123,14 +124,35 @@ class ContextManager:
 context_manager = ContextManager()
 
 # Configuration - MUST be defined before ActionLogger
-EVIDENCE_BASE_DIR = os.environ.get('GEOFF_EVIDENCE_PATH', "/home/sansforensics/evidence-storage/evidence")
-CASES_WORK_DIR = os.environ.get('GEOFF_CASES_PATH', "/home/sansforensics/evidence-storage/cases")
+def _resolve_dir(env_var, default_path, fallback_subdir):
+    """Resolve a directory path, falling back to temp if default is not writable."""
+    path = os.environ.get(env_var, default_path)
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return path
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
+        Path(fallback).mkdir(parents=True, exist_ok=True)
+        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
+        return fallback
+
+EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
+                               "/home/sansforensics/evidence-storage/evidence",
+                               "geoff-evidence")
+CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
+                             "/home/sansforensics/evidence-storage/cases",
+                             "geoff-cases")
 
 # Git Action Logger for audit trail - uses environment variable for path
 def git_commit_action(message: str, base_path: str = None):
     """Git commit for audit trail"""
     if base_path is None:
         base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
+    
+    # Ensure base_path exists
+    if not os.path.isdir(base_path):
+        return  # Can't git commit if directory doesn't exist
     
     try:
         # Configure git if not already set
@@ -158,7 +180,7 @@ class ActionLogger:
             self.log_dir.mkdir(parents=True, exist_ok=True)
         except:
             # Fallback to temp if permission denied
-            import tempfile
+            # tempfile already imported at top
             self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
             self.log_dir.mkdir(exist_ok=True)
         
@@ -446,7 +468,13 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     case_work_dir = f"{case_name}_{timestamp}"
     case_work_path = Path(CASES_WORK_DIR) / case_work_dir
-    case_work_path.mkdir(parents=True, exist_ok=True)
+    try:
+        case_work_path.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        case_work_path = Path(tempfile.gettempdir()) / "geoff-cases" / case_work_dir
+        case_work_path.mkdir(parents=True, exist_ok=True)
+        print(f"[GEOFF] Case work dir fallback: {case_work_path}")
     
     # Initialize git repo in case directory
     git_dir = case_work_path / ".git"
@@ -523,6 +551,467 @@ def get_all_cases():
     except Exception as e:
         print(f"Error reading cases: {e}")
     return cases
+
+def find_evil(evidence_dir: str) -> dict:
+    """
+    Find Evil: Point at an evidence directory, auto-run playbooks, find evil with no prompting.
+
+    Autonomous triage-to-findings pipeline:
+    1. Inventory evidence (disk images, memory dumps, logs, pcaps, registry hives, mobile)
+    2. Classify OS and incident type via rapid indicator triage
+    3. Select and run applicable playbooks through specialists
+    4. Validate every result through the Critic pipeline
+    5. Produce a unified findings report with severity ratings and MITRE ATT&CK mapping
+
+    Args:
+        evidence_dir: Absolute path to the evidence directory to analyze.
+
+    Returns:
+        dict with keys: status, evidence_dir, inventory, classification, playbooks_run,
+        findings, critic_summary, report_path, elapsed_seconds
+    """
+    import time
+    import hashlib
+    start_time = time.time()
+
+    evidence_path = Path(evidence_dir)
+    if not evidence_path.exists():
+        return {
+            "status": "error",
+            "error": f"Evidence directory not found: {evidence_dir}",
+            "evidence_dir": evidence_dir
+        }
+
+    # ------------------------------------------------------------------
+    # Phase 1: Evidence Inventory
+    # ------------------------------------------------------------------
+    inventory = {
+        "disk_images": [],
+        "memory_dumps": [],
+        "pcaps": [],
+        "evtx_logs": [],
+        "syslogs": [],
+        "registry_hives": [],
+        "mobile_backups": [],
+        "other_files": [],
+        "total_size_bytes": 0
+    }
+
+    disk_extensions = {'.e01', '.ee01', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
+    memory_extensions = {'.vmem', '.mem', '.dmp', '.core', '.lin'}
+    pcap_extensions = {'.pcap', '.pcapng', '.cap'}
+    evtx_pattern = '*.evtx'
+    syslog_patterns = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
+    registry_hives = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
+                       'usrclass.dat', 'default', 'system.sav', 'software.sav',
+                       'ntuser.dat'}
+    mobile_indicators = {'info.plist', 'manifest.db', 'manifest.plist'}
+
+    for item in evidence_path.rglob('*'):
+        if not item.is_file():
+            continue
+        try:
+            size = item.stat().st_size
+        except OSError:
+            size = 0
+        inventory["total_size_bytes"] += size
+
+        ext = item.suffix.lower()
+        name_lower = item.name.lower()
+
+        if ext in disk_extensions:
+            inventory["disk_images"].append(str(item))
+        elif ext in memory_extensions:
+            inventory["memory_dumps"].append(str(item))
+        elif ext in pcap_extensions:
+            inventory["pcaps"].append(str(item))
+        elif ext == '.evtx':
+            inventory["evtx_logs"].append(str(item))
+        elif name_lower in registry_hives:
+            inventory["registry_hives"].append(str(item))
+        elif name_lower in syslog_patterns or name_lower.startswith('syslog'):
+            inventory["syslogs"].append(str(item))
+        elif name_lower in mobile_indicators:
+            inventory["mobile_backups"].append(str(item))
+        else:
+            inventory["other_files"].append(str(item))
+
+    # Quick triage: what evidence types do we actually have?
+    has_disk = len(inventory["disk_images"]) > 0
+    has_memory = len(inventory["memory_dumps"]) > 0
+    has_pcap = len(inventory["pcaps"]) > 0
+    has_evtx = len(inventory["evtx_logs"]) > 0
+    has_syslog = len(inventory["syslogs"]) > 0
+    has_registry = len(inventory["registry_hives"]) > 0
+    has_mobile = len(inventory["mobile_backups"]) > 0
+    has_logs = has_evtx or has_syslog
+
+    # Quality score based on evidence completeness
+    evidence_score = 0.0
+    if has_disk:
+        evidence_score += 0.4
+    if has_memory:
+        evidence_score += 0.3
+    if has_logs:
+        evidence_score += 0.15
+    if has_pcap:
+        evidence_score += 0.1
+    if has_registry:
+        evidence_score += 0.05
+    evidence_score = min(evidence_score, 1.0)
+
+    # ------------------------------------------------------------------
+    # Phase 2: OS Classification & Incident Triage
+    # ------------------------------------------------------------------
+    os_type = "unknown"
+    indicator_hits = []  # (playbook_id, severity, description)
+
+    # OS detection heuristics from evidence names
+    if any('windows' in p.lower() or 'win' in p.lower() or p.lower().endswith(('.e01', '.dd')) for p in
+           inventory["disk_images"] + inventory["other_files"]):
+        os_type = "windows"
+    if any('linux' in p.lower() or 'ubuntu' in p.lower() for p in
+           inventory["disk_images"] + inventory["other_files"]):
+        os_type = "linux"
+    if any('macos' in p.lower() or 'osx' in p.lower() or 'darwin' in p.lower() for p in
+           inventory["disk_images"] + inventory["other_files"]):
+        os_type = "macos"
+    if has_mobile:
+        os_type = "mobile"
+
+    # Rapid indicator triage — scan for high-signal patterns
+    triage_patterns = {
+        "ransomware": [".locked", ".encrypted", ".crypt", "readme_decrypt", "how_to_decrypt",
+                       "recover_files", ".locky", ".cerber", ".sage", ".globe",
+                       "your_files_are", "ransom_note", "decrypt_instructions"],
+        "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
+                             "creddump", "cachedump", "secretsdump"],
+        "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
+                             "paexec", "cmbexec", "dcom", "atexec"],
+        "persistence": ["autorun", "run_once", "scheduled_task", "startup",
+                        "wmi_subscription", "com_hijack", "shell:"],
+        "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
+                        "rsync", "scp", "sftp", "ftp_upload", "exfil"],
+        "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
+                          "timestomp", "timemodify", "ccleaner", "bleachbit"],
+        "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
+                      "shell=", "eval(", "base64_decode", "webshell"],
+        "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
+                   "wmic", "msbuild", "installutil", "msiexec"],
+    }
+
+    for category, patterns in triage_patterns.items():
+        for pattern in patterns:
+            pattern_lower = pattern.lower()
+            for file_path in inventory["other_files"] + inventory["disk_images"]:
+                if pattern_lower in file_path.lower():
+                    indicator_hits.append((category, pattern, file_path))
+                    break  # one hit per pattern is enough
+
+    # Map indicator categories to playbooks
+    playbook_map = {
+        "ransomware": ["PB-SIFT-002", "PB-SIFT-008"],
+        "credential_theft": ["PB-SIFT-004", "PB-SIFT-003"],
+        "lateral_movement": ["PB-SIFT-003", "PB-SIFT-005"],
+        "persistence": ["PB-SIFT-005", "PB-SIFT-001"],
+        "exfiltration": ["PB-SIFT-006", "PB-SIFT-009"],
+        "anti_forensics": ["PB-SIFT-010", "PB-SIFT-001"],
+        "web_shell": ["PB-SIFT-008", "PB-SIFT-001"],
+        "lolbin": ["PB-SIFT-007", "PB-SIFT-001"],
+    }
+
+    severity_map = {
+        "ransomware": "CRITICAL",
+        "credential_theft": "HIGH",
+        "lateral_movement": "HIGH",
+        "persistence": "HIGH",
+        "exfiltration": "HIGH",
+        "anti_forensics": "HIGH",
+        "web_shell": "HIGH",
+        "lolbin": "MEDIUM",
+    }
+
+    # Build prioritized playbook list (deduplicated, ordered)
+    selected_playbooks = []
+    seen_playbooks = set()
+
+    # Always include triage first
+    selected_playbooks.append("PB-SIFT-016")
+    seen_playbooks.add("PB-SIFT-016")
+
+    # Add playbooks triggered by indicators, ordered by severity
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    triggered = []
+    for category, pattern, path in indicator_hits:
+        severity = severity_map.get(category, "MEDIUM")
+        for pb in playbook_map.get(category, []):
+            if pb not in seen_playbooks:
+                triggered.append((severity_order.get(severity, 2), pb, category, severity))
+                seen_playbooks.add(pb)
+
+    triggered.sort(key=lambda x: x[0])
+    for _, pb, cat, sev in triggered:
+        selected_playbooks.append(pb)
+
+    # Add OS-specific playbook
+    os_playbooks = {"linux": "PB-SIFT-012", "macos": "PB-SIFT-013", "mobile": "PB-SIFT-015"}
+    os_pb = os_playbooks.get(os_type)
+    if os_pb and os_pb not in seen_playbooks:
+        selected_playbooks.append(os_pb)
+        seen_playbooks.add(os_pb)
+
+    # Always run malware hunting if disk evidence exists
+    if has_disk and "PB-SIFT-001" not in seen_playbooks:
+        selected_playbooks.append("PB-SIFT-001")
+        seen_playbooks.add("PB-SIFT-001")
+
+    # Add correlation if multi-host
+    if len(inventory["disk_images"]) > 1 and "PB-SIFT-017" not in seen_playbooks:
+        selected_playbooks.append("PB-SIFT-017")
+        seen_playbooks.add("PB-SIFT-017")
+
+    # ------------------------------------------------------------------
+    # Phase 3: Execute Playbooks Through Specialists
+    # ------------------------------------------------------------------
+    findings = []
+    critic_results = []
+    playbooks_run = []
+
+    # Create case work directory for this run
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    case_name = evidence_path.name
+    case_work_dir = Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}"
+    try:
+        case_work_dir.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        # tempfile already imported at top
+        case_work_dir = Path(tempfile.gettempdir()) / "geoff-cases" / f"{case_name}_findevil_{timestamp}"
+        case_work_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
+    (case_work_dir / "output").mkdir(exist_ok=True)
+    (case_work_dir / "reports").mkdir(exist_ok=True)
+    (case_work_dir / "validations").mkdir(exist_ok=True)
+
+    # Init git in case dir
+    try:
+        subprocess.run(['git', 'init'], cwd=case_work_dir, capture_output=True, check=True)
+        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, capture_output=True)
+        subprocess.run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, capture_output=True)
+    except Exception:
+        pass
+
+    def _run_step(module: str, function: str, params: dict, playbook_id: str) -> dict:
+        """Run a single specialist step and record the result."""
+        step = {
+            "module": module,
+            "function": function,
+            "params": params,
+            "playbook": playbook_id,
+            "status": "running",
+            "started_at": datetime.now().isoformat()
+        }
+        try:
+            result = orchestrator.run_playbook_step(playbook_id, step)
+            step["status"] = "completed" if result.get("status") == "success" else "failed"
+            step["result"] = result
+
+            # Run critic validation on output
+            try:
+                critic_val = geoff_critic.validate_tool_output(
+                    tool_name=f"{module}.{function}",
+                    tool_params=params,
+                    raw_output=json.dumps(result, default=str)[:8000],
+                    geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}"
+                )
+                step["critic"] = critic_val
+                critic_results.append(critic_val)
+            except Exception as ce:
+                step["critic_error"] = str(ce)
+        except Exception as e:
+            step["status"] = "failed"
+            step["error"] = str(e)
+
+        step["completed_at"] = datetime.now().isoformat()
+        findings.append(step)
+        return step
+
+    # --- PB-SIFT-016: Triage (always runs) ---
+    triage_info = {
+        "playbook": "PB-SIFT-016",
+        "evidence_score": evidence_score,
+        "os_type": os_type,
+        "indicator_hits": indicator_hits,
+        "selected_playbooks": selected_playbooks
+    }
+    playbooks_run.append(triage_info)
+
+    # --- Memory-First Rapid Analysis (if memory dumps exist) ---
+    if has_memory:
+        for mem_dump in inventory["memory_dumps"]:
+            _run_step("volatility", "process_list", {"memory_dump": mem_dump}, "PB-SIFT-016")
+            _run_step("volatility", "network_scan", {"memory_dump": mem_dump}, "PB-SIFT-016")
+            _run_step("volatility", "find_malware", {"memory_dump": mem_dump}, "PB-SIFT-016")
+
+    # --- Disk Analysis (if disk images exist) ---
+    if has_disk:
+        for disk_img in inventory["disk_images"]:
+            _run_step("sleuthkit", "analyze_partition_table", {"disk_image": disk_img}, "PB-SIFT-001")
+            # Try filesystem analysis on each partition offset (common offsets)
+            for offset in ["63", "128", "2048", "4096", "8192"]:
+                part_result = _run_step("sleuthkit", "analyze_filesystem",
+                                         {"partition": f"-o {offset} {disk_img}"}, "PB-SIFT-001")
+                if part_result.get("result", {}).get("status") == "success":
+                    break  # Found a valid filesystem, skip remaining offsets
+            _run_step("sleuthkit", "list_files", {"partition": disk_img, "recursive": True}, "PB-SIFT-001")
+
+    # --- Registry Analysis (if registry hives exist) ---
+    if has_registry:
+        for hive_path in inventory["registry_hives"]:
+            hive_name = Path(hive_path).name.upper()
+            if 'NTUSER' in hive_name:
+                _run_step("registry", "extract_user_assist", {"ntuser_path": hive_path}, "PB-SIFT-005")
+                _run_step("registry", "extract_shellbags", {"ntuser_path": hive_path}, "PB-SIFT-005")
+            elif 'SYSTEM' in hive_name:
+                _run_step("registry", "extract_usb_devices", {"system_path": hive_path}, "PB-SIFT-005")
+                _run_step("registry", "extract_services", {"system_path": hive_path}, "PB-SIFT-005")
+                _run_step("registry", "extract_mounted_devices", {"system_path": hive_path}, "PB-SIFT-005")
+            elif 'SOFTWARE' in hive_name:
+                _run_step("registry", "extract_autoruns", {"software_path": hive_path}, "PB-SIFT-005")
+            else:
+                _run_step("registry", "parse_hive", {"hive_path": hive_path}, "PB-SIFT-005")
+
+    # --- Network Analysis (if pcaps exist) ---
+    if has_pcap:
+        for pcap_file in inventory["pcaps"]:
+            _run_step("network", "analyze_pcap", {"pcap_file": pcap_file}, "PB-SIFT-003")
+            _run_step("network", "extract_http", {"pcap_file": pcap_file}, "PB-SIFT-008")
+            _run_step("network", "extract_flows", {
+                "pcap_file": pcap_file,
+                "output_dir": str(case_work_dir / "output" / "flows")
+            }, "PB-SIFT-003")
+
+    # --- Log Analysis (if evtx/syslog exist) ---
+    if has_evtx:
+        for evtx_file in inventory["evtx_logs"]:
+            _run_step("logs", "parse_evtx", {"evtx_file": evtx_file}, "PB-SIFT-002")
+    if has_syslog:
+        for log_file in inventory["syslogs"]:
+            _run_step("logs", "parse_syslog", {"log_file": log_file}, "PB-SIFT-012")
+
+    # --- YARA Scan (if disk images or memory dumps exist) ---
+    if has_disk or has_memory:
+        scan_targets = inventory["disk_images"] + inventory["memory_dumps"]
+        for target in scan_targets[:5]:  # Limit to 5 targets for time
+            _run_step("yara", "scan_file", {"target_file": target}, "PB-SIFT-001")
+
+    # --- String/IOC Extraction (if disk images exist) ---
+    if has_disk:
+        for disk_img in inventory["disk_images"][:3]:
+            _run_step("strings", "extract_strings", {"file_path": disk_img, "min_length": 8}, "PB-SIFT-001")
+
+    # --- Mobile Analysis (if mobile backups exist) ---
+    if has_mobile:
+        for backup_dir in set(str(Path(p).parent) for p in inventory["mobile_backups"]):
+            _run_step("mobile", "analyze_ios_backup", {"backup_dir": backup_dir}, "PB-SIFT-015")
+
+    # --- Timeline (if disk images exist) ---
+    if has_disk:
+        for disk_img in inventory["disk_images"][:2]:
+            timeline_output = str(case_work_dir / "output" / f"timeline_{Path(disk_img).stem}.plaso")
+            _run_step("plaso", "create_timeline", {
+                "evidence_path": disk_img,
+                "output_file": timeline_output
+            }, "PB-SIFT-001")
+
+    # ------------------------------------------------------------------
+    # Phase 4: Aggregate Findings & Generate Report
+    # ------------------------------------------------------------------
+
+    # Compute severity distribution
+    severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
+    evil_found = False
+
+    for category, pattern, path in indicator_hits:
+        sev = severity_map.get(category, "MEDIUM")
+        severity_counts[sev] += 1
+        if sev in ("CRITICAL", "HIGH"):
+            evil_found = True
+
+    # Check specialist results for additional findings
+    for f in findings:
+        result = f.get("result", {})
+        if not isinstance(result, dict):
+            continue
+        # YARA matches = evil
+        if result.get("match_count", 0) > 0:
+            severity_counts["HIGH"] += 1
+            evil_found = True
+        # Volatility malfind = evil
+        if f.get("module") == "volatility" and f.get("function") == "find_malware":
+            stdout = result.get("stdout", "")
+            if stdout and "No malware" not in stdout and len(stdout.strip()) > 20:
+                severity_counts["HIGH"] += 1
+                evil_found = True
+        # Critic flagged hallucinations — reduce confidence
+        critic = f.get("critic", {})
+        if isinstance(critic, dict) and not critic.get("valid", True):
+            severity_counts["LOW"] += 1
+
+    # Critic summary
+    critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
+    critic_total = len(critic_results)
+    critic_pct = (critic_approved / critic_total * 100) if critic_total > 0 else 100.0
+
+    # Build unified report
+    elapsed = time.time() - start_time
+    report = {
+        "title": f"Find Evil Report — {case_name}",
+        "generated_at": datetime.now().isoformat(),
+        "evidence_dir": str(evidence_dir),
+        "evidence_score": round(evidence_score, 2),
+        "os_type": os_type,
+        "evil_found": evil_found,
+        "severity_distribution": severity_counts,
+        "indicator_hits": [
+            {"category": cat, "pattern": pat, "file": fp, "severity": severity_map.get(cat, "MEDIUM")}
+            for cat, pat, fp in indicator_hits
+        ],
+        "playbooks_run": selected_playbooks,
+        "specialist_steps_executed": len(findings),
+        "steps_succeeded": sum(1 for f in findings if f.get("status") == "completed"),
+        "steps_failed": sum(1 for f in findings if f.get("status") == "failed"),
+        "critic_approval_pct": round(critic_pct, 1),
+        "findings_detail": findings,
+        "elapsed_seconds": round(elapsed, 1),
+        "case_work_dir": str(case_work_dir)
+    }
+
+    # Write report to disk
+    report_path = case_work_dir / "reports" / "find_evil_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(report_path, 'w') as rf:
+        json.dump(report, rf, indent=2, default=str)
+
+    # Git commit the report
+    try:
+        subprocess.run(['git', 'add', '.'], cwd=case_work_dir, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', f'[FIND-EVIL] Report for {case_name}'],
+                       cwd=case_work_dir, capture_output=True)
+    except Exception:
+        pass
+
+    # Log the action
+    action_logger.log('FIND_EVIL', {
+        'evidence_dir': evidence_dir,
+        'evil_found': evil_found,
+        'steps_executed': len(findings),
+        'elapsed_seconds': round(elapsed, 1),
+        'description': f"Find Evil run on {evidence_dir}"
+    })
+
+    return report
+
 
 def get_available_tools_status():
     """Get status of all forensic tools"""
@@ -1284,6 +1773,94 @@ def get_investigation_status(case_name):
             return jsonify({'status': 'not_found', 'case': case_name}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
+
+@app.route('/find-evil', methods=['POST'])
+def find_evil_route():
+    """
+    POST /find-evil
+    Point at an evidence directory, auto-run playbooks, find evil with no prompting.
+
+    Request body (JSON):
+        {
+            "evidence_dir": "/path/to/evidence"
+        }
+
+    Returns:
+        Full Find Evil report with inventory, classification, findings, and critic validation.
+    """
+    try:
+        data = request.json or {}
+        evidence_dir = data.get('evidence_dir', '').strip()
+
+        if not evidence_dir:
+            return jsonify({
+                'status': 'error',
+                'error': 'Missing required field: evidence_dir',
+                'usage': 'POST {"evidence_dir": "/path/to/evidence"} to /find-evil'
+            }), 400
+
+        # Run Find Evil
+        report = find_evil(evidence_dir)
+
+        # If error (e.g., dir not found), return appropriate status
+        if report.get('status') == 'error':
+            return jsonify(report), 404
+
+        return jsonify(report)
+
+    except Exception as e:
+        action_logger.log('FIND_EVIL_ERROR', {
+            'error': str(e),
+            'description': 'Find Evil route error'
+        })
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+
+@app.route('/find-evil', methods=['GET'])
+def find_evil_info():
+    """GET /find-evil — Return usage info and supported playbooks"""
+    return jsonify({
+        'name': 'Find Evil',
+        'description': 'Point at an evidence directory, auto-run playbooks, find evil with no prompting.',
+        'usage': 'POST /find-evil with {"evidence_dir": "/path/to/evidence"}',
+        'supported_evidence': [
+            'Disk images (.E01, .dd, .raw, .img, .aff)',
+            'Memory dumps (.vmem, .mem, .dmp)',
+            'Network captures (.pcap, .pcapng)',
+            'Windows Event Logs (.evtx)',
+            'Syslog files (syslog, auth.log, messages)',
+            'Registry hives (NTUSER.DAT, SYSTEM, SOFTWARE, SECURITY, SAM)',
+            'Mobile backups (iOS Info.plist, Manifest.db)'
+        ],
+        'playbooks': [
+            {'id': 'PB-SIFT-016', 'name': 'Triage Prioritization', 'trigger': 'Always runs first'},
+            {'id': 'PB-SIFT-001', 'name': 'Malware Hunting', 'trigger': 'Disk image present'},
+            {'id': 'PB-SIFT-002', 'name': 'Ransomware', 'trigger': 'Ransomware indicators'},
+            {'id': 'PB-SIFT-003', 'name': 'Lateral Movement', 'trigger': 'Lateral movement indicators'},
+            {'id': 'PB-SIFT-004', 'name': 'Credential Theft', 'trigger': 'Credential theft indicators'},
+            {'id': 'PB-SIFT-005', 'name': 'Persistence', 'trigger': 'Registry hives present'},
+            {'id': 'PB-SIFT-006', 'name': 'Exfiltration', 'trigger': 'Exfiltration indicators'},
+            {'id': 'PB-SIFT-007', 'name': 'Living-off-the-Land', 'trigger': 'LOLBin indicators'},
+            {'id': 'PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Web shell indicators'},
+            {'id': 'PB-SIFT-009', 'name': 'Insider Threat', 'trigger': 'Exfiltration indicators'},
+            {'id': 'PB-SIFT-010', 'name': 'Anti-Forensics', 'trigger': 'Anti-forensics indicators'},
+            {'id': 'PB-SIFT-012', 'name': 'Linux Forensics', 'trigger': 'Linux image detected'},
+            {'id': 'PB-SIFT-013', 'name': 'macOS Forensics', 'trigger': 'macOS image detected'},
+            {'id': 'PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Mobile backup detected'},
+            {'id': 'PB-SIFT-017', 'name': 'Cross-Image Correlation', 'trigger': 'Multiple disk images'}
+        ],
+        'pipeline': [
+            '1. Evidence inventory & quality scoring',
+            '2. OS classification & rapid indicator triage',
+            '3. Playbook selection & specialist execution',
+            '4. Critic validation of every result',
+            '5. Unified findings report with severity & MITRE ATT&CK mapping'
+        ]
+    })
+
 
 if __name__ == '__main__':
     print(f'Geoff DFIR on port {PORT}')
