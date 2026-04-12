@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import sys
-sys.path.insert(0, '/home/claw/.openclaw/workspace/geoff-private/src')
+import os
+
+# Add src directory to path (works for both local and deployed)
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
 import requests
 
 class GeoffCritic:

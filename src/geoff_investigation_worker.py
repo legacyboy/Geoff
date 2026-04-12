@@ -14,8 +14,10 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-# Add src to path
-sys.path.insert(0, '/home/claw/.openclaw/workspace/geoff-private/src')
+# Add src to path (works for both local and deployed)
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 # Configuration from environment
 CASES_WORK_DIR = os.environ.get('GEOFF_CASES_PATH', "/home/sansforensics/evidence-storage/cases")

@@ -7,7 +7,11 @@ import os
 import json
 import sys
 import subprocess
-sys.path.insert(0, '/home/claw/.openclaw/workspace/geoff-private/src')
+
+# Add src directory to path (works for both local and deployed)
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 import requests
 from datetime import datetime
