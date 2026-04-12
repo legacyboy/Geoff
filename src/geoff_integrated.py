@@ -22,6 +22,7 @@ from flask_cors import CORS
 from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, YARA_Specialist, STRINGS_Specialist
 from sift_specialists_extended import ExtendedOrchestrator
 from geoff_critic import GeoffCritic, ValidationPipeline
+from geoff_forensicator import ForensicatorAgent
 
 # Context Window Management
 class ContextManager:
@@ -209,6 +210,9 @@ orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
 # Initialize Critic for validation
 geoff_critic = GeoffCritic(OLLAMA_URL, LLM_MODEL)
 validation_pipeline = ValidationPipeline(orchestrator, geoff_critic)
+
+# Initialize Forensicator for tool execution (multi-agent architecture)
+geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
 
 # Shared JSON Schema for investigation steps
 INVESTIGATION_SCHEMA = {
@@ -1045,14 +1049,33 @@ def chat():
                     if 'partition' in tool_request['function']:
                         tool_request['params']['partition'] = evidence_file
                 
-                # Run the tool
-                step = {
+                # Run the tool via Forensicator (multi-agent)
+                forensicator_result = geoff_forensicator.execute_task(
+                    instruction=user_msg,
+                    evidence_path=evidence_file
+                )
+                
+                # Convert Forensicator result to tool_result format
+                tool_result = {
                     'module': tool_request['module'],
                     'function': tool_request['function'],
                     'params': tool_request['params'],
-                    'status': 'running'
+                    'status': 'completed',
+                    'forensicator_output': forensicator_result
                 }
-                tool_result = orchestrator.run_playbook_step('chat-session', step)
+                
+                # Validate with Critic
+                critic_validation = geoff_critic.validate_tool_output(
+                    tool_name=f"{tool_request['module']}.{tool_request['function']}",
+                    tool_params=tool_request['params'],
+                    raw_output=json.dumps(forensicator_result.get('validated_output', {})),
+                    geoff_analysis=f"Executed {tool_request['function']} on {evidence_file}"
+                )
+                
+                # Commit validation to git
+                geoff_critic.commit_validation(case_match or 'chat-session', critic_validation)
+                
+                tool_result['critic_validation'] = critic_validation
         
         # If investigation was started, return that status immediately (skip LLM)
         if tool_request and tool_request['function'] == 'run_full_investigation' and tool_result:

@@ -20,12 +20,23 @@
 
 ## What is GEOFF?
 
-GEOFF is a conversational DFIR (Digital Forensics and Incident Response) platform that:
+GEOFF is a **multi-agent conversational DFIR platform** with three specialized AI agents working together:
 
-- **Chats** about evidence like a colleague would
-- **Runs** 32 forensic functions across 9 specialist modules
-- **Validates** every analysis with a Critic agent for hallucination detection
-- **Commits** every action to git for full reproducibility
+**The Multi-Agent Team:**
+- **Manager** (DeepSeek R1 70B) - Orchestrates investigations, makes strategic decisions
+- **Forensicator** (Qwen 2.5 Coder 32B) - Executes forensic tools with self-validation
+- **Critic** (Qwen3 30B) - Validates all outputs for hallucinations and accuracy
+
+**Workflow:**
+```
+User → Manager → Forensicator → Tools → Critic → Git → Report
+```
+
+**Key Capabilities:**
+- **32 forensic functions** across 9 specialist modules
+- **Double validation** (Forensicator self-check + Critic review)
+- **Git-backed** every action committed for reproducibility
+- **24K context window** with smart truncation
 
 ---
 
