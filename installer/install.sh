@@ -170,39 +170,68 @@ setup_geoff() {
     mkdir -p "$HOME/.geoff"
     mkdir -p "$HOME/.geoff/evidence"
     mkdir -p "$HOME/.geoff/ui"
+    mkdir -p "$HOME/.geoff/src"
     mkdir -p "$HOME/.openclaw"
     
-    # Copy UI files if available
-    if [[ -d "$SCRIPT_DIR/ui" ]]; then
-        echo "  Copying UI files..."
-        cp -r "$SCRIPT_DIR/ui/"* "$HOME/.geoff/ui/"
-        # Install dependencies
-        cd "$HOME/.geoff/ui"
-        npm install 2>/dev/null || npm install ws 2>/dev/null || echo "  Warning: Could not install npm dependencies"
+    # Copy Python source files (Flask backend with Find Evil)
+    echo "  Copying Geoff Python source..."
+    if [[ -d "$SCRIPT_DIR/src" ]]; then
+        cp -r "$SCRIPT_DIR/src/"* "$HOME/.geoff/src/"
     else
-        echo "  Downloading UI from GitHub..."
+        # Clone from GitHub if src not available
         cd /tmp
-        rm -rf /tmp/Geoff-ui-download 2>/dev/null || true
-        git clone --depth 1 https://github.com/legacyboy/Geoff.git /tmp/Geoff-ui-download 2>/dev/null || {
-            echo "  ERROR: Failed to download UI from GitHub"
-            echo "  Creating basic UI structure..."
-            mkdir -p "$HOME/.geoff/ui/public"
-            echo '<!DOCTYPE html><html><head><title>G.E.O.F.F.</title></head><body><h1>G.E.O.F.F. - Evidence Operations Forensic Framework</h1><p>Status: Running</p><p>Motto: "Follow every thread"</p></body></html>' > "$HOME/.geoff/ui/public/index.html"
-        }
-        if [[ -d /tmp/Geoff-ui-download/installer/ui ]]; then
-            cp -r /tmp/Geoff-ui-download/installer/ui/* "$HOME/.geoff/ui/"
-            rm -rf /tmp/Geoff-ui-download
-        elif [[ -d /tmp/Geoff-ui-download/web-ui ]]; then
-            cp -r /tmp/Geoff-ui-download/web-ui/* "$HOME/.geoff/ui/"
-            rm -rf /tmp/Geoff-ui-download
-        fi
-        
-        # Install dependencies if package.json exists
-        if [[ -f "$HOME/.geoff/ui/package.json" ]]; then
-            cd "$HOME/.geoff/ui"
-            npm install 2>/dev/null || echo "  Warning: npm install failed"
-        fi
+        rm -rf /tmp/Geoff-src 2>/dev/null || true
+        git clone --depth 1 https://github.com/legacyboy/Geoff.git /tmp/Geoff-src 2>/dev/null && \
+            cp -r /tmp/Geoff-src/src/* "$HOME/.geoff/src/" 2>/dev/null || true
     fi
+    
+    # Copy playbooks
+    mkdir -p "$HOME/.geoff/playbooks"
+    if [[ -d "$SCRIPT_DIR/../playbooks" ]]; then
+        cp -r "$SCRIPT_DIR/../playbooks/"* "$HOME/.geoff/playbooks/" 2>/dev/null || true
+    fi
+    
+    # Install Python dependencies
+    pip install flask requests --quiet 2>/dev/null || pip3 install flask requests --quiet 2>/dev/null || true
+    
+    # Create basic UI placeholder (Flask serves the API)
+    mkdir -p "$HOME/.geoff/ui/public"
+    cat > "$HOME/.geoff/ui/public/index.html" << 'UIEOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>G.E.O.F.F.</title>
+    <style>
+        body { font-family: Arial; padding: 40px; background: #1a1a2e; color: #eee; }
+        h1 { color: #00ff88; }
+        .api { background: #16213e; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        code { background: #0f3460; padding: 2px 6px; border-radius: 4px; }
+        a { color: #00ff88; }
+    </style>
+</head>
+<body>
+    <h1>G.E.O.F.F. - Evidence Operations Forensic Framework</h1>
+    <p><strong>Find Evil:</strong> Point at evidence, auto-analyze, get results.</p>
+    
+    <div class="api">
+        <h3>API Endpoints</h3>
+        <p><code>GET /</code> - This page</p>
+        <p><code>GET /find-evil</code> - Usage info</p>
+        <p><code>POST /find-evil</code> - Run Find Evil</p>
+        <p><code>POST /chat</code> - Chat with Geoff</p>
+    </div>
+    
+    <div class="api">
+        <h3>Quick Start</h3>
+        <pre>curl -X POST http://localhost:8080/find-evil \
+  -H 'Content-Type: application/json' \
+  -d '{"evidence_dir": "/path/to/evidence"}'</pre>
+    </div>
+    
+    <p>Status: Running | Flask Backend Active</p>
+</body>
+</html>
+UIEOF
     
     # Create Geoff config (YAML)
     cat > "$HOME/.openclaw/config.yaml" << EOF
@@ -322,10 +351,10 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-    # Geoff UI service
-    sudo tee /etc/systemd/system/geoff-ui.service > /dev/null << EOF
+    # Geoff Flask API service
+    sudo tee /etc/systemd/system/geoff.service > /dev/null << EOF
 [Unit]
-Description=Geoff UI Server
+Description=Geoff DFIR Server (Flask)
 After=network.target ollama.service
 Wants=ollama.service
 
@@ -333,12 +362,9 @@ Wants=ollama.service
 Type=simple
 User=${GEOFF_USER}
 Environment="HOME=${HOME}"
-Environment="GEOFF_UI_PORT=8080"
-Environment="GEOFF_GATEWAY_URL=ws://127.0.0.1:18789"
-Environment="GEOFF_TOKEN=geoff-default"
-Environment="GEOFF_EVIDENCE=${HOME}/.geoff/evidence"
-WorkingDirectory=${HOME}/.geoff/ui
-ExecStart=/usr/bin/node ${HOME}/.geoff/ui/server.js
+Environment="OLLAMA_HOST=127.0.0.1:11434"
+WorkingDirectory=${HOME}/.geoff
+ExecStart=/usr/bin/python3 ${HOME}/.geoff/src/geoff_integrated.py
 Restart=always
 RestartSec=10
 
@@ -348,7 +374,7 @@ EOF
 
     sudo systemctl daemon-reload
     sudo systemctl enable ollama
-    sudo systemctl enable geoff-ui
+    sudo systemctl enable geoff
     
     echo "  ✓ Services created"
 }
