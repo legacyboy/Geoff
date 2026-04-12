@@ -28,6 +28,18 @@ INSTALL_DIR="${HOME}/.geoff"
 OLLAMA_VERSION="0.6.5"
 OLLAMA_MODEL="gemma3:4b"
 OLLAMA_MODEL_DIGEST="aeda25e63ebd"
+
+# Geoff Agent Models
+# Manager: deepseek-r1:70b (main orchestrator)
+# Forensicator: qwen2.5-coder:32b (tool execution)  
+# Critic: qwen3:30b (validation and git enforcement)
+MANAGER_MODEL="deepseek-r1:70b"
+FORENSICATOR_MODEL="qwen2.5-coder:32b"
+CRITIC_MODEL="qwen3:30b"
+
+# Cloud mode variables
+GEOFF_CLOUD="false"
+GEOFF_API_KEY=""  # User must provide their own for cloud mode
 GEOFF_USER="${USER}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -55,19 +67,8 @@ check_requirements() {
         sudo apt-get install -y jq
     fi
     
-    # Check RAM
-    RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    RAM_GB=$((RAM_KB / 1024 / 1024))
-    if [[ $RAM_GB -lt 8 ]]; then
-        echo "WARNING: Recommended 8GB+ RAM. Found ${RAM_GB}GB."
-        read -p "Continue anyway? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
-    
-    echo "  ✓ Requirements met"
+    # RAM check removed - will attempt install regardless of available memory
+    echo "  ✓ Requirements check bypassed (install will proceed)"
 }
 
 # Install Ollama
