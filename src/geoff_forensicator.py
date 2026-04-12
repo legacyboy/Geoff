@@ -8,6 +8,7 @@ Uses qwen2.5-coder:32b for code/tool understanding
 import json
 import subprocess
 import re
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional

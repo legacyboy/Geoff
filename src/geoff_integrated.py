@@ -49,8 +49,8 @@ class ContextManager:
         if estimated_tokens <= max_tokens:
             return text
         
-        # Calculate max characters
-        max_chars = max_tokens * 4
+        # Calculate max characters using CHARS_PER_TOKEN constant
+        max_chars = int(max_tokens * self.CHARS_PER_TOKEN)
         
         # Keep beginning and end, truncate middle
         if len(text) > max_chars:
