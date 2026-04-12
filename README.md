@@ -162,11 +162,28 @@ cd Geoff/installer
 ### Manual Setup (Advanced)
 ```bash
 pip install -r requirements.txt
+
+# Ollama Configuration (local or remote)
+export OLLAMA_URL="http://localhost:11434"  # or remote: http://your-ollama-server:11434
+
+# Agent Models (via Ollama)
+export GEOFF_MANAGER_MODEL="deepseek-r1:70b"
+export GEOFF_FORENSICATOR_MODEL="qwen2.5-coder:32b"  
+export GEOFF_CRITIC_MODEL="qwen3:30b"
+
+# Other settings
 export GEOFF_EVIDENCE_PATH="/path/to/evidence"
 export GEOFF_PORT=8080
-export OLLAMA_URL="http://localhost:11434"
-export GEOFF_MODEL="qwen3-coder-next:cloud"
+
 python src/geoff_integrated.py
+```
+
+**Remote Ollama Example:**
+```bash
+# Point to remote Ollama server
+export OLLAMA_URL="http://192.168.1.100:11434"
+# Models referenced by name on that server
+export GEOFF_MANAGER_MODEL="deepseek-r1:70b"
 ```
 
 ### Access
