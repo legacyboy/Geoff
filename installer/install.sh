@@ -518,17 +518,33 @@ main() {
     echo "  Geoff Installation Complete!"
     echo "========================================"
     echo ""
-    echo "Next steps:"
-    echo "  1. Reload your shell: source ~/.bashrc"
-    echo "  2. Start Geoff: geoff start"
-    echo "  3. Access the web UI: http://localhost:8080"
-    echo "  4. Or chat in terminal: geoff chat"
+    
+    # Start services automatically
+    echo "Starting Geoff services..."
+    sudo systemctl start ollama 2>/dev/null || echo "  Note: Could not start ollama service"
+    sleep 3
+    sudo systemctl start geoff-ui 2>/dev/null || echo "  Note: Could not start geoff-ui service"
+    sleep 2
+    
+    # Check if services are running
+    if sudo systemctl is-active --quiet ollama 2>/dev/null; then
+        echo "  ✓ Ollama service running"
+    fi
+    if sudo systemctl is-active --quiet geoff-ui 2>/dev/null; then
+        echo "  ✓ Geoff UI service running"
+    fi
+    
+    echo ""
+    echo "Geoff is ready!"
+    echo ""
+    echo "Access:"
+    echo "  Web UI: http://localhost:8080"
+    echo "  Terminal: geoff chat"
     echo ""
     echo "Quick commands:"
     echo "  geoff start      - Start all services"
     echo "  geoff stop       - Stop all services"
     echo "  geoff status     - Check status"
-    echo "  geoff ui         - Open web UI"
     echo "  geoff logs       - View logs"
     echo ""
     echo "Configuration:"
