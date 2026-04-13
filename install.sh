@@ -87,6 +87,8 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
     git pull origin main || warn "Git pull failed — continuing with existing code"
 else
     info "Cloning GEOFF repository..."
+    sudo mkdir -p "$INSTALL_DIR"
+    sudo chown "$(whoami):$(id -gn)" "$INSTALL_DIR"
     git clone "$REPO" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
@@ -94,7 +96,7 @@ ok "Code ready at ${INSTALL_DIR}"
 
 # ── Python virtual environment ─────────────────────────────────────────────
 info "Setting up Python environment..."
-python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || true
+python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || sudo python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || true
 source "${INSTALL_DIR}/venv/bin/activate"
 pip install --quiet -r requirements.txt 2>/dev/null || pip install --quiet flask requests jsonschema
 ok "Python environment ready"
