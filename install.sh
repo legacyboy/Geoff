@@ -6,9 +6,11 @@
 #   curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash
 #   curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --profile local
 #   curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --profile cloud --dir /opt/geoff
+#   curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --profile cloud --ollama-key YOUR_KEY
 #
 # Options:
 #   --profile cloud|local   Model profile (default: cloud)
+#   --ollama-key <key>      Ollama cloud API key (required for cloud profile models)
 #   --dir <path>            Install directory (default: /opt/geoff)
 #   --skip-ollama           Skip Ollama model pulls (Ollama itself is always installed if missing)
 #   --skip-deps             Skip apt dependency installs
@@ -20,6 +22,7 @@ set -euo pipefail
 REPO="https://github.com/legacyboy/Geoff.git"
 INSTALL_DIR="/opt/geoff"
 PROFILE="cloud"
+OLLAMA_KEY=""
 SKIP_OLLAMA=false
 SKIP_DEPS=false
 
@@ -38,8 +41,9 @@ fail()  { echo -e "${RED}[GEOFF]${NC} $*" >&2; exit 1; }
 # ── Parse args ──────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --profile)  PROFILE="$2"; shift 2;;
-        --dir)      INSTALL_DIR="$2"; shift 2;;
+        --profile)     PROFILE="$2"; shift 2;;
+        --ollama-key)  OLLAMA_KEY="$2"; shift 2;;
+        --dir)         INSTALL_DIR="$2"; shift 2;;
         --skip-ollama) SKIP_OLLAMA=true; shift;;
         --skip-deps)   SKIP_DEPS=true; shift;;
         -h|--help)
@@ -53,6 +57,11 @@ done
 # ── Validate profile ───────────────────────────────────────────────────────
 if [[ "$PROFILE" != "cloud" && "$PROFILE" != "local" ]]; then
     fail "Unknown profile '$PROFILE'. Must be 'cloud' or 'local'."
+fi
+
+if [[ "$PROFILE" == "cloud" && -z "$OLLAMA_KEY" ]]; then
+    warn "Cloud profile selected but no --ollama-key provided. Cloud models require an Ollama API key."
+    warn "Set it later in .env: OLLAMA_API_KEY=<your-key>"
 fi
 
 info "Installing GEOFF with profile: ${YELLOW}${PROFILE}${NC}"
@@ -110,10 +119,12 @@ ok "Python environment ready"
 info "Configuring profile: ${PROFILE}"
 
 # Create .env file for the profile
+ENV_EXTRA=""
+[[ -n "$OLLAMA_KEY" ]] && ENV_EXTRA="OLLAMA_API_KEY=${OLLAMA_KEY}"
 cat > "${INSTALL_DIR}/.env" << EOF
-# GEOFF Configuration
 GEOFF_PROFILE=${PROFILE}
 OLLAMA_URL=http://localhost:11434
+${ENV_EXTRA}
 EOF
 
 ok "Profile '${PROFILE}' configured in ${INSTALL_DIR}/.env"
@@ -169,6 +180,8 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
         info "  Forensicator: ${FORENSICATOR_MODEL}"
         info "  Critic:       ${CRITIC_MODEL}"
 
+        # Set API key for cloud model pulls if provided
+        [[ -n "$OLLAMA_KEY" ]] && export OLLAMA_API_KEY="$OLLAMA_KEY"
         ollama pull "$MANAGER_MODEL"      || warn "Failed to pull ${MANAGER_MODEL}"
         ollama pull "$FORENSICATOR_MODEL" || warn "Failed to pull ${FORENSICATOR_MODEL}"
         ollama pull "$CRITIC_MODEL"        || warn "Failed to pull ${CRITIC_MODEL}"

@@ -35,13 +35,21 @@ class GeoffCritic:
                  model: str = "qwen3-coder-next:cloud"):
         self.ollama_url = ollama_url or os.environ.get('OLLAMA_URL', 'http://localhost:11434')
         self.model = model
+        self._api_key = os.environ.get('OLLAMA_API_KEY', '')
         self.validation_log = []
+
+    def _ollama_headers(self):
+        h = {'Content-Type': 'application/json'}
+        if self._api_key:
+            h['Authorization'] = f'Bearer {self._api_key}'
+        return h
 
     def _call_critic_llm(self, prompt: str) -> str:
         """Call LLM for sanity check review"""
         try:
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
+                headers=self._ollama_headers(),
                 json={
                     "model": self.model,
                     "prompt": prompt,

@@ -21,6 +21,13 @@ import requests
 FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen3-coder-next:cloud")
 
 OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
+OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
+
+def _ollama_headers():
+    h = {'Content-Type': 'application/json'}
+    if OLLAMA_API_KEY:
+        h['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
+    return h
 
 
 def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
@@ -29,6 +36,7 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
     try:
         response = requests.post(
             f"{url}/api/generate",
+            headers=_ollama_headers(),
             json={
                 "model": FORENSICATOR_MODEL,
                 "prompt": prompt,

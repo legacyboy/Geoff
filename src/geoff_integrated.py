@@ -168,6 +168,14 @@ CORS(app)
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
+OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
+
+def ollama_headers():
+    """Return headers for Ollama API requests, including auth if configured."""
+    h = {'Content-Type': 'application/json'}
+    if OLLAMA_API_KEY:
+        h['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
+    return h
 
 # ---------------------------------------------------------------------------
 # Model Profiles — cloud vs local
@@ -294,6 +302,7 @@ def call_llm(user_message, context="", agent_type="manager"):
         full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
         response = requests.post(
             f"{OLLAMA_URL}/api/generate",
+            headers=ollama_headers(),
             json={
                 "model": model,
                 "prompt": full_prompt,
