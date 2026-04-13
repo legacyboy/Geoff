@@ -138,7 +138,7 @@ def _resolve_dir(env_var, default_path, fallback_subdir):
         return fallback
 
 EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
-                               "/home/sansforensics/evidence-storage/evidence",
+                               "/home/sansforensics/evidence-storage",
                                "geoff-evidence")
 CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
                              "/home/sansforensics/evidence-storage/cases",
@@ -1794,14 +1794,7 @@ def find_evil_route():
     """
     try:
         data = request.json or {}
-        evidence_dir = data.get('evidence_dir', '').strip()
-
-        if not evidence_dir:
-            return jsonify({
-                'status': 'error',
-                'error': 'Missing required field: evidence_dir',
-                'usage': 'POST {"evidence_dir": "/path/to/evidence"} to /find-evil'
-            }), 400
+        evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
 
         # Run Find Evil
         report = find_evil(evidence_dir)
