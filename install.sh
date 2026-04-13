@@ -67,7 +67,7 @@ if [[ "$SKIP_DEPS" == false ]]; then
     info "Installing system dependencies..."
     if command -v apt-get >/dev/null; then
         sudo apt-get update -qq
-        sudo apt-get install -y -qq python3-pip python3-venv git curl jq \
+        sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
             sleuthkit volatility3 yara ssdeep hashdeep exiftool plaso-tools \
             regripper tshark 2>/dev/null || true
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
@@ -96,8 +96,13 @@ ok "Code ready at ${INSTALL_DIR}"
 
 # ── Python virtual environment ─────────────────────────────────────────────
 info "Setting up Python environment..."
-python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || sudo python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || true
-source "${INSTALL_DIR}/venv/bin/activate"
+python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || sudo python3 -m venv "${INSTALL_DIR}/venv" || sudo python3 -m venv "${INSTALL_DIR}/venv" || {
+    warn "venv creation failed, trying with --without-pip..."
+    python3 -m venv --without-pip "${INSTALL_DIR}/venv" || fail "Failed to create Python virtual environment"
+    # Install pip manually into the venv
+    curl -sSL https://bootstrap.pypa.io/get-pip.py | "${INSTALL_DIR}/venv/bin/python3"
+}
+source "${INSTALL_DIR}/venv/bin/activate" || fail "Failed to activate virtual environment"
 pip install --quiet -r requirements.txt 2>/dev/null || pip install --quiet flask requests jsonschema
 ok "Python environment ready"
 
