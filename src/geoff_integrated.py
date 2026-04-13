@@ -169,10 +169,36 @@ PORT = int(os.environ.get('GEOFF_PORT', 8080))
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 
+# ---------------------------------------------------------------------------
+# Model Profiles — cloud vs local
+# ---------------------------------------------------------------------------
+PROFILES_PATH = Path(__file__).parent.parent / "profiles.json"
+
+def load_profile(profile_name: str) -> dict:
+    """Load model profile from profiles.json.
+    Env vars GEOFF_*_MODEL override profile settings.
+    """
+    try:
+        with open(PROFILES_PATH) as f:
+            profiles = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Fallback defaults if profiles.json missing
+        profiles = {
+            "cloud": {"manager": "deepseek-v3.2:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud"},
+            "local": {"manager": "deepseek-r1:32b", "forensicator": "qwen2.5-coder:14b", "critic": "qwen2.5:14b"},
+        }
+    if profile_name not in profiles:
+        print(f"[WARN] Unknown profile '{profile_name}', falling back to 'cloud'")
+        profile_name = "cloud"
+    return profiles[profile_name]
+
+ACTIVE_PROFILE = os.environ.get('GEOFF_PROFILE', 'cloud')
+_profile_models = load_profile(ACTIVE_PROFILE)
+
 AGENT_MODELS = {
-    "manager": os.environ.get('GEOFF_MANAGER_MODEL', "deepseek-r1:70b"),
-    "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b"),
-    "critic": os.environ.get('GEOFF_CRITIC_MODEL', "qwen3-coder-next:cloud")
+    "manager": os.environ.get('GEOFF_MANAGER_MODEL', _profile_models["manager"]),
+    "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', _profile_models["forensicator"]),
+    "critic": os.environ.get('GEOFF_CRITIC_MODEL', _profile_models["critic"]),
 }
 
 LLM_MODEL = AGENT_MODELS["manager"]
@@ -2403,7 +2429,8 @@ if __name__ == '__main__':
     print(f'Geoff DFIR on port {PORT}')
     print(f'Evidence source: {EVIDENCE_BASE_DIR}')
     print(f'Cases work dir: {CASES_WORK_DIR}')
+    print(f'Profile: {ACTIVE_PROFILE}')
     print(f'Ollama: {OLLAMA_URL}')
-    print(f'Model: {LLM_MODEL}')
+    print(f'Models: manager={AGENT_MODELS["manager"]} forensicator={AGENT_MODELS["forensicator"]} critic={AGENT_MODELS["critic"]}')
     print(f'REMnux orchestrator: loaded')
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

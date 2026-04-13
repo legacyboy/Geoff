@@ -16,8 +16,9 @@ from typing import Dict, List, Any
 import requests
 
 # Forensicator Model Configuration
-# Local: qwen2.5-coder:32b | Cloud: qwen2.5-coder (via API)
-FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b")
+# Set GEOFF_FORENSICATOR_MODEL to override, or GEOFF_PROFILE=cloud|local
+# Defaults to the active profile from profiles.json
+FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen3-coder-next:cloud")
 
 OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 

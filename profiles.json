@@ -1,0 +1,12 @@
+{
+  "cloud": {
+    "manager": "deepseek-v3.2:cloud",
+    "forensicator": "qwen3-coder-next:cloud",
+    "critic": "qwen3.5:cloud"
+  },
+  "local": {
+    "manager": "deepseek-r1:32b",
+    "forensicator": "qwen2.5-coder:14b",
+    "critic": "qwen2.5:14b"
+  }
+}
