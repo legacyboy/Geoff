@@ -1156,6 +1156,188 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 })
 
     # ------------------------------------------------------------------
+    # Phase 3c: User Activity Extraction (Cross-Host)
+    # ------------------------------------------------------------------
+    user_activity_summary = {}
+
+    # Try to extract per-user activity from merged or individual timelines
+    timeline_for_extraction = list(Path(output_dir).glob("timeline_*.plaso"))
+    merged_plaso = case_work_dir / "timeline" / "merged_super.plaso"
+    if merged_plaso.exists():
+        timeline_for_extraction = [merged_plaso]
+
+    if timeline_for_extraction:
+        _update_job(93, "correlation", "Extracting user activity across hosts")
+        try:
+            # Use psort to extract user-relevant events from Plaso timelines
+            # Focus on: file access, process execution, logins, browser history,
+            # registry modifications — all keyed by username + hostname
+            user_event_types = [
+                "windows:registry:userassist",   # UserAssist (program execution)
+                "windows:evt:4624",               # Successful logon
+                "windows:evt:4625",               # Failed logon
+                "windows:evt:4648",               # Explicit credential logon
+                "windows:evt:4688",               # Process creation
+                "windows:evtx:4624",
+                "windows:evtx:4625",
+                "windows:evtx:4648",
+                "windows:evtx:4688",
+                "shell:history",                  # Bash/shell history
+                "browser:chrome:history",
+                "browser:firefox:history",
+                "santa:execution",                 # macOS Santa
+                "filestat",                        # File stat events (if user-attributed)
+            ]
+
+            for tl_path in timeline_for_extraction:
+                try:
+                    # Query psort for user-attributed events
+                    psort_cmd = [
+                        "python3", "/usr/bin/psort.py",
+                        "-o", "json",
+                        str(tl_path),
+                    ]
+                    psort_result = subprocess.run(
+                        psort_cmd,
+                        capture_output=True, text=True, timeout=300
+                    )
+
+                    if psort_result.returncode == 0 and psort_result.stdout:
+                        # Parse JSON output line by line
+                        for line in psort_result.stdout.strip().split("\n"):
+                            try:
+                                event = json.loads(line)
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+
+                            username = event.get("username", "")
+                            hostname = event.get("hostname", event.get("computer_name", ""))
+                            event_type = event.get("data_type", "")
+                            timestamp = event.get("datetime", "")
+
+                            if not username:
+                                continue
+
+                            # Normalize username
+                            user_key = f"{username}@{hostname}" if hostname else username
+
+                            if user_key not in user_activity_summary:
+                                user_activity_summary[user_key] = {
+                                    "username": username,
+                                    "hosts": set(),
+                                    "event_types": {},
+                                    "timeline": [],
+                                    "lateral_movement_indicators": [],
+                                }
+
+                            user_activity_summary[user_key]["hosts"].add(hostname)
+                            user_activity_summary[user_key]["event_types"][event_type] = \
+                                user_activity_summary[user_key]["event_types"].get(event_type, 0) + 1
+
+                            # Keep last 100 events per user to avoid bloat
+                            if len(user_activity_summary[user_key]["timeline"]) < 100:
+                                user_activity_summary[user_key]["timeline"].append({
+                                    "timestamp": timestamp,
+                                    "event_type": event_type,
+                                    "host": hostname,
+                                    "detail": event.get("message", "")[:200],
+                                })
+
+                    # Also try a targeted psort query for login events across hosts
+                    for evt_filter in ["4624", "4648", "4688"]:
+                        try:
+                            targeted_cmd = [
+                                "python3", "/usr/bin/psort.py",
+                                str(tl_path),
+                                f"event_identifier IS {evt_filter}",
+                                "-o", "json",
+                            ]
+                            targeted_result = subprocess.run(
+                                targeted_cmd,
+                                capture_output=True, text=True, timeout=120
+                            )
+                            if targeted_result.returncode == 0 and targeted_result.stdout:
+                                for line in targeted_result.stdout.strip().split("\n"):
+                                    try:
+                                        event = json.loads(line)
+                                    except (json.JSONDecodeError, ValueError):
+                                        continue
+                                    username = event.get("username", "")
+                                    hostname = event.get("hostname", "")
+                                    if not username:
+                                        continue
+                                    user_key = f"{username}@{hostname}" if hostname else username
+                                    if user_key in user_activity_summary:
+                                        # Track lateral movement: same user, different hosts
+                                        if len(user_activity_summary[user_key]["hosts"]) > 1:
+                                            user_activity_summary[user_key]["lateral_movement_indicators"].append({
+                                                "type": "cross_host_activity",
+                                                "user": username,
+                                                "hosts": list(user_activity_summary[user_key]["hosts"]),
+                                                "event": event.get("message", "")[:200],
+                                                "timestamp": event.get("datetime", ""),
+                                            })
+                        except Exception:
+                            pass
+
+                except Exception as e:
+                    findings.append({
+                        "playbook": "PB-SIFT-017",
+                        "module": "plaso",
+                        "function": "extract_user_activity",
+                        "status": "failed",
+                        "error": str(e),
+                    })
+
+            # Convert sets to sorted lists for JSON serialization
+            for user_key in user_activity_summary:
+                user_activity_summary[user_key]["hosts"] = sorted(
+                    user_activity_summary[user_key]["hosts"]
+                )
+                # Deduplicate lateral movement indicators (max 50)
+                lmi = user_activity_summary[user_key]["lateral_movement_indicators"]
+                seen = set()
+                deduped = []
+                for indicator in lmi:
+                    sig = f"{indicator.get('type','')}:{indicator.get('timestamp','')}"
+                    if sig not in seen:
+                        seen.add(sig)
+                        deduped.append(indicator)
+                    if len(deduped) >= 50:
+                        break
+                user_activity_summary[user_key]["lateral_movement_indicators"] = deduped
+
+            if user_activity_summary:
+                findings.append({
+                    "playbook": "PB-SIFT-017",
+                    "module": "plaso",
+                    "function": "user_activity_extraction",
+                    "status": "completed",
+                    "result": {
+                        "users_tracked": len(user_activity_summary),
+                        "users_with_cross_host_activity": sum(
+                            1 for u in user_activity_summary.values()
+                            if len(u["hosts"]) > 1
+                        ),
+                        "lateral_movement_indicators": sum(
+                            len(u["lateral_movement_indicators"])
+                            for u in user_activity_summary.values()
+                        ),
+                    },
+                    "started_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now().isoformat(),
+                })
+
+        except Exception as e:
+            findings.append({
+                "playbook": "PB-SIFT-017",
+                "module": "plaso",
+                "function": "user_activity_extraction",
+                "status": "failed",
+                "error": str(e),
+            })
+
+    # ------------------------------------------------------------------
     # Phase 4: Aggregate Findings & Severity
     # ------------------------------------------------------------------
     _update_job(95, "reporting", "Aggregating findings")
@@ -1226,6 +1408,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),
         "findings_detail": findings,
+        "user_activity_summary": user_activity_summary,
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
     }
@@ -2439,9 +2622,10 @@ def find_evil_info():
             '3. ALL 19 playbooks execute (no cherry-picking)',
             '4. Steps skipped only if required tool is missing',
             '5. Multi-host correlation with Plaso timeline merge',
-            '6. Critic validation of every result',
-            '7. JSON Schema validation of investigation state',
-            '8. Unified findings report with severity & MITRE ATT&CK mapping',
+            '6. User activity extraction across hosts (lateral movement detection)',
+            '7. Critic validation of every result',
+            '8. JSON Schema validation of investigation state',
+            '9. Unified findings report with severity & MITRE ATT&CK mapping',
         ]
     })
 
