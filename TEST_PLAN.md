@@ -1,8 +1,6 @@
-# TEST_PLAN.md - Test Coverage Overview
+# Test Plan
 
-**Project:** Geoff Private
-**Created:** 2026-04-13
-**Status:** Draft
+This document outlines the testing strategy and test cases for the project.
 
 ---
 
@@ -19,270 +17,118 @@
 ## Find Evil Tests
 
 ### Overview
-Tests for the "Find Evil" detection engine to identify malicious activity, anomalies, and security threats.
+Tests for the "Find Evil" threat detection and analysis functionality.
 
-### Test Categories
+### Test Cases
 
-| Category | Description | Priority |
-|----------|-------------|----------|
-| Signature Detection | Verify known attack signatures are detected | High |
-| Anomaly Detection | Detect statistically unusual behavior patterns | High |
-| IOC Matching | Match against known Indicators of Compromise | High |
-| False Positive Handling | Ensure benign activity is not flagged | Medium |
-| Performance | Validate detection under load | Medium |
-
-### Test Scenarios
-
-1. **Signature-Based Detection**
-   - Input: Known malware samples, attack patterns
-   - Expected: Positive match with confidence score
-   - Edge cases: Encrypted payloads, obfuscated code
-
-2. **Behavioral Analysis**
-   - Input: Process execution logs, network traffic
-   - Expected: Flag suspicious sequences (e.g., LSASS access + network egress)
-   - Edge cases: Legitimate admin tools, developer workflows
-
-3. **IOC Feed Integration**
-   - Input: IPs, domains, file hashes from threat intel
-   - Expected: Match against observed data
-   - Edge cases: Stale IOCs, shared hosting false positives
-
-### Success Criteria
-
-- Detection rate > 95% on labeled malicious samples
-- False positive rate < 2% on benign test set
-- Latency < 100ms per event under normal load
+| ID | Test Case | Priority | Steps | Expected Result |
+|----|-----------|----------|-------|-----------------|
+| FE-001 | Detect malicious file hash | High | 1. Submit known malicious hash<br>2. Run detection scan | System identifies hash as malicious |
+| FE-002 | Detect suspicious network traffic | High | 1. Generate suspicious traffic pattern<br>2. Monitor detection response | Alert generated for suspicious activity |
+| FE-003 | False positive handling | Medium | 1. Submit benign file with similar pattern<br>2. Verify classification | Correctly classified as benign |
+| FE-004 | Performance with large datasets | Medium | 1. Load 100k+ file hashes<br>2. Run detection scan | Scan completes within acceptable time |
+| FE-005 | Integration with threat intelligence feeds | High | 1. Configure TI feed<br>2. Verify updates | Feed updates successfully, threats detected |
 
 ---
 
 ## Q&A Tests
 
 ### Overview
-Tests for the Question & Answer interface, including natural language processing, query understanding, and response accuracy.
+Tests for the Question & Answer system functionality.
 
-### Test Categories
+### Test Cases
 
-| Category | Description | Priority |
-|----------|-------------|----------|
-| Query Parsing | Parse various question formats | High |
-| Context Retention | Maintain conversation context | High |
-| Answer Relevance | Ensure responses are relevant | High |
-| Security Boundaries | Prevent jailbreaks and misuse | Critical |
-| Multi-turn Logic | Handle follow-up questions | Medium |
-
-### Test Scenarios
-
-1. **Basic Query Handling**
-   - Input: "What is the status of [service]?"
-   - Expected: Return current status from monitoring
-   - Variations: Abbreviations, typos, informal language
-
-2. **Context Preservation**
-   - Input: Sequence of related questions
-     - "Show me failed logins"
-   - "From which IPs?"
-   - "When did they start?"
-   - Expected: Each answer correctly inherits context
-
-3. **Security & Safety**
-   - Input: Attempted jailbreak prompts, injection attacks
-   - Expected: Refuse harmful requests, maintain system integrity
-   - Edge cases: Roleplay scenarios, encoded payloads
-
-4. **Multi-language Support**
-   - Input: Questions in different languages
-   - Expected: Detect language, respond appropriately
-
-### Success Criteria
-
-- Intent recognition accuracy > 90%
-- Context maintained across > 5 turns
-- Zero successful jailbreaks on security test suite
+| ID | Test Case | Priority | Steps | Expected Result |
+|----|-----------|----------|-------|-----------------|
+| QA-001 | Basic query response | High | 1. Submit simple question<br>2. Review answer | Accurate and relevant response returned |
+| QA-002 | Context-aware follow-up | High | 1. Ask initial question<br>2. Ask follow-up referencing context | System maintains context correctly |
+| QA-003 | Multi-turn conversation | Medium | 1. Engage in 5+ turn conversation<br>2. Verify coherence | Conversation remains coherent throughout |
+| QA-004 | Handling of ambiguous queries | Medium | 1. Submit vague question<br>2. Observe clarification request | System requests clarification appropriately |
+| QA-005 | Response time performance | High | 1. Submit query<br>2. Measure response time | Response received within 3 seconds |
+| QA-006 | Error handling for invalid queries | Medium | 1. Submit malformed query<br>2. Observe error handling | Graceful error with helpful message |
 
 ---
 
 ## Playbook Tests
 
 ### Overview
-Tests for automated response playbooks, including workflow execution, decision trees, and action triggers.
+Tests for automation playbook execution and management.
 
-### Test Categories
+### Test Cases
 
-| Category | Description | Priority |
-|----------|-------------|----------|
-| Trigger Conditions | Verify playbook triggers correctly | High |
-| Workflow Execution | End-to-end playbook runs | High |
-| Decision Logic | Conditional branching accuracy | High |
-| Rollback Capability | Undo actions when needed | Medium |
-| Parallel Execution | Handle concurrent playbooks | Medium |
-
-### Test Scenarios
-
-1. **Simple Response Playbook**
-   - Trigger: High-severity alert
-   - Steps: Isolate host, notify SOC, create ticket
-   - Expected: All actions execute in order, status reported
-
-2. **Conditional Branching**
-   - Trigger: Suspicious login
-   - Condition: Check if from known travel location
-   - Branch A (yes): Send verification email
-   - Branch B (no): Force password reset + alert
-   - Expected: Correct branch chosen based on context
-
-3. **Escalation Chains**
-   - Trigger: Critical incident
-   - Steps: Page on-call, wait 15 min, escalate to manager
-   - Expected: Escalation proceeds if no acknowledgment
-
-4. **Error Handling**
-   - Scenario: Action fails (e.g., API unreachable)
-   - Expected: Error logged, fallback executed, playbook continues or halts based on config
-
-### Success Criteria
-
-- Playbook triggers match criteria 100%
-- Execution success rate > 98%
-- Escalation completed within defined SLAs
+| ID | Test Case | Priority | Steps | Expected Result |
+|----|-----------|----------|-------|-----------------|
+| PB-001 | Create new playbook | High | 1. Open playbook editor<br>2. Add automation steps<br>3. Save playbook | Playbook created successfully |
+| PB-002 | Execute playbook manually | High | 1. Select playbook<br>2. Click run<br>3. Monitor execution | Playbook executes all steps correctly |
+| PB-003 | Schedule playbook execution | High | 1. Set schedule for playbook<br>2. Wait for trigger time<br>3. Verify execution | Playbook runs at scheduled time |
+| PB-004 | Conditional logic in playbooks | Medium | 1. Create playbook with if/else<br>2. Test both branches | Conditions evaluated correctly |
+| PB-005 | Playbook error handling | Medium | 1. Create playbook with failing step<br>2. Execute and observe | Error captured, playbook halts or continues based on settings |
+| PB-006 | Import/export playbooks | Low | 1. Export playbook to JSON<br>2. Import on different instance | Playbook imports and functions identically |
 
 ---
 
 ## Web UI Tests
 
 ### Overview
-Tests for the web-based user interface, including functionality, accessibility, and cross-browser compatibility.
+Tests for the web user interface functionality and usability.
 
-### Test Categories
+### Test Cases
 
-| Category | Description | Priority |
-|----------|-------------|----------|
-| Authentication | Login/logout, MFA, session management | Critical |
-| Dashboard | Widgets, real-time updates, data visualization | High |
-| Navigation | Menus, breadcrumbs, deep linking | High |
-| Forms & Input | Validation, submission, error handling | High |
-| Responsive Design | Mobile, tablet, desktop layouts | Medium |
-| Accessibility | WCAG compliance, screen readers | Medium |
-
-### Test Scenarios
-
-1. **User Authentication**
-   - Valid credentials → Successful login
-   - Invalid credentials → Error message, no session
-   - MFA flow → Prompt for TOTP, validate, proceed
-   - Session timeout → Auto-logout, preserve unsaved work warning
-
-2. **Dashboard Functionality**
-   - Load: Widgets render with live data
-   - Interaction: Drag to reorder, click to expand
-   - Real-time: WebSocket updates reflect new data
-
-3. **Search & Filtering**
-   - Input: Various search terms, filters
-   - Expected: Results update, URL reflects state, pagination works
-
-4. **Form Submissions**
-   - Validation: Required fields, type checking, XSS prevention
-   - Submission: Success feedback, error handling
-   - File uploads: Size limits, type restrictions
-
-5. **Browser Compatibility**
-   - Chrome, Firefox, Safari, Edge (latest 2 versions)
-   - Mobile Safari (iOS), Chrome Mobile (Android)
-
-### Success Criteria
-
-- All critical paths functional across supported browsers
-- Page load time < 3s on standard connection
-- Lighthouse accessibility score > 90
+| ID | Test Case | Priority | Steps | Expected Result |
+|----|-----------|----------|-------|-----------------|
+| UI-001 | Login authentication | High | 1. Navigate to login page<br>2. Enter credentials<br>3. Submit | User authenticated and redirected to dashboard |
+| UI-002 | Dashboard load performance | High | 1. Navigate to dashboard<br>2. Measure load time | Dashboard loads within 5 seconds |
+| UI-003 | Responsive design - mobile | Medium | 1. Access via mobile viewport<br>2. Test navigation and interactions | Layout adjusts correctly, all features accessible |
+| UI-004 | Navigation menu functionality | High | 1. Click each menu item<br>2. Verify page navigation | All links navigate to correct pages |
+| UI-005 | Form validation | High | 1. Submit form with invalid data<br>2. Observe validation | Appropriate error messages displayed |
+| UI-006 | Data table operations | Medium | 1. Access table with data<br>2. Test sort, filter, pagination | All table operations function correctly |
+| UI-007 | Session timeout handling | Medium | 1. Leave session idle<br>2. Wait for timeout<br>3. Attempt action | User redirected to login with appropriate message |
+| UI-008 | Cross-browser compatibility | Medium | 1. Test in Chrome, Firefox, Safari<br>2. Verify functionality | Consistent behavior across browsers |
 
 ---
 
 ## Install Tests
 
 ### Overview
-Tests for installation procedures, covering different environments, dependency management, and upgrade paths.
+Tests for installation procedures and initial setup.
 
-### Test Categories
+### Test Cases
 
-| Category | Description | Priority |
-|----------|-------------|----------|
-| Fresh Install | Clean installation on new system | Critical |
-| Dependencies | Verify all dependencies resolve | Critical |
-| Configuration | Post-install config validation | High |
-| Upgrade | In-place version upgrades | High |
-| Rollback | Revert failed installations | Medium |
-| Uninstall | Clean removal from system | Medium |
-
-### Test Scenarios
-
-1. **Clean Installation**
-   - Environment: Fresh OS (Ubuntu 22.04, RHEL 9, Windows Server 2022)
-   - Steps: Run installer, provide configuration
-   - Expected: Service starts, health check passes
-
-2. **Docker Deployment**
-   - Environment: Docker, Docker Compose, Kubernetes
-   - Steps: Pull images, start services
-   - Expected: All containers healthy, networking functional
-
-3. **Dependency Validation**
-   - Scenario: Missing required packages
-   - Expected: Clear error, installation aborts with instructions
-   - Scenario: Version conflicts
-   - Expected: Warning or automatic resolution
-
-4. **Configuration Tests**
-   - Valid config → Service starts normally
-   - Invalid config → Clear error message, graceful exit
-   - Partial config → Sensible defaults applied, warnings logged
-
-5. **Upgrade Scenarios**
-   - Minor version: Automatic migration
-   - Major version: Manual steps documented, data preserved
-   - Rollback: Previous version restorable
-
-6. **Air-gapped Installation**
-   - Scenario: No internet access
-   - Expected: Offline package bundle installs successfully
-
-### Success Criteria
-
-- Installation completes without errors on all target platforms
-- Health check passes within 60 seconds of start
-- Upgrade path documented and tested for last 2 major versions
+| ID | Test Case | Priority | Steps | Expected Result |
+|----|-----------|----------|-------|-----------------|
+| IN-001 | Fresh installation - Linux | High | 1. Download installer<br>2. Run install script<br>3. Verify completion | Installation completes without errors |
+| IN-002 | Fresh installation - Windows | High | 1. Download installer<br>2. Run setup.exe<br>3. Verify completion | Installation completes without errors |
+| IN-003 | Fresh installation - macOS | High | 1. Download installer<br>2. Run install script<br>3. Verify completion | Installation completes without errors |
+| IN-004 | Upgrade from previous version | High | 1. Install old version<br>2. Run upgrade installer<br>3. Verify data migration | Upgrade successful, data preserved |
+| IN-005 | Dependency resolution | Medium | 1. Install on minimal system<br>2. Verify dependencies installed | All required dependencies installed |
+| IN-006 | Configuration validation | High | 1. Complete installation<br>2. Run configuration validator | Configuration validated successfully |
+| IN-007 | Uninstallation | Medium | 1. Run uninstaller<br>2. Verify removal<br>3. Check for remnants | Software fully removed, config optionally preserved |
+| IN-008 | Docker deployment | Medium | 1. Run docker-compose<br>2. Verify services start<br>3. Test connectivity | All containers start, services accessible |
 
 ---
 
-## Test Execution Schedule
+## Test Execution Notes
 
-| Phase | Tests | Frequency | Owner |
-|-------|-------|-----------|-------|
-| Pre-commit | Unit tests for Find Evil, Q&A | Every PR | Developer |
-| CI/CD | All automated tests | Every merge | CI System |
-| Nightly | Full regression suite | Daily | QA Team |
-| Release | Install tests, performance tests | Before release | Release Engineer |
-| Ad-hoc | Security penetration tests | Quarterly | Security Team |
+### Prerequisites
+- Test environment configured with appropriate data
+- Test accounts created with required permissions
+- Network access to external dependencies
 
----
+### Test Data
+- Sample malicious file hashes (known test samples)
+- Benign files for false positive testing
+- Mock threat intelligence feed data
 
-## Test Environments
-
-| Environment | Purpose | Data |
-|-------------|---------|------|
-| Unit | Fast feedback, isolated tests | Mock data |
-| Integration | Component interaction | Synthetic data |
-| Staging | Pre-prod validation | Anonymized prod snapshot |
-| Production | Smoke tests, monitoring | Live data (read-only) |
+### Exit Criteria
+- All High priority tests pass
+- No critical bugs outstanding
+- Performance benchmarks met
 
 ---
 
-## Related Documents
+## Revision History
 
-- [LINK TO DETAILED TEST CASES]
-- [LINK TO AUTOMATION SCRIPTS]
-- [LINK TO CI/CD CONFIGURATION]
+| Date | Version | Author | Changes |
+|------|---------|--------|---------|
+| 2026-04-13 | 1.0 | Test Team | Initial test plan creation |
 
----
-
-*Last Updated: 2026-04-13*
