@@ -202,48 +202,78 @@ cd validations/
 
 ### Requirements
 
-**Pinned Versions for Forensic Repeatability:**
-
-| Component | Version/Digest | Purpose |
-|-----------|---------------|---------|
-| **Ollama binary** | v0.6.5 | Local LLM inference engine |
-| **Ollama model** | gemma3:4b (digest: `aeda25e63ebd`) | Default Geoff model |
-| **Geoff** | v0.1.0 | DFIR investigation framework |
-
-These exact versions ensure identical behavior across installations for chain of custody and evidence integrity.
-
 **System Requirements:**
 - Python 3.10+
-- Ollama (versions pinned above)
-- SIFT Tools (SleuthKit, Volatility3, YARA, etc.)
+- Ollama (for LLM inference)
+- SIFT/REMnux tools (SleuthKit, Volatility3, YARA, etc.)
+- 8GB+ RAM for local models, or just an Ollama connection for cloud
 
-### Installation (Public Repo - when available)
+### Installation
+
+**Cloud profile (default) — uses cloud-hosted Ollama models, no local GPU needed:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/legacyboy/Geoff/main/installer/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash
 ```
 
-### Installation (Private Repo - current)
+**Local profile — pulls ~40GB of models to run everything locally:**
 ```bash
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --profile local
+```
+
+**Other options:**
+```bash
+# Install to a custom directory
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --dir /opt/geoff
+
+# Skip Ollama model pulls (if already installed)
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --skip-ollama
+
+# Skip system dependency installs
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --skip-deps
+
+# Private repo — clone and run manually
 git clone https://github.com/legacyboy/Geoff.git
-cd Geoff/installer
-./install.sh
+cd Geoff
+chmod +x install.sh
+./install.sh --profile local
+```
+
+### Model Profiles
+
+GEOFF uses three AI agents, each with a specific model. Switch between cloud and local with a single flag:
+
+| Agent | Cloud Profile | Local Profile |
+|-------|--------------|---------------|
+| **Manager** | deepseek-v3.2:cloud | deepseek-r1:32b |
+| **Forensicator** | qwen3-coder-next:cloud | qwen2.5-coder:14b |
+| **Critic** | qwen3.5:cloud | qwen2.5:14b |
+
+Switch profiles at runtime without reinstalling:
+```bash
+# Use cloud models
+GEOFF_PROFILE=cloud python3 src/geoff_integrated.py
+
+# Use local models
+GEOFF_PROFILE=local python3 src/geoff_integrated.py
+
+# Override individual models
+GEOFF_PROFILE=local GEOFF_CRITIC_MODEL=qwen2.5:32b python3 src/geoff_integrated.py
 ```
 
 ### Manual Setup (Advanced)
 ```bash
 pip install -r requirements.txt
 
-# Ollama Configuration (local or remote)
-export OLLAMA_URL="http://localhost:11434"  # or remote: http://your-ollama-server:11434
+# Ollama Configuration
+export OLLAMA_URL="http://localhost:11434"  # or remote Ollama server
 
-# Agent Models (via Ollama)
-export GEOFF_MANAGER_MODEL="deepseek-r1:70b"
-export GEOFF_FORENSICATOR_MODEL="qwen2.5-coder:32b"  
-export GEOFF_CRITIC_MODEL="qwen3:30b"
+# Profile selection
+export GEOFF_PROFILE=cloud  # or: local
 
-# Other settings
-export GEOFF_EVIDENCE_PATH="/path/to/evidence"
-export GEOFF_PORT=8080
+# Or override individual models
+export GEOFF_MANAGER_MODEL="deepseek-v3.2:cloud"
+export GEOFF_FORENSICATOR_MODEL="qwen3-coder-next:cloud"
+export GEOFF_CRITIC_MODEL="qwen3.5:cloud"
 
 python src/geoff_integrated.py
 ```
