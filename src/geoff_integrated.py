@@ -8,6 +8,9 @@ import json
 import sys
 import subprocess
 import tempfile
+import threading
+import time
+import uuid
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,226 +23,18 @@ from pathlib import Path
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 
+from jsonschema import validate as jsonschema_validate, ValidationError
+
 from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, YARA_Specialist, STRINGS_Specialist
 from sift_specialists_extended import ExtendedOrchestrator
+from sift_specialists_remnux import REMNUX_Orchestrator
 from geoff_critic import GeoffCritic, ValidationPipeline
 from geoff_forensicator import ForensicatorAgent
 
-# Context Window Management
-class ContextManager:
-    """Manages LLM context window to prevent overflow while keeping relevant info"""
-    
-    # qwen3-coder-next:cloud has 32K context window
-    # Reserve 8K for response + system overhead
-    MAX_CONTEXT_TOKENS = 24000  # ~76KB of text (3.2 chars per token for high-entropy forensic data)
-    
-    # Use 3.2 chars/token for high-entropy forensic data and code (more accurate than 4)
-    CHARS_PER_TOKEN = 3.2
-    
-    def __init__(self):
-        self.conversation_history = []  # Store last N exchanges for context
-        self.max_history_turns = 5
-    
-    def estimate_tokens(self, text: str) -> int:
-        """Token estimation: ~3.2 characters per token for high-entropy forensic data"""
-        return int(len(text) / self.CHARS_PER_TOKEN)
-    
-    def truncate_text(self, text: str, max_tokens: int) -> str:
-        """Truncate text to fit within token limit"""
-        estimated_tokens = self.estimate_tokens(text)
-        if estimated_tokens <= max_tokens:
-            return text
-        
-        # Calculate max characters using CHARS_PER_TOKEN constant
-        max_chars = int(max_tokens * self.CHARS_PER_TOKEN)
-        
-        # Keep beginning and end, truncate middle
-        if len(text) > max_chars:
-            half = max_chars // 2
-            return text[:half] + "\n...[truncated for context]...\n" + text[-half:]
-        return text
-    
-    def build_context(self, system_prompt: str, case_info: str, tool_info: str, 
-                     user_message: str, evidence_files: list = None) -> str:
-        """Build optimized context that fits within limits"""
-        
-        # Start with system prompt
-        parts = [system_prompt]
-        used_tokens = self.estimate_tokens(system_prompt)
-        
-        # Add case info with truncation for large file lists
-        if evidence_files and len(evidence_files) > 50:
-            # Summarize large file lists
-            file_summary = f"Case has {len(evidence_files)} items. Key items:\n"
-            file_summary += "\n".join(evidence_files[:30])
-            file_summary += f"\n...[and {len(evidence_files) - 30} more files]"
-            case_info = file_summary
-        
-        case_tokens = self.estimate_tokens(case_info)
-        if used_tokens + case_tokens < self.MAX_CONTEXT_TOKENS * 0.6:
-            parts.append(case_info)
-            used_tokens += case_tokens
-        else:
-            # Truncate case info
-            parts.append(self.truncate_text(case_info, 
-                       int((self.MAX_CONTEXT_TOKENS - used_tokens) * 0.3)))
-            used_tokens = self.estimate_tokens("\n".join(parts))
-        
-        # Add conversation history (recent exchanges)
-        if self.conversation_history:
-            history_text = "Recent conversation:\n"
-            for turn in self.conversation_history[-self.max_history_turns:]:
-                history_text += f"User: {turn['user'][:200]}\n"
-                history_text += f"Geoff: {turn['geoff'][:200]}\n"
-            
-            history_tokens = self.estimate_tokens(history_text)
-            if used_tokens + history_tokens < self.MAX_CONTEXT_TOKENS * 0.8:
-                parts.append(history_text)
-                used_tokens += history_tokens
-        
-        # Add tool info (shorter, always fits)
-        remaining_tokens = self.MAX_CONTEXT_TOKENS - used_tokens
-        if remaining_tokens > 500:
-            parts.append(tool_info)
-        
-        return "\n\n".join(parts)
-    
-    def add_exchange(self, user_msg: str, geoff_response: str):
-        """Add exchange to conversation history"""
-        self.conversation_history.append({
-            'user': user_msg,
-            'geoff': geoff_response,
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        # Keep only recent history
-        if len(self.conversation_history) > self.max_history_turns * 2:
-            self.conversation_history = self.conversation_history[-self.max_history_turns:]
-    
-    def clear_history(self):
-        """Clear conversation history (e.g., new case)"""
-        self.conversation_history = []
+# ---------------------------------------------------------------------------
+# JSON Schema Enforcement for Investigation State
+# ---------------------------------------------------------------------------
 
-# Initialize global context manager
-context_manager = ContextManager()
-
-# Configuration - MUST be defined before ActionLogger
-def _resolve_dir(env_var, default_path, fallback_subdir):
-    """Resolve a directory path, falling back to temp if default is not writable."""
-    path = os.environ.get(env_var, default_path)
-    try:
-        Path(path).mkdir(parents=True, exist_ok=True)
-        return path
-    except (PermissionError, OSError):
-        # tempfile already imported at top
-        fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
-        Path(fallback).mkdir(parents=True, exist_ok=True)
-        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
-        return fallback
-
-EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
-                               "/home/sansforensics/evidence-storage",
-                               "geoff-evidence")
-CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
-                             "/home/sansforensics/evidence-storage/cases",
-                             "geoff-cases")
-
-# Git Action Logger for audit trail - uses environment variable for path
-def git_commit_action(message: str, base_path: str = None):
-    """Git commit for audit trail"""
-    if base_path is None:
-        base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
-    
-    # Ensure base_path exists
-    if not os.path.isdir(base_path):
-        return  # Can't git commit if directory doesn't exist
-    
-    try:
-        # Configure git if not already set
-        subprocess.run(['git', 'config', 'user.email'], cwd=base_path, capture_output=True, check=True)
-    except:
-        # Set default git config
-        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=base_path, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=base_path, capture_output=True)
-    
-    try:
-        subprocess.run(['git', 'add', '.'], cwd=base_path, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', f"[GEOFF-ACTION] {message}"], cwd=base_path, capture_output=True)
-        print(f"[GIT] Committed: {message}")
-    except:
-        pass  # Git not available or nothing to commit
-
-class ActionLogger:
-    """Logger for all Geoff actions with git integration"""
-    
-    def __init__(self, log_dir: str = None):
-        if log_dir is None:
-            log_dir = os.environ.get('GEOFF_LOGS_DIR', CASES_WORK_DIR + '/logs')
-        self.log_dir = Path(log_dir)
-        try:
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-        except:
-            # Fallback to temp if permission denied
-            # tempfile already imported at top
-            self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
-            self.log_dir.mkdir(exist_ok=True)
-        
-        self.action_log = self.log_dir / f"actions_{datetime.now().strftime('%Y%m')}.jsonl"
-    
-    def log(self, action_type: str, details: dict, commit: bool = True):
-        """Log an action with optional git commit"""
-        entry = {
-            'timestamp': datetime.now().isoformat(),
-            'action_type': action_type,
-            'details': details
-        }
-        
-        # Append to JSONL file
-        with open(self.action_log, 'a') as f:
-            f.write(json.dumps(entry) + '\n')
-        
-        # Git commit for audit trail
-        if commit:
-            git_commit_action(f"{action_type}: {details.get('description', 'action')}")
-        
-        return entry
-
-# Initialize global action logger
-action_logger = ActionLogger()
-
-app = Flask(__name__)
-CORS(app)
-
-# Configuration
-PORT = int(os.environ.get('GEOFF_PORT', 8080))
-
-# Ollama Configuration (local or remote)
-# Local default: http://localhost:11434
-# Remote example: http://localhost:11434 or https://ollama.yourserver.com
-OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
-
-# Geoff Agent Models (all via Ollama)
-# Change these to use different models on your Ollama instance
-AGENT_MODELS = {
-    "manager": os.environ.get('GEOFF_MANAGER_MODEL', "deepseek-r1:70b"),
-    "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b"),
-    "critic": os.environ.get('GEOFF_CRITIC_MODEL', "qwen3:30b")
-}
-
-# Default model for general queries
-LLM_MODEL = AGENT_MODELS["manager"]
-
-# Initialize extended orchestrator with 100% coverage
-orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
-
-# Initialize Critic for validation
-geoff_critic = GeoffCritic(OLLAMA_URL, LLM_MODEL)
-validation_pipeline = ValidationPipeline(orchestrator, geoff_critic)
-
-# Initialize Forensicator for tool execution (multi-agent architecture)
-geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
-
-# Shared JSON Schema for investigation steps
 INVESTIGATION_SCHEMA = {
     "type": "object",
     "required": ["investigation_id", "steps", "current_step"],
@@ -256,37 +51,171 @@ INVESTIGATION_SCHEMA = {
                 "required": ["index", "module", "function", "status"],
                 "properties": {
                     "index": {"type": "integer"},
-                    "module": {
-                        "type": "string",
-                        "enum": ["sleuthkit", "volatility", "yara", "strings", "registry", "plaso", "network", "logs", "mobile", "chat", "analysis"]
-                    },
+                    "module": {"type": "string"},
                     "function": {"type": "string"},
                     "params": {"type": "object"},
-                    "description": {"type": "string"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "running", "completed", "failed"]
-                    },
-                    "added_at": {"type": "string", "format": "date-time"},
+                    "status": {"type": "string", "enum": ["pending", "running", "completed", "failed"]},
+                    "started_at": {"type": "string", "format": "date-time"},
                     "completed_at": {"type": "string", "format": "date-time"},
                     "result": {"type": "object"}
-                }
-            }
-        },
-        "artifacts": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string"},
-                    "path": {"type": "string"},
-                    "description": {"type": "string"},
-                    "hash": {"type": "string"}
                 }
             }
         }
     }
 }
+
+
+def validate_investigation_state(state: dict) -> bool:
+    """Validate an investigation state dict against the JSON schema.
+
+    Returns True if valid. Raises jsonschema.ValidationError on failure.
+    """
+    jsonschema_validate(instance=state, schema=INVESTIGATION_SCHEMA)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Directory Resolution & Configuration
+# ---------------------------------------------------------------------------
+
+def _resolve_dir(env_var, default_path, fallback_subdir):
+    """Resolve a directory path, falling back to temp if default is not writable."""
+    path = os.environ.get(env_var, default_path)
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return path
+    except (PermissionError, OSError):
+        fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
+        Path(fallback).mkdir(parents=True, exist_ok=True)
+        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
+        return fallback
+
+EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
+                               "/home/sansforensics/evidence-storage",
+                               "geoff-evidence")
+CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
+                             "/home/sansforensics/evidence-storage/cases",
+                             "geoff-cases")
+
+# ---------------------------------------------------------------------------
+# Git Action Logger for Audit Trail
+# ---------------------------------------------------------------------------
+
+def git_commit_action(message: str, base_path: str = None):
+    """Git commit for audit trail"""
+    if base_path is None:
+        base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
+
+    if not os.path.isdir(base_path):
+        return
+
+    try:
+        subprocess.run(['git', 'config', 'user.email'], cwd=base_path, capture_output=True, check=True)
+    except Exception:
+        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=base_path, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=base_path, capture_output=True)
+
+    try:
+        subprocess.run(['git', 'add', '.'], cwd=base_path, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', f"[GEOFF-ACTION] {message}"], cwd=base_path, capture_output=True)
+        print(f"[GIT] Committed: {message}")
+    except Exception:
+        pass
+
+
+class ActionLogger:
+    """Logger for all Geoff actions with git integration"""
+
+    def __init__(self, log_dir: str = None):
+        if log_dir is None:
+            log_dir = os.environ.get('GEOFF_LOGS_DIR', CASES_WORK_DIR + '/logs')
+        self.log_dir = Path(log_dir)
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
+            self.log_dir.mkdir(exist_ok=True)
+
+        self.action_log = self.log_dir / f"actions_{datetime.now().strftime('%Y%m')}.jsonl"
+
+    def log(self, action_type: str, details: dict, commit: bool = True):
+        """Log an action with optional git commit"""
+        entry = {
+            'timestamp': datetime.now().isoformat(),
+            'action_type': action_type,
+            'details': details
+        }
+
+        with open(self.action_log, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+
+        if commit:
+            git_commit_action(f"{action_type}: {details.get('description', 'action')}")
+
+        return entry
+
+
+# Initialize global action logger
+action_logger = ActionLogger()
+
+# ---------------------------------------------------------------------------
+# Flask App & Core Config
+# ---------------------------------------------------------------------------
+
+app = Flask(__name__)
+CORS(app)
+
+PORT = int(os.environ.get('GEOFF_PORT', 8080))
+
+OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
+
+AGENT_MODELS = {
+    "manager": os.environ.get('GEOFF_MANAGER_MODEL', "deepseek-r1:70b"),
+    "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b"),
+    "critic": os.environ.get('GEOFF_CRITIC_MODEL', "qwen3:30b")
+}
+
+LLM_MODEL = AGENT_MODELS["manager"]
+
+# ---------------------------------------------------------------------------
+# Orchestrators
+# ---------------------------------------------------------------------------
+
+orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
+remnux_orchestrator = REMNUX_Orchestrator()
+
+# Initialize Critic for validation
+geoff_critic = GeoffCritic(OLLAMA_URL, LLM_MODEL)
+validation_pipeline = ValidationPipeline(orchestrator, geoff_critic)
+
+# Initialize Forensicator for tool execution (multi-agent architecture)
+geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
+
+# ---------------------------------------------------------------------------
+# Find Evil Job Tracking (async)
+# ---------------------------------------------------------------------------
+
+_find_evil_jobs = {}  # job_id -> {status, progress, result, started_at, ...}
+_find_evil_lock = threading.Lock()
+
+
+def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict:
+    """Route a step to the correct orchestrator based on module prefix.
+
+    Steps whose module is 'remnux' (or starts with 'remnux_') go to the
+    REMnux orchestrator; everything else goes to the extended SIFT orchestrator.
+    """
+    if module == "remnux" or module.startswith("remnux_"):
+        step = {"function": function, "params": params}
+        return remnux_orchestrator.run_playbook_step("find-evil", step)
+    else:
+        step = {"module": module, "function": function, "params": params}
+        return orchestrator.run_playbook_step("find-evil", step)
+
+
+# ---------------------------------------------------------------------------
+# LLM & Tool Detection
+# ---------------------------------------------------------------------------
 
 GEOFF_PROMPT = """You are G.E.O.F.F. (Git-backed Evidence Operations Forensic Framework), a professional digital forensics investigation system.
 
@@ -312,6 +241,8 @@ Your role is to conduct thorough, systematic forensic analysis using established
 
 *Mobile Forensics:* iOS backup analysis, Android data extraction
 
+*REMnux Malware Analysis:* Static/dynamic analysis, binary identification, unpacking, disassembly, AV scanning
+
 **Operational Protocol:**
 - Respond with clear, technical accuracy
 - When instructed to investigate, execute systematically without unnecessary clarification
@@ -325,15 +256,15 @@ Your role is to conduct thorough, systematic forensic analysis using established
 - Clear identification of IOCs and suspicious activity
 - Structured reporting suitable for legal documentation"""
 
+
 def call_llm(user_message, context="", agent_type="manager"):
     """Call LLM via Ollama (local or remote)
-    
+
     agent_type: "manager", "forensicator", or "critic" - determines which model to use
     """
     try:
-        # Select model based on agent type
         model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
-        
+
         full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
         response = requests.post(
             f"{OLLAMA_URL}/api/generate",
@@ -353,165 +284,187 @@ def call_llm(user_message, context="", agent_type="manager"):
         print(f"LLM Error: {e}")
         return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
+
 def detect_tool_request(message: str) -> dict:
     """Detect if user is asking to run a forensic tool - 100% coverage"""
     message_lower = message.lower()
-    
+
     # SleuthKit patterns
     if any(word in message_lower for word in ['mmls', 'partition table', 'partition layout']):
         return {'module': 'sleuthkit', 'function': 'analyze_partition_table', 'params': {}}
-    
+
     if any(word in message_lower for word in ['fsstat', 'filesystem', 'file system stats']):
         return {'module': 'sleuthkit', 'function': 'analyze_filesystem', 'params': {}}
-    
+
     if any(word in message_lower for word in ['fls', 'list files', 'show files', 'directory listing']):
         return {'module': 'sleuthkit', 'function': 'list_files', 'params': {'recursive': True}}
-    
+
     if any(word in message_lower for word in ['icat', 'extract file', 'get file']):
         return {'module': 'sleuthkit', 'function': 'extract_file', 'params': {}}
-    
+
     if any(word in message_lower for word in ['istat', 'file info', 'inode details']):
         return {'module': 'sleuthkit', 'function': 'get_file_info', 'params': {}}
-    
+
     if any(word in message_lower for word in ['ils', 'list inodes']):
         return {'module': 'sleuthkit', 'function': 'list_inodes', 'params': {}}
-    
+
     # Volatility patterns
     if any(word in message_lower for word in ['volatility', 'memory dump', 'process list', 'pslist']):
         return {'module': 'volatility', 'function': 'process_list', 'params': {}}
-    
+
     if any(word in message_lower for word in ['netscan', 'network connections', 'connections']):
         return {'module': 'volatility', 'function': 'network_scan', 'params': {}}
-    
+
     if any(word in message_lower for word in ['malfind', 'malware', 'injected code']):
         return {'module': 'volatility', 'function': 'find_malware', 'params': {}}
-    
+
     if any(word in message_lower for word in ['dump process', 'proc dump']):
         return {'module': 'volatility', 'function': 'dump_process', 'params': {}}
-    
+
     # YARA patterns
     if any(word in message_lower for word in ['yara', 'scan for malware', 'signature scan']):
         return {'module': 'yara', 'function': 'scan_file', 'params': {}}
-    
+
     if any(word in message_lower for word in ['yara scan directory', 'scan folder']):
         return {'module': 'yara', 'function': 'scan_directory', 'params': {}}
-    
+
     # Strings patterns
     if any(word in message_lower for word in ['strings', 'extract strings', 'find iocs']):
         return {'module': 'strings', 'function': 'extract_strings', 'params': {}}
-    
+
     # Registry patterns
     if any(word in message_lower for word in ['registry', 'regripper', 'hive']):
         return {'module': 'registry', 'function': 'parse_hive', 'params': {}}
-    
+
     if any(word in message_lower for word in ['userassist', 'program execution']):
         return {'module': 'registry', 'function': 'extract_user_assist', 'params': {}}
-    
+
     if any(word in message_lower for word in ['shellbags', 'folder access']):
         return {'module': 'registry', 'function': 'extract_shellbags', 'params': {}}
-    
+
     if any(word in message_lower for word in ['usb devices', 'usbstor']):
         return {'module': 'registry', 'function': 'extract_usb_devices', 'params': {}}
-    
+
     if any(word in message_lower for word in ['autoruns', 'run keys']):
         return {'module': 'registry', 'function': 'extract_autoruns', 'params': {}}
-    
+
     if any(word in message_lower for word in ['services', 'service config']):
         return {'module': 'registry', 'function': 'extract_services', 'params': {}}
-    
+
     if any(word in message_lower for word in ['mounted devices']):
         return {'module': 'registry', 'function': 'extract_mounted_devices', 'params': {}}
-    
+
     # Timeline/Plaso patterns
     if any(word in message_lower for word in ['timeline', 'log2timeline', 'plaso']):
         return {'module': 'plaso', 'function': 'create_timeline', 'params': {}}
-    
+
     if any(word in message_lower for word in ['sort timeline', 'psort']):
         return {'module': 'plaso', 'function': 'sort_timeline', 'params': {}}
-    
+
     # Network patterns
     if any(word in message_lower for word in ['pcap', 'network capture', 'packet']):
         return {'module': 'network', 'function': 'analyze_pcap', 'params': {}}
-    
+
     if any(word in message_lower for word in ['tcpflow', 'extract flows']):
         return {'module': 'network', 'function': 'extract_flows', 'params': {}}
-    
+
     if any(word in message_lower for word in ['http extract', 'web traffic']):
         return {'module': 'network', 'function': 'extract_http', 'params': {}}
-    
+
     # Log patterns
     if any(word in message_lower for word in ['evtx', 'windows event log']):
         return {'module': 'logs', 'function': 'parse_evtx', 'params': {}}
-    
+
     if any(word in message_lower for word in ['syslog', 'linux log']):
         return {'module': 'logs', 'function': 'parse_syslog', 'params': {}}
-    
+
     # Mobile patterns
     if any(word in message_lower for word in ['ios', 'iphone', 'ipad']):
         return {'module': 'mobile', 'function': 'analyze_ios_backup', 'params': {}}
-    
+
     if any(word in message_lower for word in ['android', 'mobile']):
         return {'module': 'mobile', 'function': 'analyze_android', 'params': {}}
-    
+
+    # REMnux patterns
+    if any(word in message_lower for word in ['remnux', 'die scan', 'detect it easy']):
+        return {'module': 'remnux', 'function': 'die_scan', 'params': {}}
+
+    if any(word in message_lower for word in ['exiftool', 'metadata']):
+        return {'module': 'remnux', 'function': 'exiftool_scan', 'params': {}}
+
+    if any(word in message_lower for word in ['clamav', 'clam scan']):
+        return {'module': 'remnux', 'function': 'clamav_scan', 'params': {}}
+
+    if any(word in message_lower for word in ['radare2', 'disassem', 'r2 ']):
+        return {'module': 'remnux', 'function': 'radare2_analyze', 'params': {}}
+
+    if any(word in message_lower for word in ['floss', 'obfuscated strings']):
+        return {'module': 'remnux', 'function': 'floss_strings', 'params': {}}
+
+    if any(word in message_lower for word in ['pdfid', 'pdf scan']):
+        return {'module': 'remnux', 'function': 'pdfid_scan', 'params': {}}
+
+    if any(word in message_lower for word in ['oledump', 'ole analysis']):
+        return {'module': 'remnux', 'function': 'oledump_scan', 'params': {}}
+
+    if any(word in message_lower for word in ['upx', 'unpack']):
+        return {'module': 'remnux', 'function': 'upx_unpack', 'params': {}}
+
     # Investigation trigger - full playbook execution
     if any(word in message_lower for word in ['investigate', 'full analysis', 'run playbooks', 'systematic analysis']):
         return {'module': 'orchestrator', 'function': 'run_full_investigation', 'params': {}}
-    
+
     return None
+
+
+# ---------------------------------------------------------------------------
+# Full Investigation (background worker)
+# ---------------------------------------------------------------------------
 
 def run_full_investigation(case_name: str, evidence_path: str = None):
     """Spawn background investigation worker for case with timestamped directory"""
-    import subprocess
-    from datetime import datetime
-    
-    # Create timestamped case directory: cases/<case_name>_YYYYMMDD_HHMMSS/
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     case_work_dir = f"{case_name}_{timestamp}"
     case_work_path = Path(CASES_WORK_DIR) / case_work_dir
     try:
         case_work_path.mkdir(parents=True, exist_ok=True)
     except (PermissionError, OSError):
-        # tempfile already imported at top
         case_work_path = Path(tempfile.gettempdir()) / "geoff-cases" / case_work_dir
         case_work_path.mkdir(parents=True, exist_ok=True)
         print(f"[GEOFF] Case work dir fallback: {case_work_path}")
-    
-    # Initialize git repo in case directory
+
+    # Initialize git repo
     git_dir = case_work_path / ".git"
     if not git_dir.exists():
         subprocess.run(['git', 'init'], cwd=case_work_path, capture_output=True)
         subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, capture_output=True)
         subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, capture_output=True)
-        # Add safe.directory to allow commits from any process
         subprocess.run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
-        # Also set local safe.directory
         subprocess.run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
-    
+
     # Create subdirectories
     (case_work_path / "logs").mkdir(exist_ok=True)
     (case_work_path / "output").mkdir(exist_ok=True)
     (case_work_path / "reports").mkdir(exist_ok=True)
     (case_work_path / "timeline").mkdir(exist_ok=True)
-    
-    # Spawn background worker with work directory
+
+    # Spawn background worker
     worker_cmd = [
-        'python3', 
+        'python3',
         '/home/sansforensics/geoff_worker.py',
         case_name,
         str(case_work_path)
     ]
     if evidence_path:
         worker_cmd.append(evidence_path)
-    
-    # Start in background, detached
+
     subprocess.Popen(
         worker_cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True
     )
-    
-    # Return immediate acknowledgment
+
     return {
         "status": "started",
         "case": case_name,
@@ -520,6 +473,11 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
         "progress_file": str(case_work_path / "investigation_status.json"),
         "note": "Background investigation running. Progress updates every 10 seconds."
     }
+
+
+# ---------------------------------------------------------------------------
+# Evidence Helpers
+# ---------------------------------------------------------------------------
 
 def get_evidence_recursive(path, prefix=""):
     """Recursively get all files and folders"""
@@ -534,9 +492,10 @@ def get_evidence_recursive(path, prefix=""):
             else:
                 size = os.path.getsize(item_path)
                 items.append(f"{display_name} ({size} bytes)")
-    except:
+    except Exception:
         pass
     return items
+
 
 def get_all_cases():
     """Get ALL cases with ALL contents"""
@@ -552,39 +511,269 @@ def get_all_cases():
         print(f"Error reading cases: {e}")
     return cases
 
-def find_evil(evidence_dir: str) -> dict:
-    """
-    Find Evil: Point at an evidence directory, auto-run playbooks, find evil with no prompting.
 
-    Autonomous triage-to-findings pipeline:
-    1. Inventory evidence (disk images, memory dumps, logs, pcaps, registry hives, mobile)
-    2. Classify OS and incident type via rapid indicator triage
-    3. Select and run applicable playbooks through specialists
-    4. Validate every result through the Critic pipeline
-    5. Produce a unified findings report with severity ratings and MITRE ATT&CK mapping
+def get_available_tools_status():
+    """Get status of all forensic tools"""
+    return orchestrator.get_available_tools()
 
-    Args:
-        evidence_dir: Absolute path to the evidence directory to analyze.
 
-    Returns:
-        dict with keys: status, evidence_dir, inventory, classification, playbooks_run,
-        findings, critic_summary, report_path, elapsed_seconds
-    """
-    import time
-    import hashlib
-    start_time = time.time()
+# ---------------------------------------------------------------------------
+# Find Evil — Run ALL 19 Playbooks (PB-SIFT-001 through PB-SIFT-019)
+# ---------------------------------------------------------------------------
 
-    evidence_path = Path(evidence_dir)
-    if not evidence_path.exists():
-        return {
-            "status": "error",
-            "error": f"Evidence directory not found: {evidence_dir}",
-            "evidence_dir": evidence_dir
-        }
+# All 19 SIFT playbook IDs — always run, never cherry-pick
+ALL_PLAYBOOKS = [f"PB-SIFT-{i:03d}" for i in range(1, 20)]
+# PB-SIFT-011 is skipped in the original; keep 19 IDs but the orchestrator
+# may not have 011 implemented. We still attempt it.
 
-    # ------------------------------------------------------------------
-    # Phase 1: Evidence Inventory
-    # ------------------------------------------------------------------
+# Triage indicators for severity classification (used for reporting, NOT for
+# playbook selection — all playbooks always run regardless)
+TRIAGE_PATTERNS = {
+    "ransomware": [".locked", ".encrypted", ".crypt", "readme_decrypt", "how_to_decrypt",
+                   "recover_files", ".locky", ".cerber", ".sage", ".globe",
+                   "your_files_are", "ransom_note", "decrypt_instructions"],
+    "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
+                         "creddump", "cachedump", "secretsdump"],
+    "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
+                         "paexec", "cmbexec", "dcom", "atexec"],
+    "persistence": ["autorun", "run_once", "scheduled_task", "startup",
+                    "wmi_subscription", "com_hijack", "shell:"],
+    "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
+                    "rsync", "scp", "sftp", "ftp_upload", "exfil"],
+    "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
+                      "timestomp", "timemodify", "ccleaner", "bleachbit"],
+    "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
+                  "shell=", "eval(", "base64_decode", "webshell"],
+    "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
+               "wmic", "msbuild", "installutil", "msiexec"],
+}
+
+SEVERITY_MAP = {
+    "ransomware": "CRITICAL",
+    "credential_theft": "HIGH",
+    "lateral_movement": "HIGH",
+    "persistence": "HIGH",
+    "exfiltration": "HIGH",
+    "anti_forensics": "HIGH",
+    "web_shell": "HIGH",
+    "lolbin": "MEDIUM",
+}
+
+# Map each playbook to its specialist steps.
+# Steps that require evidence types not present will be skipped at runtime
+# (tool-missing check), but the playbook itself always "runs" (even if all
+# steps are skipped).
+PLAYBOOK_STEPS = {
+    "PB-SIFT-001": {  # Malware Hunting
+        "disk_images": [
+            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("yara", "scan_file", {"target_file": "{image}"}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-002": {  # Ransomware
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-003": {  # Lateral Movement
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-004": {  # Credential Theft
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("yara", "scan_file", {"target_file": "{image}"}),
+        ],
+        "registry_hives": [
+            ("registry", "parse_hive", {"hive_path": "{hive}"}),
+        ],
+    },
+    "PB-SIFT-005": {  # Persistence
+        "registry_hives": [
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-006": {  # Exfiltration
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_http", {"pcap_file": "{pcap}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+    },
+    "PB-SIFT-007": {  # Living-off-the-Land
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("yara", "scan_file", {"target_file": "{image}"}),
+        ],
+    },
+    "PB-SIFT-008": {  # Initial Access
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_http", {"pcap_file": "{pcap}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+    },
+    "PB-SIFT-009": {  # Insider Threat
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "syslogs": [
+            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-010": {  # Anti-Forensics
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-011": {  # (Reserved / placeholder — still attempted)
+        "disk_images": [
+            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
+        ],
+    },
+    "PB-SIFT-012": {  # Linux Forensics
+        "syslogs": [
+            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+    },
+    "PB-SIFT-013": {  # macOS Forensics
+        "disk_images": [
+            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+    },
+    "PB-SIFT-014": {  # REMnux Malware Analysis
+        "disk_images": [
+            ("remnux", "die_scan", {"target_file": "{image}"}),
+            ("remnux", "clamav_scan", {"target_file": "{image}"}),
+        ],
+        "memory_dumps": [
+            ("remnux", "floss_strings", {"target_file": "{mem}"}),
+        ],
+        "other_files": [
+            ("remnux", "exiftool_scan", {"target_file": "{file}"}),
+        ],
+    },
+    "PB-SIFT-015": {  # Mobile Forensics
+        "mobile_backups": [
+            ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
+        ],
+    },
+    "PB-SIFT-016": {  # Triage Prioritization (always runs)
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-017": {  # Cross-Image Correlation
+        "disk_images": [
+            ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
+        ],
+    },
+    "PB-SIFT-018": {  # Windows Deep-Dive
+        "registry_hives": [
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
+            ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+        ],
+    },
+    "PB-SIFT-019": {  # Full Correlation & Reporting
+        "disk_images": [
+            ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "registry_hives": [
+            ("registry", "parse_hive", {"hive_path": "{hive}"}),
+        ],
+        "syslogs": [
+            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+    },
+}
+
+
+def _inventory_evidence(evidence_path: Path) -> dict:
+    """Walk the evidence directory and categorise every file."""
     inventory = {
         "disk_images": [],
         "memory_dumps": [],
@@ -594,18 +783,16 @@ def find_evil(evidence_dir: str) -> dict:
         "registry_hives": [],
         "mobile_backups": [],
         "other_files": [],
-        "total_size_bytes": 0
+        "total_size_bytes": 0,
     }
 
-    disk_extensions = {'.e01', '.ee01', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
-    memory_extensions = {'.vmem', '.mem', '.dmp', '.core', '.lin'}
-    pcap_extensions = {'.pcap', '.pcapng', '.cap'}
-    evtx_pattern = '*.evtx'
-    syslog_patterns = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
-    registry_hives = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
-                       'usrclass.dat', 'default', 'system.sav', 'software.sav',
-                       'ntuser.dat'}
+    disk_ext = {'.e01', '.ee01', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
+    mem_ext  = {'.vmem', '.mem', '.dmp', '.core', '.lin'}
+    pcap_ext = {'.pcap', '.pcapng', '.cap'}
+    registry_names = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
+                      'usrclass.dat', 'default', 'system.sav', 'software.sav'}
     mobile_indicators = {'info.plist', 'manifest.db', 'manifest.plist'}
+    syslog_names = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
 
     for item in evidence_path.rglob('*'):
         if not item.is_file():
@@ -619,180 +806,133 @@ def find_evil(evidence_dir: str) -> dict:
         ext = item.suffix.lower()
         name_lower = item.name.lower()
 
-        if ext in disk_extensions:
+        if ext in disk_ext:
             inventory["disk_images"].append(str(item))
-        elif ext in memory_extensions:
+        elif ext in mem_ext:
             inventory["memory_dumps"].append(str(item))
-        elif ext in pcap_extensions:
+        elif ext in pcap_ext:
             inventory["pcaps"].append(str(item))
         elif ext == '.evtx':
             inventory["evtx_logs"].append(str(item))
-        elif name_lower in registry_hives:
+        elif name_lower in registry_names:
             inventory["registry_hives"].append(str(item))
-        elif name_lower in syslog_patterns or name_lower.startswith('syslog'):
+        elif name_lower in syslog_names or name_lower.startswith('syslog'):
             inventory["syslogs"].append(str(item))
         elif name_lower in mobile_indicators:
             inventory["mobile_backups"].append(str(item))
         else:
             inventory["other_files"].append(str(item))
 
-    # Quick triage: what evidence types do we actually have?
-    has_disk = len(inventory["disk_images"]) > 0
-    has_memory = len(inventory["memory_dumps"]) > 0
-    has_pcap = len(inventory["pcaps"]) > 0
-    has_evtx = len(inventory["evtx_logs"]) > 0
-    has_syslog = len(inventory["syslogs"]) > 0
-    has_registry = len(inventory["registry_hives"]) > 0
-    has_mobile = len(inventory["mobile_backups"]) > 0
-    has_logs = has_evtx or has_syslog
+    return inventory
 
-    # Quality score based on evidence completeness
-    evidence_score = 0.0
-    if has_disk:
-        evidence_score += 0.4
-    if has_memory:
-        evidence_score += 0.3
-    if has_logs:
-        evidence_score += 0.15
-    if has_pcap:
-        evidence_score += 0.1
-    if has_registry:
-        evidence_score += 0.05
-    evidence_score = min(evidence_score, 1.0)
 
-    # ------------------------------------------------------------------
-    # Phase 2: OS Classification & Incident Triage
-    # ------------------------------------------------------------------
-    os_type = "unknown"
-    indicator_hits = []  # (playbook_id, severity, description)
+def _detect_os(inventory: dict) -> str:
+    """Heuristic OS detection from file names."""
+    all_paths = inventory["disk_images"] + inventory["other_files"]
+    if any('windows' in p.lower() or 'win' in p.lower() for p in all_paths):
+        return "windows"
+    if any('linux' in p.lower() or 'ubuntu' in p.lower() for p in all_paths):
+        return "linux"
+    if any('macos' in p.lower() or 'osx' in p.lower() or 'darwin' in p.lower() for p in all_paths):
+        return "macos"
+    if inventory["mobile_backups"]:
+        return "mobile"
+    return "unknown"
 
-    # OS detection heuristics from evidence names
-    if any('windows' in p.lower() or 'win' in p.lower() or p.lower().endswith(('.e01', '.dd')) for p in
-           inventory["disk_images"] + inventory["other_files"]):
-        os_type = "windows"
-    if any('linux' in p.lower() or 'ubuntu' in p.lower() for p in
-           inventory["disk_images"] + inventory["other_files"]):
-        os_type = "linux"
-    if any('macos' in p.lower() or 'osx' in p.lower() or 'darwin' in p.lower() for p in
-           inventory["disk_images"] + inventory["other_files"]):
-        os_type = "macos"
-    if has_mobile:
-        os_type = "mobile"
 
-    # Rapid indicator triage — scan for high-signal patterns
-    triage_patterns = {
-        "ransomware": [".locked", ".encrypted", ".crypt", "readme_decrypt", "how_to_decrypt",
-                       "recover_files", ".locky", ".cerber", ".sage", ".globe",
-                       "your_files_are", "ransom_note", "decrypt_instructions"],
-        "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
-                             "creddump", "cachedump", "secretsdump"],
-        "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
-                             "paexec", "cmbexec", "dcom", "atexec"],
-        "persistence": ["autorun", "run_once", "scheduled_task", "startup",
-                        "wmi_subscription", "com_hijack", "shell:"],
-        "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
-                        "rsync", "scp", "sftp", "ftp_upload", "exfil"],
-        "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
-                          "timestomp", "timemodify", "ccleaner", "bleachbit"],
-        "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
-                      "shell=", "eval(", "base64_decode", "webshell"],
-        "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
-                   "wmic", "msbuild", "installutil", "msiexec"],
-    }
-
-    for category, patterns in triage_patterns.items():
+def _scan_triage_indicators(inventory: dict) -> list:
+    """Scan file names for high-signal triage patterns (used for severity reporting)."""
+    hits = []
+    all_paths = inventory["other_files"] + inventory["disk_images"]
+    for category, patterns in TRIAGE_PATTERNS.items():
         for pattern in patterns:
-            pattern_lower = pattern.lower()
-            for file_path in inventory["other_files"] + inventory["disk_images"]:
-                if pattern_lower in file_path.lower():
-                    indicator_hits.append((category, pattern, file_path))
+            pl = pattern.lower()
+            for fpath in all_paths:
+                if pl in fpath.lower():
+                    hits.append({"category": category, "pattern": pattern, "file": fpath,
+                                 "severity": SEVERITY_MAP.get(category, "MEDIUM")})
                     break  # one hit per pattern is enough
+    return hits
 
-    # Map indicator categories to playbooks
-    playbook_map = {
-        "ransomware": ["PB-SIFT-002", "PB-SIFT-008"],
-        "credential_theft": ["PB-SIFT-004", "PB-SIFT-003"],
-        "lateral_movement": ["PB-SIFT-003", "PB-SIFT-005"],
-        "persistence": ["PB-SIFT-005", "PB-SIFT-001"],
-        "exfiltration": ["PB-SIFT-006", "PB-SIFT-009"],
-        "anti_forensics": ["PB-SIFT-010", "PB-SIFT-001"],
-        "web_shell": ["PB-SIFT-008", "PB-SIFT-001"],
-        "lolbin": ["PB-SIFT-007", "PB-SIFT-001"],
-    }
 
-    severity_map = {
-        "ransomware": "CRITICAL",
-        "credential_theft": "HIGH",
-        "lateral_movement": "HIGH",
-        "persistence": "HIGH",
-        "exfiltration": "HIGH",
-        "anti_forensics": "HIGH",
-        "web_shell": "HIGH",
-        "lolbin": "MEDIUM",
-    }
+def _tool_available(module: str, function: str) -> bool:
+    """Quick check whether the specialist function can actually run.
 
-    # Build prioritized playbook list (deduplicated, ordered)
-    selected_playbooks = []
-    seen_playbooks = set()
+    For now we assume the specialist exists and will fail gracefully if the
+    underlying CLI tool is missing.  The orchestrator returns an error dict
+    with status='error' in that case, which we handle as a skip.
+    """
+    # We always attempt the call and handle errors; this function exists so
+    # callers can do an optimistic check if they want.
+    return True
 
-    # Always include triage first
-    selected_playbooks.append("PB-SIFT-016")
-    seen_playbooks.add("PB-SIFT-016")
 
-    # Add playbooks triggered by indicators, ordered by severity
-    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    triggered = []
-    for category, pattern, path in indicator_hits:
-        severity = severity_map.get(category, "MEDIUM")
-        for pb in playbook_map.get(category, []):
-            if pb not in seen_playbooks:
-                triggered.append((severity_order.get(severity, 2), pb, category, severity))
-                seen_playbooks.add(pb)
+def find_evil(evidence_dir: str, job_id: str = None) -> dict:
+    """
+    Find Evil: Point at an evidence directory, run ALL 19 playbooks, find evil.
 
-    triggered.sort(key=lambda x: x[0])
-    for _, pb, cat, sev in triggered:
-        selected_playbooks.append(pb)
+    Every playbook (PB-SIFT-001 through PB-SIFT-019) is executed regardless of
+    evidence type.  Individual steps are skipped only when the required tool
+    is not available for that step.
 
-    # Add OS-specific playbook
-    os_playbooks = {"linux": "PB-SIFT-012", "macos": "PB-SIFT-013", "mobile": "PB-SIFT-015"}
-    os_pb = os_playbooks.get(os_type)
-    if os_pb and os_pb not in seen_playbooks:
-        selected_playbooks.append(os_pb)
-        seen_playbooks.add(os_pb)
+    Multi-host correlation: when multiple disk images are found, individual
+    timelines are created with Plaso and then merged for cross-image
+    correlation.
 
-    # Always run malware hunting if disk evidence exists
-    if has_disk and "PB-SIFT-001" not in seen_playbooks:
-        selected_playbooks.append("PB-SIFT-001")
-        seen_playbooks.add("PB-SIFT-001")
+    Args:
+        evidence_dir: Absolute path to the evidence directory to analyse.
+        job_id: Optional async job ID (used for progress tracking).
 
-    # Add correlation if multi-host
-    if len(inventory["disk_images"]) > 1 and "PB-SIFT-017" not in seen_playbooks:
-        selected_playbooks.append("PB-SIFT-017")
-        seen_playbooks.add("PB-SIFT-017")
+    Returns:
+        dict with keys: status, evidence_dir, inventory, playbooks_run,
+        findings, evil_found, severity, report_path, elapsed_seconds
+    """
+    start_time = time.time()
+    evidence_path = Path(evidence_dir)
+
+    if not evidence_path.exists():
+        return {
+            "status": "error",
+            "error": f"Evidence directory not found: {evidence_dir}",
+            "evidence_dir": evidence_dir,
+        }
+
+    def _update_job(progress_pct: float, current_pb: str, current_step: str = ""):
+        """Push progress to the in-memory job tracker."""
+        if job_id is None:
+            return
+        with _find_evil_lock:
+            _find_evil_jobs[job_id]["progress_pct"] = round(progress_pct, 1)
+            _find_evil_jobs[job_id]["current_playbook"] = current_pb
+            _find_evil_jobs[job_id]["current_step"] = current_step
+            _find_evil_jobs[job_id]["elapsed_seconds"] = round(time.time() - start_time, 1)
 
     # ------------------------------------------------------------------
-    # Phase 3: Execute Playbooks Through Specialists
+    # Phase 1: Evidence Inventory
     # ------------------------------------------------------------------
-    findings = []
-    critic_results = []
-    playbooks_run = []
+    inventory = _inventory_evidence(evidence_path)
+    os_type = _detect_os(inventory)
+    indicator_hits = _scan_triage_indicators(inventory)
 
-    # Create case work directory for this run
+    _update_job(5, "inventory", "Complete")
+
+    # ------------------------------------------------------------------
+    # Phase 2: Prepare Case Work Directory
+    # ------------------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     case_name = evidence_path.name
     case_work_dir = Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}"
     try:
         case_work_dir.mkdir(parents=True, exist_ok=True)
     except (PermissionError, OSError):
-        # tempfile already imported at top
         case_work_dir = Path(tempfile.gettempdir()) / "geoff-cases" / f"{case_name}_findevil_{timestamp}"
         case_work_dir.mkdir(parents=True, exist_ok=True)
         print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
-    (case_work_dir / "output").mkdir(exist_ok=True)
-    (case_work_dir / "reports").mkdir(exist_ok=True)
-    (case_work_dir / "validations").mkdir(exist_ok=True)
 
-    # Init git in case dir
+    for subdir in ("output", "reports", "validations", "timeline"):
+        (case_work_dir / subdir).mkdir(exist_ok=True)
+
+    # Init git
     try:
         subprocess.run(['git', 'init'], cwd=case_work_dir, capture_output=True, check=True)
         subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, capture_output=True)
@@ -801,157 +941,198 @@ def find_evil(evidence_dir: str) -> dict:
     except Exception:
         pass
 
-    def _run_step(module: str, function: str, params: dict, playbook_id: str) -> dict:
-        """Run a single specialist step and record the result."""
-        step = {
-            "module": module,
-            "function": function,
-            "params": params,
-            "playbook": playbook_id,
-            "status": "running",
-            "started_at": datetime.now().isoformat()
-        }
-        try:
-            result = orchestrator.run_playbook_step(playbook_id, step)
-            step["status"] = "completed" if result.get("status") == "success" else "failed"
-            step["result"] = result
+    _update_job(8, "setup", "Case directory ready")
 
-            # Run critic validation on output
-            try:
-                critic_val = geoff_critic.validate_tool_output(
-                    tool_name=f"{module}.{function}",
-                    tool_params=params,
-                    raw_output=json.dumps(result, default=str)[:8000],
-                    geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}"
-                )
-                step["critic"] = critic_val
-                critic_results.append(critic_val)
-            except Exception as ce:
-                step["critic_error"] = str(ce)
-        except Exception as e:
-            step["status"] = "failed"
-            step["error"] = str(e)
+    # ------------------------------------------------------------------
+    # Phase 3: Execute ALL 19 Playbooks
+    # ------------------------------------------------------------------
+    findings = []
+    critic_results = []
+    playbooks_run = []
+    steps_completed = 0
+    steps_failed = 0
+    steps_skipped = 0
+    total_pb = len(ALL_PLAYBOOKS)
 
-        step["completed_at"] = datetime.now().isoformat()
-        findings.append(step)
-        return step
-
-    # --- PB-SIFT-016: Triage (always runs) ---
-    triage_info = {
-        "playbook": "PB-SIFT-016",
-        "evidence_score": evidence_score,
-        "os_type": os_type,
-        "indicator_hits": indicator_hits,
-        "selected_playbooks": selected_playbooks
+    # Evidence type shorthand
+    ev = {
+        "disk_images": inventory["disk_images"],
+        "memory_dumps": inventory["memory_dumps"],
+        "pcaps": inventory["pcaps"],
+        "evtx_logs": inventory["evtx_logs"],
+        "syslogs": inventory["syslogs"],
+        "registry_hives": inventory["registry_hives"],
+        "mobile_backups": inventory["mobile_backups"],
+        "other_files": inventory["other_files"],
     }
-    playbooks_run.append(triage_info)
 
-    # --- Memory-First Rapid Analysis (if memory dumps exist) ---
-    if has_memory:
-        for mem_dump in inventory["memory_dumps"]:
-            _run_step("volatility", "process_list", {"memory_dump": mem_dump}, "PB-SIFT-016")
-            _run_step("volatility", "network_scan", {"memory_dump": mem_dump}, "PB-SIFT-016")
-            _run_step("volatility", "find_malware", {"memory_dump": mem_dump}, "PB-SIFT-016")
+    output_dir = str(case_work_dir / "output")
 
-    # --- Disk Analysis (if disk images exist) ---
-    if has_disk:
-        for disk_img in inventory["disk_images"]:
-            _run_step("sleuthkit", "analyze_partition_table", {"disk_image": disk_img}, "PB-SIFT-001")
-            # Try filesystem analysis on each partition offset (common offsets)
-            # Parse the mmls output from a prior run to get the actual NTFS offset
-            detected_offset = None
-            for offset in [63, 128, 2048, 4096, 8192]:
-                part_result = _run_step("sleuthkit", "analyze_filesystem",
-                                         {"image": disk_img, "offset": offset}, "PB-SIFT-001")
-                if part_result.get("result", {}).get("status") == "success":
-                    detected_offset = offset
-                    break  # Found a valid filesystem, skip remaining offsets
-            _run_step("sleuthkit", "list_files",
-                       {"image": disk_img, "offset": detected_offset, "recursive": True}, "PB-SIFT-001")
+    for pb_idx, playbook_id in enumerate(ALL_PLAYBOOKS):
+        pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
+        _update_job(pb_progress_base, playbook_id, "Starting")
 
-    # --- Registry Analysis (if registry hives exist) ---
-    if has_registry:
-        for hive_path in inventory["registry_hives"]:
-            hive_name = Path(hive_path).name.upper()
-            if 'NTUSER' in hive_name:
-                _run_step("registry", "extract_user_assist", {"ntuser_path": hive_path}, "PB-SIFT-005")
-                _run_step("registry", "extract_shellbags", {"ntuser_path": hive_path}, "PB-SIFT-005")
-            elif 'SYSTEM' in hive_name:
-                _run_step("registry", "extract_usb_devices", {"system_path": hive_path}, "PB-SIFT-005")
-                _run_step("registry", "extract_services", {"system_path": hive_path}, "PB-SIFT-005")
-                _run_step("registry", "extract_mounted_devices", {"system_path": hive_path}, "PB-SIFT-005")
-            elif 'SOFTWARE' in hive_name:
-                _run_step("registry", "extract_autoruns", {"software_path": hive_path}, "PB-SIFT-005")
+        pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
+        pb_findings = []
+        any_step_ran = False
+
+        for ev_type, step_templates in pb_steps_def.items():
+            evidence_items = ev.get(ev_type, [])
+            # If no evidence of this type, skip the steps for this evidence type
+            # (but the playbook still "runs" — it just has no applicable evidence)
+            if not evidence_items:
+                continue
+
+            # For some evidence types we iterate over each item; for others we
+            # just use the first one (to keep runtime manageable).
+            # Disk images and memory dumps: iterate all; others: first 3.
+            if ev_type in ("disk_images", "memory_dumps"):
+                items = evidence_items
             else:
-                _run_step("registry", "parse_hive", {"hive_path": hive_path}, "PB-SIFT-005")
+                items = evidence_items[:3]
 
-    # --- Network Analysis (if pcaps exist) ---
-    if has_pcap:
-        for pcap_file in inventory["pcaps"]:
-            _run_step("network", "analyze_pcap", {"pcap_file": pcap_file}, "PB-SIFT-003")
-            _run_step("network", "extract_http", {"pcap_file": pcap_file}, "PB-SIFT-008")
-            _run_step("network", "extract_flows", {
-                "pcap_file": pcap_file,
-                "output_dir": str(case_work_dir / "output" / "flows")
-            }, "PB-SIFT-003")
+            for item in items:
+                item_stem = Path(item).stem
+                for module, function, raw_params in step_templates:
+                    _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
 
-    # --- Log Analysis (if evtx/syslog exist) ---
-    if has_evtx:
-        for evtx_file in inventory["evtx_logs"]:
-            _run_step("logs", "parse_evtx", {"evtx_file": evtx_file}, "PB-SIFT-002")
-    if has_syslog:
-        for log_file in inventory["syslogs"]:
-            _run_step("logs", "parse_syslog", {"log_file": log_file}, "PB-SIFT-012")
+                    # Build actual params by substituting placeholders
+                    params = {}
+                    for k, v in raw_params.items():
+                        if isinstance(v, str):
+                            v = v.replace("{image}", item)
+                            v = v.replace("{mem}", item)
+                            v = v.replace("{pcap}", item)
+                            v = v.replace("{evtx}", item)
+                            v = v.replace("{syslog}", item)
+                            v = v.replace("{hive}", item)
+                            v = v.replace("{mobile}", str(Path(item).parent))
+                            v = v.replace("{file}", item)
+                            v = v.replace("{output_dir}", output_dir)
+                            v = v.replace("{image_stem}", item_stem)
+                        params[k] = v
 
-    # --- YARA Scan (if disk images or memory dumps exist) ---
-    if has_disk or has_memory:
-        scan_targets = inventory["disk_images"] + inventory["memory_dumps"]
-        for target in scan_targets[:5]:  # Limit to 5 targets for time
-            _run_step("yara", "scan_file", {"target_file": target}, "PB-SIFT-001")
+                    step_record = {
+                        "playbook": playbook_id,
+                        "module": module,
+                        "function": function,
+                        "params": params,
+                        "evidence_file": item,
+                        "status": "running",
+                        "started_at": datetime.now().isoformat(),
+                    }
 
-    # --- String/IOC Extraction (if disk images exist) ---
-    if has_disk:
-        for disk_img in inventory["disk_images"][:3]:
-            _run_step("strings", "extract_strings", {"file_path": disk_img, "min_length": 8}, "PB-SIFT-001")
+                    try:
+                        result = _run_step_via_orchestrator(module, function, params)
+                        step_status = result.get("status", "error")
+                        # If the tool was missing, skip (not a failure)
+                        if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                            step_record["status"] = "skipped"
+                            step_record["result"] = result
+                            steps_skipped += 1
+                        elif step_status == "success":
+                            step_record["status"] = "completed"
+                            step_record["result"] = result
+                            steps_completed += 1
+                            any_step_ran = True
+                        else:
+                            step_record["status"] = "failed"
+                            step_record["result"] = result
+                            steps_failed += 1
+                            any_step_ran = True
 
-    # --- Mobile Analysis (if mobile backups exist) ---
-    if has_mobile:
-        for backup_dir in set(str(Path(p).parent) for p in inventory["mobile_backups"]):
-            _run_step("mobile", "analyze_ios_backup", {"backup_dir": backup_dir}, "PB-SIFT-015")
+                        # Critic validation
+                        try:
+                            critic_val = geoff_critic.validate_tool_output(
+                                tool_name=f"{module}.{function}",
+                                tool_params=params,
+                                raw_output=json.dumps(result, default=str)[:8000],
+                                geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}",
+                            )
+                            step_record["critic"] = critic_val
+                            critic_results.append(critic_val)
+                        except Exception as ce:
+                            step_record["critic_error"] = str(ce)
+                    except Exception as e:
+                        step_record["status"] = "failed"
+                        step_record["error"] = str(e)
+                        steps_failed += 1
 
-    # --- Timeline (if disk images exist) ---
-    if has_disk:
-        for disk_img in inventory["disk_images"][:2]:
-            timeline_output = str(case_work_dir / "output" / f"timeline_{Path(disk_img).stem}.plaso")
-            _run_step("plaso", "create_timeline", {
-                "evidence_path": disk_img,
-                "output_file": timeline_output
-            }, "PB-SIFT-001")
+                    step_record["completed_at"] = datetime.now().isoformat()
+                    findings.append(step_record)
+                    pb_findings.append(step_record)
+
+        playbooks_run.append({
+            "playbook_id": playbook_id,
+            "steps_attempted": len(pb_findings),
+            "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+            "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+            "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+        })
 
     # ------------------------------------------------------------------
-    # Phase 4: Aggregate Findings & Generate Report
+    # Phase 3b: Multi-Host Correlation
     # ------------------------------------------------------------------
+    _update_job(92, "correlation", "Cross-image timeline merge")
 
-    # Compute severity distribution
+    timeline_files = []
+    if len(inventory["disk_images"]) > 1:
+        # Individual timelines already created in PB-SIFT-017 / PB-SIFT-019
+        # Find them in the output dir
+        timeline_files = list(Path(output_dir).glob("timeline_*.plaso"))
+
+        if len(timeline_files) > 1:
+            # Merge with Plaso psort
+            merged_output = str(case_work_dir / "timeline" / "merged_super.plaso")
+            try:
+                merge_cmd = [
+                    "python3", "/usr/bin/log2timeline.py",
+                    "--storage_file", merged_output,
+                ] + [str(f) for f in timeline_files]
+                subprocess.run(merge_cmd, capture_output=True, timeout=600)
+                findings.append({
+                    "playbook": "PB-SIFT-017",
+                    "module": "plaso",
+                    "function": "merge_timelines",
+                    "status": "completed",
+                    "result": {"merged_output": merged_output, "source_timelines": len(timeline_files)},
+                    "started_at": datetime.now().isoformat(),
+                    "completed_at": datetime.now().isoformat(),
+                })
+            except Exception as e:
+                findings.append({
+                    "playbook": "PB-SIFT-017",
+                    "module": "plaso",
+                    "function": "merge_timelines",
+                    "status": "failed",
+                    "error": str(e),
+                })
+
+    # ------------------------------------------------------------------
+    # Phase 4: Aggregate Findings & Severity
+    # ------------------------------------------------------------------
+    _update_job(95, "reporting", "Aggregating findings")
+
     severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
     evil_found = False
 
-    for category, pattern, path in indicator_hits:
-        sev = severity_map.get(category, "MEDIUM")
-        severity_counts[sev] += 1
+    # From triage indicators
+    for hit in indicator_hits:
+        sev = hit["severity"]
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
         if sev in ("CRITICAL", "HIGH"):
             evil_found = True
 
-    # Check specialist results for additional findings
+    # From specialist results
     for f in findings:
         result = f.get("result", {})
         if not isinstance(result, dict):
             continue
-        # YARA matches = evil
+        # YARA matches
         if result.get("match_count", 0) > 0:
             severity_counts["HIGH"] += 1
             evil_found = True
-        # Volatility malfind = evil
+        # Volatility malfind
         if f.get("module") == "volatility" and f.get("function") == "find_malware":
             stdout = result.get("stdout", "")
             if stdout and "No malware" not in stdout and len(stdout.strip()) > 20:
@@ -962,42 +1143,78 @@ def find_evil(evidence_dir: str) -> dict:
         if isinstance(critic, dict) and not critic.get("valid", True):
             severity_counts["LOW"] += 1
 
+    # Overall severity
+    if severity_counts["CRITICAL"] > 0:
+        overall_severity = "CRITICAL"
+    elif severity_counts["HIGH"] > 0:
+        overall_severity = "HIGH"
+    elif severity_counts["MEDIUM"] > 0:
+        overall_severity = "MEDIUM"
+    elif severity_counts["LOW"] > 0:
+        overall_severity = "LOW"
+    else:
+        overall_severity = "INFO"
+
     # Critic summary
     critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
     critic_total = len(critic_results)
     critic_pct = (critic_approved / critic_total * 100) if critic_total > 0 else 100.0
 
-    # Build unified report
     elapsed = time.time() - start_time
+
     report = {
         "title": f"Find Evil Report — {case_name}",
         "generated_at": datetime.now().isoformat(),
         "evidence_dir": str(evidence_dir),
-        "evidence_score": round(evidence_score, 2),
         "os_type": os_type,
         "evil_found": evil_found,
+        "severity": overall_severity,
         "severity_distribution": severity_counts,
-        "indicator_hits": [
-            {"category": cat, "pattern": pat, "file": fp, "severity": severity_map.get(cat, "MEDIUM")}
-            for cat, pat, fp in indicator_hits
-        ],
-        "playbooks_run": selected_playbooks,
+        "indicator_hits": indicator_hits,
+        "playbooks_run": playbooks_run,
+        "playbooks_total": total_pb,
         "specialist_steps_executed": len(findings),
-        "steps_succeeded": sum(1 for f in findings if f.get("status") == "completed"),
-        "steps_failed": sum(1 for f in findings if f.get("status") == "failed"),
+        "steps_completed": steps_completed,
+        "steps_failed": steps_failed,
+        "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),
         "findings_detail": findings,
         "elapsed_seconds": round(elapsed, 1),
-        "case_work_dir": str(case_work_dir)
+        "case_work_dir": str(case_work_dir),
     }
 
-    # Write report to disk
+    # ------------------------------------------------------------------
+    # Phase 5: Validate Investigation State (schema enforcement)
+    # ------------------------------------------------------------------
+    investigation_state = {
+        "investigation_id": job_id or f"fe-{uuid.uuid4().hex[:8]}",
+        "steps": [
+            {
+                "index": i,
+                "module": f.get("module", "unknown"),
+                "function": f.get("function", "unknown"),
+                "status": f.get("status", "pending"),
+                "started_at": f.get("started_at"),
+                "completed_at": f.get("completed_at"),
+                "result": f.get("result", {}),
+            }
+            for i, f in enumerate(findings)
+        ],
+        "current_step": len(findings),
+    }
+
+    try:
+        validate_investigation_state(investigation_state)
+    except ValidationError as ve:
+        report["schema_validation_warning"] = str(ve.message)
+
+    # Write report
     report_path = case_work_dir / "reports" / "find_evil_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, 'w') as rf:
         json.dump(report, rf, indent=2, default=str)
 
-    # Git commit the report
+    # Git commit
     try:
         subprocess.run(['git', 'add', '.'], cwd=case_work_dir, capture_output=True)
         subprocess.run(['git', 'commit', '-m', f'[FIND-EVIL] Report for {case_name}'],
@@ -1005,21 +1222,23 @@ def find_evil(evidence_dir: str) -> dict:
     except Exception:
         pass
 
-    # Log the action
+    # Log
     action_logger.log('FIND_EVIL', {
         'evidence_dir': evidence_dir,
         'evil_found': evil_found,
+        'severity': overall_severity,
         'steps_executed': len(findings),
         'elapsed_seconds': round(elapsed, 1),
-        'description': f"Find Evil run on {evidence_dir}"
+        'description': f"Find Evil run on {evidence_dir}",
     })
 
+    _update_job(100, "complete", "Done")
     return report
 
 
-def get_available_tools_status():
-    """Get status of all forensic tools"""
-    return orchestrator.get_available_tools()
+# ---------------------------------------------------------------------------
+# HTML Template (with Find Evil tab)
+# ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -1231,7 +1450,147 @@ HTML_TEMPLATE = """
         .file-item.dir { color: #58a6ff; }
         .file-item.file { color: #a371f7; }
         
-        /* Tools Panel */
+        /* Find Evil Tab Styles */
+        #findevil-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .fe-config {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .fe-config label {
+            display: block;
+            color: #8b949e;
+            font-size: 0.85rem;
+            margin-bottom: 6px;
+        }
+
+        .fe-config input[type="text"] {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 0.95rem;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .fe-config input:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+
+        .fe-run-btn {
+            margin-top: 12px;
+            padding: 12px 28px;
+            background: #da3633;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+
+        .fe-run-btn:hover { background: #f85149; }
+        .fe-run-btn:disabled { background: #484f58; cursor: not-allowed; }
+
+        .fe-progress {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .fe-progress-bar {
+            width: 100%;
+            height: 22px;
+            background: #21262d;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .fe-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #238636, #3fb950);
+            border-radius: 6px;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: white;
+            min-width: 40px;
+        }
+
+        .fe-status-text {
+            color: #8b949e;
+            font-size: 0.85rem;
+        }
+
+        .fe-status-text strong {
+            color: #c9d1d9;
+        }
+
+        .fe-results {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .fe-severity {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+
+        .fe-severity.CRITICAL { background: #da3633; color: white; }
+        .fe-severity.HIGH     { background: #d29922; color: #0d1117; }
+        .fe-severity.MEDIUM   { background: #1f6feb; color: white; }
+        .fe-severity.LOW      { background: #238636; color: white; }
+        .fe-severity.INFO     { background: #30363d; color: #8b949e; }
+
+        .fe-pb-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+
+        .fe-pb-table th {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1px solid #30363d;
+            color: #8b949e;
+        }
+
+        .fe-pb-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .fe-pb-table .completed { color: #3fb950; }
+        .fe-pb-table .failed    { color: #f85149; }
+        .fe-pb-table .skipped   { color: #8b949e; }
+
+        /* Tools Panel (kept for reference) */
         #tools-content {
             flex: 1;
             overflow-y: auto;
@@ -1286,11 +1645,17 @@ HTML_TEMPLATE = """
     <div class="tabs">
         <div class="tab active" onclick="showTab('chat')">💬 Chat</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
+        <div class="tab" onclick="showTab('findevil')">🔍 Find Evil</div>
     </div>
     
     <div id="chat" class="content active">
         <div id="chat-content">
-            <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.\n\nAwaiting investigation directive. Provide case name or evidence path to begin systematic analysis.\n\nAvailable: 32 forensic functions across 9 specialist modules.\nPlaybook library: 18 PB-SIFT investigation protocols.</div>
+            <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.
+
+Awaiting investigation directive. Provide case name or evidence path to begin systematic analysis.
+
+Available: 32 forensic functions across 9 specialist modules + REMnux.
+Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking).</div>
         </div>
         <div class="chat-input-area">
             <input type="text" id="chat-input" placeholder="e.g., Run mmls on the narcos disk image..." onkeypress="if(event.key==='Enter') sendChat()">
@@ -1301,6 +1666,29 @@ HTML_TEMPLATE = """
     <div id="evidence" class="content">
         <div id="evidence-content">
             <div class="loading">Loading evidence...</div>
+        </div>
+    </div>
+
+    <div id="findevil" class="content">
+        <div id="findevil-content">
+            <div class="fe-config">
+                <label for="fe-evidence-dir">Evidence Directory</label>
+                <input type="text" id="fe-evidence-dir" placeholder="/path/to/evidence (leave blank for default)">
+                <button class="fe-run-btn" id="fe-run-btn" onclick="runFindEvil()">🔍 Run Find Evil</button>
+            </div>
+            <div id="fe-progress-area" style="display:none;">
+                <div class="fe-progress">
+                    <div class="fe-status-text">
+                        <strong>Playbook:</strong> <span id="fe-pb-name">—</span> &nbsp;|&nbsp;
+                        <strong>Step:</strong> <span id="fe-step-name">—</span> &nbsp;|&nbsp;
+                        <strong>Elapsed:</strong> <span id="fe-elapsed">0s</span>
+                    </div>
+                    <div class="fe-progress-bar">
+                        <div class="fe-progress-fill" id="fe-progress-fill" style="width:0%">0%</div>
+                    </div>
+                </div>
+            </div>
+            <div id="fe-results-area" style="display:none;"></div>
         </div>
     </div>
     
@@ -1352,11 +1740,9 @@ HTML_TEMPLATE = """
                 
                 addMessage(data.response, 'geoff');
                 
-                // If tool was run, show result
                 if(data.tool_result) {
                     addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
                 }
-                // If investigation started, begin polling
                 if(data.investigation_started) {
                     addMessage('Investigation started for: ' + data.case_name + '\\nPolling progress every 10 seconds...', 'system');
                     pollInvestigationStatus(data.case_name);
@@ -1371,10 +1757,7 @@ HTML_TEMPLATE = """
         let investigationPollInterval = null;
         
         async function pollInvestigationStatus(caseName) {
-            // Clear any existing poll
-            if(investigationPollInterval) {
-                clearInterval(investigationPollInterval);
-            }
+            if(investigationPollInterval) clearInterval(investigationPollInterval);
             
             const poll = async () => {
                 try {
@@ -1411,7 +1794,6 @@ HTML_TEMPLATE = """
                 }
             };
             
-            // Poll immediately and then every 10 seconds
             poll();
             investigationPollInterval = setInterval(poll, 10000);
         }
@@ -1457,63 +1839,175 @@ HTML_TEMPLATE = """
             }
         }
         
-        async function loadTools() {
-            const container = document.getElementById('tools-content');
-            container.innerHTML = '<div class="loading">Loading...</div>';
-            
+        // ---- Find Evil UI ----
+        let fePollInterval = null;
+
+        async function runFindEvil() {
+            const evidenceDir = document.getElementById('fe-evidence-dir').value.trim();
+            const btn = document.getElementById('fe-run-btn');
+            const progressArea = document.getElementById('fe-progress-area');
+            const resultsArea = document.getElementById('fe-results-area');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Running...';
+            progressArea.style.display = 'block';
+            resultsArea.style.display = 'none';
+            resultsArea.innerHTML = '';
+
+            document.getElementById('fe-pb-name').textContent = 'Starting...';
+            document.getElementById('fe-step-name').textContent = '';
+            document.getElementById('fe-elapsed').textContent = '0s';
+            document.getElementById('fe-progress-fill').style.width = '0%';
+            document.getElementById('fe-progress-fill').textContent = '0%';
+
             try {
-                const res = await fetch('/tools');
+                const res = await fetch('/find-evil', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ evidence_dir: evidenceDir || '' })
+                });
                 const data = await res.json();
-                const tools = data.tools || {};
-                
-                let html = '';
-                for(const [tool, info] of Object.entries(tools)) {
-                    const available = info.available === true || (typeof info.available === 'object' && Object.values(info.available).some(v => v));
-                    const statusClass = available ? 'available' : 'unavailable';
-                    const statusIcon = available ? '✅' : '❌';
-                    
-                    html += '<div class="tool-category">';
-                    html += '<h3>' + tool.toUpperCase() + '</h3>';
-                    html += '<div class="tool-status ' + statusClass + '">' + statusIcon + ' ' + (available ? 'Available' : 'Not Available') + '</div>';
-                    
-                    if(info.functions && info.functions.length > 0) {
-                        html += '<div class="tool-functions">';
-                        html += info.functions.join(', ');
-                        html += '</div>';
-                    }
-                    html += '</div>';
+
+                if (data.job_id) {
+                    // Async mode — poll for progress
+                    pollFindEvilStatus(data.job_id);
+                } else if (data.status === 'error') {
+                    showFindEvilError(data.error || 'Unknown error');
+                    btn.disabled = false;
+                    btn.textContent = '🔍 Run Find Evil';
+                } else {
+                    // Sync result (shouldn't happen but handle gracefully)
+                    showFindEvilResults(data);
+                    btn.disabled = false;
+                    btn.textContent = '🔍 Run Find Evil';
                 }
-                container.innerHTML = html;
             } catch(e) {
-                container.innerHTML = '<div class="loading">Error loading tools: ' + e.message + '</div>';
+                showFindEvilError(e.message);
+                btn.disabled = false;
+                btn.textContent = '🔍 Run Find Evil';
             }
         }
-        
+
+        function pollFindEvilStatus(jobId) {
+            if(fePollInterval) clearInterval(fePollInterval);
+
+            const poll = async () => {
+                try {
+                    const res = await fetch('/find-evil/status/' + jobId);
+                    if(res.ok) {
+                        const status = await res.json();
+                        const pct = status.progress_pct || 0;
+                        document.getElementById('fe-pb-name').textContent = status.current_playbook || '—';
+                        document.getElementById('fe-step-name').textContent = status.current_step || '';
+                        document.getElementById('fe-elapsed').textContent = (status.elapsed_seconds || 0).toFixed(0) + 's';
+                        document.getElementById('fe-progress-fill').style.width = pct + '%';
+                        document.getElementById('fe-progress-fill').textContent = pct + '%';
+
+                        if (status.status === 'complete') {
+                            clearInterval(fePollInterval);
+                            const report = status.result || {};
+                            showFindEvilResults(report);
+                            document.getElementById('fe-run-btn').disabled = false;
+                            document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
+                        } else if (status.status === 'error') {
+                            clearInterval(fePollInterval);
+                            showFindEvilError(status.error || 'Unknown error');
+                            document.getElementById('fe-run-btn').disabled = false;
+                            document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
+                        }
+                    }
+                } catch(e) {
+                    console.error('Find Evil poll error:', e);
+                }
+            };
+
+            poll();
+            fePollInterval = setInterval(poll, 2000);
+        }
+
+        function showFindEvilResults(report) {
+            const area = document.getElementById('fe-results-area');
+            area.style.display = 'block';
+
+            const sev = report.severity || 'INFO';
+            const evil = report.evil_found;
+            const sevDist = report.severity_distribution || {};
+
+            let html = '<div class="fe-results">';
+            html += '<h3 style="color:#58a6ff; margin-bottom:10px;">Find Evil Report</h3>';
+            html += '<div class="fe-severity ' + sev + '">' + sev + '</div>';
+            html += '<p style="margin-bottom:8px;"><strong>Evil Found:</strong> ' + (evil ? '🔴 YES' : '🟢 NO') + '</p>';
+            html += '<p style="margin-bottom:8px;"><strong>OS:</strong> ' + (report.os_type || 'unknown') + ' &nbsp;|&nbsp; <strong>Elapsed:</strong> ' + (report.elapsed_seconds || 0).toFixed(1) + 's</p>';
+
+            html += '<p style="margin-bottom:6px;"><strong>Severity Distribution:</strong> ';
+            for (const [k, v] of Object.entries(sevDist)) {
+                if (v > 0) html += '<span class="fe-severity ' + k + '" style="font-size:0.75rem;padding:2px 8px;margin:2px;">' + k + ': ' + v + '</span> ';
+            }
+            html += '</p>';
+
+            html += '<p style="margin-bottom:6px;"><strong>Critic Approval:</strong> ' + (report.critic_approval_pct || 0) + '%</p>';
+
+            const pbs = report.playbooks_run || [];
+            if (pbs.length > 0) {
+                html += '<table class="fe-pb-table"><tr><th>Playbook</th><th>Completed</th><th>Skipped</th><th>Failed</th></tr>';
+                pbs.forEach(pb => {
+                    const cClass = pb.steps_completed > 0 ? 'completed' : '';
+                    const sClass = pb.steps_skipped > 0 ? 'skipped' : '';
+                    const fClass = pb.steps_failed > 0 ? 'failed' : '';
+                    html += '<tr><td>' + pb.playbook_id + '</td>';
+                    html += '<td class="' + cClass + '">' + pb.steps_completed + '</td>';
+                    html += '<td class="' + sClass + '">' + pb.steps_skipped + '</td>';
+                    html += '<td class="' + fClass + '">' + pb.steps_failed + '</td></tr>';
+                });
+                html += '</table>';
+            }
+
+            if (report.case_work_dir) {
+                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Report: ' + report.case_work_dir + '/reports/find_evil_report.json</p>';
+            }
+
+            html += '</div>';
+            area.innerHTML = html;
+        }
+
+        function showFindEvilError(msg) {
+            const area = document.getElementById('fe-results-area');
+            area.style.display = 'block';
+            area.innerHTML = '<div class="fe-results"><p style="color:#f85149;font-weight:600;">Error: ' + msg + '</p></div>';
+        }
+
         loadEvidence();
     </script>
 </body>
 </html>
 """
 
+
+# ---------------------------------------------------------------------------
+# Flask Routes
+# ---------------------------------------------------------------------------
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+
 @app.route('/chat', methods=['POST'])
 def chat():
     """LLM-powered chat with tool detection"""
+    user_msg = ''
     try:
         data = request.json
         user_msg = data.get('message', '')
-        
+
         if not user_msg:
             return jsonify({'response': 'What would you like to look at?'})
-        
+
         # Detect if user wants to run a tool
         tool_request = detect_tool_request(user_msg)
         tool_result = None
         evidence_file = None
-        
+
         # Check if user mentions a case
         cases = get_all_cases()
         case_match = None
@@ -1523,35 +2017,31 @@ def chat():
                 case_match = case_name
                 files = cases[case_name]
                 break
-        
+
         # If tool request detected, run it
         if tool_request and case_match:
-            # Full investigation - run all playbooks
             if tool_request['function'] == 'run_full_investigation':
-                tool_result = run_full_investigation(case_match, evidence_file if 'evidence_file' in locals() else None)
+                tool_result = run_full_investigation(case_match, evidence_file)
             else:
                 # Single tool execution
-                # Find evidence file from context
                 case_path = Path(EVIDENCE_BASE_DIR) / case_match
-                # Look for disk images or memory dumps
                 for ext in ['.E01', '.dd', '.raw', '.mem', '.img']:
                     matches = list(case_path.rglob(f'*{ext}'))
                     if matches:
                         evidence_file = str(matches[0])
                         break
-                
+
                 if evidence_file:
                     tool_request['params']['disk_image'] = evidence_file
                     if 'partition' in tool_request['function']:
                         tool_request['params']['partition'] = evidence_file
-                
+
                 # Run the tool via Forensicator (multi-agent)
                 forensicator_result = geoff_forensicator.execute_task(
                     instruction=user_msg,
                     evidence_path=evidence_file
                 )
-                
-                # Convert Forensicator result to tool_result format
+
                 tool_result = {
                     'module': tool_request['module'],
                     'function': tool_request['function'],
@@ -1559,7 +2049,7 @@ def chat():
                     'status': 'completed',
                     'forensicator_output': forensicator_result
                 }
-                
+
                 # Validate with Critic
                 critic_validation = geoff_critic.validate_tool_output(
                     tool_name=f"{tool_request['module']}.{tool_request['function']}",
@@ -1567,13 +2057,11 @@ def chat():
                     raw_output=json.dumps(forensicator_result.get('validated_output', {})),
                     geoff_analysis=f"Executed {tool_request['function']} on {evidence_file}"
                 )
-                
-                # Commit validation to git
+
                 geoff_critic.commit_validation(case_match or 'chat-session', critic_validation)
-                
                 tool_result['critic_validation'] = critic_validation
-        
-        # If investigation was started, return that status immediately (skip LLM)
+
+        # If investigation was started, return that status immediately
         if tool_request and tool_request['function'] == 'run_full_investigation' and tool_result:
             result = {
                 'response': f"**G.E.O.F.F. Investigation Initiated**\n\n" +
@@ -1588,12 +2076,12 @@ def chat():
                 'case_name': tool_result.get('case', case_match)
             }
             return jsonify(result)
-        
-        # Build optimized context using ContextManager
+
+        # Build context for LLM
         case_info = ""
         if case_match:
             case_info = f"Case '{case_match}' has {len(files)} items.\n" + "\n".join(files)
-        
+
         tool_info = """Available forensic tools:
 - SleuthKit: mmls (partition), fls (list files), fsstat (filesystem), icat (extract), istat/ils (inodes)
 - Volatility: process list, network scan, malware find, registry scan, process dump
@@ -1603,17 +2091,11 @@ def chat():
 - Timeline: log2timeline (create), psort (sort), super timeline
 - Network: pcap analysis, tcpflow, HTTP extraction
 - Logs: EVTX parsing, syslog analysis
-- Mobile: iOS backup, Android data"""
-        
-        # Build optimized context
-        context = context_manager.build_context(
-            GEOFF_PROMPT,
-            case_info,
-            tool_info,
-            user_msg,
-            files if case_match else []
-        )
-        
+- Mobile: iOS backup, Android data
+- REMnux: DIE, exiftool, ClamAV, radare2, floss, pdfid, oledump, UPX"""
+
+        context = f"{case_info}\n\n{tool_info}"
+
         # Log the chat action
         action_logger.log('CHAT', {
             'user_message': user_msg,
@@ -1621,44 +2103,31 @@ def chat():
             'tool_executed': tool_request['module'] + '.' + tool_request['function'] if tool_request else None,
             'description': f"Chat with {case_match or 'no case'}"
         })
-        
+
         # Call LLM
         response = call_llm(user_msg, context, agent_type="manager")
-        
-        # Add to conversation history (with truncation for large responses)
-        context_manager.add_exchange(
-            user_msg[:500],  # Truncate long user messages
-            response[:1000]  # Truncate long responses
-        )
-        
+
         result = {'response': response}
         if tool_result:
             result['tool_result'] = tool_result
-            
-            # Check if this was an investigation start
+
             if isinstance(tool_result, dict) and tool_result.get('status') == 'started':
                 result['investigation_started'] = True
                 result['case_name'] = tool_result.get('case', case_match)
-            
-            # Validate tool output with Critic (skip for investigation - it's async)
+
             if tool_request and tool_request['function'] != 'run_full_investigation':
                 print(f"[CRITIC] Validating {tool_request['module']}.{tool_request['function']}...")
                 validation = geoff_critic.validate_tool_output(
                     f"{tool_request['module']}.{tool_request['function']}",
                     tool_request['params'],
                     json.dumps(tool_result),
-                    response  # Geoff's analysis
+                    response
                 )
                 result['critic_validation'] = validation
                 result['critic_approved'] = validation.get('valid', False)
-                
-                # Commit validation to git
-                geoff_critic.commit_validation(
-                    case_match or 'unknown',
-                    validation
-                )
-                
-                # Log tool execution
+
+                geoff_critic.commit_validation(case_match or 'unknown', validation)
+
                 action_logger.log('TOOL_EXECUTION', {
                     'module': tool_request['module'],
                     'function': tool_request['function'],
@@ -1667,56 +2136,51 @@ def chat():
                     'description': f"Ran {tool_request['module']}.{tool_request['function']} on {case_match}",
                     'critic_valid': validation.get('valid', False)
                 })
-        
+
         return jsonify(result)
     except Exception as e:
         action_logger.log('ERROR', {'error': str(e), 'user_message': user_msg})
         return jsonify({'response': f'Error: {str(e)}'})
+
 
 @app.route('/cases', methods=['GET'])
 def list_cases():
     """Return ALL cases with ALL files"""
     return jsonify({'cases': get_all_cases()})
 
+
 @app.route('/tools', methods=['GET'])
 def list_tools():
     """Return available forensic tools"""
     return jsonify({'tools': get_available_tools_status()})
 
+
 @app.route('/run-tool', methods=['POST'])
 def run_tool():
     """Execute a forensic tool directly"""
+    module = function = ''
     try:
         data = request.json
         module = data.get('module')
         function = data.get('function')
         params = data.get('params', {})
-        
-        # Log the tool execution request
+
         action_logger.log('TOOL_API_CALL', {
             'module': module,
             'function': function,
             'params': params,
             'description': f"API call to run {module}.{function}"
         })
-        
-        step = {
-            'module': module,
-            'function': function,
-            'params': params,
-            'status': 'running'
-        }
-        
-        result = orchestrator.run_playbook_step('api-call', step)
-        
-        # Log successful execution
+
+        result = _run_step_via_orchestrator(module, function, params)
+
         action_logger.log('TOOL_API_SUCCESS', {
             'module': module,
             'function': function,
             'result_status': result.get('status'),
             'description': f"API {module}.{function} completed"
         })
-        
+
         return jsonify(result)
     except Exception as e:
         action_logger.log('TOOL_API_ERROR', {
@@ -1727,6 +2191,7 @@ def run_tool():
         })
         return jsonify({'status': 'error', 'error': str(e)})
 
+
 @app.route('/critic/validate', methods=['POST'])
 def critic_validate():
     """Manually trigger critic validation"""
@@ -1736,24 +2201,23 @@ def critic_validate():
         tool_output = data.get('tool_output')
         geoff_analysis = data.get('geoff_analysis')
         investigation_id = data.get('investigation_id', 'manual')
-        
+
         if not all([tool_name, tool_output, geoff_analysis]):
             return jsonify({'error': 'Missing required fields: tool_name, tool_output, geoff_analysis'}), 400
-        
-        # Run validation
+
         validation = geoff_critic.validate_tool_output(
             tool_name,
             {},
             tool_output,
             geoff_analysis
         )
-        
-        # Commit to git
+
         geoff_critic.commit_validation(investigation_id, validation)
-        
+
         return jsonify(validation)
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)})
+
 
 @app.route('/critic/summary/<investigation_id>', methods=['GET'])
 def critic_summary(investigation_id):
@@ -1763,6 +2227,7 @@ def critic_summary(investigation_id):
         return jsonify(summary)
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)})
+
 
 @app.route('/investigation/status/<case_name>', methods=['GET'])
 def get_investigation_status(case_name):
@@ -1778,11 +2243,14 @@ def get_investigation_status(case_name):
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
+
 @app.route('/find-evil', methods=['POST'])
 def find_evil_route():
     """
     POST /find-evil
-    Point at an evidence directory, auto-run playbooks, find evil with no prompting.
+    Point at an evidence directory, auto-run all 19 playbooks, find evil.
+
+    Now returns a job_id immediately and runs async.
 
     Request body (JSON):
         {
@@ -1790,20 +2258,56 @@ def find_evil_route():
         }
 
     Returns:
-        Full Find Evil report with inventory, classification, findings, and critic validation.
+        { "job_id": "...", "status": "running" }
     """
     try:
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
 
-        # Run Find Evil
-        report = find_evil(evidence_dir)
+        # Verify the directory exists before spawning a job
+        if not Path(evidence_dir).exists():
+            return jsonify({
+                "status": "error",
+                "error": f"Evidence directory not found: {evidence_dir}",
+                "evidence_dir": evidence_dir,
+            }), 404
 
-        # If error (e.g., dir not found), return appropriate status
-        if report.get('status') == 'error':
-            return jsonify(report), 404
+        # Create a job ID and register it
+        job_id = f"fe-{uuid.uuid4().hex[:12]}"
 
-        return jsonify(report)
+        with _find_evil_lock:
+            _find_evil_jobs[job_id] = {
+                "status": "running",
+                "progress_pct": 0.0,
+                "current_playbook": "initializing",
+                "current_step": "",
+                "elapsed_seconds": 0.0,
+                "started_at": datetime.now().isoformat(),
+                "result": None,
+                "error": None,
+            }
+
+        # Spawn the find_evil run in a background thread
+        def _run():
+            try:
+                report = find_evil(evidence_dir, job_id=job_id)
+                with _find_evil_lock:
+                    _find_evil_jobs[job_id]["status"] = "complete"
+                    _find_evil_jobs[job_id]["result"] = report
+            except Exception as e:
+                with _find_evil_lock:
+                    _find_evil_jobs[job_id]["status"] = "error"
+                    _find_evil_jobs[job_id]["error"] = str(e)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        return jsonify({
+            "job_id": job_id,
+            "status": "running",
+            "evidence_dir": evidence_dir,
+            "message": "Find Evil job started. Poll /find-evil/status/" + job_id + " for progress.",
+        })
 
     except Exception as e:
         action_logger.log('FIND_EVIL_ERROR', {
@@ -1816,12 +2320,41 @@ def find_evil_route():
         }), 500
 
 
+@app.route('/find-evil/status/<job_id>', methods=['GET'])
+def find_evil_status(job_id):
+    """
+    GET /find-evil/status/<job_id>
+    Returns current progress of a Find Evil job.
+    """
+    with _find_evil_lock:
+        job = _find_evil_jobs.get(job_id)
+
+    if job is None:
+        return jsonify({"status": "not_found", "error": f"No job with ID {job_id}"}), 404
+
+    resp = {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress_pct": job["progress_pct"],
+        "current_playbook": job["current_playbook"],
+        "current_step": job["current_step"],
+        "elapsed_seconds": job["elapsed_seconds"],
+    }
+
+    if job["status"] == "complete":
+        resp["result"] = job["result"]
+    elif job["status"] == "error":
+        resp["error"] = job["error"]
+
+    return jsonify(resp)
+
+
 @app.route('/find-evil', methods=['GET'])
 def find_evil_info():
     """GET /find-evil — Return usage info and supported playbooks"""
     return jsonify({
         'name': 'Find Evil',
-        'description': 'Point at an evidence directory, auto-run playbooks, find evil with no prompting.',
+        'description': 'Point at an evidence directory, auto-run ALL 19 playbooks, find evil with no prompting.',
         'usage': 'POST /find-evil with {"evidence_dir": "/path/to/evidence"}',
         'supported_evidence': [
             'Disk images (.E01, .dd, .raw, .img, .aff)',
@@ -1830,31 +2363,38 @@ def find_evil_info():
             'Windows Event Logs (.evtx)',
             'Syslog files (syslog, auth.log, messages)',
             'Registry hives (NTUSER.DAT, SYSTEM, SOFTWARE, SECURITY, SAM)',
-            'Mobile backups (iOS Info.plist, Manifest.db)'
+            'Mobile backups (iOS Info.plist, Manifest.db)',
         ],
         'playbooks': [
-            {'id': 'PB-SIFT-016', 'name': 'Triage Prioritization', 'trigger': 'Always runs first'},
-            {'id': 'PB-SIFT-001', 'name': 'Malware Hunting', 'trigger': 'Disk image present'},
-            {'id': 'PB-SIFT-002', 'name': 'Ransomware', 'trigger': 'Ransomware indicators'},
-            {'id': 'PB-SIFT-003', 'name': 'Lateral Movement', 'trigger': 'Lateral movement indicators'},
-            {'id': 'PB-SIFT-004', 'name': 'Credential Theft', 'trigger': 'Credential theft indicators'},
-            {'id': 'PB-SIFT-005', 'name': 'Persistence', 'trigger': 'Registry hives present'},
-            {'id': 'PB-SIFT-006', 'name': 'Exfiltration', 'trigger': 'Exfiltration indicators'},
-            {'id': 'PB-SIFT-007', 'name': 'Living-off-the-Land', 'trigger': 'LOLBin indicators'},
-            {'id': 'PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Web shell indicators'},
-            {'id': 'PB-SIFT-009', 'name': 'Insider Threat', 'trigger': 'Exfiltration indicators'},
-            {'id': 'PB-SIFT-010', 'name': 'Anti-Forensics', 'trigger': 'Anti-forensics indicators'},
-            {'id': 'PB-SIFT-012', 'name': 'Linux Forensics', 'trigger': 'Linux image detected'},
-            {'id': 'PB-SIFT-013', 'name': 'macOS Forensics', 'trigger': 'macOS image detected'},
-            {'id': 'PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Mobile backup detected'},
-            {'id': 'PB-SIFT-017', 'name': 'Cross-Image Correlation', 'trigger': 'Multiple disk images'}
+            {'id': 'PB-SIFT-001', 'name': 'Malware Hunting', 'trigger': 'Always (all playbooks run)'},
+            {'id': 'PB-SIFT-002', 'name': 'Ransomware', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-003', 'name': 'Lateral Movement', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-004', 'name': 'Credential Theft', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-005', 'name': 'Persistence', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-006', 'name': 'Exfiltration', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-007', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-009', 'name': 'Insider Threat', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-010', 'name': 'Anti-Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-011', 'name': 'Reserved', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-012', 'name': 'Linux Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-013', 'name': 'macOS Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-014', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-016', 'name': 'Triage Prioritization', 'trigger': 'Always (runs first)'},
+            {'id': 'PB-SIFT-017', 'name': 'Cross-Image Correlation', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-018', 'name': 'Windows Deep-Dive', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-019', 'name': 'Full Correlation & Reporting', 'trigger': 'Always'},
         ],
         'pipeline': [
             '1. Evidence inventory & quality scoring',
             '2. OS classification & rapid indicator triage',
-            '3. Playbook selection & specialist execution',
-            '4. Critic validation of every result',
-            '5. Unified findings report with severity & MITRE ATT&CK mapping'
+            '3. ALL 19 playbooks execute (no cherry-picking)',
+            '4. Steps skipped only if required tool is missing',
+            '5. Multi-host correlation with Plaso timeline merge',
+            '6. Critic validation of every result',
+            '7. JSON Schema validation of investigation state',
+            '8. Unified findings report with severity & MITRE ATT&CK mapping',
         ]
     })
 
@@ -1865,4 +2405,5 @@ if __name__ == '__main__':
     print(f'Cases work dir: {CASES_WORK_DIR}')
     print(f'Ollama: {OLLAMA_URL}')
     print(f'Model: {LLM_MODEL}')
+    print(f'REMnux orchestrator: loaded')
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

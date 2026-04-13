@@ -24,7 +24,7 @@ GEOFF is a **multi-agent conversational DFIR platform** with three specialized A
 
 **The Multi-Agent Team:**
 - **Manager** (DeepSeek R1 70B) - Orchestrates investigations, makes strategic decisions
-- **Forensicator** (Qwen 2.5 Coder 32B) - Executes forensic tools with self-validation
+- **Forensicator** (Qwen 2.5 Coder 32B) - Executes forensic tools
 - **Critic** (Qwen3 30B) - Validates all outputs for hallucinations and accuracy
 
 **Workflow:**
@@ -35,9 +35,8 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 **Key Capabilities:**
 - **Find Evil** — point at an evidence directory, auto-run playbooks, find evil with no prompting
 - **32 forensic functions** across 9 specialist modules
-- **Double validation** (Forensicator self-check + Critic review)
+- **Critic validation** (Critic reviews all Forensicator output for accuracy)
 - **Git-backed** every action committed for reproducibility
-- **24K context window** with smart truncation
 
 ---
 
@@ -63,15 +62,15 @@ GEOFF is designed to work with REMnux malware analysis tools. Current integratio
 
 | Category | Tools | Purpose | Status |
 |----------|-------|---------|--------|
-| **Static Analysis** | `die`, `exiftool`, `peframe`, `upx` | Binary identification, metadata, PE structure, unpacking | 🛠️ Requires REMnux Install |
+| **Static Analysis** | `die`, `exiftool`, `peframe`, `upx` | Binary identification, metadata, PE structure, unpacking | ✅ Wrappers Available |
 | **Dynamic Analysis** | `fakedns`, `inetsim`, `wireshark` | Network simulation, traffic capture | 🛠️ Requires REMnux Install |
 | **Memory Forensics** | `vol.py`, `rekall` | Memory dump analysis | ✅ Via Volatility3 (built-in) |
 | **Network Analysis** | `wireshark`, `tcpflow`, `ngrep` | PCAP inspection, flow reconstruction | ✅ Via tshark/tcpflow (built-in) |
 | **Malware Detection** | `clamav`, `yara` | Signature-based detection, custom rules | ✅ Via YARA (built-in) |
 | **Web Analysis** | `js-beautify`, `burp` | JavaScript deobfuscation, web proxy | 🛠️ Requires REMnux Install |
-| **Document Analysis** | `pdfid`, `pdf-parser`, `oledump` | PDF and Office document inspection | 🛠️ Requires REMnux Install |
-| **Crypto** | `ssdeep`, `hashdeep` | Fuzzy hashing, file integrity | 🛠️ Requires REMnux Install |
-| **Utilities** | `radare2`, `gdb` | Disassembly, debugging | 🛠️ Requires REMnux Install |
+| **Document Analysis** | `pdfid`, `pdf-parser`, `oledump` | PDF and Office document inspection | ✅ Wrappers Available |
+| **Crypto** | `ssdeep`, `hashdeep` | Fuzzy hashing, file integrity | ✅ Wrappers Available |
+| **Utilities** | `radare2`, `gdb` | Disassembly, debugging | ✅ Wrappers Available |
 
 **Note:** GEOFF provides 32 built-in forensic functions. REMnux tools provide additional specialized analysis when installed on the SIFT workstation.
 
@@ -131,6 +130,8 @@ Find Evil is GEOFF's autonomous investigation mode. Point it at a directory of e
 | macOS image detected | PB-SIFT-013 | HIGH |
 | Mobile backup detected | PB-SIFT-015 | HIGH |
 | Multiple disk images | PB-SIFT-017 | HIGH |
+| REMnux static analysis needed | PB-SIFT-018 | HIGH |
+| Malware sample requiring full SOP | PB-SIFT-019 | HIGH |
 | Any disk image present | PB-SIFT-001 | (baseline) |
 
 **API Reference:**
@@ -154,7 +155,7 @@ POST /find-evil          → Run Find Evil
 
 ## Playbook Library
 
-18 PB-SIFT playbooks for structured investigations:
+19 PB-SIFT playbooks for structured investigations:
 
 - PB-SIFT-001: Malware Hunting
 - PB-SIFT-002: Ransomware
@@ -173,6 +174,8 @@ POST /find-evil          → Run Find Evil
 - PB-SIFT-015: Mobile
 - PB-SIFT-016: Triage
 - PB-SIFT-017: Correlation
+- PB-SIFT-018: REMnux Malware Analysis
+- PB-SIFT-019: Malware Analysis SOP
 
 ---
 
@@ -182,8 +185,7 @@ Every investigation is fully reproducible:
 
 1. **Git History** - Every action and validation committed
 2. **Validation Files** - Stored in `validations/` with full results
-3. **Context Management** - 24K token window, conversation history retained
-4. **Action Logging** - JSONL logs of all operations
+3. **Action Logging** - JSONL logs of all operations
 
 Another investigator can:
 ```bash
@@ -299,15 +301,15 @@ No prompting. Just results.
                    │
     ┌──────────────┼──────────────┐
     ▼              ▼              ▼
-┌─────────┐  ┌──────────┐  ┌──────────┐
-│Context  │  │ Action   │  │ Critic   │
-│Manager  │  │ Logger   │  │ Validator│
-└────┬────┘  └────┬─────┘  └────┬─────┘
-     │            │             │
-     └────────────┼─────────────┘
-                  │
-        ┌─────────┴──────────┐
-        ▼                    ▼
+┌──────────┐         ┌──────────┐
+│ Action   │         │ Critic   │
+│ Logger   │         │ Validator│
+└────┬─────┘         └────┬─────┘
+     │                    │
+     └─────────┬──────────┘
+               │
+     ┌─────────┴──────────┐
+     ▼                    ▼
 ┌───────────────┐    ┌──────────────┐
 │ Extended      │    │ Validation   │
 │ Orchestrator  │    │ Pipeline     │
@@ -361,15 +363,6 @@ This schema ensures:
 - **State validation** - Required fields prevent incomplete investigations
 - **Reproducibility** - Complete audit trail of every step
 - **Error recovery** - Failed steps tracked with full context
-
----
-
-## Training
-
-GEOFF includes CTF training data:
-- 27 writeup files from 29 sources
-- Memory, disk, network, malware forensics
-- Real-world scenarios and methodologies
 
 ---
 
