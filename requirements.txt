@@ -13,4 +13,4 @@ gitpython>=3.1,<4.0
 # python-evtx>=0.7.4  -- Windows Event Log parsing
 # volatility3>=2.0     -- Memory forensics
 # plaso>=20240101      -- Timeline analysis
-# yara-python>=4.5     -- Malware detection
+# yara-python>=4.5     -- Malware detectionpython-dotenv
