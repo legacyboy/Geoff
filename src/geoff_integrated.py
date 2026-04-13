@@ -172,13 +172,22 @@ OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
 
 def ollama_headers():
     """Return headers for Ollama API requests.
-    For local Ollama (localhost), auth is handled by 'ollama signin'.
-    For direct ollama.com API calls, include Bearer token if OLLAMA_API_KEY is set.
+    When OLLAMA_API_KEY is set, we call ollama.com/api directly (cloud models)
+    and include Bearer auth. Otherwise, use local Ollama (which uses signin tokens).
     """
     h = {'Content-Type': 'application/json'}
-    if OLLAMA_API_KEY and 'ollama.com' in OLLAMA_URL:
+    if OLLAMA_API_KEY:
         h['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
     return h
+
+def ollama_base_url():
+    """Return the base URL for Ollama API calls.
+    If OLLAMA_API_KEY is set, use ollama.com/api directly for cloud model access.
+    Otherwise, use local Ollama (localhost:11434 or OLLAMA_URL).
+    """
+    if OLLAMA_API_KEY:
+        return 'https://ollama.com/api'
+    return OLLAMA_URL
 
 # ---------------------------------------------------------------------------
 # Model Profiles — cloud vs local
@@ -304,7 +313,7 @@ def call_llm(user_message, context="", agent_type="manager"):
 
         full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
         response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
+            f"{ollama_base_url()}/generate",
             headers=ollama_headers(),
             json={
                 "model": model,
@@ -2442,7 +2451,11 @@ if __name__ == '__main__':
     print(f'Evidence source: {EVIDENCE_BASE_DIR}')
     print(f'Cases work dir: {CASES_WORK_DIR}')
     print(f'Profile: {ACTIVE_PROFILE}')
-    print(f'Ollama: {OLLAMA_URL}')
+    print(f'Ollama: {ollama_base_url()}')
+    if OLLAMA_API_KEY:
+        print(f'Auth: API key (ollama.com cloud)')
+    else:
+        print(f'Auth: local (ollama signin)')
     print(f'Models: manager={AGENT_MODELS["manager"]} forensicator={AGENT_MODELS["forensicator"]} critic={AGENT_MODELS["critic"]}')
     print(f'REMnux orchestrator: loaded')
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

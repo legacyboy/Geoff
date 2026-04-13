@@ -38,9 +38,14 @@ class GeoffCritic:
         self._api_key = os.environ.get('OLLAMA_API_KEY', '')
         self.validation_log = []
 
+    def _base_url(self):
+        if self._api_key:
+            return 'https://ollama.com/api'
+        return self.ollama_url
+
     def _ollama_headers(self):
         h = {'Content-Type': 'application/json'}
-        if self._api_key and 'ollama.com' in self.ollama_url:
+        if self._api_key:
             h['Authorization'] = f'Bearer {self._api_key}'
         return h
 
@@ -48,7 +53,7 @@ class GeoffCritic:
         """Call LLM for sanity check review"""
         try:
             response = requests.post(
-                f"{self.ollama_url}/api/generate",
+                f"{self._base_url()}/generate",
                 headers=self._ollama_headers(),
                 json={
                     "model": self.model,
