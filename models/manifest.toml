@@ -1,0 +1,48 @@
+# GEOFF Local Models — Verified Specifications
+#
+# When installing in local profile, the installer pulls these models from
+# the Ollama registry and verifies their identity (architecture, base model,
+# quantization, parameter count) matches these pinned specifications.
+#
+# Ollama's registry is content-addressable: each pull is verified by SHA256.
+# These specs provide an additional layer of verification that the model
+# identity is correct, not just that the download was intact.
+#
+# Format: TOML
+
+[[models]]
+ollama_name = "deepseek-r1:32b"
+# DeepSeek-R1-Distill-Qwen-32B, Q4_K_M quantization
+# Source: https://ollama.com/library/deepseek-r1/tags
+expected_architecture = "qwen2"
+expected_base_model = "DeepSeek-R1-Distill-Qwen-32B"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 32764897792
+expected_size_label = "32B"
+license = "MIT"
+description = "DeepSeek-R1-Distill-Qwen-32B Q4_K_M — reasoning/manager model"
+hf_repo = "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF"
+
+[[models]]
+ollama_name = "qwen2.5-coder:14b"
+# Qwen2.5-Coder-14B-Instruct, Q4_K_M quantization
+expected_architecture = "qwen2"
+expected_base_model = "Qwen2.5 Coder 14B"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 14770033664
+expected_size_label = "14B"
+license = "Apache-2.0"
+description = "Qwen2.5-Coder-14B-Instruct Q4_K_M — forensicator/tool-execution model"
+hf_repo = "bartowski/Qwen2.5-Coder-14B-GGUF"
+
+[[models]]
+ollama_name = "qwen2.5:14b"
+# Qwen2.5-14B-Instruct, Q4_K_M quantization
+expected_architecture = "qwen2"
+expected_base_model = "Qwen2.5 14B"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 14770033664
+expected_size_label = "14B"
+license = "Apache-2.0"
+description = "Qwen2.5-14B-Instruct Q4_K_M — critic/validation model"
+hf_repo = "bartowski/Qwen2.5-14B-Instruct-GGUF"

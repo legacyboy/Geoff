@@ -195,11 +195,19 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
             ollama signin || warn "ollama signin failed — cloud models may not work"
         fi
 
-        ollama pull "$MANAGER_MODEL"      || warn "Failed to pull ${MANAGER_MODEL}"
-        ollama pull "$FORENSICATOR_MODEL" || warn "Failed to pull ${FORENSICATOR_MODEL}"
-        ollama pull "$CRITIC_MODEL"        || warn "Failed to pull ${CRITIC_MODEL}"
+        # Pull models and verify identity
+        for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
+            info "Pulling ${MODEL_NAME}..."
+            ollama pull "$MODEL_NAME" || { warn "Failed to pull ${MODEL_NAME}"; continue; }
 
-        ok "Models pulled"
+            # Verify model identity against manifest
+            if [[ -f "${INSTALL_DIR}/models/verify_model.sh" ]]; then
+                bash "${INSTALL_DIR}/models/verify_model.sh" "$MODEL_NAME" "${INSTALL_DIR}/models/manifest.toml" || \
+                    warn "Model ${MODEL_NAME} identity verification FAILED — model may not be the expected version"
+            fi
+        done
+
+        ok "Models pulled and verified"
 else
     info "Skipping Ollama model pulls (--skip-ollama)"
 fi
