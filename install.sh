@@ -10,7 +10,7 @@
 # Options:
 #   --profile cloud|local   Model profile (default: cloud)
 #   --dir <path>            Install directory (default: /opt/geoff)
-#   --skip-ollama           Skip Ollama model pulls
+#   --skip-ollama           Skip Ollama model pulls (Ollama itself is always installed if missing)
 #   --skip-deps             Skip apt dependency installs
 #   -h, --help              Show this help
 # ============================================================================
@@ -112,10 +112,34 @@ EOF
 
 ok "Profile '${PROFILE}' configured in ${INSTALL_DIR}/.env"
 
+# ── Install Ollama if missing ──────────────────────────────────────────
+if ! command -v ollama >/dev/null 2>&1; then
+    info "Ollama not found — installing..."
+    curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install failed. Install manually: https://ollama.com"
+    ok "Ollama installed"
+fi
+
+# ── Ensure Ollama is running ──────────────────────────────────────────────
+if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+    info "Starting Ollama service..."
+    ollama serve &>/dev/null &
+    OLLAMA_PID=$!
+    # Wait for Ollama to be ready
+    for i in $(seq 1 30); do
+        if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+        fail "Ollama failed to start after 30 seconds"
+    fi
+    ok "Ollama is running (PID ${OLLAMA_PID})"
+fi
+
 # ── Pull Ollama models ────────────────────────────────────────────────────
 if [[ "$SKIP_OLLAMA" == false ]]; then
-    if command -v ollama >/dev/null; then
-        info "Pulling Ollama models for ${PROFILE} profile..."
+    info "Pulling Ollama models for ${PROFILE} profile..."
 
         # Read model names from profiles.json
         if [[ -f "${INSTALL_DIR}/profiles.json" ]]; then
@@ -144,11 +168,6 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
         ollama pull "$CRITIC_MODEL"        || warn "Failed to pull ${CRITIC_MODEL}"
 
         ok "Models pulled"
-    else
-        warn "Ollama not found — skipping model pull"
-        warn "Install Ollama: curl -fsSL https://ollama.com/install.sh | sh"
-        warn "Then run: ollama pull <model> for each model in profiles.json"
-    fi
 else
     info "Skipping Ollama model pulls (--skip-ollama)"
 fi
