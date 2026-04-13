@@ -40,7 +40,7 @@ class GeoffCritic:
 
     def _ollama_headers(self):
         h = {'Content-Type': 'application/json'}
-        if self._api_key:
+        if self._api_key and 'ollama.com' in self.ollama_url:
             h['Authorization'] = f'Bearer {self._api_key}'
         return h
 

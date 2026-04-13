@@ -10,7 +10,7 @@
 #
 # Options:
 #   --profile cloud|local   Model profile (default: cloud)
-#   --ollama-key <key>      Ollama cloud API key (required for cloud profile models)
+#   --ollama-key <key>      Ollama API key for cloud models (sets OLLAMA_API_KEY env var)
 #   --dir <path>            Install directory (default: /opt/geoff)
 #   --skip-ollama           Skip Ollama model pulls (Ollama itself is always installed if missing)
 #   --skip-deps             Skip apt dependency installs
@@ -23,6 +23,7 @@ REPO="https://github.com/legacyboy/Geoff.git"
 INSTALL_DIR="/opt/geoff"
 PROFILE="cloud"
 OLLAMA_KEY=""
+OLLAMA_SIGNIN=false
 SKIP_OLLAMA=false
 SKIP_DEPS=false
 
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile)     PROFILE="$2"; shift 2;;
         --ollama-key)  OLLAMA_KEY="$2"; shift 2;;
+        --ollama-signin) OLLAMA_SIGNIN=true; shift;;
         --dir)         INSTALL_DIR="$2"; shift 2;;
         --skip-ollama) SKIP_OLLAMA=true; shift;;
         --skip-deps)   SKIP_DEPS=true; shift;;
@@ -59,9 +61,13 @@ if [[ "$PROFILE" != "cloud" && "$PROFILE" != "local" ]]; then
     fail "Unknown profile '$PROFILE'. Must be 'cloud' or 'local'."
 fi
 
-if [[ "$PROFILE" == "cloud" && -z "$OLLAMA_KEY" ]]; then
-    warn "Cloud profile selected but no --ollama-key provided. Cloud models require an Ollama API key."
-    warn "Set it later in .env: OLLAMA_API_KEY=<your-key>"
+if [[ "$PROFILE" == "cloud" ]]; then
+    if [[ -z "$OLLAMA_KEY" && "$OLLAMA_SIGNIN" == false ]]; then
+        warn "Cloud profile selected. Cloud models require authentication:"
+        warn "  Option 1: --ollama-signin (interactive login via 'ollama signin')"
+        warn "  Option 2: --ollama-key <key> (for direct ollama.com API access)"
+        warn "Cloud models may fail without authentication."
+    fi
 fi
 
 info "Installing GEOFF with profile: ${YELLOW}${PROFILE}${NC}"
@@ -180,8 +186,15 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
         info "  Forensicator: ${FORENSICATOR_MODEL}"
         info "  Critic:       ${CRITIC_MODEL}"
 
-        # Set API key for cloud model pulls if provided
+        # Set API key for ollama.com direct access if provided
         [[ -n "$OLLAMA_KEY" ]] && export OLLAMA_API_KEY="$OLLAMA_KEY"
+
+        # If --ollama-signin requested, run interactive signin
+        if [[ "$OLLAMA_SIGNIN" == true ]]; then
+            info "Running 'ollama signin' (interactive) — enter your Ollama credentials:"
+            ollama signin || warn "ollama signin failed — cloud models may not work"
+        fi
+
         ollama pull "$MANAGER_MODEL"      || warn "Failed to pull ${MANAGER_MODEL}"
         ollama pull "$FORENSICATOR_MODEL" || warn "Failed to pull ${FORENSICATOR_MODEL}"
         ollama pull "$CRITIC_MODEL"        || warn "Failed to pull ${CRITIC_MODEL}"

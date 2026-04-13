@@ -171,9 +171,12 @@ OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
 
 def ollama_headers():
-    """Return headers for Ollama API requests, including auth if configured."""
+    """Return headers for Ollama API requests.
+    For local Ollama (localhost), auth is handled by 'ollama signin'.
+    For direct ollama.com API calls, include Bearer token if OLLAMA_API_KEY is set.
+    """
     h = {'Content-Type': 'application/json'}
-    if OLLAMA_API_KEY:
+    if OLLAMA_API_KEY and 'ollama.com' in OLLAMA_URL:
         h['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
     return h
 

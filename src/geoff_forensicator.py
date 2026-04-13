@@ -25,7 +25,7 @@ OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
 
 def _ollama_headers():
     h = {'Content-Type': 'application/json'}
-    if OLLAMA_API_KEY:
+    if OLLAMA_API_KEY and 'ollama.com' in OLLAMA_URL_DEFAULT:
         h['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
     return h
 
