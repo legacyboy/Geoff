@@ -172,7 +172,7 @@ OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 AGENT_MODELS = {
     "manager": os.environ.get('GEOFF_MANAGER_MODEL', "deepseek-r1:70b"),
     "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen2.5-coder:32b"),
-    "critic": os.environ.get('GEOFF_CRITIC_MODEL', "qwen3:30b")
+    "critic": os.environ.get('GEOFF_CRITIC_MODEL', "qwen3-coder-next:cloud")
 }
 
 LLM_MODEL = AGENT_MODELS["manager"]
