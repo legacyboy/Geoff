@@ -858,12 +858,16 @@ def find_evil(evidence_dir: str) -> dict:
         for disk_img in inventory["disk_images"]:
             _run_step("sleuthkit", "analyze_partition_table", {"disk_image": disk_img}, "PB-SIFT-001")
             # Try filesystem analysis on each partition offset (common offsets)
-            for offset in ["63", "128", "2048", "4096", "8192"]:
+            # Parse the mmls output from a prior run to get the actual NTFS offset
+            detected_offset = None
+            for offset in [63, 128, 2048, 4096, 8192]:
                 part_result = _run_step("sleuthkit", "analyze_filesystem",
-                                         {"partition": f"-o {offset} {disk_img}"}, "PB-SIFT-001")
+                                         {"image": disk_img, "offset": offset}, "PB-SIFT-001")
                 if part_result.get("result", {}).get("status") == "success":
+                    detected_offset = offset
                     break  # Found a valid filesystem, skip remaining offsets
-            _run_step("sleuthkit", "list_files", {"partition": disk_img, "recursive": True}, "PB-SIFT-001")
+            _run_step("sleuthkit", "list_files",
+                       {"image": disk_img, "offset": detected_offset, "recursive": True}, "PB-SIFT-001")
 
     # --- Registry Analysis (if registry hives exist) ---
     if has_registry:

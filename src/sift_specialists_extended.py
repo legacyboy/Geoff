@@ -140,16 +140,24 @@ class PLASO_Specialist:
         try:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
             
-            cmd = ['python3', self.log2timeline_path, '--status_view', 'linear']
+            cmd = ['python3', self.log2timeline_path, '--status_view', 'none']
             
             if parsers:
                 cmd.extend(['--parsers', ','.join(parsers)])
-            else:
-                cmd.extend(['--parsers', 'win7'])  # Default to Windows 7 preset
+            # Don't force a parser preset — let Plaso auto-detect
             
+            # Plaso uses --source or positional SOURCE; try positional first
             cmd.extend([output_file, evidence_path])
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 min timeout
+            
+            # If positional SOURCE fails, retry with --source flag
+            if result.returncode != 0 and 'unrecognized arguments' in result.stderr:
+                cmd_retry = ['python3', self.log2timeline_path, '--status_view', 'none']
+                if parsers:
+                    cmd_retry.extend(['--parsers', ','.join(parsers)])
+                cmd_retry.extend([output_file, '--source', evidence_path])
+                result = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=1800)
             
             return {
                 'tool': 'log2timeline',
@@ -158,7 +166,7 @@ class PLASO_Specialist:
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[-5000:],  # Last 5000 chars
-                'stderr': result.stderr,
+                'stderr': result.stderr[-2000:],
                 'timestamp': datetime.now().isoformat()
             }
         except subprocess.TimeoutExpired:

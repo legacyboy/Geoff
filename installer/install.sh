@@ -67,6 +67,19 @@ check_requirements() {
         sudo apt-get install -y jq
     fi
     
+    # Install YARA for malware detection
+    if ! command -v yara &> /dev/null; then
+        echo "Installing YARA..."
+        sudo apt-get update && sudo apt-get install -y yara
+        if command -v yara &> /dev/null; then
+            echo "  ✓ YARA installed: $(yara --version 2>&1 | head -1)"
+        else
+            echo "  ⚠ YARA installation failed — malware scanning will be unavailable"
+        fi
+    else
+        echo "  ✓ YARA already installed: $(yara --version 2>&1 | head -1)"
+    fi
+    
     # RAM check removed - will attempt install regardless of available memory
     echo "  ✓ Requirements check bypassed (install will proceed)"
 }

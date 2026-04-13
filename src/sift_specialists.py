@@ -71,35 +71,54 @@ class SLEUTHKIT_Specialist:
         """mmls - Display partition layout"""
         return self.run('mmls', [disk_image])
     
-    def analyze_filesystem(self, partition: str) -> Dict[str, Any]:
+    def analyze_filesystem(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """fsstat - Display file system statistics"""
-        return self.run('fsstat', [partition])
+        args = []
+        if offset is not None:
+            args = ['-o', str(offset)]
+        args.append(image)
+        return self.run('fsstat', args)
     
-    def list_files(self, partition: str, inode: Optional[int] = None, recursive: bool = True) -> Dict[str, Any]:
+    def list_files(self, image: str, offset: Optional[int] = None, inode: Optional[int] = None, recursive: bool = True) -> Dict[str, Any]:
         """fls - List files and directories"""
-        args = [partition]
+        args = []
         if recursive:
-            args = ['-r'] + args
+            args.append('-r')
+        if offset is not None:
+            args.extend(['-o', str(offset)])
+        args.append(image)
         if inode:
-            args += [str(inode)]
+            args.append(str(inode))
         return self.run('fls', args)
     
-    def extract_file(self, partition: str, inode: int, output_path: str) -> Dict[str, Any]:
+    def extract_file(self, image: str, inode: int, output_path: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """icat - Extract file by inode"""
-        result = self.run('icat', [partition, str(inode)])
+        args = []
+        if offset is not None:
+            args = ['-o', str(offset)]
+        args.extend([image, str(inode)])
+        result = self.run('icat', args)
         if result['status'] == 'success':
             Path(output_path).write_text(result['stdout'])
             result['output_file'] = output_path
             result['bytes_extracted'] = len(result['stdout'])
         return result
     
-    def list_inodes(self, partition: str) -> Dict[str, Any]:
+    def list_inodes(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """ils - List inode information"""
-        return self.run('ils', [partition])
+        args = []
+        if offset is not None:
+            args = ['-o', str(offset)]
+        args.append(image)
+        return self.run('ils', args)
     
-    def get_file_info(self, partition: str, inode: int) -> Dict[str, Any]:
+    def get_file_info(self, image: str, inode: int, offset: Optional[int] = None) -> Dict[str, Any]:
         """istat - Display inode details"""
-        return self.run('istat', [partition, str(inode)])
+        args = []
+        if offset is not None:
+            args = ['-o', str(offset)]
+        args.extend([image, str(inode)])
+        return self.run('istat', args)
 
 
 class VOLATILITY_Specialist:
