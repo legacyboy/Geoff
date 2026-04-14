@@ -1668,33 +1668,33 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
             break
 
-    # Classification based on indicator hits
-    classification = "Unknown"
-    severity = "MEDIUM"
+    # Classification based on indicator hits (indicator_hits is a list of dicts)
+    hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
+    
     # C2 detection always runs PB-SIFT-019
-    if indicator_hits.get("c2") or any("c2" in str(h.get("category", "")) for h in indicator_hits):
+    if "c2" in hit_categories or "command" in hit_categories:
         if "PB-SIFT-019" not in execution_plan:
             execution_plan.append("PB-SIFT-019")
 
-    if indicator_hits.get("ransomware"):
+    if "ransomware" in hit_categories:
         classification = "Ransomware"
         severity = "CRITICAL"
-    elif indicator_hits.get("c2"):
+    elif "c2" in hit_categories or "command" in hit_categories:
         classification = "Command & Control"
         severity = "CRITICAL"
-    elif indicator_hits.get("credential_theft"):
+    elif "credential_theft" in hit_categories:
         classification = "Credential Theft"
         severity = "HIGH"
-    elif indicator_hits.get("lateral_movement"):
+    elif "lateral_movement" in hit_categories:
         classification = "Lateral Movement"
         severity = "HIGH"
-    elif indicator_hits.get("web_shell") or indicator_hits.get("initial_access"):
+    elif "web_shell" in hit_categories or "initial_access" in hit_categories:
         classification = "External Breach"
         severity = "HIGH"
     elif suspicious_binary_found:
         classification = "Malware"
         severity = "HIGH"
-    elif indicator_hits.get("exfiltration"):
+    elif "exfiltration" in hit_categories:
         classification = "Exfiltration"
         severity = "MEDIUM"
 
