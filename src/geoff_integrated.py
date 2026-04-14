@@ -91,7 +91,7 @@ def _resolve_dir(env_var, default_path, fallback_subdir):
         return fallback
 
 EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
-                               "/home/sansforensics/evidence-storage",
+                               "/home/sansforensics/evidence-storage/evidence",
                                "geoff-evidence")
 CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
                              "/home/sansforensics/evidence-storage/cases",
