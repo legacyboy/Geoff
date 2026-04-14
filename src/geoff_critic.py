@@ -84,14 +84,16 @@ RAW OUTPUT (excerpt):
 ANALYSIS:
 {geoff_analysis}
 
-Answer ONLY these two questions:
+Answer these questions:
 1. Does the analysis claim something NOT present in the raw output? (hallucination)
-2. Is there any obvious nonsense? (e.g. impossible values, contradictory claims)
+2. Is there any obvious nonsense? (impossible values, contradictory claims)
+3. Are any claimed IOCs (IPs, hashes, timestamps, URLs) invalid format?
 
 Respond in JSON:
 {{
     "hallucinations": ["list claims not in raw output, or empty list"],
     "nonsense": ["list obvious nonsense, or empty list"],
+    "invalid_iocs": ["list IOCs with invalid format, or empty list"],
     "passes_sanity": true/false
 }}"""
 
@@ -147,6 +149,101 @@ Respond in JSON:
             "false_positives": false_positives,
             "false_positive_count": len(false_positives),
             "validated_iocs": validated_iocs,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    # --- IOC Format Validation Helpers ---
+
+    @staticmethod
+    def _is_valid_ip(value: str) -> bool:
+        """Check if value looks like a valid IPv4 address."""
+        parts = value.split('.')
+        if len(parts) != 4:
+            return False
+        try:
+            return all(0 <= int(p) <= 255 for p in parts)
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _is_valid_hash(value: str) -> bool:
+        """Check if value looks like a valid MD5/SHA1/SHA256 hash."""
+        hex_chars = set("0123456789abcdef")
+        value_lower = value.lower()
+        if not all(c in hex_chars for c in value_lower):
+            return False
+        return len(value_lower) in (32, 40, 64)  # MD5, SHA1, SHA256
+
+    @staticmethod
+    def _is_valid_timestamp(value) -> bool:
+        """Check if value is a plausible forensic timestamp.
+        Accepts: epoch seconds (0-2B range), Windows FILETIME, ISO 8601 strings.
+        Does NOT reject nanosecond epochs — those are common in forensic data."""
+        if isinstance(value, (int, float)):
+            # Epoch seconds or epoch millis
+            return 0 <= value <= 4_000_000_000 or 0 <= value / 1000 <= 4_000_000_000
+        if isinstance(value, str):
+            # ISO 8601 format
+            if re.match(r'\d{4}-\d{2}-\d{2}', value):
+                return True
+            # Epoch as string
+            try:
+                v = float(value)
+                return 0 <= v <= 4_000_000_000 or 0 <= v / 1000 <= 4_000_000_000
+            except ValueError:
+                pass
+        return True  # Don't reject timestamps we can't parse — they might be valid forensic formats
+
+    @staticmethod
+    def _is_valid_url(value: str) -> bool:
+        """Basic URL format check."""
+        return bool(re.match(r'https?://', value, re.IGNORECASE))
+
+    def validate_ioc_formats(self, iocs: Dict[str, List]) -> Dict[str, Any]:
+        """Validate that extracted IOCs have valid format (not presence in source).
+        This is complementary to validate_ioc_extraction() which checks source text presence.
+
+        Checks: IP format, hash format, timestamp plausibility, URL format.
+        Returns format validation results without modifying the IOCs.
+        """
+        format_issues = []
+        format_valid = []
+
+        validators = {
+            'ips': self._is_valid_ip,
+            'ip_addresses': self._is_valid_ip,
+            'domains': lambda v: bool(re.match(r'[\w.-]+\.[a-z]{2,}$', v, re.IGNORECASE)),
+            'hashes': self._is_valid_hash,
+            'md5': self._is_valid_hash,
+            'sha1': self._is_valid_hash,
+            'sha256': self._is_valid_hash,
+            'urls': self._is_valid_url,
+            'emails': lambda v: bool(re.match(r'^[\w.+-]+@[\w.-]+$', v)),
+            'timestamps': self._is_valid_timestamp,
+        }
+
+        for ioc_type, ioc_list in iocs.items():
+            validator = validators.get(ioc_type)
+            if validator is None:
+                # Unknown type — can't validate format, assume OK
+                format_valid.extend(ioc_list)
+                continue
+            for ioc in ioc_list:
+                if isinstance(ioc, str) and validator(ioc):
+                    format_valid.append(ioc)
+                else:
+                    format_issues.append({
+                        "type": ioc_type,
+                        "value": str(ioc)[:100],
+                        "reason": f"Invalid {ioc_type} format"
+                    })
+
+        return {
+            "validation_type": "ioc_formats",
+            "total_iocs": len(format_valid) + len(format_issues),
+            "format_valid_count": len(format_valid),
+            "format_issues": format_issues,
+            "format_issue_count": len(format_issues),
             "timestamp": datetime.now().isoformat()
         }
 

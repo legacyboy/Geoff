@@ -147,6 +147,103 @@ def safe_run(cmd, timeout=300, **kwargs):
         }
 
 
+def _correlate_timelines(merged_timeline: str, case_work_dir, job_id: str) -> Dict[str, Any]:
+    """Correlate events across multiple host images from a merged Plaso timeline.
+
+    Uses psort json_line format and extracts username/hostname from the
+    'message' field (top-level fields are unreliable in Plaso output).
+    """
+    if not Path(merged_timeline).exists():
+        return {"error": "merged timeline not found", "path": merged_timeline}
+
+    try:
+        psort_cmd = [
+            "python3", "/usr/bin/psort.py",
+            "-o", "json_line",
+            merged_timeline,
+        ]
+        result = safe_run(psort_cmd, timeout=600)
+
+        if result["code"] != 0:
+            return {"error": f"psort failed: {result.get('stderr', '')[:200]}"}
+
+        # Regex patterns for extracting user/host from Plaso message field
+        _username_patterns = [
+            re.compile(r'\bAccount Name:\s*([\\\w.\-]+)', re.IGNORECASE),
+            re.compile(r'\bUser Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+            re.compile(r'\bLogon Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+        ]
+        _hostname_patterns = [
+            re.compile(r'\bWorkstation Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+            re.compile(r'\bComputer Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+            re.compile(r'\bSource Network Address:\s*([\\\w.\-]+)', re.IGNORECASE),
+        ]
+
+        user_hosts = {}  # username -> set of hostnames
+        events_sample = []
+        lines_processed = 0
+
+        for line in result["stdout"].strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            lines_processed += 1
+            message = event.get("message", "")
+            username = event.get("username", "") or ""
+            hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
+
+            # Fall back to message field parsing if top-level fields empty
+            if not username:
+                for pat in _username_patterns:
+                    m = pat.search(message)
+                    if m:
+                        username = m.group(1)
+                        break
+            if not hostname:
+                for pat in _hostname_patterns:
+                    m = pat.search(message)
+                    if m:
+                        hostname = m.group(1)
+                        break
+
+            if username and hostname:
+                if username not in user_hosts:
+                    user_hosts[username] = set()
+                user_hosts[username].add(hostname)
+
+            if len(events_sample) < 20:
+                events_sample.append({
+                    "timestamp": event.get("datetime", ""),
+                    "event_type": event.get("data_type", ""),
+                    "message": message[:150],
+                })
+
+        # Build cross-host correlation findings
+        cross_host_users = []
+        for username, hosts in user_hosts.items():
+            if len(hosts) > 1:
+                cross_host_users.append({
+                    "user": username,
+                    "hosts": sorted(hosts),
+                    "risk_level": "HIGH" if len(hosts) >= 3 else "MEDIUM",
+                })
+
+        return {
+            "total_events_analyzed": lines_processed,
+            "unique_users": len(user_hosts),
+            "cross_host_users": cross_host_users[:20],
+            "cross_host_user_count": len(cross_host_users),
+            "events_sample": events_sample,
+        }
+    except Exception as e:
+        _log_error("Correlation analysis failed", e)
+        return {"error": str(e)}
+
+
 def safe_git_commit(message: str, base_path: str = None):
     """Safe git commit wrapper. Returns dict with status/data/error."""
     if base_path is None:
@@ -857,6 +954,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-017": "REMnux Malware Analysis",
     "PB-SIFT-018": "Malware Analysis",
     "PB-SIFT-019": "Command & Control",
+    "PB-SIFT-020": "Timeline Analysis",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1111,6 +1209,15 @@ PLAYBOOK_STEPS = {
         ],
         "syslogs": [
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+    },
+    "PB-SIFT-020": {  # Timeline Analysis (NEW)
+        "disk_images": [
+            ("plaso", "sort_timeline", {
+                "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
+                "output_format": "json_line",
+                "filter": None,
+            }),
         ],
     },
     "PB-SIFT-019": {  # Command & Control
@@ -1982,20 +2089,45 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings[-3:]):
                 break
 
-        # Anti-forensics confidence cascade: if PB-SIFT-012 found HIGH/CRITICAL,
-        # retroactively downgrade all previous findings
+        # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
+        # retroactively downgrade ALL findings and mark them compromised.
+        # Uses word-boundary matching for single-word keywords to avoid false
+        # positives (e.g. "del" matching "model", "delete", "delivered").
         if playbook_id == "PB-SIFT-012":
+            anti_forensics_keywords = [
+                "log clear", "event log clear", "timestomp",
+                "anti-forensic", "wevtutil", "sdelete",
+                "eraser", "bleachbit", "cipher /w", "fsutil",
+                "ccleaner", "secure delete",
+            ]
             anti_forensics_hit = False
             for step in pb_findings:
                 result = step.get("result", {})
-                result_str = json.dumps(result, default=str).lower()
-                if any(kw in result_str for kw in ["log clear", "event log clear", "timestomp", "anti-forensic", "wevtutil", "sdelete", "eraser", "bleachbit", "cipher /w"]):
+                if not isinstance(result, dict):
+                    continue
+                # Check structured anti_forensics_detected field first
+                if result.get("anti_forensics_detected"):
                     anti_forensics_hit = True
+                    break
+                # String match with word boundaries for single words
+                result_str = json.dumps(result, default=str).lower()
+                for kw in anti_forensics_keywords:
+                    if " " in kw:
+                        # Multi-word: substring match is safe
+                        if kw in result_str:
+                            anti_forensics_hit = True
+                            break
+                    else:
+                        # Single-word: word boundary match to avoid false positives
+                        if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
+                            anti_forensics_hit = True
+                            break
+                if anti_forensics_hit:
                     break
             if anti_forensics_hit:
                 confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                 _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
-                # Downgrade all findings: CONFIRMED → POSSIBLE, POSSIBLE → UNVERIFIED
+                # Downgrade all findings across ALL playbooks and mark compromised
                 for f in findings:
                     if isinstance(f.get("result"), dict):
                         confidence = f["result"].get("confidence", "")
@@ -2003,6 +2135,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             f["result"]["confidence"] = "POSSIBLE"
                         elif confidence == "POSSIBLE":
                             f["result"]["confidence"] = "UNVERIFIED"
+                        # Mark all findings as potentially compromised
+                        if "compromised_by" not in f["result"]:
+                            f["result"]["compromised_by"] = []
+                        if "anti-forensics" not in f["result"]["compromised_by"]:
+                            f["result"]["compromised_by"].append("anti-forensics")
+                        f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
 
         playbooks_run.append({
             "playbook_id": playbook_id,
@@ -2044,23 +2182,54 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         timeline_files = list(Path(output_dir).glob("timeline_*.plaso"))
 
         if len(timeline_files) > 1:
-            # Merge with Plaso psort
-            merged_output = str(case_work_dir / "timeline" / "merged_super.plaso")
+            # Merge timelines by re-running log2timeline for each image
+            # into the SAME storage file. log2timeline.py takes evidence sources
+            # (disk images), NOT .plaso files — so we must re-process from
+            # the original images. Plaso appends to existing storage files.
+            merged_output = str(case_work_dir / "timeline" / "merged.plaso")
             try:
-                merge_cmd = [
-                    "python3", "/usr/bin/log2timeline.py",
-                    "--storage_file", merged_output,
-                ] + [str(f) for f in timeline_files]
-                safe_run(merge_cmd, timeout=600)
-                findings.append({
-                    "playbook": "PB-SIFT-016",
-                    "module": "plaso",
-                    "function": "merge_timelines",
-                    "status": "completed",
-                    "result": {"merged_output": merged_output, "source_timelines": len(timeline_files)},
-                    "started_at": datetime.now().isoformat(),
-                    "completed_at": datetime.now().isoformat(),
-                })
+                images_processed = 0
+                for img_info in inventory.get("disk_images", []):
+                    img_path = img_info if isinstance(img_info, str) else img_info.get("path", "")
+                    if not img_path:
+                        continue
+                    merge_cmd = [
+                        "python3", "/usr/bin/log2timeline.py",
+                        "--status_view", "none",
+                        merged_output,  # storage file (appends if exists)
+                        img_path,       # evidence source
+                    ]
+                    merge_result = safe_run(merge_cmd, timeout=600)
+                    if merge_result["code"] == 0:
+                        images_processed += 1
+
+                if images_processed > 0:
+                    # Run correlation analysis on the merged timeline
+                    correlation = _correlate_timelines(
+                        merged_output, case_work_dir, job_id
+                    )
+                    findings.append({
+                        "playbook": "PB-SIFT-016",
+                        "module": "plaso",
+                        "function": "merge_timelines",
+                        "status": "completed",
+                        "result": {
+                            "merged_output": merged_output,
+                            "source_timelines": len(timeline_files),
+                            "images_processed": images_processed,
+                            "correlation": correlation,
+                        },
+                        "started_at": datetime.now().isoformat(),
+                        "completed_at": datetime.now().isoformat(),
+                    })
+                else:
+                    findings.append({
+                        "playbook": "PB-SIFT-016",
+                        "module": "plaso",
+                        "function": "merge_timelines",
+                        "status": "failed",
+                        "error": "No images could be processed for merge",
+                    })
             except Exception as e:
                 findings.append({
                     "playbook": "PB-SIFT-016",
@@ -2077,63 +2246,84 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Try to extract per-user activity from merged or individual timelines
     timeline_for_extraction = list(Path(output_dir).glob("timeline_*.plaso"))
-    merged_plaso = case_work_dir / "timeline" / "merged_super.plaso"
+    merged_plaso = case_work_dir / "timeline" / "merged.plaso"
     if merged_plaso.exists():
         timeline_for_extraction = [merged_plaso]
 
     if timeline_for_extraction:
         _update_job(93, "correlation", "Extracting user activity across hosts", log_msg="Extracting per-user activity across hosts")
         try:
-            # Use psort to extract user-relevant events from Plaso timelines
-            # Focus on: file access, process execution, logins, browser history,
-            # registry modifications — all keyed by username + hostname
-            user_event_types = [
-                "windows:registry:userassist",   # UserAssist (program execution)
-                "windows:evt:4624",               # Successful logon
-                "windows:evt:4625",               # Failed logon
-                "windows:evt:4648",               # Explicit credential logon
-                "windows:evt:4688",               # Process creation
-                "windows:evtx:4624",
-                "windows:evtx:4625",
-                "windows:evtx:4648",
-                "windows:evtx:4688",
-                "shell:history",                  # Bash/shell history
-                "browser:chrome:history",
-                "browser:firefox:history",
-                "santa:execution",                 # macOS Santa
-                "filestat",                        # File stat events (if user-attributed)
+            # Plaso's json_line format puts user info in the 'message' field,
+            # NOT in top-level 'username'/'hostname' fields. We must parse
+            # the message field with regex patterns to extract them.
+            _USERNAME_PATTERNS = [
+                re.compile(r'\bAccount Name:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bUser Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bLogon Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bSubject:\s*([\\\w.\-]+)', re.IGNORECASE),
             ]
+            _HOSTNAME_PATTERNS = [
+                re.compile(r'\bSource Network Address:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bWorkstation Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bComputer Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
+                re.compile(r'\bSource Host:\s*([\\\w.\-]+)', re.IGNORECASE),
+            ]
+
+            # Focused event types for user activity (removed low-value 'filestat')
+            user_event_types = {
+                "windows:registry:userassist",
+                "windows:evt:4624", "windows:evt:4625", "windows:evt:4648", "windows:evt:4688",
+                "windows:evtx:4624", "windows:evtx:4625", "windows:evtx:4648", "windows:evtx:4688",
+                "shell:history",
+                "browser:chrome:history", "browser:firefox:history",
+                "santa:execution",
+            }
 
             for tl_path in timeline_for_extraction:
                 try:
-                    # Query psort for user-attributed events
+                    # Use json_line format — each line is a complete JSON object
                     psort_cmd = [
                         "python3", "/usr/bin/psort.py",
-                        "-o", "json",
+                        "-o", "json_line",
                         str(tl_path),
                     ]
-                    psort_result = safe_run(
-                        psort_cmd,
-                        timeout=300
-                    )
+                    psort_result = safe_run(psort_cmd, timeout=300)
 
                     if psort_result["code"] == 0 and psort_result["stdout"]:
-                        # Parse JSON output line by line
                         for line in psort_result["stdout"].strip().split("\n"):
                             try:
                                 event = json.loads(line)
                             except (json.JSONDecodeError, ValueError):
                                 continue
 
-                            username = event.get("username", "")
-                            hostname = event.get("hostname", event.get("computer_name", ""))
+                            # Try top-level fields first (some Plaso versions)
+                            username = event.get("username", "") or ""
+                            hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
                             event_type = event.get("data_type", "")
                             timestamp = event.get("datetime", "")
+                            message = event.get("message", "")
+
+                            # Fall back to message field regex extraction
+                            if not username:
+                                for pat in _USERNAME_PATTERNS:
+                                    m = pat.search(message)
+                                    if m:
+                                        username = m.group(1)
+                                        break
+                            if not hostname:
+                                for pat in _HOSTNAME_PATTERNS:
+                                    m = pat.search(message)
+                                    if m:
+                                        hostname = m.group(1)
+                                        break
 
                             if not username:
                                 continue
 
-                            # Normalize username
+                            # Filter to user-relevant event types
+                            if event_type not in user_event_types and event_type:
+                                continue
+
                             user_key = f"{username}@{hostname}" if hostname else username
 
                             if user_key not in user_activity_summary:
@@ -2149,51 +2339,76 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             user_activity_summary[user_key]["event_types"][event_type] = \
                                 user_activity_summary[user_key]["event_types"].get(event_type, 0) + 1
 
-                            # Keep last 100 events per user to avoid bloat
                             if len(user_activity_summary[user_key]["timeline"]) < 100:
                                 user_activity_summary[user_key]["timeline"].append({
                                     "timestamp": timestamp,
                                     "event_type": event_type,
                                     "host": hostname,
-                                    "detail": event.get("message", "")[:200],
+                                    "detail": message[:200],
                                 })
 
-                    # Also try a targeted psort query for login events across hosts
+                    # Targeted queries for high-value Windows event IDs
+                    # Best source for lateral movement detection
                     for evt_filter in ["4624", "4648", "4688"]:
                         try:
                             targeted_cmd = [
                                 "python3", "/usr/bin/psort.py",
                                 str(tl_path),
                                 f"event_identifier IS {evt_filter}",
-                                "-o", "json",
+                                "-o", "json_line",
                             ]
-                            targeted_result = safe_run(
-                                targeted_cmd,
-                                timeout=120
-                            )
+                            targeted_result = safe_run(targeted_cmd, timeout=120)
                             if targeted_result["code"] == 0 and targeted_result["stdout"]:
                                 for line in targeted_result["stdout"].strip().split("\n"):
                                     try:
                                         event = json.loads(line)
                                     except (json.JSONDecodeError, ValueError):
                                         continue
-                                    username = event.get("username", "")
-                                    hostname = event.get("hostname", "")
+
+                                    message = event.get("message", "")
+                                    username = event.get("username", "") or ""
+                                    hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
+
+                                    # Extract from message if top-level fields empty
+                                    if not username:
+                                        for pat in _USERNAME_PATTERNS:
+                                            m = pat.search(message)
+                                            if m:
+                                                username = m.group(1)
+                                                break
+                                    if not hostname:
+                                        for pat in _HOSTNAME_PATTERNS:
+                                            m = pat.search(message)
+                                            if m:
+                                                hostname = m.group(1)
+                                                break
+
                                     if not username:
                                         continue
                                     user_key = f"{username}@{hostname}" if hostname else username
-                                    if user_key in user_activity_summary:
-                                        # Track lateral movement: same user, different hosts
-                                        if len(user_activity_summary[user_key]["hosts"]) > 1:
-                                            user_activity_summary[user_key]["lateral_movement_indicators"].append({
-                                                "type": "cross_host_activity",
-                                                "user": username,
-                                                "hosts": list(user_activity_summary[user_key]["hosts"]),
-                                                "event": event.get("message", "")[:200],
-                                                "timestamp": event.get("datetime", ""),
-                                            })
+
+                                    if user_key not in user_activity_summary:
+                                        user_activity_summary[user_key] = {
+                                            "username": username,
+                                            "hosts": set(),
+                                            "event_types": {},
+                                            "timeline": [],
+                                            "lateral_movement_indicators": [],
+                                        }
+
+                                    # Track lateral movement: same user across multiple hosts
+                                    user_activity_summary[user_key]["hosts"].add(hostname)
+                                    if len(user_activity_summary[user_key]["hosts"]) > 1:
+                                        user_activity_summary[user_key]["lateral_movement_indicators"].append({
+                                            "type": "cross_host_activity",
+                                            "user": username,
+                                            "hosts": list(user_activity_summary[user_key]["hosts"]),
+                                            "event": message[:200],
+                                            "timestamp": event.get("datetime", ""),
+                                            "event_id": evt_filter,
+                                        })
                         except Exception as e:
-                            _log_error(f"User activity event parsing", e)
+                            _log_error(f"User activity event parsing for ID {evt_filter}", e)
 
                 except Exception as e:
                     findings.append({
@@ -2203,7 +2418,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "status": "failed",
                         "error": str(e),
                     })
-
             # Convert sets to sorted lists for JSON serialization
             for user_key in user_activity_summary:
                 user_activity_summary[user_key]["hosts"] = sorted(
