@@ -87,10 +87,12 @@ if [[ "$SKIP_DEPS" == false ]]; then
             regripper tshark 2>/dev/null || true
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
         sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
-        # Install REMnux repo for additional malware analysis tools
+        # Install REMnux distro for malware analysis tools
         if ! command -v remnux &>/dev/null; then
-            info "Installing REMnux tool repository..."
-            curl -sSL https://REMnux.org/install-remnux.sh | bash -s -- --mode light 2>/dev/null || \
+            info "Installing REMnux distro (addon mode)..."
+            curl -O https://REMnux.org/remnux 2>/dev/null && \
+                chmod +x remnux && sudo mv remnux /usr/local/bin/ && \
+                sudo remnux install --mode=addon 2>/dev/null || \
                 warn "REMnux installation failed — some malware analysis tools may be unavailable"
         else
             info "REMnux already installed, updating..."
