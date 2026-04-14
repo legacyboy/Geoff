@@ -1346,6 +1346,23 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
 
+    # Crash Recovery — reset any 'running' steps from previous runs
+    for pb_file in case_work_dir.glob("output/*.json"):
+        try:
+            with open(pb_file) as f:
+                pb_steps = json.load(f)
+            changed = False
+            for step in pb_steps:
+                if step.get("status") == "running":
+                    step["status"] = "failed"
+                    step["error"] = "Interrupted by crash — status was 'running' on restart"
+                    changed = True
+            if changed:
+                _atomic_write(pb_file, json.dumps(pb_steps, default=str, indent=2))
+                _log_info(f"Crash recovery: reset 'running' steps in {pb_file.name} to 'failed'")
+        except Exception:
+            pass  # Non-critical recovery — don't block startup
+
     # ------------------------------------------------------------------
     # Phase 3: Triage & Execution Plan (PB-SIFT-000)
     # ------------------------------------------------------------------
@@ -1602,6 +1619,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
                     step_record = {
                         "playbook": playbook_id,
+                        "step_key": step_key,
                         "module": module,
                         "function": function,
                         "params": params,
@@ -1650,7 +1668,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             step_record["result"] = result
                             steps_completed += 1
                             any_step_ran = True
-                            executed_steps.add(step_key)  # Mark complete only on success
+                            # Step marked complete in findings (single source of truth)
                             _fe_log(job_id, f"  \u2713 {module}.{function} \u2192 OK")
                         else:
                             step_record["status"] = "failed"
@@ -1681,6 +1699,18 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     step_record["completed_at"] = datetime.now().isoformat()
                     findings.append(step_record)
                     pb_findings.append(step_record)
+
+                    # CONTINUE_ON_FAILURE enforcement
+                    if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
+                        _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
+                        # Break out of all loops
+                        break
+
+        # Check if we broke out due to failure
+        if not CONTINUE_ON_FAILURE:
+            failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
+            if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings[-3:]):
+                break
 
         # Anti-forensics confidence cascade: if PB-SIFT-012 found HIGH/CRITICAL,
         # retroactively downgrade all previous findings
@@ -2011,6 +2041,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "user_activity_summary": user_activity_summary,
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
+        "failures": [f for f in findings if f.get("status") == "failed"],
+        "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
+        "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
     }
 
     # ------------------------------------------------------------------
