@@ -677,16 +677,26 @@ class PLASO_Specialist:
         try:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
-            cmd = ['python3', self.log2timeline_path, '--status_view', 'none']
+            # Use system python3 (not venv) or run script directly — plaso may not be in venv
+            system_python = '/usr/bin/python3'
+            cmd = [system_python, self.log2timeline_path, '--status_view', 'none']
             if parsers:
                 cmd.extend(['--parsers', ','.join(parsers)])
             cmd.extend([output_file, evidence_path])
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
 
+            # Retry running script directly if python3 import fails
+            if result.returncode != 0 and 'ModuleNotFoundError' in result.stderr:
+                cmd_direct = [self.log2timeline_path, '--status_view', 'none']
+                if parsers:
+                    cmd_direct.extend(['--parsers', ','.join(parsers)])
+                cmd_direct.extend([output_file, evidence_path])
+                result = subprocess.run(cmd_direct, capture_output=True, text=True, timeout=1800)
+
             # Retry with --source if positional fails
             if result.returncode != 0 and 'unrecognized arguments' in result.stderr:
-                cmd_retry = ['python3', self.log2timeline_path, '--status_view', 'none']
+                cmd_retry = [system_python, self.log2timeline_path, '--status_view', 'none']
                 if parsers:
                     cmd_retry.extend(['--parsers', ','.join(parsers)])
                 cmd_retry.extend([output_file, '--source', evidence_path])
@@ -736,7 +746,7 @@ class PLASO_Specialist:
         try:
             output_file = storage_file.replace('.plaso', f'.{output_format}')
 
-            cmd = ['python3', self.psort_path, '-o', output_format, '-w', output_file]
+            cmd = ['/usr/bin/python3', self.psort_path, '-o', output_format, '-w', output_file]
             if filter_str:
                 cmd.extend(['--slice', filter_str])
             cmd.append(storage_file)
@@ -776,7 +786,7 @@ class PLASO_Specialist:
 
         try:
             result = subprocess.run(
-                ['python3', self.pinfo_path, storage_file],
+                ['/usr/bin/python3', self.pinfo_path, storage_file],
                 capture_output=True, text=True, timeout=60,
             )
 
