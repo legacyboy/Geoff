@@ -268,6 +268,23 @@ class SLEUTHKIT_Specialist:
                 return {'tool': 'icat', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
         return raw
 
+    def list_deleted(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
+        """List deleted files using fls — filters for entries marked as deleted."""
+        result = self.list_files(image, offset, recursive=True)
+        if result['status'] != 'success':
+            return result
+        deleted_files = result.get('deleted_files', [])
+        deleted_entries = [e for e in result.get('files', []) + result.get('directories', []) if e.get('is_deleted')]
+        return {
+            'tool': 'fls (deleted)',
+            'image': image,
+            'offset': offset,
+            'status': 'success',
+            'total_deleted': len(deleted_entries),
+            'deleted_files': deleted_entries if deleted_entries else deleted_files,
+            'raw_output': result.get('raw_output', ''),
+        }
+
     def list_inodes(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """ils - List inode information with parsed entries"""
         args = []
