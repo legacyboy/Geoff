@@ -162,7 +162,7 @@ fi
 
 # ── Pull Ollama models ────────────────────────────────────────────────────
 if [[ "$SKIP_OLLAMA" == false ]]; then
-    info "Pulling Ollama models for ${PROFILE} profile..."
+    info "Setting up models for ${PROFILE} profile..."
 
         # Read model names from profiles.json
         if [[ -f "${INSTALL_DIR}/profiles.json" ]]; then
@@ -186,28 +186,150 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
         info "  Forensicator: ${FORENSICATOR_MODEL}"
         info "  Critic:       ${CRITIC_MODEL}"
 
-        # Set API key for ollama.com direct access if provided
-        [[ -n "$OLLAMA_KEY" ]] && export OLLAMA_API_KEY="$OLLAMA_KEY"
+        if [[ "$PROFILE" == "cloud" ]]; then
+            # ── Cloud: pull from ollama.com registry ──
+            [[ -n "$OLLAMA_KEY" ]] && export OLLAMA_API_KEY="$OLLAMA_KEY"
 
-        # If --ollama-signin requested, run interactive signin
-        if [[ "$OLLAMA_SIGNIN" == true ]]; then
-            info "Running 'ollama signin' (interactive) — enter your Ollama credentials:"
-            ollama signin || warn "ollama signin failed — cloud models may not work"
-        fi
-
-        # Pull models and verify identity
-        for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
-            info "Pulling ${MODEL_NAME}..."
-            ollama pull "$MODEL_NAME" || { warn "Failed to pull ${MODEL_NAME}"; continue; }
-
-            # Verify model identity against manifest
-            if [[ -f "${INSTALL_DIR}/models/verify_model.sh" ]]; then
-                bash "${INSTALL_DIR}/models/verify_model.sh" "$MODEL_NAME" "${INSTALL_DIR}/models/manifest.toml" || \
-                    warn "Model ${MODEL_NAME} identity verification FAILED — model may not be the expected version"
+            if [[ "$OLLAMA_SIGNIN" == true ]]; then
+                info "Running 'ollama signin' (interactive) — enter your Ollama credentials:"
+                ollama signin || warn "ollama signin failed — cloud models may not work"
             fi
-        done
 
-        ok "Models pulled and verified"
+            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
+                info "Pulling ${MODEL_NAME}..."
+                ollama pull "$MODEL_NAME" || { warn "Failed to pull ${MODEL_NAME}"; continue; }
+            done
+
+            ok "Cloud models pulled"
+        else
+            # ── Local: download from HuggingFace with SHA256 verification ──
+            MODELS_DIR="${INSTALL_DIR}/models"
+            GGUF_DIR="${INSTALL_DIR}/gguf"
+            mkdir -p "$GGUF_DIR"
+
+            # Parse manifest.toml to download and verify each model
+            CURRENT_MODEL=""
+            while IFS= read -r line; do
+                # Track which [[models]] section we're in
+                if [[ "$line" == "[[models]]" ]]; then
+                    CURRENT_MODEL=""
+                    continue
+                fi
+
+                # Parse key = value pairs
+                if [[ "$line" =~ ^ollama_name ]]; then
+                    CURRENT_MODEL=$(echo "$line" | sed 's/ollama_name *= *"\(.*\)"/\1/' | tr -d '"')
+                    continue
+                fi
+
+                if [[ -n "$CURRENT_MODEL" ]]; then
+                    # Check if this model is one we need
+                    case "$CURRENT_MODEL" in
+                        "$MANAGER_MODEL"|"$FORENSICATOR_MODEL"|"$CRITIC_MODEL")
+                            # Parse fields
+                            if [[ "$line" =~ ^gguf_url ]]; then
+                                GGUF_URL=$(echo "$line" | sed 's/gguf_url *= *"\(.*\)"/\1/' | tr -d '"')
+                            elif [[ "$line" =~ ^gguf_sha256 ]]; then
+                                EXPECTED_SHA256=$(echo "$line" | sed 's/gguf_sha256 *= *"\(.*\)"/\1/' | tr -d '"')
+                            elif [[ "$line" =~ ^gguf_size ]]; then
+                                EXPECTED_SIZE=$(echo "$line" | sed 's/gguf_size *= *\([0-9]*\)/\1/')
+                            elif [[ "$line" =~ ^modelfile ]]; then
+                                MODELFILE=$(echo "$line" | sed 's/modelfile *= *"\(.*\)"/\1/' | tr -d '"')
+                            elif [[ "$line" =~ ^hf_file ]]; then
+                                GGUF_FILE=$(echo "$line" | sed 's/hf_file *= *"\(.*\)"/\1/' | tr -d '"')
+                            fi
+                            ;;
+                    esac
+                fi
+            done < "${MODELS_DIR}/manifest.toml"
+
+            # Download and verify each local model
+            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
+                # Re-parse just this model from manifest
+                GGUF_URL=""
+                EXPECTED_SHA256=""
+                EXPECTED_SIZE=""
+                MODELFILE=""
+                GGUF_FILE=""
+                IN_SECTION=false
+
+                while IFS= read -r line; do
+                    if [[ "$line" == "[[models]]" ]]; then
+                        IN_SECTION=false
+                        continue
+                    fi
+                    if [[ "$line" == *"ollama_name = \"${MODEL_NAME}\""* ]]; then
+                        IN_SECTION=true
+                        continue
+                    fi
+                    if [[ "$IN_SECTION" == true ]]; then
+                        if [[ "$line" =~ ^gguf_url ]]; then
+                            GGUF_URL=$(echo "$line" | sed 's/gguf_url *= *"\(.*\)"/\1/' | tr -d '"')
+                        elif [[ "$line" =~ ^gguf_sha256 ]]; then
+                            EXPECTED_SHA256=$(echo "$line" | sed 's/gguf_sha256 *= *"\(.*\)"/\1/' | tr -d '"')
+                        elif [[ "$line" =~ ^gguf_size ]]; then
+                            EXPECTED_SIZE=$(echo "$line" | sed 's/gguf_size *= *\([0-9]*\)/\1/')
+                        elif [[ "$line" =~ ^modelfile ]]; then
+                            MODELFILE=$(echo "$line" | sed 's/modelfile *= *"\(.*\)"/\1/' | tr -d '"')
+                        elif [[ "$line" =~ ^hf_file ]]; then
+                            GGUF_FILE=$(echo "$line" | sed 's/hf_file *= *"\(.*\)"/\1/' | tr -d '"')
+                        fi
+                    fi
+                done < "${MODELS_DIR}/manifest.toml"
+
+                if [[ -z "$GGUF_URL" || -z "$EXPECTED_SHA256" ]]; then
+                    warn "No manifest entry for ${MODEL_NAME} — falling back to ollama pull"
+                    ollama pull "$MODEL_NAME" || warn "Failed to pull ${MODEL_NAME}"
+                    continue
+                fi
+
+                GGUF_PATH="${GGUF_DIR}/${GGUF_FILE}"
+
+                # Download if not already present
+                if [[ -f "$GGUF_PATH" ]]; then
+                    info "GGUF already exists: ${GGUF_FILE}"
+                else
+                    info "Downloading ${GGUF_FILE} from HuggingFace (~$(( EXPECTED_SIZE / 1073741824 ))GB)..."
+                    curl -L -o "$GGUF_PATH" "$GGUF_URL" || { warn "Failed to download ${GGUF_FILE}"; continue; }
+                fi
+
+                # Verify size
+                ACTUAL_SIZE=$(stat -c%s "$GGUF_PATH" 2>/dev/null || stat -f%z "$GGUF_PATH" 2>/dev/null)
+                if [[ -n "$EXPECTED_SIZE" && "$ACTUAL_SIZE" -ne "$EXPECTED_SIZE" ]]; then
+                    warn "Size mismatch for ${GGUF_FILE}: expected ${EXPECTED_SIZE}, got ${ACTUAL_SIZE}"
+                    warn "Deleting corrupted download..."
+                    rm -f "$GGUF_PATH"
+                    continue
+                fi
+
+                # Verify SHA256
+                info "Verifying SHA256 for ${GGUF_FILE}..."
+                ACTUAL_SHA256=$(sha256sum "$GGUF_PATH" | cut -d' ' -f1)
+                if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+                    warn "SHA256 MISMATCH for ${GGUF_FILE}!"
+                    warn "  Expected: ${EXPECTED_SHA256}"
+                    warn "  Got:      ${ACTUAL_SHA256}"
+                    warn "Deleting unverified download..."
+                    rm -f "$GGUF_PATH"
+                    continue
+                fi
+                ok "SHA256 verified: ${GGUF_FILE}"
+
+                # Create Ollama model from Modelfile
+                info "Creating Ollama model ${MODEL_NAME}..."
+                # Modelfile uses relative path — run from gguf dir
+                (cd "$GGUF_DIR" && ollama create "$MODEL_NAME" -f "${MODELS_DIR}/${MODELFILE}") || \
+                    { warn "Failed to create ${MODEL_NAME}"; continue; }
+
+                # Verify model identity
+                if [[ -f "${MODELS_DIR}/verify_model.sh" ]]; then
+                    bash "${MODELS_DIR}/verify_model.sh" "$MODEL_NAME" "${MODELS_DIR}/manifest.toml" || \
+                        warn "Model ${MODEL_NAME} identity verification FAILED"
+                fi
+
+                ok "Model ${MODEL_NAME} ready (verified)"
+            done
+        fi
 else
     info "Skipping Ollama model pulls (--skip-ollama)"
 fi

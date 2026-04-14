@@ -1,18 +1,22 @@
-# GEOFF Local Model Modelfiles (Fallback)
-#
-# These Modelfiles are used if you want to build models from GGUF files
-# downloaded directly from HuggingFace, instead of using `ollama pull`.
-#
-# The primary install method is `ollama pull` with identity verification
-# (see manifest.toml). These Modelfiles are provided as a fallback for
-# air-gapped environments or custom builds.
-#
-# To use:
-#   1. Download the GGUF from the HuggingFace repo listed in manifest.toml
-#   2. Place it in this directory
-#   3. Run: ollama create <model-name> -f <modelfile>
-
 # DeepSeek-R1-Distill-Qwen-32B Q4_K_M
-# Download from: https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF
-# Expected size: ~19.5 GB
-# Verify: SHA256 7c63ceb85ad6c733d78e3e44e038528197e7fe8a86dbc3eb09912b21998bc62c
+# Download GGUF from: https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF
+# File: DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf
+# SHA256: 7c63ceb85ad6c733d78e3e44e038528197e7fe8a86dbc3eb09912b21998bc62c
+# Size: 19851335840 bytes (~19.5 GB)
+# License: MIT
+
+FROM ./DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf
+
+TEMPLATE """{{- if .System }}{{ .System }}{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice .Messages $i)) 1}}
+{{- if eq .Role "user" }}<｜User｜>{{ .Content }}{{ end }}
+{{- if eq .Role "assistant" }}<｜Assistant｜>{{ .Content }}{{ end }}
+{{- if and $last (ne .Role "assistant") }}<｜Assistant｜>{{ end }}
+{{- end }}"""
+
+PARAMETER stop "<｜begin▁of▁sentence｜>"
+PARAMETER stop "<｜end▁of▁sentence｜>"
+PARAMETER stop "<｜User｜>"
+PARAMETER stop "<｜Assistant｜>"
+PARAMETER temperature 0.6
