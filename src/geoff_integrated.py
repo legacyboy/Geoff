@@ -570,7 +570,7 @@ def get_available_tools_status():
 # ---------------------------------------------------------------------------
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
-ALL_PLAYBOOKS = [f"PB-SIFT-{i:03d}" for i in range(1, 20)]
+ALL_PLAYBOOKS = ["PB-SIFT-016"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + ["PB-SIFT-017", "PB-SIFT-018", "PB-SIFT-019"]
 # PB-SIFT-011 is skipped in the original; keep 19 IDs but the orchestrator
 # may not have 011 implemented. We still attempt it.
 
