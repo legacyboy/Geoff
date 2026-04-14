@@ -82,38 +82,34 @@ def safe_git_commit(message: str, base_path: str = None):
         base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
     
     if not os.path.isdir(base_path):
-        print(f"[GEOFF] git commit: not a directory: {base_path}")
+        _log_error(f"git commit: not a directory: {base_path}")
         return None
     
     # Check if we're in a git repo
-    result = subprocess.run(['git', 'rev-parse', '--is-inside-work-tree'], 
-                           cwd=base_path, capture_output=True, text=True)
+    result = safe_run(['git', 'rev-parse', '--is-inside-work-tree'], cwd=base_path, timeout=10)
     if result.returncode != 0:
-        print(f"[GEOFF] git commit: not a git repo: {base_path}")
+        _log_error(f"git commit: not a git repo: {base_path}")
         return None
     
     # Run git add -A
-    add_result = subprocess.run(['git', 'add', '-A'], cwd=base_path, capture_output=True, text=True)
+    add_result = safe_run(['git', 'add', '-A'], cwd=base_path, timeout=60)
     if add_result.returncode != 0:
-        print(f"[GEOFF] git add failed: {add_result.stderr[:200]}")
+        _log_error(f"git add failed: {add_result.stderr[:200]}")
         return None
     
     # Run git commit
-    commit_result = subprocess.run(['git', 'commit', '-m', message], 
-                                  cwd=base_path, capture_output=True, text=True)
+    commit_result = safe_run(['git', 'commit', '-m', message], cwd=base_path, timeout=60)
     
     if commit_result.returncode == 0:
         # Extract commit hash
-        hash_result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
-                                    cwd=base_path, capture_output=True, text=True)
+        hash_result = safe_run(['git', 'rev-parse', 'HEAD'], cwd=base_path, timeout=10)
         if hash_result.returncode == 0:
             commit_hash = hash_result.stdout.strip()
-            print(f"[GIT] Committed: {message} (hash: {commit_hash})")
+            _log_error(f"Committed: {message} (hash: {commit_hash})")  # not an error but uses same logger
             return commit_hash
         return None
     elif "nothing to commit" in commit_result.stderr.lower():
         # Nothing to commit - this is not an error
-        print(f"[GIT] No changes to commit")
         return None
     else:
         print(f"[GEOFF] git commit failed: {commit_result.stderr[:500]}")
@@ -141,7 +137,8 @@ def _fe_log_with_exception(job_id: str, msg: str, e: Exception = None):
 
 
 def _log_error(msg: str, e: Exception = None, job_id: str = None):
-    """Generic error logger - uses _fe_log for job contexts, print for others."""
+    """Generic error logger - uses _fe_log for job contexts, print for others.
+    In STRICT_MODE, re-raises the exception after logging."""
     if e:
         log_msg = f"{msg} Error: {e}"
         if job_id:
@@ -152,6 +149,8 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
         _fe_log(job_id, log_msg)
     else:
         print(f"[GEOFF] error: {log_msg}")
+    if STRICT_MODE and e:
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -260,10 +259,11 @@ class ActionLogger:
             'details': details
         }
 
-        # Atomic write for action log
+        # Atomic write for action log (with lock)
         try:
             log_content = json.dumps(entry) + '\n'
-            _atomic_write(self.action_log, log_content, 'a')
+            with _log_lock:
+                _atomic_write(self.action_log, log_content, 'a')
         except Exception as e:
             _log_error(f"ActionLogger log write {self.action_log}", e)
             # Fallback to regular write
@@ -366,18 +366,6 @@ geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
 # ---------------------------------------------------------------------------
 
 _find_evil_jobs = {}  # job_id -> {status, progress, result, started_at, log, ...}
-_find_evil_lock = threading.Lock()
-
-
-def _fe_log(job_id: str, msg: str):
-    """Append a timestamped log entry to a Find Evil job."""
-    if job_id is None:
-        return
-    with _find_evil_lock:
-        if job_id in _find_evil_jobs:
-            ts = datetime.now().strftime("%H:%M:%S")
-            _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": msg})
-
 
 def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict:
     """Route a step to the correct orchestrator based on module prefix.
@@ -610,11 +598,11 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     # Initialize git repo
     git_dir = case_work_path / ".git"
     if not git_dir.exists():
-        subprocess.run(['git', 'init'], cwd=case_work_path, capture_output=True)
-        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, capture_output=True)
-        subprocess.run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
-        subprocess.run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, capture_output=True)
+        safe_run(['git', 'init'], cwd=case_work_path, timeout=30)
+        safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, timeout=10)
+        safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, timeout=10)
+        safe_run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
+        safe_run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
 
     # Create subdirectories
     (case_work_path / "logs").mkdir(exist_ok=True)
@@ -1009,6 +997,7 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         "mobile_backups": [],
         "other_files": [],
         "total_size_bytes": 0,
+        "file_hashes": {},  # path -> sha256
     }
 
     disk_ext = {'.e01', '.ee01', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
@@ -1024,9 +1013,14 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             continue
         try:
             size = item.stat().st_size
-        except OSError:
+        except OSError as e:
+            print(f"[GEOFF] Cannot stat {item}: {e}")
             size = 0
         inventory["total_size_bytes"] += size
+
+        # Hash evidence files for chain of custody
+        file_hash = _hash_file(str(item))
+        inventory["file_hashes"][str(item)] = file_hash
 
         ext = item.suffix.lower()
         name_lower = item.name.lower()
@@ -1108,9 +1102,9 @@ def _scan_triage_indicators(inventory: dict) -> list:
     binary_evidence = inventory.get("disk_images", []) + inventory.get("memory_dumps", [])
     for fpath in binary_evidence:
         try:
-            result = subprocess.run(
+            result = safe_run(
                 ["strings", "-n", "8", str(fpath)],
-                capture_output=True, timeout=120, text=True
+                timeout=120
             )
             if result.returncode != 0:
                 continue
@@ -1281,10 +1275,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Init git
     try:
-        subprocess.run(['git', 'init'], cwd=case_work_dir, capture_output=True, check=True)
-        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, capture_output=True)
-        subprocess.run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, capture_output=True)
+        safe_run(['git', 'init'], cwd=case_work_dir, timeout=30, check=True)
+        safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, timeout=10)
+        safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, timeout=10)
+        safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
     except Exception as e:
         _log_error(f"git init case_work_dir {case_work_dir}", e)
 
@@ -1633,8 +1627,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         try:
             # Write playbook findings to output dir
             pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-            with open(pb_output, 'w') as f:
-                json.dump(pb_findings, f, default=str, indent=2)
+            _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
             git_commit_action(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
         except Exception as gce:
             _fe_log(job_id, f"  git commit failed: {gce}")
@@ -1658,7 +1651,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     "python3", "/usr/bin/log2timeline.py",
                     "--storage_file", merged_output,
                 ] + [str(f) for f in timeline_files]
-                subprocess.run(merge_cmd, capture_output=True, timeout=600)
+                safe_run(merge_cmd, timeout=600)
                 findings.append({
                     "playbook": "PB-SIFT-016",
                     "module": "plaso",
@@ -1719,9 +1712,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "-o", "json",
                         str(tl_path),
                     ]
-                    psort_result = subprocess.run(
+                    psort_result = safe_run(
                         psort_cmd,
-                        capture_output=True, text=True, timeout=300
+                        timeout=300
                     )
 
                     if psort_result.returncode == 0 and psort_result.stdout:
@@ -1774,9 +1767,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 f"event_identifier IS {evt_filter}",
                                 "-o", "json",
                             ]
-                            targeted_result = subprocess.run(
+                            targeted_result = safe_run(
                                 targeted_cmd,
-                                capture_output=True, text=True, timeout=120
+                                timeout=120
                             )
                             if targeted_result.returncode == 0 and targeted_result.stdout:
                                 for line in targeted_result.stdout.strip().split("\n"):
