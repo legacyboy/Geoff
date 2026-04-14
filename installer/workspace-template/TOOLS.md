@@ -1,80 +1,44 @@
-# TOOLS.md - Geoff's Tool Notes
+# TOOLS.md - GEOFF Forensic Tools
 
-Skills define _how_ tools work. This file is for _Geoff's_ specifics.
+## SIFT Workstation Tools
 
-## Multi-Agent Models
+GEOFF runs on SANS SIFT Workstation. Available tools:
 
-### Local Models (via Ollama)
+### SleuthKit (sleuthkit_specialist)
+- `mmls` — partition table analysis
+- `fsstat` — filesystem statistics
+- `fls` — file listing
+- `icat` — file extraction by inode
+- `istat` — inode metadata
 
-| Alias | Model | Size | Role | Trigger |
-|-------|-------|------|------|---------|
-| `geoff` | gemma4:31b-cloud | 4GB | Main coordinator | Default |
-| `fastcoder` | qwen2.5-coder:7b | 4.7GB | Quick fixes | "quick", "fix" |
-| `critic` | qwen2.5-coder:14b | 9GB | Code review | "review", "audit" |
-| `architect` | gemma4:31b-cloud | 8GB | UI/Frontend | "UI", "design" |
-| `deepseek` | deepseek-coder:33b | 18GB | Complex dev | "build", "architecture" |
+### Volatility 3 (volatility_specialist)
+- `windows.pslist` — process listing
+- `windows.netscan` — network connections
+- `windows.cmdline` — command line arguments
+- `windows.registry.userassist` — program execution history
+- `windows.hashdump` — credential extraction
 
-### Cloud Models (via Ollama Cloud)
+### Plaso (plaso_specialist)
+- `log2timeline.py` — timeline creation
+- `psort` — timeline analysis and filtering
 
-| Alias | Model | Role |
-|-------|-------|------|
-| `deepseek-v3` | ollama/deepseek-v3.2:cloud | Complex reasoning, coding |
-| `gemma4` | ollama/gemma4:31b-cloud | General purpose, fast |
-| `qwen-large` | ollama/qwen2.5:32b:cloud | Large context tasks |
+### REMnux (remnux_specialist, if installed)
+- `die` — Detect It Easy static analysis
+- `peframe` — PE framework analysis
+- `pdfid`/`pdf-parser` — PDF analysis
+- `radare2` — binary disassembly
+- `floss` — string extraction from malware
 
-## Environment
+### Network Analysis
+- `tshark` — packet capture analysis
+- `zeek` — network security monitoring
 
-- **OS:** Ubuntu 24.04
-- **Node:** v22
-- **OpenClaw:** Installed via npm
-- **Ollama:** ~/.local/bin/ollama
-- **Port:** 11434
+### String Analysis
+- `strings` — ASCII/Unicode string extraction
 
-## Geoff-Specific Config
+## Model Profiles
 
-### Test Machine (192.168.1.94)
-- User: claw
-- SSH Key: ~/.ssh/id_ed25519
-- Geoff UI: http://localhost:8080
-- Gateway: ws://127.0.0.1:18789
-- Token: geoff-default
-
-### Model Routing
-
-```javascript
-// Auto-detect which agent to use
-function routeTask(task) {
-  const lower = task.toLowerCase();
-  
-  if (lower.includes('review') || lower.includes('audit'))
-    return 'critic';
-  if (lower.includes('ui') || lower.includes('design'))
-    return 'architect';
-  if (lower.includes('build') || lower.includes('architecture'))
-    return 'deepseek';
-  if (lower.includes('quick') || lower.includes('fix'))
-    return 'fastcoder';
-  
-  return 'geoff'; // Default
-}
-```
-
-## Evidence Storage
-
-Default evidence location: `~/.geoff/evidence/`
-
-Each upload gets:
-- Original file
-- Metadata JSON
-- Processing log
-- Hash verification
-
-## API Keys
-
-- Ollama (local): Not required
-- Ollama Cloud: Set via `OLLAMA_API_KEY`
-- Other services: Stored in `~/.openclaw/agents/main/agent/auth-profiles.json`
-
----
-
-Add tool-specific configurations here as needed.
+| Profile | Manager | Forensicator | Critic |
+|---------|---------|-------------|--------|
+| Cloud | deepseek-v3.2:cloud | qwen3-coder-next:cloud | qwen3.5:cloud |
+| Local | deepseek-r1:32b | qwen2.5-coder:14b | qwen2.5:14b |

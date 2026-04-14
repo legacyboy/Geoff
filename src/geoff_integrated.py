@@ -327,7 +327,7 @@ def call_llm(user_message, context="", agent_type="manager"):
                 "model": model,
                 "prompt": full_prompt,
                 "stream": False,
-                "options": {"temperature": 0.8}
+                "options": {"temperature": 0.3}
             },
             timeout=120
         )
@@ -919,9 +919,17 @@ def _detect_os(inventory: dict) -> str:
 
 
 def _scan_triage_indicators(inventory: dict) -> list:
-    """Scan file names for high-signal triage patterns (used for severity reporting)."""
+    """Scan file names AND content for high-signal triage patterns.
+    
+    Phase 1: Scan file names for indicator patterns.
+    Phase 2: For text-accessible evidence (logs, registry, small files),
+    scan actual content for high-value strings like ransom notes, C2 domains,
+    and anti-forensics artifacts.
+    """
     hits = []
     all_paths = inventory["other_files"] + inventory["disk_images"]
+    
+    # Phase 1: Filename-based scanning
     for category, patterns in TRIAGE_PATTERNS.items():
         for pattern in patterns:
             pl = pattern.lower()
@@ -930,6 +938,60 @@ def _scan_triage_indicators(inventory: dict) -> list:
                     hits.append({"category": category, "pattern": pattern, "file": fpath,
                                  "severity": SEVERITY_MAP.get(category, "MEDIUM")})
                     break  # one hit per pattern is enough
+    
+    # Phase 2: Content-based scanning for text-accessible evidence
+    # Read first 512KB of text-friendly files for keyword matching
+    content_keywords = {
+        "ransomware": ["your files have been encrypted", "decrypt", "ransom note", "pay bitcoin",
+                        "recover your files", ".locked", ".crypt", ".encrypt"],
+        "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "credential dumping",
+                             "sekurlsa", "kerberoast", "hashdump"],
+        "lateral_movement": ["psexec", "winexec", "wmi", "smbexec", "dcom",
+                             "pass-the-hash", "pass the hash"],
+        "anti_forensics": ["wevtutil cl", "event log cleared", "audit policy",
+                          "sdelete", "cipher /w", "timestomp", "clear-eventlog",
+                          "disable-realtime"],
+        "web_shell": ["c99shell", "r57shell", "b374k", "ws0", "<%execute", 
+                      "eval(request", "system($_", "cmd.exe"],
+        "initial_access": ["phishing", "exploit", "shellcode", "payload",
+                          "meterpreter", "reverse shell", "bind shell"],
+        "exfiltration": ["upload", "exfil", "data staging", "7z a ", "rar a ",
+                         "winrar", "7zip", "compress and upload"],
+    }
+    
+    # Files we can safely read content from (logs, registry, text)
+    text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
+                       ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
+                       ".ps1", ".vbs", ".js", ".html", ".php"}
+    max_read_bytes = 512 * 1024  # 512KB per file
+    
+    for fpath in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + \
+                inventory.get("other_files", []):
+        fpath_str = str(fpath)
+        ext = Path(fpath_str).suffix.lower()
+        if ext not in text_extensions:
+            continue
+        try:
+            file_size = Path(fpath_str).stat().st_size
+            if file_size > 5 * 1024 * 1024:  # Skip files > 5MB
+                continue
+            with open(fpath_str, "rb") as f:
+                content = f.read(max_read_bytes)
+            content_lower = content.lower().decode("utf-8", errors="ignore")
+            for category, keywords in content_keywords.items():
+                for kw in keywords:
+                    if kw.lower() in content_lower:
+                        hits.append({
+                            "category": category,
+                            "pattern": kw,
+                            "file": fpath_str,
+                            "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "source": "content_scan",
+                        })
+                        break  # one hit per keyword category per file
+        except (OSError, IOError, PermissionError):
+            continue  # can't read, skip silently
+    
     return hits
 
 
