@@ -1148,6 +1148,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
         })
 
+        # Git commit after each playbook
+        try:
+            # Write playbook findings to output dir
+            pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+            with open(pb_output, 'w') as f:
+                json.dump(pb_findings, f, default=str, indent=2)
+            git_commit_action(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+        except Exception as gce:
+            _fe_log(job_id, f"  git commit failed: {gce}")
+
     # ------------------------------------------------------------------
     # Phase 3b: Multi-Host Correlation
     # ------------------------------------------------------------------
@@ -1471,11 +1481,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     with open(report_path, 'w') as rf:
         json.dump(report, rf, indent=2, default=str)
 
-    # Git commit
+    # Git commit final report
     try:
-        subprocess.run(['git', 'add', '.'], cwd=case_work_dir, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', f'[FIND-EVIL] Report for {case_name}'],
-                       cwd=case_work_dir, capture_output=True)
+        git_commit_action(f"Find Evil complete: {case_name} | evil={evil_found} severity={severity}", base_path=str(case_work_dir))
     except Exception:
         pass
 
