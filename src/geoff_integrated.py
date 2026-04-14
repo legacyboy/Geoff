@@ -1536,6 +1536,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     steps_completed = 0
     steps_failed = 0
     steps_skipped = 0
+    CONTINUE_ON_FAILURE = os.environ.get("GEOFF_CONTINUE_ON_FAILURE", "true").lower() == "true"
 
     # Evidence type shorthand
     ev = {
