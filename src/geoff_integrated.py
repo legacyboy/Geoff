@@ -637,8 +637,8 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-001": {  # Malware Hunting
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
@@ -652,7 +652,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -676,7 +676,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
         ],
         "registry_hives": [
             ("registry", "parse_hive", {"hive_path": "{hive}"}),
@@ -688,7 +688,7 @@ PLAYBOOK_STEPS = {
             ("registry", "extract_services", {"system_path": "{hive}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -714,7 +714,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": 2048}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
     "PB-SIFT-008": {  # Initial Access
@@ -726,7 +726,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-009": {  # Insider Threat
@@ -748,8 +748,8 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -766,13 +766,13 @@ PLAYBOOK_STEPS = {
         ],
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-013": {  # macOS Forensics
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-014": {  # REMnux Malware Analysis
@@ -815,7 +815,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-019": {  # Full Correlation & Reporting
@@ -991,6 +991,41 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     _update_job(5, "inventory", "Complete", log_msg="Evidence inventory complete")
 
     # ------------------------------------------------------------------
+    # Phase 1b: Detect partition offsets for each disk image
+    # ------------------------------------------------------------------
+    image_offsets = {}  # image_path -> first filesystem partition offset
+    for img in inventory.get("disk_images", []):
+        try:
+            mmls_result = orchestrator.run_playbook_step("find-evil", {
+                "module": "sleuthkit",
+                "function": "analyze_partition_table",
+                "params": {"disk_image": img}
+            })
+            if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
+                # Find first NTFS/ext4/HFS+ partition
+                for part in mmls_result["partitions"]:
+                    desc = part.get("description", "").lower()
+                    start = part.get("start_sector", 0)
+                    if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
+                        image_offsets[img] = start
+                        _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start}")
+                        break
+                if img not in image_offsets and mmls_result["partitions"]:
+                    # Use first non-meta partition
+                    for part in mmls_result["partitions"]:
+                        start = part.get("start_sector", 0)
+                        if start > 0:
+                            image_offsets[img] = start
+                            _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (first partition)")
+                            break
+            if img not in image_offsets:
+                image_offsets[img] = 2048  # fallback to common default
+                _fe_log(job_id, f"Using default offset 2048 for {Path(img).name}")
+        except Exception as e:
+            image_offsets[img] = 2048
+            _fe_log(job_id, f"Partition detection failed for {Path(img).name}: {e}, using offset 2048")
+
+    # ------------------------------------------------------------------
     # Phase 2: Prepare Case Work Directory
     # ------------------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1085,6 +1120,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             v = v.replace("{file}", item)
                             v = v.replace("{output_dir}", output_dir)
                             v = v.replace("{image_stem}", item_stem)
+                            v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
                         params[k] = v
 
                     step_record = {
