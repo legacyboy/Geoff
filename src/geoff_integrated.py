@@ -5,6 +5,7 @@ Geoff DFIR - Integrated with SIFT Tool Specialists
 
 import os
 import json
+import re
 import sys
 import subprocess
 import tempfile
@@ -1208,31 +1209,60 @@ def _detect_os(inventory: dict) -> str:
     return "unknown"
 
 
+def _is_indicator_match(haystack: str, needle: str) -> bool:
+    """Match indicator patterns with word-boundary awareness.
+    
+    For patterns >= 5 chars: use word-boundary regex (\b).\n    For patterns < 5 chars: require exact word match (delimited by non-alphanumeric).\n    This prevents 'scp' matching inside 'descriptor', 'c99' matching C99 standard refs, etc.
+    """
+    needle_lower = needle.lower()
+    haystack_lower = haystack.lower()
+    
+    if len(needle_lower) >= 5:
+        # Word-boundary regex for longer patterns
+        try:
+            return bool(re.search(r'\b' + re.escape(needle_lower) + r'\b', haystack_lower))
+        except re.error:
+            return needle_lower in haystack_lower
+    else:
+        # Short patterns: require non-alphanumeric delimiter on both sides
+        # or match at start/end of string
+        pattern = re.escape(needle_lower)
+        try:
+            return bool(re.search(r'(?<![a-zA-Z0-9])' + pattern + r'(?![a-zA-Z0-9])', haystack_lower))
+        except re.error:
+            return False
+
+
 def _scan_triage_indicators(inventory: dict) -> list:
     """Scan for high-signal triage patterns using filenames AND content.
     
-    Phase 1: Scan file names for indicator patterns.
-    Phase 2: Run strings against evidence files for keyword hits.
+    Phase 1: Scan file names for indicator patterns (word-boundary matching).
+    Phase 2: Run strings against evidence files for keyword hits (word-boundary matching).
     Phase 3: For text-accessible evidence (logs, registry), scan directly.
+    
+    All hits include a 'confidence' field:
+      - 'POSSIBLE': string/filename match only, not yet playbook-confirmed
+      - 'CONFIRMED': would be set by playbook findings (not this function)
     """
     hits = []
     all_paths = inventory["other_files"] + inventory["disk_images"]
     
-    # Phase 1: Filename-based scanning
+    # Minimum pattern length for content scanning — shorter patterns are too noisy
+    MIN_PATTERN_LENGTH = 5
+    
+    # Phase 1: Filename-based scanning (word-boundary matching)
     for category, patterns in TRIAGE_PATTERNS.items():
         for pattern in patterns:
-            pl = pattern.lower()
+            if len(pattern) < MIN_PATTERN_LENGTH:
+                continue  # Skip short patterns for content scanning
             for fpath in all_paths:
-                if pl in fpath.lower():
+                if _is_indicator_match(fpath, pattern):
                     hits.append({"category": category, "pattern": pattern, "file": fpath,
-                                 "severity": SEVERITY_MAP.get(category, "MEDIUM")})
+                                 "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                                 "confidence": "POSSIBLE", "source": "filename_scan"})
                     break  # one hit per pattern is enough
     
     # Phase 2: Run strings against disk images and memory dumps
-    # This is what actually finds things like mimikatz in a .vmem file
-    # Use TRIAGE_PATTERNS for both filename and content scanning (unified)
-    
-    # Run strings on binary evidence (disk images, memory dumps, large files)
     # Skip files >2GB for triage — the malware hunting playbook runs strings properly
     MAX_TRIAGE_STRINGS_SIZE = 2 * 1024**3  # 2GB
     binary_evidence = inventory.get("disk_images", []) + inventory.get("memory_dumps", [])
@@ -1251,12 +1281,15 @@ def _scan_triage_indicators(inventory: dict) -> list:
             content_lower = result["stdout"].lower()
             for category, keywords in TRIAGE_PATTERNS.items():
                 for kw in keywords:
-                    if kw.lower() in content_lower:
+                    if len(kw) < MIN_PATTERN_LENGTH:
+                        continue  # Skip short patterns
+                    if _is_indicator_match(content_lower, kw):
                         hits.append({
                             "category": category,
                             "pattern": kw,
                             "file": str(fpath),
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "confidence": "POSSIBLE",
                             "source": "strings_scan",
                         })
                         break  # one hit per category per file
@@ -1284,12 +1317,15 @@ def _scan_triage_indicators(inventory: dict) -> list:
             content_lower = content.lower().decode("utf-8", errors="ignore")
             for category, keywords in TRIAGE_PATTERNS.items():
                 for kw in keywords:
-                    if kw.lower() in content_lower:
+                    if len(kw) < MIN_PATTERN_LENGTH:
+                        continue
+                    if _is_indicator_match(content_lower, kw):
                         hits.append({
                             "category": category,
                             "pattern": kw,
                             "file": fpath_str,
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "confidence": "POSSIBLE",
                             "source": "content_scan",
                         })
                         break  # one hit per category per file
@@ -1414,11 +1450,35 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Create evidence separation directories
     (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
     (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
+    
+    # Symlink source evidence into evidence/raw/ for chain of custody
+    for evidence_file in inventory.get("disk_images", []) + inventory.get("memory_dumps", []) + \
+                        inventory.get("pcaps", []) + inventory.get("evtx_logs", []) + \
+                        inventory.get("syslogs", []) + inventory.get("registry_hives", []):
+        src = Path(evidence_file)
+        dst = case_work_dir / "evidence" / "raw" / src.name
+        if not dst.exists():
+            try:
+                dst.symlink_to(src)
+                _fe_log(job_id, f"Linked evidence: {src.name}")
+            except OSError:
+                try:
+                    import shutil
+                    shutil.copy2(str(src), str(dst))
+                    _fe_log(job_id, f"Copied evidence: {src.name}")
+                except OSError as e:
+                    _fe_log(job_id, f"Could not link/copy {src.name}: {e}")
     if case_work_dir != Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}":
         print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
 
     for subdir in ("output", "reports", "validations", "timeline"):
         (case_work_dir / subdir).mkdir(exist_ok=True)
+    # Link derived artifacts into evidence/derived/
+    try:
+        (case_work_dir / "evidence" / "derived" / "output").symlink_to(case_work_dir / "output")
+        (case_work_dir / "evidence" / "derived" / "timeline").symlink_to(case_work_dir / "timeline")
+    except (OSError, FileExistsError):
+        pass
 
     # Init git
     try:
@@ -1426,6 +1486,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, timeout=10)
         safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, timeout=10)
         safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
+        # Write .gitignore for case directory
+        with open(case_work_dir / '.gitignore', 'w') as f:
+            f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n')
+        safe_git_commit('Initial case setup', base_path=str(case_work_dir))
     except Exception as e:
         _log_error(f"git init case_work_dir {case_work_dir}", e)
 
@@ -1890,6 +1954,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             )
                             step_record["critic"] = critic_val
                             critic_results.append(critic_val)
+                            # Write validation to case validations/ directory
+                            try:
+                                val_dir = case_work_dir / "validations"
+                                val_dir.mkdir(exist_ok=True)
+                                val_file = val_dir / f"{step_key.replace(':', '_')}.json"
+                                _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
+                            except Exception:
+                                pass  # Non-critical
                         except Exception as ce:
                             _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
                             step_record["critic_error"] = str(ce)
@@ -2193,12 +2265,20 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
     evil_found = False
 
-    # From triage indicators
+    # From triage indicators — only POSSIBLE confidence from string/filename hits
+    # evil_found requires CONFIRMED findings or multiple distinct-category POSSIBLE hits
+    possible_categories = set()
     for hit in indicator_hits:
         sev = hit["severity"]
+        confidence = hit.get("confidence", "POSSIBLE")
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
-        if sev in ("CRITICAL", "HIGH"):
+        if confidence == "CONFIRMED":
             evil_found = True
+        elif confidence == "POSSIBLE":
+            possible_categories.add(hit["category"])
+    # Require 2+ distinct POSSIBLE categories to flag evil
+    if not evil_found and len(possible_categories) >= 2:
+        evil_found = True
 
     # From specialist results
     for f in findings:
