@@ -11,11 +11,20 @@ import tempfile
 import threading
 import time
 import uuid
+import traceback
+import hashlib
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+
+# STRICT_MODE - when True, re-raise exceptions after logging; when False (default), log and continue
+STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
+
+# Threading locks
+_log_lock = threading.Lock()
+_state_lock = threading.Lock()
 
 import requests
 from datetime import datetime
@@ -30,6 +39,120 @@ from sift_specialists_extended import ExtendedOrchestrator
 from sift_specialists_remnux import REMNUX_Orchestrator
 from geoff_critic import GeoffCritic, ValidationPipeline
 from geoff_forensicator import ForensicatorAgent
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
+
+def _hash_file(path):
+    """Compute SHA-256 hash of a file."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(8192):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, IOError):
+        return "hash_unavailable"
+
+
+def _atomic_write(path, data, mode='w'):
+    """Atomically write data to path using temp file + replace."""
+    tmp = str(path) + '.tmp'
+    with open(tmp, mode) as f:
+        f.write(data)
+    os.replace(tmp, str(path))
+
+
+def safe_run(cmd, timeout=300, **kwargs):
+    """Wrapper for subprocess.run with default timeout and exception handling."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as e:
+        print(f"[GEOFF] Command timed out after {timeout}s: {' '.join(cmd[:5])}...")
+        return e
+    except Exception as e:
+        print(f"[GEOFF] Command failed: {' '.join(cmd[:5])}... Error: {e}")
+        return e
+
+
+def safe_git_commit(message: str, base_path: str = None):
+    """Safe git commit wrapper that checks repo state, runs add, and handles 'nothing to commit'."""
+    if base_path is None:
+        base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
+    
+    if not os.path.isdir(base_path):
+        print(f"[GEOFF] git commit: not a directory: {base_path}")
+        return None
+    
+    # Check if we're in a git repo
+    result = subprocess.run(['git', 'rev-parse', '--is-inside-work-tree'], 
+                           cwd=base_path, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[GEOFF] git commit: not a git repo: {base_path}")
+        return None
+    
+    # Run git add -A
+    add_result = subprocess.run(['git', 'add', '-A'], cwd=base_path, capture_output=True, text=True)
+    if add_result.returncode != 0:
+        print(f"[GEOFF] git add failed: {add_result.stderr[:200]}")
+        return None
+    
+    # Run git commit
+    commit_result = subprocess.run(['git', 'commit', '-m', message], 
+                                  cwd=base_path, capture_output=True, text=True)
+    
+    if commit_result.returncode == 0:
+        # Extract commit hash
+        hash_result = subprocess.run(['git', 'rev-parse', 'HEAD'], 
+                                    cwd=base_path, capture_output=True, text=True)
+        if hash_result.returncode == 0:
+            commit_hash = hash_result.stdout.strip()
+            print(f"[GIT] Committed: {message} (hash: {commit_hash})")
+            return commit_hash
+        return None
+    elif "nothing to commit" in commit_result.stderr.lower():
+        # Nothing to commit - this is not an error
+        print(f"[GIT] No changes to commit")
+        return None
+    else:
+        print(f"[GEOFF] git commit failed: {commit_result.stderr[:500]}")
+        return None
+
+
+def _fe_log(job_id: str, msg: str):
+    """Append a timestamped log entry to a Find Evil job."""
+    if job_id is None:
+        return
+    with _state_lock:
+        if job_id in _find_evil_jobs:
+            ts = datetime.now().strftime("%H:%M:%S")
+            _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": msg})
+
+
+def _fe_log_with_exception(job_id: str, msg: str, e: Exception = None):
+    """Log an exception with context for Find Evil jobs."""
+    if e:
+        log_msg = f"{msg} Error: {e}"
+        log_msg += f"\nTraceback: {traceback.format_exc()[:500]}"
+    else:
+        log_msg = msg
+    _fe_log(job_id, log_msg)
+
+
+def _log_error(msg: str, e: Exception = None, job_id: str = None):
+    """Generic error logger - uses _fe_log for job contexts, print for others."""
+    if e:
+        log_msg = f"{msg} Error: {e}"
+        if job_id:
+            log_msg += f"\nTraceback: {traceback.format_exc()[:500]}"
+    else:
+        log_msg = msg
+    if job_id:
+        _fe_log(job_id, log_msg)
+    else:
+        print(f"[GEOFF] error: {log_msg}")
+
 
 # ---------------------------------------------------------------------------
 # JSON Schema Enforcement for Investigation State
@@ -102,25 +225,15 @@ CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
 # ---------------------------------------------------------------------------
 
 def git_commit_action(message: str, base_path: str = None):
-    """Git commit for audit trail"""
+    """Git commit for audit trail - now uses safe_git_commit wrapper."""
     if base_path is None:
         base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
 
     if not os.path.isdir(base_path):
         return
 
-    try:
-        subprocess.run(['git', 'config', 'user.email'], cwd=base_path, capture_output=True, check=True)
-    except Exception:
-        subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=base_path, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=base_path, capture_output=True)
-
-    try:
-        subprocess.run(['git', 'add', '.'], cwd=base_path, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', f"[GEOFF-ACTION] {message}"], cwd=base_path, capture_output=True)
-        print(f"[GIT] Committed: {message}")
-    except Exception:
-        pass
+    # Use safe_git_commit function
+    safe_git_commit(message, base_path)
 
 
 class ActionLogger:
@@ -132,7 +245,8 @@ class ActionLogger:
         self.log_dir = Path(log_dir)
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception as e:
+            _log_error("ActionLogger init mkdir", e)
             self.log_dir = Path(tempfile.gettempdir()) / 'geoff-logs'
             self.log_dir.mkdir(exist_ok=True)
 
@@ -146,8 +260,18 @@ class ActionLogger:
             'details': details
         }
 
-        with open(self.action_log, 'a') as f:
-            f.write(json.dumps(entry) + '\n')
+        # Atomic write for action log
+        try:
+            log_content = json.dumps(entry) + '\n'
+            _atomic_write(self.action_log, log_content, 'a')
+        except Exception as e:
+            _log_error(f"ActionLogger log write {self.action_log}", e)
+            # Fallback to regular write
+            try:
+                with open(self.action_log, 'a') as f:
+                    f.write(log_content)
+            except Exception as e2:
+                _log_error(f"ActionLogger fallback log write", e2)
 
         if commit:
             git_commit_action(f"{action_type}: {details.get('description', 'action')}")
@@ -336,7 +460,9 @@ def call_llm(user_message, context="", agent_type="manager"):
         else:
             return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
     except Exception as e:
-        print(f"LLM Error: {e}")
+        print(f"[GEOFF] LLM Error: {e}")
+        if STRICT_MODE:
+            raise
         return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
 
@@ -540,8 +666,8 @@ def get_evidence_recursive(path, prefix=""):
             else:
                 size = os.path.getsize(item_path)
                 items.append(f"{display_name} ({size} bytes)")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[GEOFF] Error reading evidence directory: {e}")
     return items
 
 
@@ -1089,11 +1215,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             _fe_log(job_id, log_msg)
         elif current_step:
             _fe_log(job_id, f"{current_pb} > {current_step}")
-        with _find_evil_lock:
-            _find_evil_jobs[job_id]["progress_pct"] = round(progress_pct, 1)
-            _find_evil_jobs[job_id]["current_playbook"] = current_pb
-            _find_evil_jobs[job_id]["current_step"] = current_step
-            _find_evil_jobs[job_id]["elapsed_seconds"] = round(time.time() - start_time, 1)
+        with _state_lock:
+            if job_id in _find_evil_jobs:
+                _find_evil_jobs[job_id]["progress_pct"] = round(progress_pct, 1)
+                _find_evil_jobs[job_id]["current_playbook"] = current_pb
+                _find_evil_jobs[job_id]["current_step"] = current_step
+                _find_evil_jobs[job_id]["elapsed_seconds"] = round(time.time() - start_time, 1)
 
     # ------------------------------------------------------------------
     # Phase 1: Evidence Inventory
@@ -1158,8 +1285,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         subprocess.run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, capture_output=True)
         subprocess.run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, capture_output=True)
         subprocess.run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, capture_output=True)
-    except Exception:
-        pass
+    except Exception as e:
+        _log_error(f"git init case_work_dir {case_work_dir}", e)
 
     _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
 
@@ -1221,6 +1348,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     result = _run_step_via_orchestrator(module, function, params)
                     triage_findings.append({"module": module, "function": function, "result": result, "status": result.get("status", "error")})
                 except Exception as e:
+                    _fe_log_with_exception(job_id, f"  ✗ {module}.{function} triage error", e)
                     triage_findings.append({"module": module, "function": function, "error": str(e), "status": "failed"})
 
     # --- Build execution plan from triage results ---
@@ -1354,8 +1482,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Write execution plan to case directory
     try:
-        with open(case_work_dir / "execution_plan.json", 'w') as f:
-            json.dump(execution_plan_output, f, indent=2, default=str)
+        plan_content = json.dumps(execution_plan_output, indent=2, default=str)
+        _atomic_write(case_work_dir / "execution_plan.json", plan_content)
         git_commit_action("PB-SIFT-000: Triage execution plan emitted", base_path=str(case_work_dir))
     except Exception as e:
         _fe_log(job_id, f"Failed to write execution plan: {e}")
@@ -1459,8 +1587,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             step_record["critic"] = critic_val
                             critic_results.append(critic_val)
                         except Exception as ce:
+                            _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
                             step_record["critic_error"] = str(ce)
                     except Exception as e:
+                        _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
                         step_record["status"] = "failed"
                         step_record["error"] = str(e)
                         steps_failed += 1
@@ -1669,8 +1799,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                                 "event": event.get("message", "")[:200],
                                                 "timestamp": event.get("datetime", ""),
                                             })
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _log_error(f"User activity event parsing", e)
 
                 except Exception as e:
                     findings.append({
@@ -1829,14 +1959,17 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Write report
     report_path = case_work_dir / "reports" / "find_evil_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(report_path, 'w') as rf:
-        json.dump(report, rf, indent=2, default=str)
+    try:
+        report_content = json.dumps(report, indent=2, default=str)
+        _atomic_write(report_path, report_content)
+    except Exception as e:
+        _fe_log(job_id, f"Failed to write final report: {e}")
 
     # Git commit final report
     try:
         git_commit_action(f"Find Evil complete: {case_name} | evil={evil_found} severity={severity}", base_path=str(case_work_dir))
-    except Exception:
-        pass
+    except Exception as e:
+        _fe_log(job_id, f"git commit final report failed: {e}")
 
     # Log
     action_logger.log('FIND_EVIL', {
@@ -2789,7 +2922,7 @@ def chat():
 
         return jsonify(result)
     except Exception as e:
-        action_logger.log('ERROR', {'error': str(e), 'user_message': user_msg})
+        _log_error(f"chat route error: {user_msg}", e)
         return jsonify({'response': f'Error: {str(e)}'})
 
 
@@ -2833,12 +2966,7 @@ def run_tool():
 
         return jsonify(result)
     except Exception as e:
-        action_logger.log('TOOL_API_ERROR', {
-            'module': module,
-            'function': function,
-            'error': str(e),
-            'description': f"API {module}.{function} failed"
-        })
+        _log_error(f"API {module}.{function} failed", e)
         return jsonify({'status': 'error', 'error': str(e)})
 
 
@@ -2925,7 +3053,7 @@ def find_evil_route():
         # Create a job ID and register it
         job_id = f"fe-{uuid.uuid4().hex[:12]}"
 
-        with _find_evil_lock:
+        with _state_lock:
             _find_evil_jobs[job_id] = {
                 "status": "running",
                 "progress_pct": 0.0,
@@ -2942,11 +3070,12 @@ def find_evil_route():
         def _run():
             try:
                 report = find_evil(evidence_dir, job_id=job_id)
-                with _find_evil_lock:
+                with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "complete"
                     _find_evil_jobs[job_id]["result"] = report
             except Exception as e:
-                with _find_evil_lock:
+                _fe_log_with_exception(job_id, "Find Evil job failed", e)
+                with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "error"
                     _find_evil_jobs[job_id]["error"] = str(e)
 
@@ -2977,7 +3106,7 @@ def find_evil_status(job_id):
     GET /find-evil/status/<job_id>
     Returns current progress of a Find Evil job.
     """
-    with _find_evil_lock:
+    with _state_lock:
         job = _find_evil_jobs.get(job_id)
 
     if job is None:
