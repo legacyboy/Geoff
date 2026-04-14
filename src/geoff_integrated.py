@@ -570,7 +570,7 @@ def get_available_tools_status():
 # ---------------------------------------------------------------------------
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
-ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + ["PB-SIFT-016", "PB-SIFT-017", "PB-SIFT-018"]
+ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 20)]
 # PB-SIFT-015 is skipped in the original; keep 19 IDs but the orchestrator
 # may not have 011 implemented. We still attempt it.
 
@@ -593,7 +593,8 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-015": "Data Staging",
     "PB-SIFT-016": "Cross-Image Correlation",
     "PB-SIFT-017": "REMnux Malware Analysis",
-    "PB-SIFT-018": "Malware Analysis"
+    "PB-SIFT-018": "Malware Analysis",
+    "PB-SIFT-019": "Command & Control",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -616,6 +617,8 @@ TRIAGE_PATTERNS = {
                   "shell=", "eval(", "base64_decode", "webshell"],
     "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
                "wmic", "msbuild", "installutil", "msiexec"],
+    "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
+            "cobaltstrike", "teamserver", "metasploit"],
 }
 
 SEVERITY_MAP = {
@@ -627,6 +630,7 @@ SEVERITY_MAP = {
     "anti_forensics": "HIGH",
     "web_shell": "HIGH",
     "lolbin": "MEDIUM",
+    "c2": "CRITICAL",
 }
 
 # Map each playbook to its specialist steps.
@@ -847,6 +851,23 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
         ],
     },
+    "PB-SIFT-019": {  # Command & Control
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+    },
 }
 
 
@@ -919,12 +940,11 @@ def _detect_os(inventory: dict) -> str:
 
 
 def _scan_triage_indicators(inventory: dict) -> list:
-    """Scan file names AND content for high-signal triage patterns.
+    """Scan for high-signal triage patterns using filenames AND content.
     
     Phase 1: Scan file names for indicator patterns.
-    Phase 2: For text-accessible evidence (logs, registry, small files),
-    scan actual content for high-value strings like ransom notes, C2 domains,
-    and anti-forensics artifacts.
+    Phase 2: Run strings against evidence files for keyword hits.
+    Phase 3: For text-accessible evidence (logs, registry), scan directly.
     """
     hits = []
     all_paths = inventory["other_files"] + inventory["disk_images"]
@@ -939,27 +959,51 @@ def _scan_triage_indicators(inventory: dict) -> list:
                                  "severity": SEVERITY_MAP.get(category, "MEDIUM")})
                     break  # one hit per pattern is enough
     
-    # Phase 2: Content-based scanning for text-accessible evidence
-    # Read first 512KB of text-friendly files for keyword matching
-    content_keywords = {
+    # Phase 2: Run strings against disk images and memory dumps
+    # This is what actually finds things like mimikatz in a .vmem file
+    string_keywords = {
         "ransomware": ["your files have been encrypted", "decrypt", "ransom note", "pay bitcoin",
-                        "recover your files", ".locked", ".crypt", ".encrypt"],
-        "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "credential dumping",
-                             "sekurlsa", "kerberoast", "hashdump"],
-        "lateral_movement": ["psexec", "winexec", "wmi", "smbexec", "dcom",
-                             "pass-the-hash", "pass the hash"],
-        "anti_forensics": ["wevtutil cl", "event log cleared", "audit policy",
-                          "sdelete", "cipher /w", "timestomp", "clear-eventlog",
-                          "disable-realtime"],
-        "web_shell": ["c99shell", "r57shell", "b374k", "ws0", "<%execute", 
-                      "eval(request", "system($_", "cmd.exe"],
-        "initial_access": ["phishing", "exploit", "shellcode", "payload",
-                          "meterpreter", "reverse shell", "bind shell"],
-        "exfiltration": ["upload", "exfil", "data staging", "7z a ", "rar a ",
-                         "winrar", "7zip", "compress and upload"],
+                        "recover your files"],
+        "credential_theft": ["mimikatz", "lsass", "sekurlsa", "kerberoast", "hashdump",
+                             "procdump"],
+        "lateral_movement": ["psexec", "smbexec", "wmiexec", "dcom", "winexec"],
+        "anti_forensics": ["wevtutil cl", "clear-eventlog", "sdelete", "cipher /w",
+                          "timestomp", "disable-realtime", "auditpol"],
+        "web_shell": ["c99shell", "r57shell", "b374k", "eval(request", "system($_",
+                      "cmd.exe"],
+        "initial_access": ["shellcode", "meterpreter", "reverse shell", "bind shell",
+                          "exploit"],
+        "exfiltration": ["7z a ", "rar a ", "winrar", "upload to"],
+        "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
+                "cobaltstrike"],
     }
     
-    # Files we can safely read content from (logs, registry, text)
+    # Run strings on binary evidence (disk images, memory dumps, large files)
+    binary_evidence = inventory.get("disk_images", []) + inventory.get("memory_dumps", [])
+    for fpath in binary_evidence:
+        try:
+            result = subprocess.run(
+                ["strings", "-n", "8", str(fpath)],
+                capture_output=True, timeout=120, text=True
+            )
+            if result.returncode != 0:
+                continue
+            content_lower = result.stdout[:500000].lower()  # Limit to 500KB of strings output
+            for category, keywords in string_keywords.items():
+                for kw in keywords:
+                    if kw.lower() in content_lower:
+                        hits.append({
+                            "category": category,
+                            "pattern": kw,
+                            "file": str(fpath),
+                            "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "source": "strings_scan",
+                        })
+                        break  # one hit per category per file
+        except (subprocess.TimeoutExpired, OSError, IOError):
+            continue
+    
+    # Phase 3: Direct content scan for text-accessible evidence
     text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
                        ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
                        ".ps1", ".vbs", ".js", ".html", ".php"}
@@ -978,7 +1022,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
             with open(fpath_str, "rb") as f:
                 content = f.read(max_read_bytes)
             content_lower = content.lower().decode("utf-8", errors="ignore")
-            for category, keywords in content_keywords.items():
+            for category, keywords in string_keywords.items():
                 for kw in keywords:
                     if kw.lower() in content_lower:
                         hits.append({
@@ -988,7 +1032,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "source": "content_scan",
                         })
-                        break  # one hit per keyword category per file
+                        break  # one hit per category per file
         except (OSError, IOError, PermissionError):
             continue  # can't read, skip silently
     
@@ -1264,8 +1308,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Classification based on indicator hits
     classification = "Unknown"
     severity = "MEDIUM"
+    # C2 detection always runs PB-SIFT-019
+    if indicator_hits.get("c2") or any("c2" in str(h.get("category", "")) for h in indicator_hits):
+        if "PB-SIFT-019" not in execution_plan:
+            execution_plan.append("PB-SIFT-019")
+
     if indicator_hits.get("ransomware"):
         classification = "Ransomware"
+        severity = "CRITICAL"
+    elif indicator_hits.get("c2"):
+        classification = "Command & Control"
         severity = "CRITICAL"
     elif indicator_hits.get("credential_theft"):
         classification = "Credential Theft"

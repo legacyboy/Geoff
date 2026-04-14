@@ -30,9 +30,9 @@ Playbooks are numbered following the MITRE ATT&CK kill chain order.
 | **PB-SIFT-017** | REMnux Malware Analysis | Static malware analysis using REMnux tools (die, peframe, pdfid, radare2, etc.). Only runs if suspicious binary surfaced. | ✅ Active |
 | **PB-SIFT-018** | Malware Analysis SOP | Systematic malware analysis covering entry vector, static/dynamic analysis, and reporting. Only runs if suspicious binary surfaced. | ✅ Active |
 
----
+| **PB-SIFT-019** | Command & Control | C2 infrastructure, beaconing, DNS tunneling, and persistent C2 channels. Runs when C2 indicators found in triage. | ✅ Active |
 
-## 🚀 Usage Instructions
+---
 When starting a new case, Geoff must:
 1. **Always run PB-SIFT-000 first.** No exceptions.
 2. PB-SIFT-000 emits a JSON execution plan specifying which playbooks to run and in what order.
@@ -40,5 +40,6 @@ When starting a new case, Geoff must:
 4. Do not run any playbook not in the execution plan.
 5. PB-SIFT-016 must always be the last entry if more than one host is in scope.
 6. PB-SIFT-017 and PB-SIFT-018 are only included if a suspicious binary is surfaced during triage.
+7. PB-SIFT-019 is included when C2 indicators are found during triage.
 
 **Location:** `/opt/geoff/playbooks/`
