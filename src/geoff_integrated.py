@@ -1081,6 +1081,8 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         # Hash evidence files for chain of custody
         file_hash = _hash_file(str(item))
         inventory["file_hashes"][str(item)] = file_hash
+        if file_hash == "hash_failed":
+            inventory["integrity_failures"] = inventory.get("integrity_failures", []) + [str(item)]
 
         ext = item.suffix.lower()
         name_lower = item.name.lower()
@@ -1608,8 +1610,34 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "started_at": datetime.now().isoformat(),
                     }
 
+                    # Idempotent step key — prevent duplicate runs
+                    step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+                    if step_key in executed_steps:
+                        _fe_log(job_id, f"  \u2398 {module}.{function} already executed for {Path(item).name}")
+                        continue
+
                     try:
                         result = _run_step_via_orchestrator(module, function, params)
+                        
+                        # Check for safe_run timeout indicators in result
+                        if isinstance(result, dict) and result.get("code") is not None:
+                            if result["code"] == -1:
+                                step_record["status"] = "failed"
+                                step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                                steps_failed += 1
+                                _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 timeout")
+                                findings.append(step_record)
+                                pb_findings.append(step_record)
+                                continue
+                            elif result["code"] < 0:
+                                step_record["status"] = "failed"
+                                step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                                steps_failed += 1
+                                _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 execution error")
+                                findings.append(step_record)
+                                pb_findings.append(step_record)
+                                continue
+                        
                         step_status = result.get("status", "error")
                         # If the tool was missing, skip (not a failure)
                         if step_status == "error" and "not found" in str(result.get("error", "")).lower():
@@ -1622,6 +1650,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             step_record["result"] = result
                             steps_completed += 1
                             any_step_ran = True
+                            executed_steps.add(step_key)  # Mark complete only on success
                             _fe_log(job_id, f"  \u2713 {module}.{function} \u2192 OK")
                         else:
                             step_record["status"] = "failed"
