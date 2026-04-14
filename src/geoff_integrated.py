@@ -346,6 +346,14 @@ class ActionLogger:
             log_content = json.dumps(entry) + '\n'
             with _log_lock:
                 _atomic_append(self.action_log, log_content)
+                # Log rotation: if file > 10MB, rotate
+                try:
+                    if os.path.exists(self.action_log) and os.path.getsize(self.action_log) > 10 * 1024 * 1024:
+                        rotated = f"{self.action_log}.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        os.rename(self.action_log, rotated)
+                        _log_info(f"Log rotated: {rotated}")
+                except Exception:
+                    pass  # Non-critical
         except Exception as e:
             _log_error(f"ActionLogger log write {self.action_log}", e)
             # Fallback to regular write
@@ -448,6 +456,67 @@ geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
 # ---------------------------------------------------------------------------
 
 _find_evil_jobs = {}  # job_id -> {status, progress, result, started_at, log, ...}
+
+
+
+def _sanitize_tool_output(output: str) -> str:
+    """Sanitize tool output to prevent JSON injection and control character issues."""
+    if not isinstance(output, str):
+        return str(output)
+    # Remove null bytes
+    output = output.replace("\x00", "")
+    # Remove other control characters except newline/tab
+    output = "".join(c for c in output if c in "\n\t" or (ord(c) >= 32 and ord(c) < 127) or ord(c) >= 128)
+    return output
+
+
+
+import signal
+
+class _StepTimeout(Exception):
+    """Raised when a step exceeds its watchdog timeout."""
+    pass
+
+def _run_step_with_watchdog(func, args, step_timeout=600):
+    """Run a step function with a watchdog timer. Raises _StepTimeout if exceeded."""
+    if not hasattr(signal, 'SIGALRM'):
+        # Windows or environments without SIGALRM — just run without watchdog
+        return func(*args)
+    
+    def _handler(signum, frame):
+        raise _StepTimeout(f"Step watchdog exceeded {step_timeout}s")
+    
+    old_handler = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(step_timeout)
+    try:
+        result = func(*args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+    return result
+
+
+
+MAX_STATE_FIELD_SIZE = 100 * 1024  # 100KB max for any single field in state
+
+def _compact_step_result(result: dict, case_work_dir: Path) -> dict:
+    """If any field in result exceeds MAX_STATE_FIELD_SIZE, spill to file and store reference."""
+    if not isinstance(result, dict):
+        return result
+    compacted = {}
+    for key, value in result.items():
+        val_str = json.dumps(value, default=str) if not isinstance(value, str) else value
+        if len(val_str) > MAX_STATE_FIELD_SIZE:
+            # Spill to file
+            spill_dir = case_work_dir / "spill"
+            spill_dir.mkdir(parents=True, exist_ok=True)
+            spill_path = spill_dir / f"{uuid.uuid4().hex[:8]}_{key}.json"
+            _atomic_write(spill_path, val_str)
+            compacted[key] = f"SPILLED:{spill_path}"
+            compacted[f"{key}_spill_hash"] = _hash_file(str(spill_path))
+        else:
+            compacted[key] = value
+    return compacted
 
 def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict:
     """Route a step to the correct orchestrator based on module prefix.
@@ -1255,6 +1324,42 @@ def _tool_available(module: str, function: str) -> bool:
     return True
 
 
+
+
+def _detect_dependency_cycles(playbook_steps: list) -> list:
+    """DFS cycle detection for step dependency graphs. Returns list of cycles found."""
+    # Build adjacency list from requires fields
+    adj = {}
+    step_ids = {}
+    for i, step in enumerate(playbook_steps):
+        step_id = f"{step.get('module', '?')}.{step.get('function', '?')}"
+        step_ids[step_id] = i
+        adj[step_id] = step.get("requires", [])
+    
+    cycles = []
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {sid: WHITE for sid in adj}
+    
+    def dfs(node, path):
+        color[node] = GRAY
+        path.append(node)
+        for dep in adj.get(node, []):
+            if dep in color:
+                if color[dep] == GRAY:
+                    # Found cycle
+                    cycle_start = path.index(dep)
+                    cycles.append(path[cycle_start:] + [dep])
+                elif color[dep] == WHITE:
+                    dfs(dep, path)
+        path.pop()
+        color[node] = BLACK
+    
+    for sid in adj:
+        if color[sid] == WHITE:
+            dfs(sid, [])
+    
+    return cycles
+
 def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     """
     Find Evil: Point at an evidence directory, run ALL 19 playbooks, find evil.
@@ -1352,6 +1457,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     except (PermissionError, OSError):
         case_work_dir = Path(tempfile.gettempdir()) / "geoff-cases" / f"{case_name}_findevil_{timestamp}"
         case_work_dir.mkdir(parents=True, exist_ok=True)
+    # Create evidence separation directories
+    (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
+    (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
+    if case_work_dir != Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}":
         print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
 
     for subdir in ("output", "reports", "validations", "timeline"):
@@ -1866,6 +1975,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         try:
             # Write playbook findings to output dir
             pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+            # Compact large step results before writing
+            for step in pb_findings:
+                if isinstance(step.get("result"), dict):
+                    step["result"] = _compact_step_result(step["result"], case_work_dir)
             _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
             git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
             if git_result["status"] == "failed":
