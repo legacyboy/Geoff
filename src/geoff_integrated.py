@@ -1670,6 +1670,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Classification based on indicator hits (indicator_hits is a list of dicts)
     hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
+    classification = "Unknown"
+    severity = "MEDIUM"
     
     # C2 detection always runs PB-SIFT-019
     if "c2" in hit_categories or "command" in hit_categories:
