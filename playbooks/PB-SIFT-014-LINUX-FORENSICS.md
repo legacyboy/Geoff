@@ -1,4 +1,4 @@
-# PB-SIFT-012: Linux Forensic Indicators Playbook
+# PB-SIFT-014: Linux Forensic Indicators Playbook
 ## Linux Forensic Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of compromise indicators within a Linux-based digital forensic image using the SIFT Workstation toolset.

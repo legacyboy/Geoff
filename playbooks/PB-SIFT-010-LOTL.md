@@ -1,4 +1,4 @@
-# PB-SIFT-007: Living-off-the-Land (LOTL) Indicators Playbook
+# TEMP_TEMP_PB-SIFT-014: Living-off-the-Land (LOTL) Indicators Playbook
 ## Living-off-the-Land (LOTL) Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of "Living-off-the-Land" (LotL) techniques, where attackers use legitimate, pre-installed system binaries (LOLBins) to conduct malicious activity while avoiding detection by traditional antivirus/EDR.

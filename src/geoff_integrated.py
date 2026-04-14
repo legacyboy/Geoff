@@ -566,34 +566,34 @@ def get_available_tools_status():
 
 
 # ---------------------------------------------------------------------------
-# Find Evil — Run ALL 19 Playbooks (PB-SIFT-001 through PB-SIFT-019)
+# Find Evil — Run ALL 19 Playbooks (PB-SIFT-008 through PB-SIFT-018)
 # ---------------------------------------------------------------------------
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
-ALL_PLAYBOOKS = ["PB-SIFT-016"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + ["PB-SIFT-017", "PB-SIFT-018", "PB-SIFT-019"]
-# PB-SIFT-011 is skipped in the original; keep 19 IDs but the orchestrator
+ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + ["PB-SIFT-016", "PB-SIFT-017", "PB-SIFT-018"]
+# TEMP_PB-SIFT-015 is skipped in the original; keep 19 IDs but the orchestrator
 # may not have 011 implemented. We still attempt it.
 
 PLAYBOOK_NAMES = {
-    "PB-SIFT-001": "Malware Hunting",
-    "PB-SIFT-002": "Ransomware",
-    "PB-SIFT-003": "Lateral Movement",
-    "PB-SIFT-004": "Credential Theft",
-    "PB-SIFT-005": "Persistence",
-    "PB-SIFT-006": "Exfiltration",
-    "PB-SIFT-007": "Living-off-the-Land",
-    "PB-SIFT-008": "Initial Access",
-    "PB-SIFT-009": "Web Shell",
-    "PB-SIFT-010": "DNS Tunneling",
-    "PB-SIFT-011": "Anti-Forensics",
-    "PB-SIFT-012": "Rootkit Detection",
-    "PB-SIFT-013": "Data Staging",
-    "PB-SIFT-014": "Privilege Escalation",
-    "PB-SIFT-015": "Execution",
-    "PB-SIFT-016": "Command and Control",
-    "PB-SIFT-017": "Malware Detection",
-    "PB-SIFT-018": "REMnux Malware Analysis",
-    "PB-SIFT-019": "Malware Analysis",
+    "PB-SIFT-000": "Command & Control",
+    "PB-SIFT-001": "Initial Access",
+    "PB-SIFT-002": "Execution",
+    "PB-SIFT-003": "Persistence",
+    "PB-SIFT-004": "Privilege Escalation",
+    "PB-SIFT-005": "Credential Theft",
+    "PB-SIFT-006": "Lateral Movement",
+    "PB-SIFT-007": "Exfiltration",
+    "PB-SIFT-008": "Malware Hunting",
+    "PB-SIFT-009": "Ransomware",
+    "PB-SIFT-010": "Living-off-the-Land",
+    "PB-SIFT-011": "Web Shell",
+    "PB-SIFT-012": "Anti-Forensics",
+    "PB-SIFT-013": "Insider Threat",
+    "PB-SIFT-014": "Linux Forensics",
+    "PB-SIFT-015": "Data Staging",
+    "PB-SIFT-016": "Cross-Image Correlation",
+    "PB-SIFT-017": "REMnux Malware Analysis",
+    "PB-SIFT-018": "Malware Analysis"
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -634,7 +634,7 @@ SEVERITY_MAP = {
 # (tool-missing check), but the playbook itself always "runs" (even if all
 # steps are skipped).
 PLAYBOOK_STEPS = {
-    "PB-SIFT-001": {  # Malware Hunting
+    "PB-SIFT-008": {  # Malware Hunting
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
             ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
@@ -647,7 +647,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-002": {  # Ransomware
+    "TEMP_TEMP_TEMP_PB-SIFT-015": {  # Ransomware
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -658,7 +658,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-003": {  # Lateral Movement
+    "TEMP_TEMP_TEMP_TEMP_PB-SIFT-014": {  # Lateral Movement
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
@@ -670,7 +670,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-004": {  # Credential Theft
+    "PB-SIFT-005": {  # Credential Theft
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
@@ -682,7 +682,7 @@ PLAYBOOK_STEPS = {
             ("registry", "parse_hive", {"hive_path": "{hive}"}),
         ],
     },
-    "PB-SIFT-005": {  # Persistence
+    "TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014": {  # Persistence
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
             ("registry", "extract_services", {"system_path": "{hive}"}),
@@ -694,7 +694,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-006": {  # Exfiltration
+    "TEMP_TEMP_TEMP_PB-SIFT-014": {  # Exfiltration
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
@@ -706,7 +706,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
     },
-    "PB-SIFT-007": {  # Living-off-the-Land
+    "TEMP_TEMP_PB-SIFT-014": {  # Living-off-the-Land
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -717,7 +717,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
-    "PB-SIFT-008": {  # Initial Access
+    "TEMP_PB-SIFT-008": {  # Initial Access
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
@@ -729,7 +729,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "PB-SIFT-009": {  # Insider Threat
+    "TEMP_TEMP_PB-SIFT-015": {  # Insider Threat
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -743,7 +743,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-010": {  # Anti-Forensics
+    "TEMP_PB-SIFT-014": {  # Anti-Forensics
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -755,12 +755,12 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-011": {  # (Reserved / placeholder — still attempted)
+    "TEMP_PB-SIFT-015": {  # (Reserved / placeholder — still attempted)
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
         ],
     },
-    "PB-SIFT-012": {  # Linux Forensics
+    "PB-SIFT-014": {  # Linux Forensics
         "syslogs": [
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
         ],
@@ -769,13 +769,13 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "PB-SIFT-013": {  # macOS Forensics
+    "PB-SIFT-015": {  # macOS Forensics
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "PB-SIFT-014": {  # REMnux Malware Analysis
+    "TEMP_PB-SIFT-005": {  # REMnux Malware Analysis
         "disk_images": [
             ("remnux", "die_scan", {"target_file": "{image}"}),
             ("remnux", "clamav_scan", {"target_file": "{image}"}),
@@ -787,24 +787,24 @@ PLAYBOOK_STEPS = {
             ("remnux", "exiftool_scan", {"target_file": "{file}"}),
         ],
     },
-    "PB-SIFT-015": {  # Mobile Forensics
+    "TEMP_TEMP_TEMP_TEMP_PB-SIFT-015": {  # Mobile Forensics
         "mobile_backups": [
             ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
         ],
     },
-    "PB-SIFT-016": {  # Triage Prioritization (always runs)
+    "PB-SIFT-000": {  # Triage Prioritization (always runs)
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-017": {  # Cross-Image Correlation
+    "PB-SIFT-016": {  # Cross-Image Correlation
         "disk_images": [
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
         ],
     },
-    "PB-SIFT-018": {  # Windows Deep-Dive
+    "PB-SIFT-017": {  # Windows Deep-Dive
         "registry_hives": [
             ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
             ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
@@ -818,7 +818,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "PB-SIFT-019": {  # Full Correlation & Reporting
+    "PB-SIFT-018": {  # Full Correlation & Reporting
         "disk_images": [
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
@@ -941,7 +941,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     """
     Find Evil: Point at an evidence directory, run ALL 19 playbooks, find evil.
 
-    Every playbook (PB-SIFT-001 through PB-SIFT-019) is executed regardless of
+    Every playbook (PB-SIFT-008 through PB-SIFT-018) is executed regardless of
     evidence type.  Individual steps are skipped only when the required tool
     is not available for that step.
 
@@ -1204,7 +1204,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     timeline_files = []
     if len(inventory["disk_images"]) > 1:
-        # Individual timelines already created in PB-SIFT-017 / PB-SIFT-019
+        # Individual timelines already created in PB-SIFT-016 / PB-SIFT-018
         # Find them in the output dir
         timeline_files = list(Path(output_dir).glob("timeline_*.plaso"))
 
@@ -1218,7 +1218,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 ] + [str(f) for f in timeline_files]
                 subprocess.run(merge_cmd, capture_output=True, timeout=600)
                 findings.append({
-                    "playbook": "PB-SIFT-017",
+                    "playbook": "PB-SIFT-016",
                     "module": "plaso",
                     "function": "merge_timelines",
                     "status": "completed",
@@ -1228,7 +1228,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 })
             except Exception as e:
                 findings.append({
-                    "playbook": "PB-SIFT-017",
+                    "playbook": "PB-SIFT-016",
                     "module": "plaso",
                     "function": "merge_timelines",
                     "status": "failed",
@@ -1362,7 +1362,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
                 except Exception as e:
                     findings.append({
-                        "playbook": "PB-SIFT-017",
+                        "playbook": "PB-SIFT-016",
                         "module": "plaso",
                         "function": "extract_user_activity",
                         "status": "failed",
@@ -1389,7 +1389,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
             if user_activity_summary:
                 findings.append({
-                    "playbook": "PB-SIFT-017",
+                    "playbook": "PB-SIFT-016",
                     "module": "plaso",
                     "function": "user_activity_extraction",
                     "status": "completed",
@@ -1410,7 +1410,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
         except Exception as e:
             findings.append({
-                "playbook": "PB-SIFT-017",
+                "playbook": "PB-SIFT-016",
                 "module": "plaso",
                 "function": "user_activity_extraction",
                 "status": "failed",
@@ -2706,25 +2706,25 @@ def find_evil_info():
             'Mobile backups (iOS Info.plist, Manifest.db)',
         ],
         'playbooks': [
-            {'id': 'PB-SIFT-001', 'name': 'Malware Hunting', 'trigger': 'Always (all playbooks run)'},
-            {'id': 'PB-SIFT-002', 'name': 'Ransomware', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-003', 'name': 'Lateral Movement', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-004', 'name': 'Credential Theft', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-005', 'name': 'Persistence', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-006', 'name': 'Exfiltration', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-007', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-009', 'name': 'Insider Threat', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-010', 'name': 'Anti-Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-011', 'name': 'Reserved', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-012', 'name': 'Linux Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-013', 'name': 'macOS Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-014', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-016', 'name': 'Triage Prioritization', 'trigger': 'Always (runs first)'},
-            {'id': 'PB-SIFT-017', 'name': 'Cross-Image Correlation', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-018', 'name': 'Windows Deep-Dive', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-019', 'name': 'Full Correlation & Reporting', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-008', 'name': 'Malware Hunting', 'trigger': 'Always (all playbooks run)'},
+            {'id': 'TEMP_TEMP_TEMP_PB-SIFT-015', 'name': 'Ransomware', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Lateral Movement', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-005', 'name': 'Credential Theft', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Persistence', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Exfiltration', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_PB-SIFT-014', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
+            {'id': 'TEMP_PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_PB-SIFT-015', 'name': 'Insider Threat', 'trigger': 'Always'},
+            {'id': 'TEMP_PB-SIFT-014', 'name': 'Anti-Forensics', 'trigger': 'Always'},
+            {'id': 'TEMP_PB-SIFT-015', 'name': 'Reserved', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-014', 'name': 'Linux Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-015', 'name': 'macOS Forensics', 'trigger': 'Always'},
+            {'id': 'TEMP_PB-SIFT-005', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
+            {'id': 'TEMP_TEMP_TEMP_TEMP_PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-000', 'name': 'Triage Prioritization', 'trigger': 'Always (runs first)'},
+            {'id': 'PB-SIFT-016', 'name': 'Cross-Image Correlation', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-017', 'name': 'Windows Deep-Dive', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-018', 'name': 'Full Correlation & Reporting', 'trigger': 'Always'},
         ],
         'pipeline': [
             '1. Evidence inventory & quality scoring',

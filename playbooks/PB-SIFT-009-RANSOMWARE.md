@@ -1,4 +1,4 @@
-# PB-SIFT-002: Ransomware Indicators Playbook
+# TEMP_TEMP_TEMP_PB-SIFT-015: Ransomware Indicators Playbook
 ## Ransomware Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of ransomware activity within a digital forensic image using the SIFT Workstation toolset.

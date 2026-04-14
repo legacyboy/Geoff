@@ -1,4 +1,4 @@
-# PB-SIFT-014: Network Device Forensics Playbook
+# TEMP_PB-SIFT-005: Network Device Forensics Playbook
 ## Network Hardware Analysis — Routers, Switches, Firewalls, Access Points
 
 **Objective:** High-fidelity forensic analysis of network infrastructure devices to identify unauthorized access, configuration tampering, rogue devices, and malicious traffic patterns.

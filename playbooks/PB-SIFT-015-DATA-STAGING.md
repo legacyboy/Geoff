@@ -1,4 +1,4 @@
-# PB-SIFT-013: macOS Forensic Indicators Playbook
+# PB-SIFT-015: macOS Forensic Indicators Playbook
 ## macOS Forensic Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of compromise indicators within a macOS digital forensic image using the SIFT Workstation toolset.

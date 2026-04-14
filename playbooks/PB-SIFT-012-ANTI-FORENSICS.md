@@ -1,4 +1,4 @@
-# PB-SIFT-010: Anti-Forensics Indicators Playbook
+# TEMP_PB-SIFT-014: Anti-Forensics Indicators Playbook
 ## Anti-Forensics Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of attempts to hinder, deceive, or destroy forensic evidence, including log tampering, file wiping, timestomping, and defense evasion.

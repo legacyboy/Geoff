@@ -1,4 +1,4 @@
-# PB-SIFT-008: Initial Access Indicators Playbook
+# TEMP_PB-SIFT-008: Initial Access Indicators Playbook
 ## Initial Access Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and reconstruction of the initial entry vector (Patient Zero) into a compromised system using the SIFT Workstation toolset.

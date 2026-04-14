@@ -1,4 +1,4 @@
-# PB-SIFT-017: Cross-Image Correlation Playbook
+# PB-SIFT-016: Cross-Image Correlation Playbook
 ## Multi-Host Analysis & Attack Path Reconstruction
 
 **Objective:** Correlate findings across multiple forensic images to reconstruct the full kill chain, identify the "Patient Zero" host, calculate total dwell time, and determine the overall blast radius of a campaign.
@@ -10,7 +10,7 @@
 - [ ] **Network Mapping:** Map subnet membership, trust relationships, and AD domain membership.
 - [ ] **Scope Gap Analysis:** Flag hosts referenced in artifacts that are missing from the provided evidence.
 - [ ] **Findings Integration:** Load all individual `findings.json` files into a unified correlation workspace.
-- [ ] **Confidence Baseline:** Apply evidence quality scores from **PB-SIFT-016** to adjust correlation confidence.
+- [ ] **Confidence Baseline:** Apply evidence quality scores from **PB-SIFT-000** to adjust correlation confidence.
 
 ---
 
@@ -44,7 +44,7 @@
 ---
 
 ### Phase 5 — Lateral Movement Chain Reconstruction
-- [ ] **Pivot Mapping:** Use **PB-SIFT-003** findings to map the sequence of hops (Source $\rightarrow$ Pivot $\rightarrow$ Target).
+- [ ] **Pivot Mapping:** Use **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014** findings to map the sequence of hops (Source $\rightarrow$ Pivot $\rightarrow$ Target).
 - [ ] **Logon Correlation:** Match outbound explicit credential logons on Host A to inbound network logons on Host B.
 - [ ] **Drop-to-Exec Correlation:** Match file write timestamps on Target Host to remote execution events on Source Host.
 - [ ] **Blast Radius Mapping:** Identify all hosts with confirmed attacker presence.
@@ -55,7 +55,7 @@
 
 ### Phase 6 — Credential Reuse & Account Correlation
 - [ ] **Account Mapping:** Flag accounts appearing on multiple hosts (especially service/admin accounts).
-- [ ] **Credential Theft Linkage:** Correlate theft timestamps from **PB-SIFT-004** with the first use of those credentials on other hosts.
+- [ ] **Credential Theft Linkage:** Correlate theft timestamps from **PB-SIFT-005** with the first use of those credentials on other hosts.
 - [ ] **Tactic Identification:** Flag Pass-the-Hash or Pass-the-Ticket indicators across the environment.
 - [ ] **Privilege Escalation:** Identify the highest-privilege account used (e.g., Domain Admin) and its movement path.
 - [ ] **Account Spread:** Map the timeline of attacker-created accounts appearing on multiple hosts.

@@ -1,4 +1,4 @@
-# PB-SIFT-005: Persistence Mechanism Indicators Playbook
+# TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Persistence Mechanism Indicators Playbook
 ## Persistence Mechanism Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of persistence mechanisms used by attackers to maintain access to a system across reboots and user logoffs using the SIFT Workstation toolset.

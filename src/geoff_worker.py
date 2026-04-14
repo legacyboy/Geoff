@@ -87,12 +87,12 @@ class InvestigationWorker:
         
         # Define phases
         phases = [
-            ('PB-SIFT-016', 'Triage'),
-            ('PB-SIFT-008', 'Initial Access Analysis'),
-            ('PB-SIFT-001', 'Malware Hunt'),
-            ('PB-SIFT-002', 'Ransomware Check'),
-            ('PB-SIFT-004', 'Credential Analysis'),
-            ('PB-SIFT-017', 'Correlation')
+            ('PB-SIFT-000', 'Triage'),
+            ('TEMP_PB-SIFT-008', 'Initial Access Analysis'),
+            ('PB-SIFT-008', 'Malware Hunt'),
+            ('TEMP_TEMP_TEMP_PB-SIFT-015', 'Ransomware Check'),
+            ('PB-SIFT-005', 'Credential Analysis'),
+            ('PB-SIFT-016', 'Correlation')
         ]
         
         total_phases = len(phases)
@@ -156,27 +156,27 @@ class InvestigationWorker:
         """Get steps for a playbook"""
         # Map playbooks to tool sequences
         playbook_steps = {
-            'PB-SIFT-016': [  # Triage
+            'PB-SIFT-000': [  # Triage
                 {'module': 'SLEUTHKIT', 'function': 'mmls', 'params': {'disk_image': self.evidence_path}},
                 {'module': 'SLEUTHKIT', 'function': 'fsstat', 'params': {'disk_image': self.evidence_path}},
                 {'module': 'SLEUTHKIT', 'function': 'fls', 'params': {'disk_image': self.evidence_path}},
             ],
-            'PB-SIFT-008': [  # Initial Access
+            'TEMP_PB-SIFT-008': [  # Initial Access
                 {'module': 'LOGS', 'function': 'parse_evtx', 'params': {}},
                 {'module': 'NETWORK', 'function': 'analyze_pcap', 'params': {}},
             ],
-            'PB-SIFT-001': [  # Malware Hunt
+            'PB-SIFT-008': [  # Malware Hunt
                 {'module': 'YARA', 'function': 'scan_directory', 'params': {}},
                 {'module': 'STRINGS', 'function': 'extract_iocs', 'params': {}},
             ],
-            'PB-SIFT-002': [  # Ransomware
+            'TEMP_TEMP_TEMP_PB-SIFT-015': [  # Ransomware
                 {'module': 'REGISTRY', 'function': 'parse_hive', 'params': {}},
                 {'module': 'SLEUTHKIT', 'function': 'istat', 'params': {}},
             ],
-            'PB-SIFT-004': [  # Credentials
+            'PB-SIFT-005': [  # Credentials
                 {'module': 'REGISTRY', 'function': 'extract_lsa_secrets', 'params': {}},
             ],
-            'PB-SIFT-017': [  # Correlation
+            'PB-SIFT-016': [  # Correlation
                 {'module': 'PLASO', 'function': 'create_timeline', 'params': {}},
             ]
         }
@@ -259,12 +259,12 @@ class InvestigationWorker:
 
 This automated investigation used the SIFT playbook framework to analyze evidence across 6 phases:
 
-1. **Triage** (PB-SIFT-016) - Initial assessment and file system analysis
-2. **Initial Access Analysis** (PB-SIFT-008) - Event logs and network artifacts
-3. **Malware Hunt** (PB-SIFT-001) - YARA scanning and IOC extraction
-4. **Ransomware Check** (PB-SIFT-002) - Registry and file system analysis
-5. **Credential Analysis** (PB-SIFT-004) - LSA secrets and authentication artifacts
-6. **Correlation** (PB-SIFT-017) - Timeline creation and event correlation
+1. **Triage** (PB-SIFT-000) - Initial assessment and file system analysis
+2. **Initial Access Analysis** (TEMP_PB-SIFT-008) - Event logs and network artifacts
+3. **Malware Hunt** (PB-SIFT-008) - YARA scanning and IOC extraction
+4. **Ransomware Check** (TEMP_TEMP_TEMP_PB-SIFT-015) - Registry and file system analysis
+5. **Credential Analysis** (PB-SIFT-005) - LSA secrets and authentication artifacts
+6. **Correlation** (PB-SIFT-016) - Timeline creation and event correlation
 
 ## Outputs
 

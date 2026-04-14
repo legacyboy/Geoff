@@ -109,7 +109,7 @@ Find Evil is GEOFF's autonomous investigation mode. Point it at a directory of e
 
 1. **Inventories** every artifact — disk images, memory dumps, pcaps, logs, registry hives, mobile backups
 2. **Classifies** the OS and incident type via rapid indicator triage
-3. **Selects** the right playbooks automatically (ransomware → PB-SIFT-002, web shell → PB-SIFT-008, etc.)
+3. **Selects** the right playbooks automatically (ransomware → TEMP_TEMP_TEMP_PB-SIFT-015, web shell → TEMP_PB-SIFT-008, etc.)
 4. **Executes** each playbook step through the 9 specialist modules
 5. **Validates** every result through the Critic pipeline
 6. **Reports** a unified findings report with severity ratings, evidence scores, and critic approval
@@ -118,21 +118,21 @@ Find Evil is GEOFF's autonomous investigation mode. Point it at a directory of e
 
 | Evidence / Indicator | Playbook(s) | Severity |
 |:---|:---|:---|
-| Ransom notes, encrypted extensions | PB-SIFT-002, PB-SIFT-008 | CRITICAL |
-| Credential dumping tools, LSASS access | PB-SIFT-004, PB-SIFT-003 | HIGH |
-| Lateral movement tools (PsExec, WMI) | PB-SIFT-003, PB-SIFT-005 | HIGH |
-| Persistence (autoruns, scheduled tasks) | PB-SIFT-005, PB-SIFT-001 | HIGH |
-| Exfiltration (cloud sync, bulk staging) | PB-SIFT-006, PB-SIFT-009 | HIGH |
-| Anti-forensics (log clearing, timestomping) | PB-SIFT-010, PB-SIFT-001 | HIGH |
-| Web shells, SQLi payloads | PB-SIFT-008, PB-SIFT-001 | HIGH |
-| LOLBin abuse (certutil, mshta, rundll32) | PB-SIFT-007, PB-SIFT-001 | MEDIUM |
-| Linux image detected | PB-SIFT-012 | HIGH |
-| macOS image detected | PB-SIFT-013 | HIGH |
-| Mobile backup detected | PB-SIFT-015 | HIGH |
-| Multiple disk images | PB-SIFT-017 | HIGH |
-| REMnux static analysis needed | PB-SIFT-018 | HIGH |
-| Malware sample requiring full SOP | PB-SIFT-019 | HIGH |
-| Any disk image present | PB-SIFT-001 | (baseline) |
+| Ransom notes, encrypted extensions | TEMP_TEMP_TEMP_PB-SIFT-015, TEMP_PB-SIFT-008 | CRITICAL |
+| Credential dumping tools, LSASS access | PB-SIFT-005, TEMP_TEMP_TEMP_TEMP_PB-SIFT-014 | HIGH |
+| Lateral movement tools (PsExec, WMI) | TEMP_TEMP_TEMP_TEMP_PB-SIFT-014, TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014 | HIGH |
+| Persistence (autoruns, scheduled tasks) | TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014, PB-SIFT-008 | HIGH |
+| Exfiltration (cloud sync, bulk staging) | TEMP_TEMP_TEMP_PB-SIFT-014, TEMP_TEMP_PB-SIFT-015 | HIGH |
+| Anti-forensics (log clearing, timestomping) | TEMP_PB-SIFT-014, PB-SIFT-008 | HIGH |
+| Web shells, SQLi payloads | TEMP_PB-SIFT-008, PB-SIFT-008 | HIGH |
+| LOLBin abuse (certutil, mshta, rundll32) | TEMP_TEMP_PB-SIFT-014, PB-SIFT-008 | MEDIUM |
+| Linux image detected | PB-SIFT-014 | HIGH |
+| macOS image detected | PB-SIFT-015 | HIGH |
+| Mobile backup detected | TEMP_TEMP_TEMP_TEMP_PB-SIFT-015 | HIGH |
+| Multiple disk images | PB-SIFT-016 | HIGH |
+| REMnux static analysis needed | PB-SIFT-017 | HIGH |
+| Malware sample requiring full SOP | PB-SIFT-018 | HIGH |
+| Any disk image present | PB-SIFT-008 | (baseline) |
 
 **API Reference:**
 
@@ -157,25 +157,25 @@ POST /find-evil          → Run Find Evil
 
 19 PB-SIFT playbooks for structured investigations:
 
-- PB-SIFT-001: Malware Hunting
-- PB-SIFT-002: Ransomware
-- PB-SIFT-003: Lateral Movement
-- PB-SIFT-004: Credential Theft
-- PB-SIFT-005: Persistence
-- PB-SIFT-006: Exfiltration
-- PB-SIFT-007: Living-off-the-Land
-- PB-SIFT-008: Initial Access
-- PB-SIFT-009: Insider Threat
-- PB-SIFT-010: Anti-Forensics
-- PB-SIFT-011: Cloud & SaaS
-- PB-SIFT-012: Linux
-- PB-SIFT-013: macOS
-- PB-SIFT-014: Network Device Forensics
-- PB-SIFT-015: Mobile
-- PB-SIFT-016: Triage
-- PB-SIFT-017: Correlation
-- PB-SIFT-018: REMnux Malware Analysis
-- PB-SIFT-019: Malware Analysis SOP
+- PB-SIFT-008: Malware Hunting
+- TEMP_TEMP_TEMP_PB-SIFT-015: Ransomware
+- TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Lateral Movement
+- PB-SIFT-005: Credential Theft
+- TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Persistence
+- TEMP_TEMP_TEMP_PB-SIFT-014: Exfiltration
+- TEMP_TEMP_PB-SIFT-014: Living-off-the-Land
+- TEMP_PB-SIFT-008: Initial Access
+- TEMP_TEMP_PB-SIFT-015: Insider Threat
+- TEMP_PB-SIFT-014: Anti-Forensics
+- TEMP_PB-SIFT-015: Cloud & SaaS
+- PB-SIFT-014: Linux
+- PB-SIFT-015: macOS
+- TEMP_PB-SIFT-005: Network Device Forensics
+- TEMP_TEMP_TEMP_TEMP_PB-SIFT-015: Mobile
+- PB-SIFT-000: Triage
+- PB-SIFT-016: Correlation
+- PB-SIFT-017: REMnux Malware Analysis
+- PB-SIFT-018: Malware Analysis SOP
 
 ---
 

@@ -1,4 +1,4 @@
-# PB-SIFT-016: Triage Prioritization Meta-Playbook
+# PB-SIFT-000: Triage Prioritization Meta-Playbook
 ## Case Intake & Playbook Selection
 
 **Objective:** Autonomous assessment of available evidence to score quality, determine incident type, and generate a weighted, optimized execution plan for all subsequent SIFT playbooks. This is the primary decision engine that runs first on every case.
@@ -17,7 +17,7 @@
     - **VERY LOW:** Single artifact type.
 - [ ] **Temporal Baseline:** Document image timestamps (acquisition time, system time, timezone offset).
 - [ ] **Gap Analysis:** Flag missing expected evidence (e.g., missing registry hives or memory dumps).
-- [ ] **Host Count:** Document number of hosts; if multi-host, queue **PB-SIFT-017** after individual runs.
+- [ ] **Host Count:** Document number of hosts; if multi-host, queue **PB-SIFT-016** after individual runs.
 - [ ] **Confidence Application:** Apply quality score to all subsequent findings.
 
 ---
@@ -51,10 +51,10 @@ When memory dump available, perform quick-win analysis before deep disk forensic
 - [ ] **Acquisition Time Correlation:** Compare memory acquisition timestamp with `windows.info.Info` to detect VM snapshot attacks.
 
 **Memory-First Pivot Indicators:**
-- Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **PB-SIFT-008** priority.
-- RDP/remote access tools (`mstsc.exe`, `AnyDesk.exe`) → **PB-SIFT-003** priority.
-- Credential access (`mimikatz.exe`, `lsass.exe` dumping) → **PB-SIFT-004** priority.
-- LOLBins with encoded commands (`powershell.exe`, `cmd.exe`, `certutil.exe`) → **PB-SIFT-007** priority.
+- Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **TEMP_PB-SIFT-008** priority.
+- RDP/remote access tools (`mstsc.exe`, `AnyDesk.exe`) → **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014** priority.
+- Credential access (`mimikatz.exe`, `lsass.exe` dumping) → **PB-SIFT-005** priority.
+- LOLBins with encoded commands (`powershell.exe`, `cmd.exe`, `certutil.exe`) → **TEMP_TEMP_PB-SIFT-014** priority.
 
 ---
 
@@ -87,21 +87,21 @@ Validate required evidence before queuing playbooks:
 
 ### Phase 4 — Rapid Indicator Triage
 Perform quick pattern scans to pivot priority:
-- [ ] **Ransomware:** Flag ransom notes/encrypted extensions $\rightarrow$ Priority: **PB-SIFT-002**.
-- [ ] **Cred Theft:** Flag credential dumping tools in prefetch/ShimCache $\rightarrow$ Priority: **PB-SIFT-004**.
-- [ ] **Anti-Forensics:** Flag log clearing (EID 1102/104) $\rightarrow$ Priority: **PB-SIFT-010**.
-- [ ] **External Breach:** Flag web shells in web-dirs $\rightarrow$ Priority: **PB-SIFT-008**.
-- [ ] **Exfil/Insider:** Flag bulk file access/archives in temp dirs $\rightarrow$ Priority: **PB-SIFT-006 / 009**.
-- [ ] **Cloud Pivot:** Flag cloud CLI/token cache $\rightarrow$ Priority: **PB-SIFT-011**.
-- [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains $\rightarrow$ Priority: **PB-SIFT-007**.
-- [ ] **Lateral Movement:** Flag lateral movement tools $\rightarrow$ Priority: **PB-SIFT-003**.
-- [ ] **Mobile:** Flag mobile device connection $\rightarrow$ Add **PB-SIFT-015**.
-- [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter $\rightarrow$ Priority: **PB-SIFT-008, 001**.
-- [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts $\rightarrow$ Priority: **PB-SIFT-008, 010**.
-- [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads $\rightarrow$ Priority: **PB-SIFT-008**.
-- [ ] **LFI Exploitation (CTF):** Flag file inclusion attempts (/etc/hosts, /windows/system32/drivers/etc/hosts) $\rightarrow$ Priority: **PB-SIFT-008, 010**.
-- [ ] **RDP Enablement (CTF):** Flag `netsh` commands enabling remotedesktop in cmdscan output $\rightarrow$ Priority: **PB-SIFT-003**.
-- [ ] **Malicious File Upload (CTF):** Flag PHP uploaders, files with version checks (e.g., PHP 4.1.0), suspicious temp paths $\rightarrow$ Priority: **PB-SIFT-001, 008**.
+- [ ] **Ransomware:** Flag ransom notes/encrypted extensions $\rightarrow$ Priority: **TEMP_TEMP_TEMP_PB-SIFT-015**.
+- [ ] **Cred Theft:** Flag credential dumping tools in prefetch/ShimCache $\rightarrow$ Priority: **PB-SIFT-005**.
+- [ ] **Anti-Forensics:** Flag log clearing (EID 1102/104) $\rightarrow$ Priority: **TEMP_PB-SIFT-014**.
+- [ ] **External Breach:** Flag web shells in web-dirs $\rightarrow$ Priority: **TEMP_PB-SIFT-008**.
+- [ ] **Exfil/Insider:** Flag bulk file access/archives in temp dirs $\rightarrow$ Priority: **TEMP_TEMP_TEMP_PB-SIFT-014 / 009**.
+- [ ] **Cloud Pivot:** Flag cloud CLI/token cache $\rightarrow$ Priority: **TEMP_PB-SIFT-015**.
+- [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains $\rightarrow$ Priority: **TEMP_TEMP_PB-SIFT-014**.
+- [ ] **Lateral Movement:** Flag lateral movement tools $\rightarrow$ Priority: **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014**.
+- [ ] **Mobile:** Flag mobile device connection $\rightarrow$ Add **TEMP_TEMP_TEMP_TEMP_PB-SIFT-015**.
+- [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 001**.
+- [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 010**.
+- [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads $\rightarrow$ Priority: **TEMP_PB-SIFT-008**.
+- [ ] **LFI Exploitation (CTF):** Flag file inclusion attempts (/etc/hosts, /windows/system32/drivers/etc/hosts) $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 010**.
+- [ ] **RDP Enablement (CTF):** Flag `netsh` commands enabling remotedesktop in cmdscan output $\rightarrow$ Priority: **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014**.
+- [ ] **Malicious File Upload (CTF):** Flag PHP uploaders, files with version checks (e.g., PHP 4.1.0), suspicious temp paths $\rightarrow$ Priority: **PB-SIFT-008, 008**.
 
 ---
 
@@ -132,7 +132,7 @@ Group playbooks to minimize analysis time:
 - [ ] **Group B (Disk):** Disk phases of 001, 005, 007, 008 (Symmetric/Parallel).
 - [ ] **Group C (Logs):** Log phases of 002, 003, 004, 009, 010 (Symmetric/Parallel).
 - [ ] **Group E (Specialist):** 011, 012, 013, 014, 015 (Independent).
-- [ ] **Group F (Correlation):** **PB-SIFT-017** (Post-all execution).
+- [ ] **Group F (Correlation):** **PB-SIFT-016** (Post-all execution).
 
 ---
 
@@ -150,10 +150,10 @@ Group playbooks to minimize analysis time:
 
 ### Phase 8 — Re-Triage Trigger Conditions
 Re-evaluate plan if any of the following are discovered mid-run:
-- [ ] **Lateral Movement:** Add all hosts to **PB-SIFT-017**.
-- [ ] **Cloud Tokens:** Add **PB-SIFT-011**.
+- [ ] **Lateral Movement:** Add all hosts to **PB-SIFT-016**.
+- [ ] **Cloud Tokens:** Add **TEMP_PB-SIFT-015**.
 - [ ] **Anti-Forensics:** Downgrade confidence of all completed findings to **POSSIBLE**.
-- [ ] **Mobile Connection:** Add **PB-SIFT-015**.
+- [ ] **Mobile Connection:** Add **TEMP_TEMP_TEMP_TEMP_PB-SIFT-015**.
 - [ ] **New OS Partition:** Add appropriate OS-specific playbook.
 - [ ] **Insider Threat:** Move case to restricted handling queue.
 - [ ] **Additional Hosts:** Request images for referenced hosts.

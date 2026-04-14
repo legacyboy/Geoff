@@ -1,4 +1,4 @@
-# PB-SIFT-009: Insider Threat Indicators Playbook
+# TEMP_TEMP_PB-SIFT-015: Insider Threat Indicators Playbook
 ## Insider Threat Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of unauthorized data access, hoarding, and exfiltration by an internal user (insider threat) using the SIFT Workstation toolset.

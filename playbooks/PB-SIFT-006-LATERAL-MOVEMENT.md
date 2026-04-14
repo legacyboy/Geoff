@@ -1,4 +1,4 @@
-# PB-SIFT-003: Lateral Movement Indicators Playbook
+# TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Lateral Movement Indicators Playbook
 ## Lateral Movement Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and mapping of lateral movement within a network using digital forensic images and the SIFT Workstation toolset.
