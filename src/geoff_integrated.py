@@ -835,10 +835,6 @@ def get_available_tools_status():
 # ---------------------------------------------------------------------------
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
-ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 20)]
-# PB-SIFT-015 is skipped in the original; keep 19 IDs but the orchestrator
-# may not have 011 implemented. We still attempt it.
-
 PLAYBOOK_NAMES = {
     "PB-SIFT-000": "Triage & Execution Planning",
     "PB-SIFT-001": "Initial Access",
@@ -1234,35 +1230,26 @@ def _scan_triage_indicators(inventory: dict) -> list:
     
     # Phase 2: Run strings against disk images and memory dumps
     # This is what actually finds things like mimikatz in a .vmem file
-    string_keywords = {
-        "ransomware": ["your files have been encrypted", "decrypt", "ransom note", "pay bitcoin",
-                        "recover your files"],
-        "credential_theft": ["mimikatz", "lsass", "sekurlsa", "kerberoast", "hashdump",
-                             "procdump"],
-        "lateral_movement": ["psexec", "smbexec", "wmiexec", "dcom", "winexec"],
-        "anti_forensics": ["wevtutil cl", "clear-eventlog", "sdelete", "cipher /w",
-                          "timestomp", "disable-realtime", "auditpol"],
-        "web_shell": ["c99shell", "r57shell", "b374k", "eval(request", "system($_",
-                      "cmd.exe"],
-        "initial_access": ["shellcode", "meterpreter", "reverse shell", "bind shell",
-                          "exploit"],
-        "exfiltration": ["7z a ", "rar a ", "winrar", "upload to"],
-        "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
-                "cobaltstrike"],
-    }
+    # Use TRIAGE_PATTERNS for both filename and content scanning (unified)
     
     # Run strings on binary evidence (disk images, memory dumps, large files)
+    # Skip files >2GB for triage — the malware hunting playbook runs strings properly
+    MAX_TRIAGE_STRINGS_SIZE = 2 * 1024**3  # 2GB
     binary_evidence = inventory.get("disk_images", []) + inventory.get("memory_dumps", [])
     for fpath in binary_evidence:
         try:
+            file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0
+            if file_size > MAX_TRIAGE_STRINGS_SIZE:
+                continue  # Too large for triage strings scan
+            # Pipe through head -c to terminate early instead of timeout
             result = safe_run(
-                ["strings", "-n", "8", str(fpath)],
-                timeout=120
+                ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
+                timeout=60
             )
             if result["code"] != 0:
                 continue
-            content_lower = result["stdout"][:500000].lower()  # Limit to 500KB of strings output
-            for category, keywords in string_keywords.items():
+            content_lower = result["stdout"].lower()
+            for category, keywords in TRIAGE_PATTERNS.items():
                 for kw in keywords:
                     if kw.lower() in content_lower:
                         hits.append({
@@ -1295,7 +1282,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
             with open(fpath_str, "rb") as f:
                 content = f.read(max_read_bytes)
             content_lower = content.lower().decode("utf-8", errors="ignore")
-            for category, keywords in string_keywords.items():
+            for category, keywords in TRIAGE_PATTERNS.items():
                 for kw in keywords:
                     if kw.lower() in content_lower:
                         hits.append({
@@ -1326,47 +1313,14 @@ def _tool_available(module: str, function: str) -> bool:
 
 
 
-def _detect_dependency_cycles(playbook_steps: list) -> list:
-    """DFS cycle detection for step dependency graphs. Returns list of cycles found."""
-    # Build adjacency list from requires fields
-    adj = {}
-    step_ids = {}
-    for i, step in enumerate(playbook_steps):
-        step_id = f"{step.get('module', '?')}.{step.get('function', '?')}"
-        step_ids[step_id] = i
-        adj[step_id] = step.get("requires", [])
-    
-    cycles = []
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color = {sid: WHITE for sid in adj}
-    
-    def dfs(node, path):
-        color[node] = GRAY
-        path.append(node)
-        for dep in adj.get(node, []):
-            if dep in color:
-                if color[dep] == GRAY:
-                    # Found cycle
-                    cycle_start = path.index(dep)
-                    cycles.append(path[cycle_start:] + [dep])
-                elif color[dep] == WHITE:
-                    dfs(dep, path)
-        path.pop()
-        color[node] = BLACK
-    
-    for sid in adj:
-        if color[sid] == WHITE:
-            dfs(sid, [])
-    
-    return cycles
 
 def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     """
-    Find Evil: Point at an evidence directory, run ALL 19 playbooks, find evil.
+    Find Evil: Triage-driven forensic investigation.
 
-    Every playbook (PB-SIFT-008 through PB-SIFT-018) is executed regardless of
-    evidence type.  Individual steps are skipped only when the required tool
-    is not available for that step.
+    PB-SIFT-000 runs first as mandatory entry point, scanning for indicators
+    and generating a structured execution plan. Only listed playbooks run.
+    Evidence type and indicator hits determine which playbooks are included.
 
     Multi-host correlation: when multiple disk images are found, individual
     timelines are created with Plaso and then merged for cross-image
@@ -1537,6 +1491,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     steps_failed = 0
     steps_skipped = 0
     CONTINUE_ON_FAILURE = os.environ.get("GEOFF_CONTINUE_ON_FAILURE", "true").lower() == "true"
+    _abort = False  # Set to True on failure when CONTINUE_ON_FAILURE=False
 
     # Evidence type shorthand
     ev = {
@@ -1609,7 +1564,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if os_type == "linux":
         execution_plan.append("PB-SIFT-014")
     if os_type == "macos":
-        execution_plan.append("PB-SIFT-015")
+        pass  # No macOS-specific playbook; generic disk playbooks handle it
 
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
@@ -1675,14 +1630,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     severity = "MEDIUM"
     
     # C2 detection always runs PB-SIFT-019
-    if "c2" in hit_categories or "command" in hit_categories:
+    if "c2" in hit_categories:
         if "PB-SIFT-019" not in execution_plan:
             execution_plan.append("PB-SIFT-019")
 
     if "ransomware" in hit_categories:
         classification = "Ransomware"
         severity = "CRITICAL"
-    elif "c2" in hit_categories or "command" in hit_categories:
+    elif "c2" in hit_categories:
         classification = "Command & Control"
         severity = "CRITICAL"
     elif "credential_theft" in hit_categories:
@@ -1740,6 +1695,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         any_step_ran = False
 
         for ev_type, step_templates in pb_steps_def.items():
+            if _abort:
+                break
             evidence_items = ev.get(ev_type, [])
             # If no evidence of this type, skip the steps for this evidence type
             # (but the playbook still "runs" — it just has no applicable evidence)
@@ -1755,6 +1712,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 items = evidence_items[:3]
 
             for item in items:
+                if _abort:
+                    break
                 item_stem = Path(item).stem
                 for module, function, raw_params in step_templates:
                     _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
@@ -3503,9 +3462,24 @@ def find_evil_status(job_id):
 @app.route('/find-evil', methods=['GET'])
 def find_evil_info():
     """GET /find-evil — Return usage info and supported playbooks"""
+    playbook_list = []
+    for pid, pname in PLAYBOOK_NAMES.items():
+        if pid == "PB-SIFT-000":
+            trigger = "Always (mandatory entry point)"
+        elif pid in ("PB-SIFT-017", "PB-SIFT-018"):
+            trigger = "If suspicious binary found during triage"
+        elif pid == "PB-SIFT-019":
+            trigger = "If C2 indicators found during triage"
+        elif pid == "PB-SIFT-016":
+            trigger = "If multiple disk images found"
+        else:
+            trigger = "Always (kill chain order)"
+        playbook_list.append({"id": pid, "name": pname, "trigger": trigger})
+
     return jsonify({
         'name': 'Find Evil',
-        'description': 'Point at an evidence directory, auto-run ALL 19 playbooks, find evil with no prompting.',
+        'description': 'Triage-driven forensic investigation. PB-SIFT-000 runs first, scans for indicators, and generates a structured execution plan. Only listed playbooks run — no blind execution.',
+        'model': 'triage-driven',
         'usage': 'POST /find-evil with {"evidence_dir": "/path/to/evidence"}',
         'supported_evidence': [
             'Disk images (.E01, .dd, .raw, .img, .aff)',
@@ -3514,36 +3488,15 @@ def find_evil_info():
             'Windows Event Logs (.evtx)',
             'Syslog files (syslog, auth.log, messages)',
             'Registry hives (NTUSER.DAT, SYSTEM, SOFTWARE, SECURITY, SAM)',
-            'Mobile backups (iOS Info.plist, Manifest.db)',
         ],
-        'playbooks': [
-            {'id': 'PB-SIFT-008', 'name': 'Malware Hunting', 'trigger': 'Always (all playbooks run)'},
-            {'id': 'PB-SIFT-009', 'name': 'Ransomware', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-006', 'name': 'Lateral Movement', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-005', 'name': 'Credential Theft', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-003', 'name': 'Persistence', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-007', 'name': 'Exfiltration', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-010', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-001', 'name': 'Initial Access', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-013', 'name': 'Insider Threat', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-012', 'name': 'Anti-Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-015', 'name': 'Reserved', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-014', 'name': 'Linux Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-015', 'name': 'macOS Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-004', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-006', 'name': 'Mobile Forensics', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-000', 'name': 'Triage Prioritization', 'trigger': 'Always (runs first)'},
-            {'id': 'PB-SIFT-016', 'name': 'Cross-Image Correlation', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-017', 'name': 'Windows Deep-Dive', 'trigger': 'Always'},
-            {'id': 'PB-SIFT-018', 'name': 'Full Correlation & Reporting', 'trigger': 'Always'},
-        ],
+        'playbooks': playbook_list,
         'pipeline': [
-            '1. Evidence inventory & quality scoring',
-            '2. OS classification & rapid indicator triage',
-            '3. ALL 19 playbooks execute (no cherry-picking)',
-            '4. Steps skipped only if required tool is missing',
-            '5. Multi-host correlation with Plaso timeline merge',
-            '6. User activity extraction across hosts (lateral movement detection)',
+            '1. PB-SIFT-000: Evidence inventory & quality scoring',
+            '2. Triage: OS classification & rapid indicator scanning',
+            '3. Execution plan generated from triage results',
+            '4. Only listed playbooks run (evidence-type dependent)',
+            '5. Steps skipped if required tool is missing',
+            '6. Anti-forensics confidence cascade (PB-SIFT-012)',
             '7. Critic validation of every result',
             '8. JSON Schema validation of investigation state',
             '9. Unified findings report with severity & MITRE ATT&CK mapping',
