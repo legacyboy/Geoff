@@ -1895,20 +1895,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             steps_skipped += 1
                             _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
                         elif step_status == "success":
-                            # Validate tool output before marking complete
-                            stdout = result.get("stdout", "") if isinstance(result, dict) else ""
-                            if not stdout or (isinstance(stdout, str) and len(stdout.strip()) < 10):
-                                # Tool returned success but empty/invalid output
-                                step_record["status"] = "failed"
-                                step_record["error"] = f"Empty or invalid output from {module}.{function}"
-                                step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
-                                steps_failed += 1
-                                _fe_log(job_id, f"  ✗ {module}.{function} → empty output")
+                            # Specialist tools return structured dicts without 'stdout'
+                            # Only validate stdout for safe_run results (have 'code' key)
+                            if isinstance(result, dict) and "code" in result:
+                                # safe_run result -- validate stdout
+                                stdout = result.get("stdout", "")
+                                if not stdout or len(stdout.strip()) < 10:
+                                    step_record["status"] = "failed"
+                                    step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                                    step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                    steps_failed += 1
+                                else:
+                                    step_record["status"] = "completed"
+                                    step_record["result"] = result
+                                    steps_completed += 1
                             else:
+                                # Specialist result -- trust status=success
                                 step_record["status"] = "completed"
-                                step_record["result"] = {"status": "success", "stdout": stdout, "stderr": result.get('stderr', ''), "artifacts": result.get('artifacts', []), "error": None, "provenance": {"step_key": step_key, "tool": f"{module}.{function}", "source_input": str(item), "execution_hash": execution_hash}}
+                                step_record["result"] = result
                                 steps_completed += 1
-                                _fe_log(job_id, f"  ✓ {module}.{function} → OK")
                         else:
                             step_record["status"] = "failed"
                             step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
