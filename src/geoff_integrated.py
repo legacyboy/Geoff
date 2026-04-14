@@ -1803,8 +1803,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         continue
 
                     # Dependency enforcement: check playbook step requirements
-                    step_def = next((s for s in PLAYBOOK_STEPS.get(playbook_id, []) if s.get("module") == module and s.get("function") == function), None)
-                    if step_def and step_def.get("requires"):
+                    # PLAYBOOK_STEPS entries are tuples: (module, function, params)
+                    pb_steps_list = []
+                    for category, steps in PLAYBOOK_STEPS.get(playbook_id, {}).items():
+                        if isinstance(steps, list):
+                            pb_steps_list.extend(steps)
+                    step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
+                    # Tuples don't have 'requires' — dependency checking is for future dict-based steps
+                    if isinstance(step_def, dict) and step_def.get("requires"):
                         for dep in step_def["requires"]:
                             dep_completed = any(
                                 s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
