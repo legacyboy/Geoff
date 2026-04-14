@@ -996,7 +996,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     image_offsets = {}  # image_path -> first filesystem partition offset
     for img in inventory.get("disk_images", []):
         try:
-            specialist = SLEUTHKIT_Specialist()
+            specialist = SLEUTHKIT_Specialist(evidence_path=img)
             mmls_result = specialist.analyze_partition_table(img)
             if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
                 # Find first NTFS/ext4/HFS+ partition
