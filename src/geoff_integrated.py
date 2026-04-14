@@ -2060,6 +2060,22 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             )
                             step_record["critic"] = critic_val
                             critic_results.append(critic_val)
+                            # Check for invalid IOCs flagged by critic
+                            if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
+                                step_record["invalid_iocs"] = critic_val["invalid_iocs"]
+                            # Validate IOC formats from step result
+                            try:
+                                result_iocs = {}
+                                if isinstance(result, dict):
+                                    for ioc_key in ["iocs", "ips", "domains", "hashes", "urls", "emails"]:
+                                        if ioc_key in result and isinstance(result[ioc_key], (dict, list)):
+                                            result_iocs[ioc_key] = result[ioc_key] if isinstance(result[ioc_key], list) else list(result[ioc_key].values())
+                                if result_iocs:
+                                    format_val = geoff_critic.validate_ioc_formats(result_iocs)
+                                    if format_val.get("format_issue_count", 0) > 0:
+                                        step_record["ioc_format_issues"] = format_val["format_issues"]
+                            except Exception:
+                                pass  # Non-critical
                             # Write validation to case validations/ directory
                             try:
                                 val_dir = case_work_dir / "validations"
