@@ -1628,30 +1628,87 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "started_at": datetime.now().isoformat(),
                     }
 
-                    # Idempotent step key — prevent duplicate runs
+                    # Idempotent step key — derive from findings (single source of truth)
                     step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
-                    if step_key in executed_steps:
-                        _fe_log(job_id, f"  \u2398 {module}.{function} already executed for {Path(item).name}")
+                    execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
+
+                    # Idempotency: skip if already completed with same inputs
+                    if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
+                        _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
                         continue
 
+                    # Dependency enforcement: check playbook step requirements
+                    step_def = next((s for s in PLAYBOOK_STEPS.get(playbook_id, []) if s.get("module") == module and s.get("function") == function), None)
+                    if step_def and step_def.get("requires"):
+                        for dep in step_def["requires"]:
+                            dep_completed = any(
+                                s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
+                                for s in findings
+                            )
+                            if not dep_completed:
+                                _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
+                                step_record = {
+                                    "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
+                                    "module": module, "function": function, "params": params,
+                                    "evidence_file": item, "status": "skipped", "error": f"dependency {dep} not met",
+                                    "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
+                                }
+                                findings.append(step_record)
+                                pb_findings.append(step_record)
+                                continue
+
+                    step_record = {
+                        "playbook": playbook_id,
+                        "step_key": step_key,
+                        "execution_hash": execution_hash,
+                        "module": module,
+                        "function": function,
+                        "params": params,
+                        "evidence_file": item,
+                        "status": "running",
+                        "started_at": datetime.now().isoformat(),
+                    }
+
+                    # Persist running state before execution (crash recovery)
                     try:
-                        result = _run_step_via_orchestrator(module, function, params)
-                        
+                        pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                        pb_output.parent.mkdir(parents=True, exist_ok=True)
+                        pb_findings_running = pb_findings + [step_record]
+                        _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
+                    except Exception:
+                        pass  # Non-critical — best-effort state persistence
+
+                    # Retry logic for transient failures
+                    MAX_RETRIES = 2
+                    for attempt in range(MAX_RETRIES + 1):
+                        try:
+                            result = _run_step_via_orchestrator(module, function, params)
+                            break
+                        except Exception as retry_exc:
+                            if attempt < MAX_RETRIES:
+                                _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
+                                time.sleep(1 * (attempt + 1))
+                                continue
+                            result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
+
+                    try:
                         # Check for safe_run timeout indicators in result
                         if isinstance(result, dict) and result.get("code") is not None:
                             if result["code"] == -1:
                                 step_record["status"] = "failed"
                                 step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                 steps_failed += 1
-                                _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 timeout")
+                                _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
                                 findings.append(step_record)
                                 pb_findings.append(step_record)
                                 continue
                             elif result["code"] < 0:
                                 step_record["status"] = "failed"
                                 step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
                                 steps_failed += 1
-                                _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 execution error")
+                                _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
                                 findings.append(step_record)
                                 pb_findings.append(step_record)
                                 continue
@@ -1660,22 +1717,30 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         # If the tool was missing, skip (not a failure)
                         if step_status == "error" and "not found" in str(result.get("error", "")).lower():
                             step_record["status"] = "skipped"
-                            step_record["result"] = result
+                            step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
                             steps_skipped += 1
-                            _fe_log(job_id, f"  \u2398 {module}.{function} skipped (tool not found)")
+                            _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
                         elif step_status == "success":
-                            step_record["status"] = "completed"
-                            step_record["result"] = result
-                            steps_completed += 1
-                            any_step_ran = True
-                            # Step marked complete in findings (single source of truth)
-                            _fe_log(job_id, f"  \u2713 {module}.{function} \u2192 OK")
+                            # Validate tool output before marking complete
+                            stdout = result.get("stdout", "") if isinstance(result, dict) else ""
+                            if not stdout or (isinstance(stdout, str) and len(stdout.strip()) < 10):
+                                # Tool returned success but empty/invalid output
+                                step_record["status"] = "failed"
+                                step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                                step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                steps_failed += 1
+                                _fe_log(job_id, f"  ✗ {module}.{function} → empty output")
+                            else:
+                                step_record["status"] = "completed"
+                                step_record["result"] = {"status": "success", "stdout": stdout, "stderr": result.get('stderr', ''), "artifacts": result.get('artifacts', []), "error": None}
+                                steps_completed += 1
+                                _fe_log(job_id, f"  ✓ {module}.{function} → OK")
                         else:
                             step_record["status"] = "failed"
-                            step_record["result"] = result
+                            step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
                             steps_failed += 1
                             any_step_ran = True
-                            _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 {step_status}")
+                            _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
 
                         # Critic validation
                         try:
