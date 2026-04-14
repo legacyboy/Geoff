@@ -57,14 +57,30 @@ class SLEUTHKIT_Specialist:
             return raw
 
         partitions = []
-        # mmls output format:
-        # 000:000  000:000  000:000  Description
-        # Slot     Start    End       Length    Description
+        # mmls output format (typical):
+        #   Slot      Start        End          Length       Description
+        #   002:  000:000   0000000063   0009510479   0009510417   NTFS / exFAT (0x07)
+        # Also handles simpler formats without slot prefixes
         for line in raw['stdout'].splitlines():
             line = line.strip()
-            if not line or line.startswith('DOS') or line.startswith('Slot') or line.startswith('---'):
+            if not line or line.startswith('DOS') or line.startswith('Slot') or line.startswith('---') or line.startswith('Offset') or line.startswith('Units') or line == '':
                 continue
-            # Parse: slot_num  start  end  length  description
+            # Skip unallocated/meta entries with -------
+            if line.startswith('0') and '-------' in line:
+                continue
+            if line.startswith('0') and 'Meta' in line[:20]:
+                continue
+            # Try format with slot prefix: 002:  000:000   0000000063   0009510479   0009510417   NTFS...
+            match = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if match:
+                partitions.append({
+                    'start_sector': int(match.group(1)),
+                    'end_sector': int(match.group(2)),
+                    'length_sectors': int(match.group(3)),
+                    'description': match.group(4).strip()
+                })
+                continue
+            # Try older format: slot:start  slot:end  slot:length  desc
             match = re.match(r'^(\d+):(\d+)\s+(\d+):(\d+)\s+(\d+):(\d+)\s+(.*)', line)
             if match:
                 partitions.append({
@@ -74,19 +90,19 @@ class SLEUTHKIT_Specialist:
                     'length_sectors': int(match.group(6)),
                     'description': match.group(7).strip()
                 })
-            else:
-                # Simpler format: start end length description (no slot prefix)
-                parts = line.split()
-                if len(parts) >= 4:
-                    try:
-                        partitions.append({
-                            'start_sector': int(parts[0]),
-                            'end_sector': int(parts[1]),
-                            'length_sectors': int(parts[2]),
-                            'description': ' '.join(parts[3:])
-                        })
-                    except ValueError:
-                        pass
+                continue
+            # Try simpler format: start end length description
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    partitions.append({
+                        'start_sector': int(parts[0]),
+                        'end_sector': int(parts[1]),
+                        'length_sectors': int(parts[2]),
+                        'description': ' '.join(parts[3:])
+                    })
+                except ValueError:
+                    pass
 
         return {
             'tool': 'mmls',
