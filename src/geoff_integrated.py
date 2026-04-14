@@ -996,11 +996,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     image_offsets = {}  # image_path -> first filesystem partition offset
     for img in inventory.get("disk_images", []):
         try:
-            mmls_result = orchestrator.run_playbook_step("find-evil", {
-                "module": "sleuthkit",
-                "function": "analyze_partition_table",
-                "params": {"disk_image": img}
-            })
+            specialist = SLEUTHKIT_Specialist()
+            mmls_result = specialist.analyze_partition_table(img)
             if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
                 # Find first NTFS/ext4/HFS+ partition
                 for part in mmls_result["partitions"]:
@@ -1122,6 +1119,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             v = v.replace("{image_stem}", item_stem)
                             v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
                         params[k] = v
+                    # Convert numeric string params to int
+                    for k, v in list(params.items()):
+                        if isinstance(v, str) and v.isdigit():
+                            params[k] = int(v)
+                        elif isinstance(v, str) and v.lower() in ('true', 'false'):
+                            params[k] = v.lower() == 'true'
 
                     step_record = {
                         "playbook": playbook_id,
