@@ -574,6 +574,28 @@ ALL_PLAYBOOKS = [f"PB-SIFT-{i:03d}" for i in range(1, 20)]
 # PB-SIFT-011 is skipped in the original; keep 19 IDs but the orchestrator
 # may not have 011 implemented. We still attempt it.
 
+PLAYBOOK_NAMES = {
+    "PB-SIFT-001": "Malware Hunting",
+    "PB-SIFT-002": "Ransomware",
+    "PB-SIFT-003": "Lateral Movement",
+    "PB-SIFT-004": "Credential Theft",
+    "PB-SIFT-005": "Persistence",
+    "PB-SIFT-006": "Exfiltration",
+    "PB-SIFT-007": "Living-off-the-Land",
+    "PB-SIFT-008": "Initial Access",
+    "PB-SIFT-009": "Web Shell",
+    "PB-SIFT-010": "DNS Tunneling",
+    "PB-SIFT-011": "Anti-Forensics",
+    "PB-SIFT-012": "Rootkit Detection",
+    "PB-SIFT-013": "Data Staging",
+    "PB-SIFT-014": "Privilege Escalation",
+    "PB-SIFT-015": "Execution",
+    "PB-SIFT-016": "Command and Control",
+    "PB-SIFT-017": "Malware Detection",
+    "PB-SIFT-018": "REMnux Malware Analysis",
+    "PB-SIFT-019": "Malware Analysis",
+}
+
 # Triage indicators for severity classification (used for reporting, NOT for
 # playbook selection — all playbooks always run regardless)
 TRIAGE_PATTERNS = {
@@ -1022,6 +1044,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     for pb_idx, playbook_id in enumerate(ALL_PLAYBOOKS):
         pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
+        pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
         _update_job(pb_progress_base, playbook_id, "Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name}")
 
         pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
