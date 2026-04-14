@@ -6,7 +6,6 @@ Each specialist handles a specific forensic domain with structured output parsin
 
 import json
 import subprocess
-import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -580,127 +579,6 @@ class VOLATILITY_Specialist:
             return {'tool': 'volatility', 'plugin': 'memmap', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
 
-class YARA_Specialist:
-    """Specialist for YARA malware signature scanning with parsed match output
-
-    Supports multiple rule sources installed by GEOFF:
-      /opt/geoff/yara-rules/community/  — Yara-Rules/rules (Florian Roth, malware/APT/exploit)
-      /opt/geoff/yara-rules/elastic/    — Elastic protections-artifacts (endpoint detection)
-      /opt/geoff/yara-rules/stratosphere/ — Stratosphere IPS (threat hunting)
-    Falls back to /usr/share/yara/rules if none found.
-    """
-
-    # Ordered preference: community is broadest, then elastic, then stratosphere
-    RULE_SEARCH_PATHS = [
-        '/opt/geoff/yara-rules/community/index.yar',
-        '/opt/geoff/yara-rules/elastic',
-        '/opt/geoff/yara-rules/stratosphere',
-        '/usr/share/yara/rules',
-    ]
-
-    def __init__(self, rules_path: Optional[str] = None):
-        if rules_path:
-            self.rules_path = rules_path
-        else:
-            # Auto-detect: use first available rule source
-            self.rules_path = self._auto_detect_rules()
-
-    def _auto_detect_rules(self) -> str:
-        """Find the best available YARA rules path"""
-        for path in self.RULE_SEARCH_PATHS:
-            if os.path.exists(path):
-                return path
-        # If nothing found, return default (will fail at scan time with clear error)
-        return '/opt/geoff/yara-rules/community/index.yar'
-
-    def _parse_yara_output(self, stdout: str) -> List[Dict[str, Any]]:
-        """Parse YARA output into structured matches"""
-        matches = []
-        for line in stdout.strip().splitlines():
-            if not line.strip():
-                continue
-            # YARA format: rule_name file_path
-            # Or with -m: rule_name [meta] file_path
-            parts = line.split()
-            if len(parts) >= 2:
-                rule_name = parts[0]
-                file_path = ' '.join(parts[1:])
-                match_info = {
-                    'rule': rule_name,
-                    'file': file_path,
-                }
-                # Check if there's meta info in brackets
-                meta_match = re.search(r'\[(.+?)\]', line)
-                if meta_match:
-                    match_info['meta'] = meta_match.group(1)
-                matches.append(match_info)
-        return matches
-
-    def scan_file(self, target_file: str, rules_file: Optional[str] = None) -> Dict[str, Any]:
-        """Scan a file with YARA"""
-        rules = rules_file or self.rules_path
-        if not os.path.exists(rules):
-            return {
-                'tool': 'yara',
-                'target': target_file,
-                'status': 'error',
-                'error': f'YARA rules not found at {rules}. Install rules via: /opt/geoff/install.sh --install-yara-rules',
-                'timestamp': datetime.now().isoformat()
-            }
-        cmd = ['yara', '-w', '-r', rules, target_file]
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            matches = self._parse_yara_output(result.stdout)
-
-            return {
-                'tool': 'yara',
-                'target': target_file,
-                'status': 'success',
-                'matches': matches,
-                'match_count': len(matches),
-                'raw_output': result.stdout,
-                'timestamp': datetime.now().isoformat()
-            }
-        except Exception as e:
-            return {'tool': 'yara', 'target': target_file, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
-
-    def scan_directory(self, target_dir: str, rules_file: Optional[str] = None) -> Dict[str, Any]:
-        """Scan entire directory with YARA"""
-        rules = rules_file or self.rules_path
-        if not os.path.exists(rules):
-            return {
-                'tool': 'yara',
-                'target': target_dir,
-                'status': 'error',
-                'error': f'YARA rules not found at {rules}. Install rules via: /opt/geoff/install.sh --install-yara-rules',
-                'timestamp': datetime.now().isoformat()
-            }
-        cmd = ['yara', '-w', '-r', rules, target_dir]
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-            matches = self._parse_yara_output(result.stdout)
-
-            # Group by rule for summary
-            rule_summary = {}
-            for m in matches:
-                rule = m['rule']
-                rule_summary[rule] = rule_summary.get(rule, 0) + 1
-
-            return {
-                'tool': 'yara',
-                'target': target_dir,
-                'status': 'success',
-                'matches': matches[:500],
-                'match_count': len(matches),
-                'rule_summary': rule_summary,
-                'raw_output': result.stdout[:50000],
-                'timestamp': datetime.now().isoformat()
-            }
-        except Exception as e:
-            return {'tool': 'yara', 'target': target_dir, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
-
 
 class STRINGS_Specialist:
     """Specialist for string extraction and IOC analysis with full parsing"""
@@ -813,7 +691,6 @@ class SpecialistOrchestrator:
         self.evidence_base = Path(evidence_base)
         self.sleuthkit = SLEUTHKIT_Specialist(evidence_base)
         self.volatility = VOLATILITY_Specialist()
-        self.yara = YARA_Specialist()
         self.strings = STRINGS_Specialist()
 
     def run_playbook_step(self, playbook_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
@@ -824,7 +701,6 @@ class SpecialistOrchestrator:
         specialist_map = {
             'sleuthkit': self.sleuthkit,
             'volatility': self.volatility,
-            'yara': self.yara,
             'strings': self.strings,
         }
 
@@ -846,10 +722,6 @@ class SpecialistOrchestrator:
                 'available': self.volatility.volatility_path is not None,
                 'functions': ['process_list', 'network_scan', 'find_malware',
                              'scan_registry', 'dump_process']
-            },
-            'yara': {
-                'available': True,
-                'functions': ['scan_file', 'scan_directory']
             },
             'strings': {
                 'available': True,

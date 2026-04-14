@@ -25,7 +25,7 @@ from flask_cors import CORS
 
 from jsonschema import validate as jsonschema_validate, ValidationError
 
-from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, YARA_Specialist, STRINGS_Specialist
+from sift_specialists import SpecialistOrchestrator, SLEUTHKIT_Specialist, VOLATILITY_Specialist, STRINGS_Specialist
 from sift_specialists_extended import ExtendedOrchestrator
 from sift_specialists_remnux import REMNUX_Orchestrator
 from geoff_critic import GeoffCritic, ValidationPipeline
@@ -241,8 +241,18 @@ geoff_forensicator = ForensicatorAgent(OLLAMA_URL)
 # Find Evil Job Tracking (async)
 # ---------------------------------------------------------------------------
 
-_find_evil_jobs = {}  # job_id -> {status, progress, result, started_at, ...}
+_find_evil_jobs = {}  # job_id -> {status, progress, result, started_at, log, ...}
 _find_evil_lock = threading.Lock()
+
+
+def _fe_log(job_id: str, msg: str):
+    """Append a timestamped log entry to a Find Evil job."""
+    if job_id is None:
+        return
+    with _find_evil_lock:
+        if job_id in _find_evil_jobs:
+            ts = datetime.now().strftime("%H:%M:%S")
+            _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": msg})
 
 
 def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict:
@@ -272,8 +282,6 @@ Your role is to conduct thorough, systematic forensic analysis using established
 *Disk Forensics (SleuthKit):* Partition analysis, filesystem statistics, file listing/extraction, inode analysis
 
 *Memory Forensics (Volatility):* Process enumeration, network connections, malware detection, registry analysis, memory dumping
-
-*Malware Detection (YARA):* Signature-based scanning, directory-wide detection
 
 *IOC Extraction:* String analysis, URL/IP/email extraction, registry artifact identification
 
@@ -367,13 +375,6 @@ def detect_tool_request(message: str) -> dict:
 
     if any(word in message_lower for word in ['dump process', 'proc dump']):
         return {'module': 'volatility', 'function': 'dump_process', 'params': {}}
-
-    # YARA patterns
-    if any(word in message_lower for word in ['yara', 'scan for malware', 'signature scan']):
-        return {'module': 'yara', 'function': 'scan_file', 'params': {}}
-
-    if any(word in message_lower for word in ['yara scan directory', 'scan folder']):
-        return {'module': 'yara', 'function': 'scan_directory', 'params': {}}
 
     # Strings patterns
     if any(word in message_lower for word in ['strings', 'extract strings', 'find iocs']):
@@ -616,7 +617,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
             ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
             ("sleuthkit", "list_files", {"image": "{image}", "offset": 2048, "recursive": True}),
-            ("yara", "scan_file", {"target_file": "{image}"}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
         "memory_dumps": [
@@ -653,7 +654,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
-            ("yara", "scan_file", {"target_file": "{image}"}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": 2048}),
         ],
         "registry_hives": [
             ("registry", "parse_hive", {"hive_path": "{hive}"}),
@@ -691,7 +692,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
-            ("yara", "scan_file", {"target_file": "{image}"}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": 2048}),
         ],
     },
     "PB-SIFT-008": {  # Initial Access
@@ -944,10 +945,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             "evidence_dir": evidence_dir,
         }
 
-    def _update_job(progress_pct: float, current_pb: str, current_step: str = ""):
+    def _update_job(progress_pct: float, current_pb: str, current_step: str = "", log_msg: str = ""):
         """Push progress to the in-memory job tracker."""
         if job_id is None:
             return
+        if log_msg:
+            _fe_log(job_id, log_msg)
+        elif current_step:
+            _fe_log(job_id, f"{current_pb} > {current_step}")
         with _find_evil_lock:
             _find_evil_jobs[job_id]["progress_pct"] = round(progress_pct, 1)
             _find_evil_jobs[job_id]["current_playbook"] = current_pb
@@ -961,7 +966,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     os_type = _detect_os(inventory)
     indicator_hits = _scan_triage_indicators(inventory)
 
-    _update_job(5, "inventory", "Complete")
+    _update_job(5, "inventory", "Complete", log_msg="Evidence inventory complete")
 
     # ------------------------------------------------------------------
     # Phase 2: Prepare Case Work Directory
@@ -988,7 +993,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     except Exception:
         pass
 
-    _update_job(8, "setup", "Case directory ready")
+    _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
 
     # ------------------------------------------------------------------
     # Phase 3: Execute ALL 19 Playbooks
@@ -1017,7 +1022,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     for pb_idx, playbook_id in enumerate(ALL_PLAYBOOKS):
         pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
-        _update_job(pb_progress_base, playbook_id, "Starting")
+        _update_job(pb_progress_base, playbook_id, "Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name}")
 
         pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
         pb_findings = []
@@ -1077,16 +1082,19 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             step_record["status"] = "skipped"
                             step_record["result"] = result
                             steps_skipped += 1
+                            _fe_log(job_id, f"  \u2398 {module}.{function} skipped (tool not found)")
                         elif step_status == "success":
                             step_record["status"] = "completed"
                             step_record["result"] = result
                             steps_completed += 1
                             any_step_ran = True
+                            _fe_log(job_id, f"  \u2713 {module}.{function} \u2192 OK")
                         else:
                             step_record["status"] = "failed"
                             step_record["result"] = result
                             steps_failed += 1
                             any_step_ran = True
+                            _fe_log(job_id, f"  \u2717 {module}.{function} \u2192 {step_status}")
 
                         # Critic validation
                         try:
@@ -1120,7 +1128,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Phase 3b: Multi-Host Correlation
     # ------------------------------------------------------------------
-    _update_job(92, "correlation", "Cross-image timeline merge")
+    _update_job(92, "correlation", "Cross-image timeline merge", log_msg="Merging timelines across disk images")
 
     timeline_files = []
     if len(inventory["disk_images"]) > 1:
@@ -1167,7 +1175,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         timeline_for_extraction = [merged_plaso]
 
     if timeline_for_extraction:
-        _update_job(93, "correlation", "Extracting user activity across hosts")
+        _update_job(93, "correlation", "Extracting user activity across hosts", log_msg="Extracting per-user activity across hosts")
         try:
             # Use psort to extract user-relevant events from Plaso timelines
             # Focus on: file access, process execution, logins, browser history,
@@ -1340,7 +1348,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Phase 4: Aggregate Findings & Severity
     # ------------------------------------------------------------------
-    _update_job(95, "reporting", "Aggregating findings")
+    _update_job(95, "reporting", "Aggregating findings", log_msg="Aggregating findings from all playbooks")
 
     severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
     evil_found = False
@@ -1357,10 +1365,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         result = f.get("result", {})
         if not isinstance(result, dict):
             continue
-        # YARA matches
-        if result.get("match_count", 0) > 0:
-            severity_counts["HIGH"] += 1
-            evil_found = True
         # Volatility malfind
         if f.get("module") == "volatility" and f.get("function") == "find_malware":
             stdout = result.get("stdout", "")
@@ -1462,7 +1466,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         'description': f"Find Evil run on {evidence_dir}",
     })
 
-    _update_job(100, "complete", "Done")
+    _update_job(100, "complete", "Done", log_msg="\u2714 Find Evil complete")
     return report
 
 
@@ -1909,14 +1913,27 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             <div id="fe-progress-area" style="display:none;">
                 <div class="fe-progress">
                     <div class="fe-status-text">
-                        <strong>Playbook:</strong> <span id="fe-pb-name">—</span> &nbsp;|&nbsp;
-                        <strong>Step:</strong> <span id="fe-step-name">—</span> &nbsp;|&nbsp;
+                        <strong>Playbook:</strong> <span id="fe-pb-name">—</span> &nbsp;|
+                        <strong>Step:</strong> <span id="fe-step-name">—</span> &nbsp;|
                         <strong>Elapsed:</strong> <span id="fe-elapsed">0s</span>
                     </div>
                     <div class="fe-progress-bar">
                         <div class="fe-progress-fill" id="fe-progress-fill" style="width:0%">0%</div>
                     </div>
                 </div>
+                <div id="fe-log" style="
+                    margin-top: 12px;
+                    background: #0d1117;
+                    border: 1px solid #30363d;
+                    border-radius: 6px;
+                    padding: 12px;
+                    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                    font-size: 12px;
+                    color: #8b949e;
+                    max-height: 400px;
+                    overflow-y: auto;
+                    line-height: 1.6;
+                "></div>
             </div>
             <div id="fe-results-area" style="display:none;"></div>
         </div>
@@ -2120,6 +2137,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
         function pollFindEvilStatus(jobId) {
             if(fePollInterval) clearInterval(fePollInterval);
+            let lastLogIndex = 0;
 
             const poll = async () => {
                 try {
@@ -2132,6 +2150,27 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                         document.getElementById('fe-elapsed').textContent = (status.elapsed_seconds || 0).toFixed(0) + 's';
                         document.getElementById('fe-progress-fill').style.width = pct + '%';
                         document.getElementById('fe-progress-fill').textContent = pct + '%';
+
+                        // Stream log entries
+                        if (status.log && status.log.length > lastLogIndex) {
+                            const logDiv = document.getElementById('fe-log');
+                            for (let i = lastLogIndex; i < status.log.length; i++) {
+                                const entry = status.log[i];
+                                const line = document.createElement('div');
+                                const time = entry.time || '';
+                                const msg = entry.msg || '';
+                                let color = '#8b949e';
+                                if (msg.includes('✓') || msg.includes('complete')) color = '#3fb950';
+                                else if (msg.includes('✗') || msg.includes('error') || msg.includes('fail')) color = '#f85149';
+                                else if (msg.includes('▶')) color = '#d29922';
+                                else if (msg.includes('⊘') || msg.includes('skip')) color = '#6e7681';
+                                line.style.color = color;
+                                line.textContent = time + '  ' + msg;
+                                logDiv.appendChild(line);
+                            }
+                            lastLogIndex = status.log.length;
+                            logDiv.scrollTop = logDiv.scrollHeight;
+                        }
 
                         if (status.status === 'complete') {
                             clearInterval(fePollInterval);
@@ -2315,7 +2354,6 @@ def chat():
         tool_info = """Available forensic tools:
 - SleuthKit: mmls (partition), fls (list files), fsstat (filesystem), icat (extract), istat/ils (inodes)
 - Volatility: process list, network scan, malware find, registry scan, process dump
-- YARA: signature scan, directory scan
 - Strings: extract IOCs (URLs, IPs, emails, registry paths)
 - Registry: hive parsing, UserAssist, ShellBags, USB history, autoruns, services
 - Timeline: log2timeline (create), psort (sort), super timeline
@@ -2515,6 +2553,7 @@ def find_evil_route():
                 "started_at": datetime.now().isoformat(),
                 "result": None,
                 "error": None,
+                "log": [{"time": datetime.now().strftime("%H:%M:%S"), "msg": "Find Evil job started"}],
             }
 
         # Spawn the find_evil run in a background thread
@@ -2569,6 +2608,7 @@ def find_evil_status(job_id):
         "current_playbook": job["current_playbook"],
         "current_step": job["current_step"],
         "elapsed_seconds": job["elapsed_seconds"],
+        "log": job.get("log", [])[-50:],  # Last 50 entries
     }
 
     if job["status"] == "complete":
