@@ -1723,12 +1723,11 @@ class ExtendedOrchestrator:
         # Import from original specialists
         from sift_specialists import (
             SLEUTHKIT_Specialist, VOLATILITY_Specialist,
-            YARA_Specialist, STRINGS_Specialist,
+            STRINGS_Specialist,
         )
 
         self.sleuthkit = SLEUTHKIT_Specialist(evidence_base)
         self.volatility = VOLATILITY_Specialist()
-        self.yara = YARA_Specialist()
         self.strings = STRINGS_Specialist()
 
         # Extended specialists
@@ -1754,7 +1753,6 @@ class ExtendedOrchestrator:
         specialist_map = {
             'sleuthkit': self.sleuthkit,
             'volatility': self.volatility,
-            'yara': self.yara,
             'strings': self.strings,
             'registry': self.registry,
             'plaso': self.plaso,
@@ -1793,11 +1791,6 @@ class ExtendedOrchestrator:
                 'functions': ['process_list', 'network_scan', 'find_malware',
                               'scan_registry', 'dump_process'],
                 'tools': ['volatility3', 'vol.py'],
-            },
-            'yara': {
-                'category': 'Malware Detection',
-                'functions': ['scan_file', 'scan_directory'],
-                'tools': ['yara'],
             },
             'strings': {
                 'category': 'IOC Extraction',

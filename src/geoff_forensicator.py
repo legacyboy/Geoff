@@ -115,7 +115,6 @@ Available tools:
 - fls: List files (use -r for recursive)
 - icat: Extract file content
 - strings: Extract strings (-a -n 8)
-- yara: Scan with YARA rules
 - vol.py: Volatility memory analysis
 
 Respond ONLY in JSON format:
@@ -159,9 +158,6 @@ Respond ONLY in JSON format:
 
             if "memory" in instruction.lower() or "volatility" in instruction.lower():
                 commands.append({"tool": "vol.py", "args": ["-f", evidence_path, "windows.pslist.PsList"], "reason": "List memory processes"})
-
-            if "yara" in instruction.lower() or "scan" in instruction.lower():
-                commands.append({"tool": "yara", "args": ["/usr/share/yara/rules/index.yar", evidence_path], "reason": "YARA malware scan"})
 
         return commands
 
