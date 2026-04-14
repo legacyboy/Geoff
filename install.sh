@@ -334,6 +334,46 @@ else
     info "Skipping Ollama model pulls (--skip-ollama)"
 fi
 
+# ── YARA Rules ───────────────────────────────────────────────────────────────
+YARA_RULES_DIR="${INSTALL_DIR}/yara-rules"
+if ! [[ "$SKIP_DEPS" == true ]] && command -v git &>/dev/null; then
+    info "Installing YARA rules..."
+
+    # Community rules (Yara-Rules/rules — Florian Roth, ~4.7k stars, GPL-2.0)
+    if [[ -d "${YARA_RULES_DIR}/community/.git" ]]; then
+        info "  Updating community rules..."
+        (cd "${YARA_RULES_DIR}/community" && git pull) || warn "Community rules update failed"
+    else
+        info "  Cloning community rules (Yara-Rules/rules)..."
+        git clone --depth 1 https://github.com/Yara-Rules/rules.git "${YARA_RULES_DIR}/community" 2>/dev/null || \
+            warn "Community rules clone failed"
+    fi
+
+    # Elastic protections-artifacts (~1.4k stars, Elastic License)
+    if [[ -d "${YARA_RULES_DIR}/elastic/.git" ]]; then
+        info "  Updating Elastic rules..."
+        (cd "${YARA_RULES_DIR}/elastic" && git pull) || warn "Elastic rules update failed"
+    else
+        info "  Cloning Elastic protections-artifacts..."
+        git clone --depth 1 https://github.com/elastic/protections-artifacts.git "${YARA_RULES_DIR}/elastic" 2>/dev/null || \
+            warn "Elastic rules clone failed"
+    fi
+
+    # Stratosphere IPS YARA rules (threat hunting focused, CC BY-SA 4.0)
+    if [[ -d "${YARA_RULES_DIR}/stratosphere/.git" ]]; then
+        info "  Updating Stratosphere rules..."
+        (cd "${YARA_RULES_DIR}/stratosphere" && git pull) || warn "Stratosphere rules update failed"
+    else
+        info "  Cloning Stratosphere YARA rules..."
+        git clone --depth 1 https://github.com/stratosphereips/yara-rules.git "${YARA_RULES_DIR}/stratosphere" 2>/dev/null || \
+            warn "Stratosphere rules clone failed"
+    fi
+
+    ok "YARA rules installed to ${YARA_RULES_DIR}"
+else
+    info "Skipping YARA rules installation"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"

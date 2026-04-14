@@ -6,6 +6,7 @@ Each specialist handles a specific forensic domain with structured output parsin
 
 import json
 import subprocess
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -580,10 +581,37 @@ class VOLATILITY_Specialist:
 
 
 class YARA_Specialist:
-    """Specialist for YARA malware signature scanning with parsed match output"""
+    """Specialist for YARA malware signature scanning with parsed match output
+
+    Supports multiple rule sources installed by GEOFF:
+      /opt/geoff/yara-rules/community/  — Yara-Rules/rules (Florian Roth, malware/APT/exploit)
+      /opt/geoff/yara-rules/elastic/    — Elastic protections-artifacts (endpoint detection)
+      /opt/geoff/yara-rules/stratosphere/ — Stratosphere IPS (threat hunting)
+    Falls back to /usr/share/yara/rules if none found.
+    """
+
+    # Ordered preference: community is broadest, then elastic, then stratosphere
+    RULE_SEARCH_PATHS = [
+        '/opt/geoff/yara-rules/community/index.yar',
+        '/opt/geoff/yara-rules/elastic',
+        '/opt/geoff/yara-rules/stratosphere',
+        '/usr/share/yara/rules',
+    ]
 
     def __init__(self, rules_path: Optional[str] = None):
-        self.rules_path = rules_path or '/usr/share/yara/rules'
+        if rules_path:
+            self.rules_path = rules_path
+        else:
+            # Auto-detect: use first available rule source
+            self.rules_path = self._auto_detect_rules()
+
+    def _auto_detect_rules(self) -> str:
+        """Find the best available YARA rules path"""
+        for path in self.RULE_SEARCH_PATHS:
+            if os.path.exists(path):
+                return path
+        # If nothing found, return default (will fail at scan time with clear error)
+        return '/opt/geoff/yara-rules/community/index.yar'
 
     def _parse_yara_output(self, stdout: str) -> List[Dict[str, Any]]:
         """Parse YARA output into structured matches"""
@@ -610,12 +638,16 @@ class YARA_Specialist:
 
     def scan_file(self, target_file: str, rules_file: Optional[str] = None) -> Dict[str, Any]:
         """Scan a file with YARA"""
-        cmd = ['yara', '-w', '-r']
-        if rules_file:
-            cmd.append(rules_file)
-        else:
-            cmd.append(self.rules_path)
-        cmd.append(target_file)
+        rules = rules_file or self.rules_path
+        if not os.path.exists(rules):
+            return {
+                'tool': 'yara',
+                'target': target_file,
+                'status': 'error',
+                'error': f'YARA rules not found at {rules}. Install rules via: /opt/geoff/install.sh --install-yara-rules',
+                'timestamp': datetime.now().isoformat()
+            }
+        cmd = ['yara', '-w', '-r', rules, target_file]
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -635,12 +667,16 @@ class YARA_Specialist:
 
     def scan_directory(self, target_dir: str, rules_file: Optional[str] = None) -> Dict[str, Any]:
         """Scan entire directory with YARA"""
-        cmd = ['yara', '-w', '-r']
-        if rules_file:
-            cmd.append(rules_file)
-        else:
-            cmd.append(self.rules_path)
-        cmd.append(target_dir)
+        rules = rules_file or self.rules_path
+        if not os.path.exists(rules):
+            return {
+                'tool': 'yara',
+                'target': target_dir,
+                'status': 'error',
+                'error': f'YARA rules not found at {rules}. Install rules via: /opt/geoff/install.sh --install-yara-rules',
+                'timestamp': datetime.now().isoformat()
+            }
+        cmd = ['yara', '-w', '-r', rules, target_dir]
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
