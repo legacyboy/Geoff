@@ -45,75 +45,126 @@ from geoff_forensicator import ForensicatorAgent
 # ---------------------------------------------------------------------------
 
 def _hash_file(path):
-    """Compute SHA-256 hash of a file."""
+    """Compute SHA-256 hash of a file for chain of custody."""
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
             while chunk := f.read(8192):
                 h.update(chunk)
         return h.hexdigest()
-    except (OSError, IOError):
-        return "hash_unavailable"
+    except Exception as e:
+        _log_error(f"hash_file failed for {path}", e)
+        return "hash_failed"
 
 
 def _atomic_write(path, data, mode='w'):
     """Atomically write data to path using temp file + replace."""
     tmp = str(path) + '.tmp'
-    with open(tmp, mode) as f:
-        f.write(data)
-    os.replace(tmp, str(path))
+    try:
+        with open(tmp, mode) as f:
+            f.write(data)
+        os.replace(tmp, str(path))
+    except Exception as e:
+        _log_error(f"atomic write failed for {path}", e)
+        # Clean up temp file if it exists
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        if STRICT_MODE:
+            raise
+
+
+def _atomic_append(path, data):
+    """Atomically append data to a file (read-existing + write-all + replace)."""
+    tmp = str(path) + '.tmp'
+    try:
+        existing = ''
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                existing = f.read()
+        with open(tmp, 'w') as f:
+            f.write(existing)
+            f.write(data)
+        os.replace(tmp, str(path))
+    except Exception as e:
+        _log_error(f"atomic append failed for {path}", e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        if STRICT_MODE:
+            raise
 
 
 def safe_run(cmd, timeout=300, **kwargs):
-    """Wrapper for subprocess.run with default timeout and exception handling."""
+    """Wrapper for subprocess.run with default timeout. Always returns a dict."""
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
-    except subprocess.TimeoutExpired as e:
-        print(f"[GEOFF] Command timed out after {timeout}s: {' '.join(cmd[:5])}...")
-        return e
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
+        return {
+            "code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        cmd_str = ' '.join(str(c) for c in cmd[:5])
+        _log_error(f"Command timed out after {timeout}s: {cmd_str}")
+        return {
+            "code": -1,
+            "stdout": "",
+            "stderr": f"Timeout after {timeout}s: {cmd_str}",
+        }
     except Exception as e:
-        print(f"[GEOFF] Command failed: {' '.join(cmd[:5])}... Error: {e}")
-        return e
+        cmd_str = ' '.join(str(c) for c in cmd[:5])
+        _log_error(f"Command failed: {cmd_str}", e)
+        return {
+            "code": -2,
+            "stdout": "",
+            "stderr": str(e),
+        }
 
 
 def safe_git_commit(message: str, base_path: str = None):
-    """Safe git commit wrapper that checks repo state, runs add, and handles 'nothing to commit'."""
+    """Safe git commit wrapper. Returns dict with status/data/error."""
     if base_path is None:
         base_path = os.environ.get('GEOFF_GIT_DIR', CASES_WORK_DIR + '/git')
     
     if not os.path.isdir(base_path):
         _log_error(f"git commit: not a directory: {base_path}")
-        return None
+        return {"status": "failed", "error": "not a directory", "hash": None}
     
     # Check if we're in a git repo
     result = safe_run(['git', 'rev-parse', '--is-inside-work-tree'], cwd=base_path, timeout=10)
-    if result.returncode != 0:
+    if result["code"] != 0:
         _log_error(f"git commit: not a git repo: {base_path}")
-        return None
+        return {"status": "failed", "error": "not a git repo", "hash": None}
     
     # Run git add -A
     add_result = safe_run(['git', 'add', '-A'], cwd=base_path, timeout=60)
-    if add_result.returncode != 0:
-        _log_error(f"git add failed: {add_result.stderr[:200]}")
-        return None
+    if add_result["code"] != 0:
+        _log_error(f"git add failed: {add_result['stderr'][:200]}")
+        return {"status": "failed", "error": f"git add failed: {add_result['stderr'][:100]}", "hash": None}
     
     # Run git commit
     commit_result = safe_run(['git', 'commit', '-m', message], cwd=base_path, timeout=60)
     
-    if commit_result.returncode == 0:
+    if commit_result["code"] == 0:
         # Extract commit hash
         hash_result = safe_run(['git', 'rev-parse', 'HEAD'], cwd=base_path, timeout=10)
-        if hash_result.returncode == 0:
-            commit_hash = hash_result.stdout.strip()
-            _log_error(f"Committed: {message} (hash: {commit_hash})")  # not an error but uses same logger
-            return commit_hash
-        return None
-    elif "nothing to commit" in commit_result.stderr.lower():
-        # Nothing to commit - this is not an error
-        return None
+        if hash_result["code"] == 0:
+            commit_hash = hash_result["stdout"].strip()
+            _log_info(f"Committed: {message} (hash: {commit_hash})")
+            return {"status": "committed", "hash": commit_hash, "error": None}
+        return {"status": "committed", "hash": None, "error": "could not get hash"}
+    elif commit_result["code"] < 0:
+        # Timeout or other exception from safe_run
+        _log_error(f"git commit failed: {commit_result['stderr']}")
+        return {"status": "failed", "error": commit_result["stderr"], "hash": None}
+    elif "nothing to commit" in commit_result["stderr"].lower():
+        return {"status": "noop", "hash": None, "error": None}
     else:
-        print(f"[GEOFF] git commit failed: {commit_result.stderr[:500]}")
-        return None
+        _log_error(f"git commit failed: {commit_result['stderr'][:500]}")
+        return {"status": "failed", "error": commit_result["stderr"][:200], "hash": None}
 
 
 def _fe_log(job_id: str, msg: str):
@@ -149,8 +200,16 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
         _fe_log(job_id, log_msg)
     else:
         print(f"[GEOFF] error: {log_msg}")
-    if STRICT_MODE and e:
-        raise
+    if STRICT_MODE:
+        if e:
+            raise e
+        else:
+            raise RuntimeError(msg)
+
+
+def _log_info(msg: str):
+    """Info-level logger — not an error."""
+    print(f"[GEOFF] {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +290,9 @@ def git_commit_action(message: str, base_path: str = None):
     if not os.path.isdir(base_path):
         return
 
-    # Use safe_git_commit function
-    safe_git_commit(message, base_path)
+    result = safe_git_commit(message, base_path)
+    if result["status"] == "failed":
+        _log_error(f"git commit action failed: {result.get('error', 'unknown')}")
 
 
 class ActionLogger:
@@ -263,7 +323,7 @@ class ActionLogger:
         try:
             log_content = json.dumps(entry) + '\n'
             with _log_lock:
-                _atomic_write(self.action_log, log_content, 'a')
+                _atomic_append(self.action_log, log_content)
         except Exception as e:
             _log_error(f"ActionLogger log write {self.action_log}", e)
             # Fallback to regular write
@@ -1106,9 +1166,9 @@ def _scan_triage_indicators(inventory: dict) -> list:
                 ["strings", "-n", "8", str(fpath)],
                 timeout=120
             )
-            if result.returncode != 0:
+            if result["code"] != 0:
                 continue
-            content_lower = result.stdout[:500000].lower()  # Limit to 500KB of strings output
+            content_lower = result["stdout"][:500000].lower()  # Limit to 500KB of strings output
             for category, keywords in string_keywords.items():
                 for kw in keywords:
                     if kw.lower() in content_lower:
@@ -1717,9 +1777,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         timeout=300
                     )
 
-                    if psort_result.returncode == 0 and psort_result.stdout:
+                    if psort_result["code"] == 0 and psort_result["stdout"]:
                         # Parse JSON output line by line
-                        for line in psort_result.stdout.strip().split("\n"):
+                        for line in psort_result["stdout"].strip().split("\n"):
                             try:
                                 event = json.loads(line)
                             except (json.JSONDecodeError, ValueError):
@@ -1771,8 +1831,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 targeted_cmd,
                                 timeout=120
                             )
-                            if targeted_result.returncode == 0 and targeted_result.stdout:
-                                for line in targeted_result.stdout.strip().split("\n"):
+                            if targeted_result["code"] == 0 and targeted_result["stdout"]:
+                                for line in targeted_result["stdout"].strip().split("\n"):
                                     try:
                                         event = json.loads(line)
                                     except (json.JSONDecodeError, ValueError):
