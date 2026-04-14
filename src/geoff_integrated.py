@@ -571,7 +571,7 @@ def get_available_tools_status():
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
 ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + ["PB-SIFT-016", "PB-SIFT-017", "PB-SIFT-018"]
-# TEMP_PB-SIFT-015 is skipped in the original; keep 19 IDs but the orchestrator
+# PB-SIFT-015 is skipped in the original; keep 19 IDs but the orchestrator
 # may not have 011 implemented. We still attempt it.
 
 PLAYBOOK_NAMES = {
@@ -647,7 +647,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
         ],
     },
-    "TEMP_TEMP_TEMP_PB-SIFT-015": {  # Ransomware
+    "PB-SIFT-009": {  # Ransomware
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -658,7 +658,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "TEMP_TEMP_TEMP_TEMP_PB-SIFT-014": {  # Lateral Movement
+    "PB-SIFT-006": {  # Lateral Movement
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
@@ -682,7 +682,7 @@ PLAYBOOK_STEPS = {
             ("registry", "parse_hive", {"hive_path": "{hive}"}),
         ],
     },
-    "TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014": {  # Persistence
+    "PB-SIFT-003": {  # Persistence
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
             ("registry", "extract_services", {"system_path": "{hive}"}),
@@ -694,7 +694,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "TEMP_TEMP_TEMP_PB-SIFT-014": {  # Exfiltration
+    "PB-SIFT-007": {  # Exfiltration
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
@@ -706,7 +706,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
     },
-    "TEMP_TEMP_PB-SIFT-014": {  # Living-off-the-Land
+    "PB-SIFT-010": {  # Living-off-the-Land
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -717,7 +717,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
-    "TEMP_PB-SIFT-008": {  # Initial Access
+    "PB-SIFT-001": {  # Initial Access
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
@@ -729,7 +729,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "TEMP_TEMP_PB-SIFT-015": {  # Insider Threat
+    "PB-SIFT-013": {  # Insider Threat
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -743,7 +743,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
         ],
     },
-    "TEMP_PB-SIFT-014": {  # Anti-Forensics
+    "PB-SIFT-012": {  # Anti-Forensics
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -755,7 +755,7 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "TEMP_PB-SIFT-015": {  # (Reserved / placeholder — still attempted)
+    "PB-SIFT-015": {  # (Reserved / placeholder — still attempted)
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
         ],
@@ -775,7 +775,7 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "TEMP_PB-SIFT-005": {  # REMnux Malware Analysis
+    "PB-SIFT-004": {  # REMnux Malware Analysis
         "disk_images": [
             ("remnux", "die_scan", {"target_file": "{image}"}),
             ("remnux", "clamav_scan", {"target_file": "{image}"}),
@@ -787,7 +787,7 @@ PLAYBOOK_STEPS = {
             ("remnux", "exiftool_scan", {"target_file": "{file}"}),
         ],
     },
-    "TEMP_TEMP_TEMP_TEMP_PB-SIFT-015": {  # Mobile Forensics
+    "PB-SIFT-006": {  # Mobile Forensics
         "mobile_backups": [
             ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
         ],
@@ -1050,15 +1050,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
 
     # ------------------------------------------------------------------
-    # Phase 3: Execute ALL 19 Playbooks
+    # Phase 3: Triage & Execution Plan (PB-SIFT-000)
     # ------------------------------------------------------------------
+    # Run PB-SIFT-000 (Triage) first to get the execution plan.
+    # Then execute ONLY the playbooks listed in that plan.
     findings = []
     critic_results = []
     playbooks_run = []
     steps_completed = 0
     steps_failed = 0
     steps_skipped = 0
-    total_pb = len(ALL_PLAYBOOKS)
 
     # Evidence type shorthand
     ev = {
@@ -1074,7 +1075,174 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     output_dir = str(case_work_dir / "output")
 
-    for pb_idx, playbook_id in enumerate(ALL_PLAYBOOKS):
+    # --- Run PB-SIFT-000 (Triage) first ---
+    _update_job(9, "PB-SIFT-000", "Running triage meta-playbook", log_msg="\u25b6 PB-SIFT-000: Triage Prioritization")
+    _fe_log(job_id, "\u25b6 PB-SIFT-000: Triage Prioritization")
+
+    triage_findings = []
+    triage_steps = PLAYBOOK_STEPS.get("PB-SIFT-000", {})
+    for ev_type, step_templates in triage_steps.items():
+        evidence_items = ev.get(ev_type, [])
+        if not evidence_items:
+            continue
+        items = evidence_items if ev_type in ("disk_images", "memory_dumps") else evidence_items[:3]
+        for item in items:
+            item_stem = Path(item).stem
+            for module, function, raw_params in step_templates:
+                params = {}
+                for k, v in raw_params.items():
+                    if isinstance(v, str):
+                        v = v.replace("{image}", item).replace("{mem}", item).replace("{pcap}", item)
+                        v = v.replace("{evtx}", item).replace("{syslog}", item).replace("{hive}", item)
+                        v = v.replace("{mobile}", str(Path(item).parent)).replace("{file}", item)
+                        v = v.replace("{output_dir}", output_dir).replace("{image_stem}", item_stem)
+                        v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                    params[k] = v
+                for k, v in list(params.items()):
+                    if isinstance(v, str) and v.isdigit():
+                        params[k] = int(v)
+                    elif isinstance(v, str) and v.lower() in ('true', 'false'):
+                        params[k] = v.lower() == 'true'
+                try:
+                    result = _run_step_via_orchestrator(module, function, params)
+                    triage_findings.append({"module": module, "function": function, "result": result, "status": result.get("status", "error")})
+                except Exception as e:
+                    triage_findings.append({"module": module, "function": function, "error": str(e), "status": "failed"})
+
+    # --- Build execution plan from triage results ---
+    # Determine which playbooks to run based on:
+    #   1. Evidence types available
+    #   2. Indicator hits from triage scans
+    #   3. OS detection
+    execution_plan = []
+    skipped_playbooks = []
+    confidence_modifiers = []
+
+    # Always include core playbooks
+    core_playbooks = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
+    for pb in core_playbooks:
+        execution_plan.append(pb)
+
+    # Include evidence-dependent playbooks
+    if inventory["disk_images"]:
+        execution_plan.extend(["PB-SIFT-006", "PB-SIFT-007", "PB-SIFT-008", "PB-SIFT-010", "PB-SIFT-012"])
+    if inventory["pcaps"]:
+        execution_plan.append("PB-SIFT-011")
+    if os_type == "linux":
+        execution_plan.append("PB-SIFT-014")
+    if os_type == "macos":
+        execution_plan.append("PB-SIFT-015")
+
+    # OS-agnostic playbooks
+    execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
+
+    # Add malware playbooks if suspicious binaries found
+    suspicious_binary_found = False
+    for f in triage_findings:
+        result_str = json.dumps(f.get("result", f.get("error", "")), default=str).lower()
+        if any(kw in result_str for kw in ["malware", "suspicious", "malicious", "trojan", "backdoor", "ransomware"]):
+            suspicious_binary_found = True
+            break
+    if suspicious_binary_found:
+        execution_plan.extend(["PB-SIFT-017", "PB-SIFT-018"])
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-017", "reason": "No suspicious binary surfaced during triage"})
+        skipped_playbooks.append({"id": "PB-SIFT-018", "reason": "No suspicious binary surfaced during triage"})
+
+    # Cross-image correlation last (if multi-host)
+    if len(inventory["disk_images"]) > 1:
+        execution_plan.append("PB-SIFT-016")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
+
+    # Deduplicate while preserving order
+    seen = set()
+    execution_plan = [pb for pb in execution_plan if not (pb in seen or seen.add(pb))]
+
+    # Skip playbooks that can't run (missing required evidence)
+    for pb_id in list(execution_plan):
+        if pb_id not in PLAYBOOK_STEPS:
+            execution_plan.remove(pb_id)
+            skipped_playbooks.append({"id": pb_id, "reason": "Playbook has no steps defined"})
+
+    # Evidence quality assessment
+    evidence_quality = "MEDIUM"
+    if inventory["disk_images"] and inventory["memory_dumps"]:
+        evidence_quality = "HIGH"
+    elif inventory["disk_images"]:
+        evidence_quality = "MEDIUM-HIGH"
+    elif inventory["syslogs"] or inventory["evtx_logs"]:
+        evidence_quality = "LOW"
+    else:
+        evidence_quality = "VERY LOW"
+
+    # Clock skew
+    clock_skew_offset = "UNVERIFIED"
+    for f in triage_findings:
+        result = f.get("result", {})
+        if isinstance(result, dict) and result.get("clock_skew_offset") is not None:
+            clock_skew_offset = str(result["clock_skew_offset"])
+            break
+
+    # Anti-forensics confidence modifier
+    for f in triage_findings:
+        result_str = json.dumps(f.get("result", {}), default=str).lower()
+        if any(kw in result_str for kw in ["log cleared", "event log cleared", "timestomp", "anti-forensic"]):
+            confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+            break
+
+    # Classification based on indicator hits
+    classification = "Unknown"
+    severity = "MEDIUM"
+    if indicator_hits.get("ransomware"):
+        classification = "Ransomware"
+        severity = "CRITICAL"
+    elif indicator_hits.get("credential_theft"):
+        classification = "Credential Theft"
+        severity = "HIGH"
+    elif indicator_hits.get("lateral_movement"):
+        classification = "Lateral Movement"
+        severity = "HIGH"
+    elif indicator_hits.get("web_shell") or indicator_hits.get("initial_access"):
+        classification = "External Breach"
+        severity = "HIGH"
+    elif suspicious_binary_found:
+        classification = "Malware"
+        severity = "HIGH"
+    elif indicator_hits.get("exfiltration"):
+        classification = "Exfiltration"
+        severity = "MEDIUM"
+
+    # Emit the Phase 12 execution plan
+    execution_plan_output = {
+        "case_id": str(case_work_dir.name),
+        "evidence_quality": evidence_quality,
+        "clock_skew_offset": clock_skew_offset,
+        "classification": classification,
+        "severity": severity,
+        "execution_plan": execution_plan,
+        "skipped_playbooks": skipped_playbooks,
+        "confidence_modifiers": confidence_modifiers,
+    }
+    _fe_log(job_id, f"Execution plan: {json.dumps(execution_plan)}")
+    _fe_log(job_id, f"Skipped: {json.dumps([s['id'] for s in skipped_playbooks])}")
+    _fe_log(job_id, f"Classification: {classification} | Severity: {severity} | Evidence: {evidence_quality}")
+    if "ANTI-FORENSICS-CONFIRMED" in confidence_modifiers:
+        _fe_log(job_id, "\u26a0 Anti-forensics detected — all findings will be downgraded")
+
+    # Write execution plan to case directory
+    try:
+        with open(case_work_dir / "execution_plan.json", 'w') as f:
+            json.dump(execution_plan_output, f, indent=2, default=str)
+        git_commit_action("PB-SIFT-000: Triage execution plan emitted", base_path=str(case_work_dir))
+    except Exception as e:
+        _fe_log(job_id, f"Failed to write execution plan: {e}")
+
+    # ------------------------------------------------------------------
+    # Phase 3b: Execute Playbooks from Execution Plan
+    # ------------------------------------------------------------------
+    total_pb = len(execution_plan)
+    for pb_idx, playbook_id in enumerate(execution_plan):
         pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
         pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
         _update_job(pb_progress_base, playbook_id, "Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name}")
@@ -1178,6 +1346,28 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     step_record["completed_at"] = datetime.now().isoformat()
                     findings.append(step_record)
                     pb_findings.append(step_record)
+
+        # Anti-forensics confidence cascade: if PB-SIFT-012 found HIGH/CRITICAL,
+        # retroactively downgrade all previous findings
+        if playbook_id == "PB-SIFT-012":
+            anti_forensics_hit = False
+            for step in pb_findings:
+                result = step.get("result", {})
+                result_str = json.dumps(result, default=str).lower()
+                if any(kw in result_str for kw in ["log clear", "event log clear", "timestomp", "anti-forensic", "wevtutil", "sdelete", "eraser", "bleachbit", "cipher /w"]):
+                    anti_forensics_hit = True
+                    break
+            if anti_forensics_hit:
+                confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                # Downgrade all findings: CONFIRMED → POSSIBLE, POSSIBLE → UNVERIFIED
+                for f in findings:
+                    if isinstance(f.get("result"), dict):
+                        confidence = f["result"].get("confidence", "")
+                        if confidence == "CONFIRMED":
+                            f["result"]["confidence"] = "POSSIBLE"
+                        elif confidence == "POSSIBLE":
+                            f["result"]["confidence"] = "UNVERIFIED"
 
         playbooks_run.append({
             "playbook_id": playbook_id,
@@ -2707,20 +2897,20 @@ def find_evil_info():
         ],
         'playbooks': [
             {'id': 'PB-SIFT-008', 'name': 'Malware Hunting', 'trigger': 'Always (all playbooks run)'},
-            {'id': 'TEMP_TEMP_TEMP_PB-SIFT-015', 'name': 'Ransomware', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Lateral Movement', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-009', 'name': 'Ransomware', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-006', 'name': 'Lateral Movement', 'trigger': 'Always'},
             {'id': 'PB-SIFT-005', 'name': 'Credential Theft', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Persistence', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_TEMP_PB-SIFT-014', 'name': 'Exfiltration', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_PB-SIFT-014', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
-            {'id': 'TEMP_PB-SIFT-008', 'name': 'Initial Access', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_PB-SIFT-015', 'name': 'Insider Threat', 'trigger': 'Always'},
-            {'id': 'TEMP_PB-SIFT-014', 'name': 'Anti-Forensics', 'trigger': 'Always'},
-            {'id': 'TEMP_PB-SIFT-015', 'name': 'Reserved', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-003', 'name': 'Persistence', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-007', 'name': 'Exfiltration', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-010', 'name': 'Living-off-the-Land', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-001', 'name': 'Initial Access', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-013', 'name': 'Insider Threat', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-012', 'name': 'Anti-Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-015', 'name': 'Reserved', 'trigger': 'Always'},
             {'id': 'PB-SIFT-014', 'name': 'Linux Forensics', 'trigger': 'Always'},
             {'id': 'PB-SIFT-015', 'name': 'macOS Forensics', 'trigger': 'Always'},
-            {'id': 'TEMP_PB-SIFT-005', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
-            {'id': 'TEMP_TEMP_TEMP_TEMP_PB-SIFT-015', 'name': 'Mobile Forensics', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-004', 'name': 'REMnux Malware Analysis', 'trigger': 'Always'},
+            {'id': 'PB-SIFT-006', 'name': 'Mobile Forensics', 'trigger': 'Always'},
             {'id': 'PB-SIFT-000', 'name': 'Triage Prioritization', 'trigger': 'Always (runs first)'},
             {'id': 'PB-SIFT-016', 'name': 'Cross-Image Correlation', 'trigger': 'Always'},
             {'id': 'PB-SIFT-017', 'name': 'Windows Deep-Dive', 'trigger': 'Always'},

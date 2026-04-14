@@ -1,4 +1,4 @@
-# TEMP_TEMP_TEMP_PB-SIFT-014: Exfiltration Indicators Playbook
+# PB-SIFT-007: Exfiltration Indicators Playbook
 ## Exfiltration Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of data exfiltration activity within a digital forensic image using the SIFT Workstation toolset.
@@ -52,15 +52,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Tool Signatures:** Scan for known exfiltration tool signatures — `rclone`, `megasync`, `exmatter`, `stealc`, `raccoon`.
-- [ ] **Content Analysis:** Scan archive files found on disk for sensitive content patterns — PII, credential strings, key material.
-- [ ] **Browser Cache Scan:** Scan browser cache and profile data for upload activity artifacts.
-- [ ] **Hit Documentation:** Flag any hits with tool name, file location, and data type involved.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Destination Harvesting:** Extract all outbound IPs, domains, and URLs from disk and memory artifacts.
 - [ ] **Exfiltration Sites:** Flag known exfiltration destinations — paste sites, cloud storage, file sharing services, TOR.
 - [ ] **Off-Hours Activity:** Flag DNS queries for cloud sync or file transfer services made outside business hours.
@@ -70,7 +64,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1041:** Exfiltration Over C2 Channel

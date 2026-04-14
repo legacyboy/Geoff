@@ -121,18 +121,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Binary Scan:** Scan all binaries in `/tmp`, `/var/tmp`, `/dev/shm`, `/run`, and home directories against malware rulesets.
-- [ ] **Web Shell Scan:** Scan web directories for known Linux web shell signatures.
-- [ ] **Rootkit Scan:** Scan kernel modules for known rootkit signatures (Diamorphine, Reptile, Azazel, Necurs).
-- [ ] **Script Analysis:** Scan bash history and script files for known attacker tool patterns and reverse shell one-liners.
-- [ ] **Family Detection:** Scan for known Linux malware families (Mirai, Gafgyt, Tsunami, Skidmap, HiddenWasp, Symbiote).
-- [ ] **Library Audit:** Scan shared libraries in `/lib`, `/lib64`, `/usr/lib` for tampering or injection.
-- [ ] **Hit Documentation:** Flag any hits with file path, rule name, malware family, and confidence level.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **IOC Harvesting:** Extract all IPs, domains, and URLs from disk and log artifacts.
 - [ ] **Connection Audit:** Flag outbound connection destinations from network log artifacts and `/proc/net/tcp` artifacts.
 - [ ] **Hosts Audit:** Check `/etc/hosts` for unauthorized entries — C2 redirection or security tool blocking.
@@ -143,7 +134,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1098.004:** SSH Authorized Keys

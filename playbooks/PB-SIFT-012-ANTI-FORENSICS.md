@@ -1,4 +1,4 @@
-# TEMP_PB-SIFT-014: Anti-Forensics Indicators Playbook
+# PB-SIFT-012: Anti-Forensics Indicators Playbook
 ## Anti-Forensics Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of attempts to hinder, deceive, or destroy forensic evidence, including log tampering, file wiping, timestomping, and defense evasion.
@@ -83,16 +83,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Tool Signatures:** Scan for known anti-forensics tool signatures — `sdelete`, `bleachbit`, `timestomp`, `metasploit` timestomp module.
-- [ ] **Unallocated Space:** Scan unallocated disk space for wiping tool signatures or remnant tool fragments.
-- [ ] **Bypass Patterns:** Scan for AMSI bypass patterns in script artifacts or registry hives.
-- [ ] **Tampering Tools:** Scan for log tampering tool signatures in temp or staging directories.
-- [ ] **Hit Documentation:** Flag any hits with tool name, technique, and location.
-
 ---
 
-### Phase 7 — Artifact Recovery Attempts
+### Phase 6 — Artifact Recovery Attempts
 - [ ] **Carving:** Carve deleted files from unallocated space — attempt recovery of wiped tools or staging files.
 - [ ] **Snapshot Recovery:** Extract VSS snapshots if any remain — prior snapshot may predate anti-forensics activity.
 - [ ] **Log Reconstruction:** Recover deleted event log records from unallocated MFT space where possible.
@@ -101,7 +94,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1070.001:** Indicator Removal — Event Log Clear
@@ -116,8 +109,5 @@
 - [ ] **Limitations Documentation:** Document what artifacts are missing or unrecoverable — establishes evidentiary limitations for analyst.
 - [ ] **Confidence Assessment:** Assess confidence impact — anti-forensics activity reduces confidence in completeness of all other playbook findings; note this explicitly.
 - [ ] **Severity Scoring:** Score by severity — any confirmed anti-forensics activity elevates overall case severity to **HIGH** minimum.
+- [ ] **Confidence Downgrade Directive:** If any anti-forensics finding is scored **HIGH** or **CRITICAL**, emit a confidence downgrade directive in the findings output. This directive must set the confidence modifier **ANTI-FORENSICS-CONFIRMED** and must be read by the orchestrator. Upon receiving this modifier, the orchestrator must retroactively re-score all findings already emitted in the current case from **CONFIRMED** to **POSSIBLE** and from **POSSIBLE** to **UNVERIFIED**. Flag this downgrade explicitly in the final report.
 - [ ] **Final Output:** Output structured findings file for analyst handoff.
-
----
-
-**⚠️ Analysis Note:** Anti-forensics findings directly impact the reliability of all other playbooks. If this playbook returns HIGH or CRITICAL hits, re-score all prior findings with reduced confidence and flag gaps explicitly in the final report.

@@ -1,4 +1,4 @@
-# TEMP_PB-SIFT-015: Cloud & SaaS Artifact Analysis Playbook
+# PB-SIFT-015: Cloud & SaaS Artifact Analysis Playbook
 ## Cloud & SaaS Artifact Analysis — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of cloud-based data movement, SaaS application abuse, and the theft of cloud authentication tokens using the SIFT Workstation toolset.
@@ -87,16 +87,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Token Patterns:** Scan for OAuth token patterns in user profile and temp directories — flag Bearer token strings.
-- [ ] **Cloud Secrets:** Scan for AWS access key patterns (`AKIA...`) or Azure SAS token strings on disk.
-- [ ] **Cloud Tools:** Scan for known cloud exfiltration tool signatures — `azcopy`, `rclone`, `cloudfox`, `stormspotter`.
-- [ ] **Module Analysis:** Scan PowerShell script artifacts for cloud enumeration or exfiltration module usage.
-- [ ] **Hit Documentation:** Flag any hits with platform, credential type, and location.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Endpoint Harvesting:** Extract all cloud platform endpoints accessed — flag non-corporate tenant IDs in M365/Azure URLs.
 - [ ] **Shadow IT:** Flag access to shadow IT cloud services — unsanctioned SaaS platforms.
 - [ ] **Transfer Volume:** Flag large data transfers to cloud storage endpoints — volume and destination.
@@ -106,7 +99,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1528:** Cloud Account Credential Theft

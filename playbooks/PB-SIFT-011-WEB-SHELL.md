@@ -1,4 +1,4 @@
-# TEMP_TEMP_PB-SIFT-015: Insider Threat Indicators Playbook
+# PB-SIFT-013: Insider Threat Indicators Playbook
 ## Insider Threat Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of unauthorized data access, hoarding, and exfiltration by an internal user (insider threat) using the SIFT Workstation toolset.
@@ -82,15 +82,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Harvesting Tools:** Scan for known data harvesting tool signatures — DLP bypass tools, bulk downloaders, credential harvesters.
-- [ ] **Content Analysis:** Scan archive files for sensitive content patterns — PII, account numbers, credentials, source code markers.
-- [ ] **Browser Cache:** Scan browser cache and profile data for evidence of data upload activity.
-- [ ] **Hit Documentation:** Flag any hits with tool name, data type involved, and location.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Destination Harvesting:** Extract all external destinations accessed from the host during the investigation window.
 - [ ] **Cloud Sync Correlation:** Flag personal cloud storage destinations — correlate with file staging timestamps.
 - [ ] **Volume Analysis:** Flag large outbound data transfers to non-corporate destinations.
@@ -99,7 +93,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1567.002:** Exfiltration to Cloud Storage

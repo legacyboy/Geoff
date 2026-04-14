@@ -50,15 +50,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Tool Signatures:** Scan disk for known credential dumping tool signatures — `Mimikatz`, `LaZagne`, `Pypykatz`.
-- [ ] **Pattern Matching:** Scan dump files for NTLM hash patterns or Kerberos ticket structures.
-- [ ] **Module Strings:** Scan memory artifacts for `sekurlsa` or `lsadump` module strings.
-- [ ] **Hit Documentation:** Flag any hits with tool name, location, and confidence level.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **AD Enumeration:** Flag LDAP/LDAPS queries from non-standard hosts — possible AD enumeration prior to theft.
 - [ ] **Replication Traffic:** Flag DCSync traffic patterns — replication requests from non-DC hosts.
 - [ ] **Ticket Anomalies:** Flag Kerberos traffic anomalies — unusual ticket requests or forged PAC structures.
@@ -66,7 +60,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1003.001:** OS Credential Dumping — LSASS

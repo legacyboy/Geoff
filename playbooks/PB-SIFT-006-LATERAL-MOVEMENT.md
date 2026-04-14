@@ -1,4 +1,4 @@
-# TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Lateral Movement Indicators Playbook
+# PB-SIFT-006: Lateral Movement Indicators Playbook
 ## Lateral Movement Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and mapping of lateral movement within a network using digital forensic images and the SIFT Workstation toolset.
@@ -51,14 +51,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Tool Signatures:** Scan for known lateral movement tool signatures — `Impacket`, `CobaltStrike`, `Metasploit SMB modules`.
-- [ ] **Path Analysis:** Scan dropped binaries in shared or temp paths.
-- [ ] **Hit Documentation:** Flag any hits with tool name and location.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Internal Mapping:** Extract internal IPs and hostnames referenced in disk and memory artifacts.
 - [ ] **Path Mapping:** Map movement path — identify source host, pivot points, and target hosts.
 - [ ] **Reconnaissance:** Flag any use of internal scanning tools (`nmap`, `netscan`, `adrecon`) — reconnaissance before movement.
@@ -66,7 +61,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **Chain Mapping:** Map the lateral movement chain — origin $\rightarrow$ pivot $\rightarrow$ target.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK (T1021 — Remote Services, T1047 — WMI, T1570 — Lateral Tool Transfer).

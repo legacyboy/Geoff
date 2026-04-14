@@ -1,4 +1,4 @@
-# TEMP_TEMP_TEMP_PB-SIFT-015: Ransomware Indicators Playbook
+# PB-SIFT-009: Ransomware Indicators Playbook
 ## Ransomware Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of ransomware activity within a digital forensic image using the SIFT Workstation toolset.
@@ -50,14 +50,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Family Identification:** Scan disk artifacts against ransomware-specific rulesets (LockBit, BlackCat, Akira, Royal, etc.).
-- [ ] **Memory Scan:** Scan carved memory for encryption key material or ransom note templates.
-- [ ] **Hit Documentation:** Flag any hits — note family name and confidence level.
-
 ---
 
-### Phase 7 — Encryption Scope Assessment
+### Phase 6 — Encryption Scope Assessment
 - [ ] **Impact Mapping:** Enumerate all files with unknown or appended extensions.
 - [ ] **Directory Audit:** Identify which directories and drives were impacted.
 - [ ] **Exclusion Analysis:** Identify any files explicitly excluded (e.g., `Windows\System32` to keep system bootable).
@@ -66,7 +61,7 @@
 
 ---
 
-### Phase 8 — Network IOC Extraction
+### Phase 7 — Network IOC Extraction
 - [ ] **IOC Harvesting:** Extract all IPs, domains, and URLs from disk image.
 - [ ] **Darknet Analysis:** Flag any `.onion` addresses — ransom payment or negotiation sites.
 - [ ] **Threat Intel Enrichment:** Enrich all IOCs against threat intel (VT, AbuseIPDB, internal blocklist).
@@ -74,9 +69,9 @@
 
 ---
 
-### Phase 9 — Score & Report
+### Phase 8 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
-- [ ] **Family Identification:** Identify ransomware family if possible based on YARA, note style, and extension pattern.
+- [ ] **Family Identification:** Identify ransomware family if possible based on signature, note style, and extension pattern.
 - [ ] **Attack Timeline:** Establish attack timeline — initial access $\rightarrow$ privilege escalation $\rightarrow$ lateral movement $\rightarrow$ encryption.
 - [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.
 

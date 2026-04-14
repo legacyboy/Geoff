@@ -44,7 +44,7 @@
 ---
 
 ### Phase 5 — Lateral Movement Chain Reconstruction
-- [ ] **Pivot Mapping:** Use **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014** findings to map the sequence of hops (Source $\rightarrow$ Pivot $\rightarrow$ Target).
+- [ ] **Pivot Mapping:** Use **PB-SIFT-006** findings to map the sequence of hops (Source $\rightarrow$ Pivot $\rightarrow$ Target).
 - [ ] **Logon Correlation:** Match outbound explicit credential logons on Host A to inbound network logons on Host B.
 - [ ] **Drop-to-Exec Correlation:** Match file write timestamps on Target Host to remote execution events on Source Host.
 - [ ] **Blast Radius Mapping:** Identify all hosts with confirmed attacker presence.

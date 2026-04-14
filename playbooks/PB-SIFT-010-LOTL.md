@@ -1,4 +1,4 @@
-# TEMP_TEMP_PB-SIFT-014: Living-off-the-Land (LOTL) Indicators Playbook
+# PB-SIFT-010: Living-off-the-Land (LOTL) Indicators Playbook
 ## Living-off-the-Land (LOTL) Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of "Living-off-the-Land" (LotL) techniques, where attackers use legitimate, pre-installed system binaries (LOLBins) to conduct malicious activity while avoiding detection by traditional antivirus/EDR.
@@ -74,15 +74,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Script Obfuscation:** Scan all script files on disk for known obfuscation patterns — `Invoke-Obfuscation`, `Invoke-CradleCrafter`, `ISE-Steroids`.
-- [ ] **Download Cradles:** Scan PowerShell script block log artifacts for download cradle patterns.
-- [ ] **LOTL Signatures:** Scan for known LOTL abuse signatures — Squiblydoo, WMIC XSL execution, `mshta` VBScript patterns.
-- [ ] **Hit Documentation:** Flag any hits with binary name, technique, and obfuscation method identified.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Script/CLI Harvesting:** Extract URLs and domains from script files and command line arguments on disk.
 - [ ] **Cradle Destinations:** Flag download cradle destinations — URLs passed to `certutil`, `bitsadmin`, `Invoke-WebRequest`, `curl`.
 - [ ] **Remote Targets:** Flag WMI or DCOM lateral movement targets referenced in command lines.
@@ -91,7 +85,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1059.001:** PowerShell

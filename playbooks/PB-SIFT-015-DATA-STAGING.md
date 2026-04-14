@@ -144,18 +144,9 @@
 
 ---
 
-### Phase 7 — YARA Scan
-- [ ] **Mach-O Scan:** Scan binaries in user-writable locations against macOS rulesets.
-- [ ] **Plist Scan:** Scan LaunchAgent/Daemon plists for encoded commands.
-- [ ] **Cache Scan:** Scan browser cache/downloads for exploit/dropper signatures.
-- [ ] **Shell Audit:** Scan history/scripts for attacker tool patterns.
-- [ ] **Family Scan:** Scan for Shlayer, XCSSET, MacSpy, Coldroot, EvilQuest, RustBucket, Atomic Stealer.
-- [ ] **Kext Scan:** Scan kernel extensions for rootkit signatures.
-- [ ] **Hit Documentation:** Document file path, rule name, and malware family.
-
 ---
 
-### Phase 8 — Network IOC Extraction
+### Phase 7 — Network IOC Extraction
 - [ ] **IOC Harvesting:** Extract IPs, domains, and URLs from disk/logs/browser.
 - [ ] **Persistence C2:** Flag outbound connections from LaunchAgent-backed processes.
 - [ ] **DNS Audit:** Check `/etc/hosts` for unauthorized redirects.
@@ -166,7 +157,7 @@
 
 ---
 
-### Phase 9 — Score & Report
+### Phase 8 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:**
     - **T1543.001:** LaunchAgent / LaunchDaemon Persistence

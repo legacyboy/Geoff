@@ -1,7 +1,7 @@
 # PB-SIFT-000: Triage Prioritization Meta-Playbook
 ## Case Intake & Playbook Selection
 
-**Objective:** Autonomous assessment of available evidence to score quality, determine incident type, and generate a weighted, optimized execution plan for all subsequent SIFT playbooks. This is the primary decision engine that runs first on every case.
+**Objective:** Autonomous assessment of available evidence to score quality, determine incident type, and generate a weighted, optimized execution plan for all subsequent SIFT playbooks. This is the mandatory entry point for every case — no other playbook may run until PB-SIFT-000 completes and emits its execution plan.
 
 ---
 
@@ -51,10 +51,10 @@ When memory dump available, perform quick-win analysis before deep disk forensic
 - [ ] **Acquisition Time Correlation:** Compare memory acquisition timestamp with `windows.info.Info` to detect VM snapshot attacks.
 
 **Memory-First Pivot Indicators:**
-- Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **TEMP_PB-SIFT-008** priority.
-- RDP/remote access tools (`mstsc.exe`, `AnyDesk.exe`) → **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014** priority.
+- Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **PB-SIFT-001** priority.
+- RDP/remote access tools (`mstsc.exe`, `AnyDesk.exe`) → **PB-SIFT-004** priority.
 - Credential access (`mimikatz.exe`, `lsass.exe` dumping) → **PB-SIFT-005** priority.
-- LOLBins with encoded commands (`powershell.exe`, `cmd.exe`, `certutil.exe`) → **TEMP_TEMP_PB-SIFT-014** priority.
+- LOLBins with encoded commands (`powershell.exe`, `cmd.exe`, `certutil.exe`) → **PB-SIFT-010** priority.
 
 ---
 
@@ -63,80 +63,82 @@ Validate required evidence before queuing playbooks:
 
 | Playbook | Disk Image | Memory | Logs | Network |
 | :--- | :---: | :---: | :---: | :---: |
-| **001 Malware** | YES | REC | REC | OPT |
-| **002 Ransomware** | YES | OPT | REC | OPT |
-| **003 Lateral Mov.** | YES | OPT | YES | OPT |
-| **004 Cred Theft** | YES | REC | REC | OPT |
-| **005 Persistence** | YES | OPT | OPT | NO |
-| **006 Exfiltration** | YES | OPT | REC | OPT |
-| **007 LOTL** | YES | OPT | REC | OPT |
-| **008 Initial Access** | YES | OPT | REC | OPT |
-| **009 Insider Threat** | YES | OPT | REC | OPT |
-| **010 Anti-Forensics** | YES | OPT | YES | NO |
-| **011 Cloud/SaaS** | YES | OPT | OPT | OPT |
-| **012 Linux** | YES | REC | YES | OPT |
-| **013 macOS** | YES | REC | YES | OPT |
-| **014 Network Dev.** | NO | NO | YES | YES |
-| **015 Mobile** | OPT | NO | OPT | OPT |
-| **017 Cross-Image** | NO | NO | NO | NO |
+| **000 C2** | OPT | REC | YES | YES |
+| **001 Initial Access** | YES | OPT | REC | OPT |
+| **002 Execution** | YES | REC | REC | OPT |
+| **003 Persistence** | YES | OPT | OPT | NO |
+| **004 Priv Esc** | YES | REC | OPT | OPT |
+| **005 Cred Theft** | YES | REC | REC | OPT |
+| **006 Lateral Mov.** | YES | OPT | YES | OPT |
+| **007 Exfiltration** | YES | OPT | REC | OPT |
+| **008 Malware** | YES | REC | REC | OPT |
+| **009 Ransomware** | YES | OPT | REC | OPT |
+| **010 LOTL** | YES | OPT | REC | OPT |
+| **011 Web Shell** | YES | OPT | REC | OPT |
+| **012 Anti-Forensics** | YES | OPT | YES | NO |
+| **013 Insider Threat** | YES | OPT | REC | OPT |
+| **014 Linux** | YES | REC | YES | OPT |
+| **015 Data Staging** | OPT | OPT | YES | YES |
+| **016 Cross-Image** | NO | NO | NO | NO |
+| **017 REMnux** | YES | NO | NO | NO |
+| **018 Malware SOP** | YES | NO | NO | NO |
 
 - [ ] **Execution Guard:** Mark playbooks as **UNABLE TO RUN** if required evidence is absent.
 - [ ] **Confidence Note:** Note reduced confidence for playbooks where optional evidence is missing.
 
 ---
 
-### Phase 4 — Rapid Indicator Triage
+### Phase 5 — Rapid Indicator Triage
 Perform quick pattern scans to pivot priority:
-- [ ] **Ransomware:** Flag ransom notes/encrypted extensions $\rightarrow$ Priority: **TEMP_TEMP_TEMP_PB-SIFT-015**.
-- [ ] **Cred Theft:** Flag credential dumping tools in prefetch/ShimCache $\rightarrow$ Priority: **PB-SIFT-005**.
-- [ ] **Anti-Forensics:** Flag log clearing (EID 1102/104) $\rightarrow$ Priority: **TEMP_PB-SIFT-014**.
-- [ ] **External Breach:** Flag web shells in web-dirs $\rightarrow$ Priority: **TEMP_PB-SIFT-008**.
-- [ ] **Exfil/Insider:** Flag bulk file access/archives in temp dirs $\rightarrow$ Priority: **TEMP_TEMP_TEMP_PB-SIFT-014 / 009**.
-- [ ] **Cloud Pivot:** Flag cloud CLI/token cache $\rightarrow$ Priority: **TEMP_PB-SIFT-015**.
-- [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains $\rightarrow$ Priority: **TEMP_TEMP_PB-SIFT-014**.
-- [ ] **Lateral Movement:** Flag lateral movement tools $\rightarrow$ Priority: **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014**.
-- [ ] **Mobile:** Flag mobile device connection $\rightarrow$ Add **TEMP_TEMP_TEMP_TEMP_PB-SIFT-015**.
-- [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 001**.
-- [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 010**.
-- [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads $\rightarrow$ Priority: **TEMP_PB-SIFT-008**.
-- [ ] **LFI Exploitation (CTF):** Flag file inclusion attempts (/etc/hosts, /windows/system32/drivers/etc/hosts) $\rightarrow$ Priority: **TEMP_PB-SIFT-008, 010**.
-- [ ] **RDP Enablement (CTF):** Flag `netsh` commands enabling remotedesktop in cmdscan output $\rightarrow$ Priority: **TEMP_TEMP_TEMP_TEMP_PB-SIFT-014**.
-- [ ] **Malicious File Upload (CTF):** Flag PHP uploaders, files with version checks (e.g., PHP 4.1.0), suspicious temp paths $\rightarrow$ Priority: **PB-SIFT-008, 008**.
+- [ ] **Ransomware:** Flag ransom notes/encrypted extensions → Priority: **PB-SIFT-009**.
+- [ ] **Cred Theft:** Flag credential dumping tools in prefetch/ShimCache → Priority: **PB-SIFT-005**.
+- [ ] **Anti-Forensics:** Flag log clearing (EID 1102/104) → Priority: **PB-SIFT-012**.
+- [ ] **External Breach:** Flag web shells in web-dirs → Priority: **PB-SIFT-001**.
+- [ ] **Exfil/Insider:** Flag bulk file access/archives in temp dirs → Priority: **PB-SIFT-007 / 013**.
+- [ ] **Cloud Pivot:** Flag cloud CLI/token cache → Priority: **PB-SIFT-007**.
+- [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains → Priority: **PB-SIFT-010**.
+- [ ] **Lateral Movement:** Flag lateral movement tools → Priority: **PB-SIFT-006**.
+- [ ] **Mobile:** Flag mobile device connection → Add **PB-SIFT-015**.
+- [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter → Priority: **PB-SIFT-001, 008**.
+- [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts → Priority: **PB-SIFT-001, 012**.
+- [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads → Priority: **PB-SIFT-001**.
+- [ ] **LFI Exploitation (CTF):** Flag file inclusion attempts (/etc/hosts, /windows/system32/drivers/etc/hosts) → Priority: **PB-SIFT-001, 012**.
+- [ ] **RDP Enablement (CTF):** Flag `netsh` commands enabling remotedesktop in cmdscan output → Priority: **PB-SIFT-004**.
+- [ ] **Malicious File Upload (CTF):** Flag PHP uploaders, files with version checks (e.g., PHP 4.1.0), suspicious temp paths → Priority: **PB-SIFT-001, 008**.
 
 ---
 
-### Phase 5 — Case Classification & Weighted Selection
+### Phase 6 — Case Classification & Weighted Selection
 Assign classification and execution order:
 
 | Indicator Pattern | Classification | Priority Order | Severity Weight |
 | :--- | :--- | :--- | :--- |
-| Ransom notes + Encrypted files | Ransomware | 002, 008, 003, 006, 010 | **CRITICAL** |
-| Cred dump tools + LSASS access | Credential Theft | 004, 003, 005, 008 | **HIGH** |
-| Encoded PS + LOLBin + C2 | Malware / APT | 001, 007, 005, 008, 010 | **HIGH** |
-| Bulk access + USB + Cloud sync | Insider Threat | 009, 006, 010 | **HIGH** |
-| Log cleared + Timestomping | Anti-Forensics | 010, 001, 003, 004 | **HIGH** |
-| Web shell + Exploit logs | External Breach | 008, 003, 001, 005 | **HIGH** |
-| Cloud tokens + M365 CLI | Cloud Pivot | 011, 006, 004 | **HIGH** |
-| Linux image + SUID/Cron | Linux Compromise | 012, 005, 004 | **HIGH** |
-| macOS image + dylib injection | macOS Compromise | 013, 005, 004 | **HIGH** |
-| Net config + Firmware mismatch | Net Device Comp. | 014 | **HIGH** |
-| Mobile backup + Spyware sigs | Mobile Threat | 015, 009 | **HIGH** |
+| Ransom notes + Encrypted files | Ransomware | 009, 008, 006, 007, 012 | **CRITICAL** |
+| Cred dump tools + LSASS access | Credential Theft | 005, 006, 003, 001 | **HIGH** |
+| Encoded PS + LOLBin + C2 | Malware / APT | 008, 010, 003, 001, 012 | **HIGH** |
+| Bulk access + USB + Cloud sync | Insider Threat | 013, 007, 012 | **HIGH** |
+| Log cleared + Timestomping | Anti-Forensics | 012, 008, 006, 005 | **HIGH** |
+| Web shell + Exploit logs | External Breach | 001, 006, 008, 003 | **HIGH** |
+| Cloud tokens + M365 CLI | Cloud Pivot | 013, 007, 005 | **HIGH** |
+| Linux image + SUID/Cron | Linux Compromise | 014, 003, 005 | **HIGH** |
+| macOS image + dylib injection | macOS Compromise | 015, 003, 005 | **HIGH** |
+| Net config + Firmware mismatch | Net Device Comp. | 015 | **HIGH** |
 
 ---
 
-### Phase 6 — Parallel Execution Grouping
+### Phase 7 — Parallel Execution Grouping
 Group playbooks to minimize analysis time:
 
 - [ ] **Group D (Timeline):** Build Super Timeline first (Dependency for all).
-- [ ] **Group A (Memory):** Memory phases of 001, 003, 004, 007 (Symmetric/Parallel).
-- [ ] **Group B (Disk):** Disk phases of 001, 005, 007, 008 (Symmetric/Parallel).
-- [ ] **Group C (Logs):** Log phases of 002, 003, 004, 009, 010 (Symmetric/Parallel).
-- [ ] **Group E (Specialist):** 011, 012, 013, 014, 015 (Independent).
+- [ ] **Group A (Memory):** Memory phases of 008, 006, 005, 010 (Symmetric/Parallel).
+- [ ] **Group B (Disk):** Disk phases of 008, 003, 010, 001 (Symmetric/Parallel).
+- [ ] **Group C (Logs):** Log phases of 009, 006, 005, 013, 012 (Symmetric/Parallel).
+- [ ] **Group E (Specialist):** 014, 015 (Independent).
 - [ ] **Group F (Correlation):** **PB-SIFT-016** (Post-all execution).
 
 ---
 
-### Phase 7 — SLA & Escalation Management
+### Phase 8 — SLA & Escalation Management
 - [ ] **Time Estimation:** Calculate total analysis time based on size and playbook count.
 - [ ] **SLA Tiers:**
     - **CRITICAL:** 2h initial / 8h full.
@@ -148,19 +150,19 @@ Group playbooks to minimize analysis time:
 
 ---
 
-### Phase 8 — Re-Triage Trigger Conditions
+### Phase 9 — Re-Triage Trigger Conditions
 Re-evaluate plan if any of the following are discovered mid-run:
 - [ ] **Lateral Movement:** Add all hosts to **PB-SIFT-016**.
-- [ ] **Cloud Tokens:** Add **TEMP_PB-SIFT-015**.
+- [ ] **Cloud Tokens:** Add **PB-SIFT-007**.
 - [ ] **Anti-Forensics:** Downgrade confidence of all completed findings to **POSSIBLE**.
-- [ ] **Mobile Connection:** Add **TEMP_TEMP_TEMP_TEMP_PB-SIFT-015**.
+- [ ] **Mobile Connection:** Add **PB-SIFT-015**.
 - [ ] **New OS Partition:** Add appropriate OS-specific playbook.
 - [ ] **Insider Threat:** Move case to restricted handling queue.
 - [ ] **Additional Hosts:** Request images for referenced hosts.
 
 ---
 
-### Phase 9 — Confidence Scoring Framework
+### Phase 10 — Confidence Scoring Framework
 Adjust findings based on evidence quality:
 
 | Condition | Adjustment |
@@ -175,7 +177,7 @@ Adjust findings based on evidence quality:
 
 ---
 
-### Phase 10 — Case Handoff Checklist
+### Phase 11 — Case Handoff Checklist
 - [ ] **Queue Completion:** All playbooks completed, skipped, or failed (with log).
 - [ ] **Findings Generation:** Unified `findings.json` with severity, confidence, and source.
 - [ ] **Normalization Doc:** Clock skew normalization documented.
@@ -185,3 +187,32 @@ Adjust findings based on evidence quality:
 - [ ] **Correlation:** Cross-image report generated (if multi-host).
 - [ ] **Executive Summary:** Incident type, affected hosts, and next actions.
 - [ ] **Audit Trail:** Triage plan JSON archived.
+
+---
+
+### Phase 12 — Execution Plan Output
+Before any other playbook runs, PB-SIFT-000 must emit a structured JSON execution plan. This plan is authoritative — no playbook outside this list may be executed.
+
+**Required output format:**
+
+```json
+{
+  "case_id": "<string>",
+  "evidence_quality": "<HIGH|MEDIUM-HIGH|MEDIUM|LOW|VERY LOW>",
+  "clock_skew_offset": "<offset in seconds or UNVERIFIED>",
+  "classification": "<string>",
+  "severity": "<CRITICAL|HIGH|MEDIUM|LOW>",
+  "execution_plan": ["PB-SIFT-XXX", "PB-SIFT-XXX"],
+  "skipped_playbooks": [
+    {"id": "PB-SIFT-XXX", "reason": "<string>"}
+  ],
+  "confidence_modifiers": ["<string>"]
+}
+```
+
+**Rules:**
+- The `execution_plan` array is the authoritative ordered list of playbooks Geoff will run.
+- No playbook outside this list may be executed.
+- **PB-SIFT-016** (Cross-Image Correlation) must always be the last entry if more than one host is in scope.
+- **PB-SIFT-017** (REMnux) and **PB-SIFT-018** (Malware SOP) are only included if a suspicious binary is surfaced during triage.
+- Playbooks marked as **UNABLE TO RUN** in the Evidence Compatibility Matrix (Phase 4) must appear in `skipped_playbooks` with a reason.

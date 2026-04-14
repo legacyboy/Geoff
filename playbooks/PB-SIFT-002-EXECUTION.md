@@ -1,4 +1,4 @@
-# TEMP_TEMP_TEMP_TEMP_PB-SIFT-015: Mobile Device Artifacts Playbook
+# PB-SIFT-006: Mobile Device Artifacts Playbook
 ## Mobile Device Artifacts — Static Image Analysis
 
 **Objective:** Identification and analysis of mobile device artifacts discovered within a desktop forensic image, backups, or full filesystem extractions using the SIFT Workstation toolset.

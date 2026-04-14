@@ -1,4 +1,4 @@
-# TEMP_PB-SIFT-008: Initial Access Indicators Playbook
+# PB-SIFT-001: Initial Access Indicators Playbook
 ## Initial Access Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and reconstruction of the initial entry vector (Patient Zero) into a compromised system using the SIFT Workstation toolset.
@@ -73,16 +73,9 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Phishing Signatures:** Scan email attachment remnants and download directories for known phishing document signatures.
-- [ ] **Web Shell Scan:** Scan web directories for known web shell signatures — China Chopper, WSO, b374k, Godzilla.
-- [ ] **Container Scan:** Scan ISO / VHD mount points for malicious payload signatures.
-- [ ] **Exploit Kit Detection:** Scan browser cache for exploit kit signatures.
-- [ ] **Hit Documentation:** Flag any hits with delivery method, file name, location, and confidence level.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **Source Harvesting:** Extract domains and IPs from browser history, email headers, and web server logs.
 - [ ] **Phishing Domain Analysis:** Flag phishing domains — look for typosquatting, homoglyph, or lookalike domains relative to known legitimate domains.
 - [ ] **First Callback:** Flag initial C2 callback destination — first outbound connection after execution timestamp.
@@ -91,7 +84,7 @@
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1566.001:** Spearphishing Attachment

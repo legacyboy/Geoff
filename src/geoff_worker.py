@@ -88,9 +88,9 @@ class InvestigationWorker:
         # Define phases
         phases = [
             ('PB-SIFT-000', 'Triage'),
-            ('TEMP_PB-SIFT-008', 'Initial Access Analysis'),
+            ('PB-SIFT-001', 'Initial Access Analysis'),
             ('PB-SIFT-008', 'Malware Hunt'),
-            ('TEMP_TEMP_TEMP_PB-SIFT-015', 'Ransomware Check'),
+            ('PB-SIFT-009', 'Ransomware Check'),
             ('PB-SIFT-005', 'Credential Analysis'),
             ('PB-SIFT-016', 'Correlation')
         ]
@@ -161,7 +161,7 @@ class InvestigationWorker:
                 {'module': 'SLEUTHKIT', 'function': 'fsstat', 'params': {'disk_image': self.evidence_path}},
                 {'module': 'SLEUTHKIT', 'function': 'fls', 'params': {'disk_image': self.evidence_path}},
             ],
-            'TEMP_PB-SIFT-008': [  # Initial Access
+            'PB-SIFT-001': [  # Initial Access
                 {'module': 'LOGS', 'function': 'parse_evtx', 'params': {}},
                 {'module': 'NETWORK', 'function': 'analyze_pcap', 'params': {}},
             ],
@@ -169,7 +169,7 @@ class InvestigationWorker:
                 {'module': 'YARA', 'function': 'scan_directory', 'params': {}},
                 {'module': 'STRINGS', 'function': 'extract_iocs', 'params': {}},
             ],
-            'TEMP_TEMP_TEMP_PB-SIFT-015': [  # Ransomware
+            'PB-SIFT-009': [  # Ransomware
                 {'module': 'REGISTRY', 'function': 'parse_hive', 'params': {}},
                 {'module': 'SLEUTHKIT', 'function': 'istat', 'params': {}},
             ],
@@ -260,9 +260,9 @@ class InvestigationWorker:
 This automated investigation used the SIFT playbook framework to analyze evidence across 6 phases:
 
 1. **Triage** (PB-SIFT-000) - Initial assessment and file system analysis
-2. **Initial Access Analysis** (TEMP_PB-SIFT-008) - Event logs and network artifacts
+2. **Initial Access Analysis** (PB-SIFT-001) - Event logs and network artifacts
 3. **Malware Hunt** (PB-SIFT-008) - YARA scanning and IOC extraction
-4. **Ransomware Check** (TEMP_TEMP_TEMP_PB-SIFT-015) - Registry and file system analysis
+4. **Ransomware Check** (PB-SIFT-009) - Registry and file system analysis
 5. **Credential Analysis** (PB-SIFT-005) - LSA secrets and authentication artifacts
 6. **Correlation** (PB-SIFT-016) - Timeline creation and event correlation
 

@@ -1,4 +1,4 @@
-# TEMP_TEMP_TEMP_TEMP_TEMP_PB-SIFT-014: Persistence Mechanism Indicators Playbook
+# PB-SIFT-003: Persistence Mechanism Indicators Playbook
 ## Persistence Mechanism Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of persistence mechanisms used by attackers to maintain access to a system across reboots and user logoffs using the SIFT Workstation toolset.
@@ -64,23 +64,16 @@
 
 ---
 
-### Phase 6 — YARA Scan
-- [ ] **Autorun Binaries:** Scan all autorun-referenced binaries against malware rulesets.
-- [ ] **WMI Repository:** Scan WMI repository for known malicious subscription patterns.
-- [ ] **Task XML Analysis:** Scan scheduled task XML files for encoded or obfuscated commands.
-- [ ] **Hijack Paths:** Scan DLLs in hijack-prone paths against known malicious signatures.
-- [ ] **Hit Documentation:** Flag any hits with persistence type, location, and confidence level.
-
 ---
 
-### Phase 7 — Network IOC Extraction
+### Phase 6 — Network IOC Extraction
 - [ ] **C2 Harvesting:** Extract any C2 addresses or domains referenced in persistence payloads.
 - [ ] **Beacon Analysis:** Flag beaconing patterns implied by scheduled task intervals — regular outbound at fixed intervals is a strong indicator.
 - [ ] **Intel Enrichment:** Enrich all extracted IOCs against threat intel feeds.
 
 ---
 
-### Phase 8 — Score & Report
+### Phase 7 — Score & Report
 - [ ] **Aggregation:** Aggregate all flags into findings report.
 - [ ] **MITRE Mapping:** Identify technique per MITRE ATT&CK:
     - **T1547.001:** Registry Run Keys
