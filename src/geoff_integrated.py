@@ -97,14 +97,36 @@ def _atomic_append(path, data):
             raise
 
 
+MAX_STDOUT_SIZE = 50 * 1024 * 1024  # 50MB — prevent memory blowup from tool output
+
+def _sanitize_path(path_str: str, allowed_base: str = "") -> str:
+    """Sanitize file paths to prevent directory traversal attacks."""
+    basename = os.path.basename(str(path_str))
+    if allowed_base:
+        resolved = os.path.realpath(os.path.join(allowed_base, basename))
+        if not resolved.startswith(os.path.realpath(allowed_base)):
+            return os.path.join(allowed_base, basename)  # Fallback to basename only
+    return basename
+
 def safe_run(cmd, timeout=300, **kwargs):
-    """Wrapper for subprocess.run with default timeout. Always returns a dict."""
+    """Wrapper for subprocess.run with default timeout. Always returns a dict.
+    Truncates stdout at MAX_STDOUT_SIZE to prevent memory blowup."""
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
+        stdout = result.stdout
+        truncated = False
+        if len(stdout) > MAX_STDOUT_SIZE:
+            # Truncate and dump full output to file
+            dump_path = os.path.join(tempfile.gettempdir(), f"geoff_stdout_{uuid.uuid4().hex[:8]}.txt")
+            with open(dump_path, "w") as f:
+                f.write(stdout)
+            stdout = stdout[:MAX_STDOUT_SIZE] + f"\n... TRUNCATED (full output at {dump_path})"
+            truncated = True
         return {
             "code": result.returncode,
-            "stdout": result.stdout,
+            "stdout": stdout,
             "stderr": result.stderr,
+            "truncated": truncated,
         }
     except subprocess.TimeoutExpired:
         cmd_str = ' '.join(str(c) for c in cmd[:5])
@@ -235,7 +257,7 @@ INVESTIGATION_SCHEMA = {
                     "module": {"type": "string"},
                     "function": {"type": "string"},
                     "params": {"type": "object"},
-                    "status": {"type": "string", "enum": ["pending", "running", "completed", "failed"]},
+                    "status": {"type": "string", "enum": ["pending", "running", "completed", "failed", "skipped", "blocked"]},
                     "started_at": {"type": "string", "format": "date-time"},
                     "completed_at": {"type": "string", "format": "date-time"},
                     "result": {"type": "object"}
@@ -1363,6 +1385,37 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         except Exception:
             pass  # Non-critical recovery — don't block startup
 
+    # Disk State Reconciliation — find orphaned artifacts not tracked in state
+    try:
+        tracked_files = set()
+        for pb_file in case_work_dir.glob("output/*.json"):
+            try:
+                with open(pb_file) as f:
+                    pb_steps = json.load(f)
+                for step in pb_steps:
+                    if step.get("evidence_file"):
+                        tracked_files.add(str(step["evidence_file"]))
+                    result = step.get("result", {})
+                    if isinstance(result, dict):
+                        for art in result.get("artifacts", []):
+                            tracked_files.add(str(art))
+            except Exception:
+                pass
+        # Scan for untracked files in case work dir
+        untracked = []
+        for f in case_work_dir.rglob("*"):
+            if f.is_file() and str(f) not in tracked_files:
+                rel = f.relative_to(case_work_dir)
+                if str(rel).startswith(("output/", "timeline/", "reports/")):
+                    fhash = _hash_file(str(f))
+                    untracked.append({"file": str(f), "hash": fhash, "note": "orphaned — not in state"})
+        if untracked:
+            orphan_log = case_work_dir / "untracked_artifacts.json"
+            _atomic_write(orphan_log, json.dumps(untracked, indent=2, default=str))
+            _log_info(f"Disk reconciliation: {len(untracked)} untracked artifacts found")
+    except Exception as e:
+        _log_error(f"Disk reconciliation failed: {e}")
+
     # ------------------------------------------------------------------
     # Phase 3: Triage & Execution Plan (PB-SIFT-000)
     # ------------------------------------------------------------------
@@ -1666,6 +1719,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "params": params,
                         "evidence_file": item,
                         "status": "running",
+                        "retries": 0,
+                        "max_retries": 2,
                         "started_at": datetime.now().isoformat(),
                     }
 
@@ -1732,7 +1787,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 _fe_log(job_id, f"  ✗ {module}.{function} → empty output")
                             else:
                                 step_record["status"] = "completed"
-                                step_record["result"] = {"status": "success", "stdout": stdout, "stderr": result.get('stderr', ''), "artifacts": result.get('artifacts', []), "error": None}
+                                step_record["result"] = {"status": "success", "stdout": stdout, "stderr": result.get('stderr', ''), "artifacts": result.get('artifacts', []), "error": None, "provenance": {"step_key": step_key, "tool": f"{module}.{function}", "source_input": str(item), "execution_hash": execution_hash}}
                                 steps_completed += 1
                                 _fe_log(job_id, f"  ✓ {module}.{function} → OK")
                         else:
@@ -1807,14 +1862,21 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
         })
 
-        # Git commit after each playbook
+        # Git commit after each playbook — part of transaction, not optional
         try:
             # Write playbook findings to output dir
             pb_output = case_work_dir / "output" / f"{playbook_id}.json"
             _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
-            git_commit_action(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+            git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+            if git_result["status"] == "failed":
+                _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
+                # In STRICT_MODE, treat git commit failure as step failure
+                if STRICT_MODE:
+                    raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
         except Exception as gce:
             _fe_log(job_id, f"  git commit failed: {gce}")
+            if STRICT_MODE:
+                raise
 
     # ------------------------------------------------------------------
     # Phase 3b: Multi-Host Correlation
