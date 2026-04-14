@@ -1781,9 +1781,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         elif isinstance(v, str) and v.lower() in ('true', 'false'):
                             params[k] = v.lower() == 'true'
 
+                    # Idempotent step key — derive from findings (single source of truth)
+                    step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+                    execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
+
                     step_record = {
                         "playbook": playbook_id,
                         "step_key": step_key,
+                        "execution_hash": execution_hash,
                         "module": module,
                         "function": function,
                         "params": params,
@@ -1791,10 +1796,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "status": "running",
                         "started_at": datetime.now().isoformat(),
                     }
-
-                    # Idempotent step key — derive from findings (single source of truth)
-                    step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
-                    execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
 
                     # Idempotency: skip if already completed with same inputs
                     if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
