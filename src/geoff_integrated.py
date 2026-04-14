@@ -566,7 +566,7 @@ def get_available_tools_status():
 
 
 # ---------------------------------------------------------------------------
-# Find Evil — Run ALL 19 Playbooks (PB-SIFT-008 through PB-SIFT-018)
+# Find Evil — Triage-driven playbook orchestration
 # ---------------------------------------------------------------------------
 
 # All 19 SIFT playbook IDs — always run, never cherry-pick
@@ -575,7 +575,7 @@ ALL_PLAYBOOKS = ["PB-SIFT-000"] + [f"PB-SIFT-{i:03d}" for i in range(1, 16)] + [
 # may not have 011 implemented. We still attempt it.
 
 PLAYBOOK_NAMES = {
-    "PB-SIFT-000": "Command & Control",
+    "PB-SIFT-000": "Triage & Execution Planning",
     "PB-SIFT-001": "Initial Access",
     "PB-SIFT-002": "Execution",
     "PB-SIFT-003": "Persistence",
@@ -634,6 +634,94 @@ SEVERITY_MAP = {
 # (tool-missing check), but the playbook itself always "runs" (even if all
 # steps are skipped).
 PLAYBOOK_STEPS = {
+    "PB-SIFT-000": {  # Triage & Execution Planning (always runs first)
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-001": {  # Initial Access
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_http", {"pcap_file": "{pcap}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+    },
+    "PB-SIFT-002": {  # Execution
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+    },
+    "PB-SIFT-003": {  # Persistence
+        "registry_hives": [
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-004": {  # Privilege Escalation
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+        ],
+    },
+    "PB-SIFT-005": {  # Credential Theft
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+        ],
+        "registry_hives": [
+            ("registry", "parse_hive", {"hive_path": "{hive}"}),
+        ],
+    },
+    "PB-SIFT-006": {  # Lateral Movement
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-007": {  # Exfiltration
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
+            ("network", "extract_http", {"pcap_file": "{pcap}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+    },
     "PB-SIFT-008": {  # Malware Hunting
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
@@ -658,54 +746,6 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-006": {  # Lateral Movement
-        "pcaps": [
-            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
-            ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
-        ],
-        "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
-        ],
-        "memory_dumps": [
-            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
-        ],
-    },
-    "PB-SIFT-005": {  # Credential Theft
-        "memory_dumps": [
-            ("volatility", "process_list", {"memory_dump": "{mem}"}),
-            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
-        ],
-        "registry_hives": [
-            ("registry", "parse_hive", {"hive_path": "{hive}"}),
-        ],
-    },
-    "PB-SIFT-003": {  # Persistence
-        "registry_hives": [
-            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
-            ("registry", "extract_services", {"system_path": "{hive}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-        ],
-        "memory_dumps": [
-            ("volatility", "process_list", {"memory_dump": "{mem}"}),
-        ],
-    },
-    "PB-SIFT-007": {  # Exfiltration
-        "pcaps": [
-            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
-            ("network", "extract_http", {"pcap_file": "{pcap}"}),
-        ],
-        "memory_dumps": [
-            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
-        ],
-        "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
-        ],
-    },
     "PB-SIFT-010": {  # Living-off-the-Land
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
@@ -717,16 +757,24 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
-    "PB-SIFT-001": {  # Initial Access
-        "pcaps": [
-            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
-            ("network", "extract_http", {"pcap_file": "{pcap}"}),
-        ],
+    "PB-SIFT-011": {  # Web Shell
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+    },
+    "PB-SIFT-012": {  # Anti-Forensics
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
     "PB-SIFT-013": {  # Insider Threat
@@ -743,23 +791,6 @@ PLAYBOOK_STEPS = {
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-012": {  # Anti-Forensics
-        "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
-        ],
-        "memory_dumps": [
-            ("volatility", "process_list", {"memory_dump": "{mem}"}),
-        ],
-    },
-    "PB-SIFT-015": {  # (Reserved / placeholder — still attempted)
-        "disk_images": [
-            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
-        ],
-    },
     "PB-SIFT-014": {  # Linux Forensics
         "syslogs": [
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
@@ -769,13 +800,21 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
-    "PB-SIFT-015": {  # macOS Forensics
+    "PB-SIFT-015": {  # Data Staging
         "disk_images": [
-            ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
         ],
     },
-    "PB-SIFT-004": {  # REMnux Malware Analysis
+    "PB-SIFT-016": {  # Cross-Image Correlation
+        "disk_images": [
+            ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
+        ],
+    },
+    "PB-SIFT-017": {  # REMnux Malware Analysis
         "disk_images": [
             ("remnux", "die_scan", {"target_file": "{image}"}),
             ("remnux", "clamav_scan", {"target_file": "{image}"}),
@@ -787,38 +826,7 @@ PLAYBOOK_STEPS = {
             ("remnux", "exiftool_scan", {"target_file": "{file}"}),
         ],
     },
-    "PB-SIFT-006": {  # Mobile Forensics
-        "mobile_backups": [
-            ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
-        ],
-    },
-    "PB-SIFT-000": {  # Triage Prioritization (always runs)
-        "memory_dumps": [
-            ("volatility", "process_list", {"memory_dump": "{mem}"}),
-            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
-            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
-        ],
-    },
-    "PB-SIFT-016": {  # Cross-Image Correlation
-        "disk_images": [
-            ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
-        ],
-    },
-    "PB-SIFT-017": {  # Windows Deep-Dive
-        "registry_hives": [
-            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
-            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
-            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
-            ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
-        ],
-        "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-        ],
-    },
-    "PB-SIFT-018": {  # Full Correlation & Reporting
+    "PB-SIFT-018": {  # Malware Analysis SOP
         "disk_images": [
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
