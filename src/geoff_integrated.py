@@ -1211,7 +1211,7 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
         ],
     },
-    "PB-SIFT-020": {  # Timeline Analysis (NEW)
+    "PB-SIFT-020": {  # Timeline Analysis — psort after log2timeline
         "disk_images": [
             ("plaso", "sort_timeline", {
                 "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
@@ -1747,6 +1747,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         skipped_playbooks.append({"id": "PB-SIFT-017", "reason": "No suspicious binary surfaced during triage"})
         skipped_playbooks.append({"id": "PB-SIFT-018", "reason": "No suspicious binary surfaced during triage"})
+
+    # Timeline analysis — always run if disk images present (psort after log2timeline)
+    if len(inventory["disk_images"]) > 0:
+        execution_plan.append("PB-SIFT-020")
 
     # Cross-image correlation last (if multi-host)
     if len(inventory["disk_images"]) > 1:
@@ -2466,6 +2470,86 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 "error": str(e),
             })
 
+
+    # ------------------------------------------------------------------
+    # Phase 3d: LLM Analysis of Findings
+    # ------------------------------------------------------------------
+    _update_job(94, "analysis", "Analyzing findings with LLM", log_msg="LLM analyzing collected findings for patterns and conclusions")
+    try:
+        # Build a condensed summary of findings for LLM context
+        findings_summary = []
+        for f in findings:
+            if f.get("status") != "completed":
+                continue
+            result = f.get("result", {})
+            if not isinstance(result, dict):
+                continue
+            summary = {
+                "playbook": f.get("playbook", ""),
+                "module": f.get("module", ""),
+                "function": f.get("function", ""),
+            }
+            for key in ["total_strings", "ioc_counts", "event_count", "files_count",
+                        "partitions", "processes", "connections", "suspicious",
+                        "total_files", "deleted_files", "iocs", "registry_keys",
+                        "confidence", "severity", "category"]:
+                if key in result:
+                    val = result[key]
+                    if isinstance(val, (dict, list)) and len(str(val)) > 500:
+                        val = str(val)[:500] + "..."
+                    summary[key] = val
+            findings_summary.append(summary)
+
+        if findings_summary:
+            summary_text = json.dumps(findings_summary[:50], default=str)
+            if len(summary_text) > 8000:
+                summary_text = summary_text[:8000] + "..."
+
+            analysis_prompt = f"""Analyze the following forensic findings and provide:
+1. KEY_FINDINGS: 3-5 most important findings with confidence (POSSIBLE/CONFIRMED)
+2. ATTACK_TIMELINE: Chronological sequence of events (if timeline data exists)
+3. RECOMMENDATIONS: 2-3 actionable next steps for the investigator
+4. SUMMARY: One-paragraph executive summary
+
+Findings data:
+{summary_text}
+
+Evidence type: {os_type}
+Playbooks run: {', '.join(p['playbook_id'] for p in playbooks_run)}
+Anti-forensics detected: {('Yes' if 'ANTI-FORENSICS-CONFIRMED' in confidence_modifiers else 'No')}
+
+Respond in JSON format with keys: key_findings, attack_timeline, recommendations, summary"""
+
+            llm_analysis = call_llm(analysis_prompt, context="", agent_type="manager")
+
+            try:
+                json_match = re.search(r'\{.*\}', llm_analysis, re.DOTALL)
+                if json_match:
+                    analysis_result = json.loads(json_match.group())
+                else:
+                    analysis_result = {"raw_analysis": llm_analysis}
+            except (json.JSONDecodeError, ValueError):
+                analysis_result = {"raw_analysis": llm_analysis}
+
+            findings.append({
+                "playbook": "ANALYSIS",
+                "module": "llm",
+                "function": "analyze_findings",
+                "status": "completed",
+                "result": analysis_result,
+                "started_at": datetime.now().isoformat(),
+                "completed_at": datetime.now().isoformat(),
+            })
+    except Exception as e:
+        _log_error("LLM analysis failed", e)
+        findings.append({
+            "playbook": "ANALYSIS",
+            "module": "llm",
+            "function": "analyze_findings",
+            "status": "failed",
+            "error": str(e),
+        })
+
     # ------------------------------------------------------------------
     # Phase 4: Aggregate Findings & Severity
     # ------------------------------------------------------------------
@@ -2547,6 +2631,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "failures": [f for f in findings if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
         "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
+        "llm_analysis": next((f["result"] for f in findings if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
     # ------------------------------------------------------------------
