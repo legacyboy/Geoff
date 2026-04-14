@@ -1448,26 +1448,21 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         case_work_dir = Path(tempfile.gettempdir()) / "geoff-cases" / f"{case_name}_findevil_{timestamp}"
         case_work_dir.mkdir(parents=True, exist_ok=True)
     # Create evidence separation directories
-    (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
     (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
     
-    # Symlink source evidence into evidence/raw/ for chain of custody
-    for evidence_file in inventory.get("disk_images", []) + inventory.get("memory_dumps", []) + \
-                        inventory.get("pcaps", []) + inventory.get("evtx_logs", []) + \
-                        inventory.get("syslogs", []) + inventory.get("registry_hives", []):
-        src = Path(evidence_file)
-        dst = case_work_dir / "evidence" / "raw" / src.name
-        if not dst.exists():
-            try:
-                dst.symlink_to(src)
-                _fe_log(job_id, f"Linked evidence: {src.name}")
-            except OSError:
-                try:
-                    import shutil
-                    shutil.copy2(str(src), str(dst))
-                    _fe_log(job_id, f"Copied evidence: {src.name}")
-                except OSError as e:
-                    _fe_log(job_id, f"Could not link/copy {src.name}: {e}")
+    # Write evidence manifest to evidence/raw/ (references, not copies/links)
+    # Raw evidence stays in its original location — only derived artifacts go here
+    manifest = {
+        "evidence_dir": str(evidence_dir),
+        "disk_images": inventory.get("disk_images", []),
+        "memory_dumps": inventory.get("memory_dumps", []),
+        "pcaps": inventory.get("pcaps", []),
+        "evtx_logs": inventory.get("evtx_logs", []),
+        "syslogs": inventory.get("syslogs", []),
+        "registry_hives": inventory.get("registry_hives", []),
+        "total_size_bytes": inventory.get("total_size_bytes", 0),
+    }
+    _atomic_write(case_work_dir / "evidence" / "raw" / "manifest.json", json.dumps(manifest, indent=2, default=str))
     if case_work_dir != Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}":
         print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
 
