@@ -154,103 +154,6 @@ def safe_run(cmd, timeout=300, **kwargs):
         }
 
 
-def _correlate_timelines(merged_timeline: str, case_work_dir, job_id: str) -> Dict[str, Any]:
-    """Correlate events across multiple host images from a merged Plaso timeline.
-
-    Uses psort json_line format and extracts username/hostname from the
-    'message' field (top-level fields are unreliable in Plaso output).
-    """
-    if not Path(merged_timeline).exists():
-        return {"error": "merged timeline not found", "path": merged_timeline}
-
-    try:
-        psort_cmd = [
-            "python3", "/usr/bin/psort.py",
-            "-o", "json_line",
-            merged_timeline,
-        ]
-        result = safe_run(psort_cmd, timeout=600)
-
-        if result["code"] != 0:
-            return {"error": f"psort failed: {result.get('stderr', '')[:200]}"}
-
-        # Regex patterns for extracting user/host from Plaso message field
-        _username_patterns = [
-            re.compile(r'\bAccount Name:\s*([\\\w.\-]+)', re.IGNORECASE),
-            re.compile(r'\bUser Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-            re.compile(r'\bLogon Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-        ]
-        _hostname_patterns = [
-            re.compile(r'\bWorkstation Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-            re.compile(r'\bComputer Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-            re.compile(r'\bSource Network Address:\s*([\\\w.\-]+)', re.IGNORECASE),
-        ]
-
-        user_hosts = {}  # username -> set of hostnames
-        events_sample = []
-        lines_processed = 0
-
-        for line in result["stdout"].strip().split("\n"):
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-            lines_processed += 1
-            message = event.get("message", "")
-            username = event.get("username", "") or ""
-            hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
-
-            # Fall back to message field parsing if top-level fields empty
-            if not username:
-                for pat in _username_patterns:
-                    m = pat.search(message)
-                    if m:
-                        username = m.group(1)
-                        break
-            if not hostname:
-                for pat in _hostname_patterns:
-                    m = pat.search(message)
-                    if m:
-                        hostname = m.group(1)
-                        break
-
-            if username and hostname:
-                if username not in user_hosts:
-                    user_hosts[username] = set()
-                user_hosts[username].add(hostname)
-
-            if len(events_sample) < 20:
-                events_sample.append({
-                    "timestamp": event.get("datetime", ""),
-                    "event_type": event.get("data_type", ""),
-                    "message": message[:150],
-                })
-
-        # Build cross-host correlation findings
-        cross_host_users = []
-        for username, hosts in user_hosts.items():
-            if len(hosts) > 1:
-                cross_host_users.append({
-                    "user": username,
-                    "hosts": sorted(hosts),
-                    "risk_level": "HIGH" if len(hosts) >= 3 else "MEDIUM",
-                })
-
-        return {
-            "total_events_analyzed": lines_processed,
-            "unique_users": len(user_hosts),
-            "cross_host_users": cross_host_users[:20],
-            "cross_host_user_count": len(cross_host_users),
-            "events_sample": events_sample,
-        }
-    except Exception as e:
-        _log_error("Correlation analysis failed", e)
-        return {"error": str(e)}
-
-
 def safe_git_commit(message: str, base_path: str = None):
     """Safe git commit wrapper. Returns dict with status/data/error."""
     if base_path is None:
@@ -1958,42 +1861,42 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 if _abort:
                     break
                 evidence_items = dev_ev.get(ev_type, [])
-            # If no evidence of this type, skip the steps for this evidence type
-            # (but the playbook still "runs" — it just has no applicable evidence)
-            if not evidence_items:
-                continue
+                # If no evidence of this type, skip the steps for this evidence type
+                # (but the playbook still "runs" — it just has no applicable evidence)
+                if not evidence_items:
+                    continue
 
-            # For some evidence types we iterate over each item; for others we
-            # just use the first one (to keep runtime manageable).
-            # Disk images and memory dumps: iterate all; others: first 3.
-            if ev_type in ("disk_images", "memory_dumps"):
-                items = evidence_items
-            else:
-                items = evidence_items[:3]
+                # For some evidence types we iterate over each item; for others we
+                # just use the first one (to keep runtime manageable).
+                # Disk images and memory dumps: iterate all; others: first 3.
+                if ev_type in ("disk_images", "memory_dumps"):
+                    items = evidence_items
+                else:
+                    items = evidence_items[:3]
 
-            for item in items:
-                if _abort:
-                    break
-                item_stem = Path(item).stem
-                for module, function, raw_params in step_templates:
-                    _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
+                for item in items:
+                    if _abort:
+                        break
+                    item_stem = Path(item).stem
+                    for module, function, raw_params in step_templates:
+                        _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
 
-                    # Build actual params by substituting placeholders
-                    params = {}
-                    for k, v in raw_params.items():
-                        if isinstance(v, str):
-                            v = v.replace("{image}", item)
-                            v = v.replace("{mem}", item)
-                            v = v.replace("{pcap}", item)
-                            v = v.replace("{evtx}", item)
-                            v = v.replace("{syslog}", item)
-                            v = v.replace("{hive}", item)
-                            v = v.replace("{mobile}", str(Path(item).parent))
-                            v = v.replace("{file}", item)
-                            v = v.replace("{output_dir}", output_dir)
-                            v = v.replace("{image_stem}", item_stem)
-                            v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
-                        params[k] = v
+                        # Build actual params by substituting placeholders
+                        params = {}
+                        for k, v in raw_params.items():
+                            if isinstance(v, str):
+                                v = v.replace("{image}", item)
+                                v = v.replace("{mem}", item)
+                                v = v.replace("{pcap}", item)
+                                v = v.replace("{evtx}", item)
+                                v = v.replace("{syslog}", item)
+                                v = v.replace("{hive}", item)
+                                v = v.replace("{mobile}", str(Path(item).parent))
+                                v = v.replace("{file}", item)
+                                v = v.replace("{output_dir}", output_dir)
+                                v = v.replace("{image_stem}", item_stem)
+                                v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                            params[k] = v
                     # Convert numeric string params to int
                     for k, v in list(params.items()):
                         if isinstance(v, str) and v.isdigit():
@@ -2384,72 +2287,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"Cross-host correlation failed: {e}")
         correlated_users = {}
     # ------------------------------------------------------------------
-    _update_job(92, "correlation", "Cross-image timeline merge", log_msg="Merging timelines across disk images")
-
-    timeline_files = []
-    if len(inventory["disk_images"]) > 1:
-        # Individual timelines already created in PB-SIFT-016 / PB-SIFT-018
-        # Find them in the output dir
-        timeline_files = list(Path(output_dir).glob("timeline_*.plaso"))
-
-        if len(timeline_files) > 1:
-            # Merge timelines by re-running log2timeline for each image
-            # into the SAME storage file. log2timeline.py takes evidence sources
-            # (disk images), NOT .plaso files — so we must re-process from
-            # the original images. Plaso appends to existing storage files.
-            merged_output = str(case_work_dir / "timeline" / "merged.plaso")
-            try:
-                images_processed = 0
-                for img_info in inventory.get("disk_images", []):
-                    img_path = img_info if isinstance(img_info, str) else img_info.get("path", "")
-                    if not img_path:
-                        continue
-                    merge_cmd = [
-                        "python3", "/usr/bin/log2timeline.py",
-                        "--status_view", "none",
-                        merged_output,  # storage file (appends if exists)
-                        img_path,       # evidence source
-                    ]
-                    merge_result = safe_run(merge_cmd, timeout=600)
-                    if merge_result["code"] == 0:
-                        images_processed += 1
-
-                if images_processed > 0:
-                    # Run correlation analysis on the merged timeline
-                    correlation = _correlate_timelines(
-                        merged_output, case_work_dir, job_id
-                    )
-                    findings.append({
-                        "playbook": "PB-SIFT-016",
-                        "module": "plaso",
-                        "function": "merge_timelines",
-                        "status": "completed",
-                        "result": {
-                            "merged_output": merged_output,
-                            "source_timelines": len(timeline_files),
-                            "images_processed": images_processed,
-                            "correlation": correlation,
-                        },
-                        "started_at": datetime.now().isoformat(),
-                        "completed_at": datetime.now().isoformat(),
-                    })
-                else:
-                    findings.append({
-                        "playbook": "PB-SIFT-016",
-                        "module": "plaso",
-                        "function": "merge_timelines",
-                        "status": "failed",
-                        "error": "No images could be processed for merge",
-                    })
-            except Exception as e:
-                findings.append({
-                    "playbook": "PB-SIFT-016",
-                    "module": "plaso",
-                    "function": "merge_timelines",
-                    "status": "failed",
-                    "error": str(e),
-                })
-
     # ------------------------------------------------------------------
     # Phase 4: Aggregate Findings & Severity
     # ------------------------------------------------------------------
