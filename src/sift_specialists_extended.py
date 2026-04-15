@@ -677,6 +677,8 @@ class PLASO_Specialist:
         try:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
+            system_python = '/usr/bin/python3'
+
             # Try multiple command variants for different plaso versions
             # 2024+:  log2timeline.py --storage_file OUTPUT SOURCE
             # 2023:   log2timeline.py --status_view none OUTPUT SOURCE
