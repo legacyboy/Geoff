@@ -754,12 +754,14 @@ class SuperTimeline:
         with open(csv_path, "w") as f:
             f.write("timestamp,device_id,owner,event_type,summary,suspicious\n")
             for event in events:
-                # Escape CSV fields
-                summary = event.get("summary", "").replace('"', '""')
+                # Escape CSV fields, handle None values
+                summary = (event.get("summary") or "").replace('"', '""')
+                owner = event.get("owner") or ""
+                timestamp = event.get("timestamp") or ""
                 f.write(
-                    f'"{event.get("timestamp", "")}",'
+                    f'"{timestamp}",'
                     f'"{event.get("device_id", "")}",'
-                    f'"{event.get("owner", "")}",'
+                    f'"{owner}",'
                     f'"{event.get("event_type", "")}",'
                     f'"{summary[:200]}",'
                     f'"{event.get("suspicious", False)}"\n'
