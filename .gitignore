@@ -3,3 +3,19 @@ src/__pycache__/
 scripts/__pycache__/
 TEST_PLAN_LOCAL.md
 REFACTOR_PROGRESS.log
+
+# Forensic artifacts (can be multi-GB)
+*.plaso
+*.json_line
+*.E01
+*.E02
+*.E03
+*.dd
+*.raw
+*.vhd
+*.vmdk
+*.vdi
+*.img
+*.mem
+*.pcap
+*.evtx
