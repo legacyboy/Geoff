@@ -677,30 +677,41 @@ class PLASO_Specialist:
         try:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
-            # Use system python3 (not venv) or run script directly — plaso may not be in venv
-            system_python = '/usr/bin/python3'
-            cmd = [system_python, self.log2timeline_path, '--status_view', 'none']
-            if parsers:
-                cmd.extend(['--parsers', ','.join(parsers)])
-            cmd.extend([output_file, evidence_path])
+            # Try multiple command variants for different plaso versions
+            # Modern: log2timeline.py --status_view none OUTPUT SOURCE
+            # Older:  log2timeline.py OUTPUT SOURCE
+            # Some:   log2timeline.py -o OUTPUT SOURCE
+            variants = [
+                [system_python, self.log2timeline_path, '--status_view', 'none', output_file, evidence_path],
+                [system_python, self.log2timeline_path, output_file, evidence_path],
+                [self.log2timeline_path, '--status_view', 'none', output_file, evidence_path],
+                [self.log2timeline_path, output_file, evidence_path],
+            ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            result = None
+            for cmd in variants:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                    if result.returncode == 0:
+                        break
+                    # If it's an arg error, try next variant
+                    if 'unrecognized arguments' in result.stderr or 'unrecognized option' in result.stderr:
+                        continue
+                    # If it's a ModuleNotFoundError, try direct script
+                    if 'ModuleNotFoundError' in result.stderr and cmd[0] == system_python:
+                        continue
+                    # Other error — stop trying
+                    break
+                except Exception:
+                    continue
 
-            # Retry running script directly if python3 import fails
-            if result.returncode != 0 and 'ModuleNotFoundError' in result.stderr:
-                cmd_direct = [self.log2timeline_path, '--status_view', 'none']
-                if parsers:
-                    cmd_direct.extend(['--parsers', ','.join(parsers)])
-                cmd_direct.extend([output_file, evidence_path])
-                result = subprocess.run(cmd_direct, capture_output=True, text=True, timeout=1800)
-
-            # Retry with --source if positional fails
-            if result.returncode != 0 and 'unrecognized arguments' in result.stderr:
-                cmd_retry = [system_python, self.log2timeline_path, '--status_view', 'none']
-                if parsers:
-                    cmd_retry.extend(['--parsers', ','.join(parsers)])
-                cmd_retry.extend([output_file, '--source', evidence_path])
-                result = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=1800)
+            if result is None:
+                return {
+                    'tool': 'log2timeline',
+                    'status': 'error',
+                    'error': 'All log2timeline command variants failed',
+                    'timestamp': datetime.now().isoformat(),
+                }
 
             parsed = self._parse_log2timeline_stdout(result.stdout)
 
