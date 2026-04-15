@@ -41,6 +41,13 @@ from sift_specialists_remnux import REMNUX_Orchestrator
 from geoff_critic import GeoffCritic, ValidationPipeline
 from geoff_forensicator import ForensicatorAgent
 
+# New modules for architecture pivot
+from device_discovery import DeviceDiscovery
+from host_correlator import HostCorrelator
+from super_timeline import SuperTimeline
+from narrative_report import NarrativeReportGenerator
+from behavioral_analyzer import BehavioralAnalyzer
+
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
@@ -1316,6 +1323,21 @@ def _detect_os(inventory: dict) -> str:
     return "unknown"
 
 
+def _detect_os_from_devices(device_map: dict) -> str:
+    """Determine dominant OS from device map for playbook selection."""
+    os_counts = {}
+    for dev in device_map.values():
+        os_t = dev.get("os_type", "unknown")
+        os_counts[os_t] = os_counts.get(os_t, 0) + 1
+    if not os_counts:
+        return "unknown"
+    # Return most common OS type, excluding 'network' and 'unknown'
+    filtered = {k: v for k, v in os_counts.items() if k not in ("network", "unknown")}
+    if filtered:
+        return max(filtered, key=filtered.get)
+    return "unknown"
+
+
 def _is_indicator_match(haystack: str, needle: str) -> bool:
     """Match indicator patterns with word-boundary awareness.
     
@@ -1506,7 +1528,21 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Phase 1: Evidence Inventory
     # ------------------------------------------------------------------
     inventory = _inventory_evidence(evidence_path)
-    os_type = _detect_os(inventory)
+
+    # Phase 1a: Device Discovery & User Attribution
+    _update_job(3, "discovery", "Identifying devices and users")
+    device_disc = DeviceDiscovery(orchestrator)
+    device_map, user_map = device_disc.discover(evidence_path, inventory)
+    _fe_log(job_id, f"Discovered {len(device_map)} devices, {len(user_map)} users")
+
+    for dev_id, dev in device_map.items():
+        _fe_log(job_id, f"  Device: {dev_id} ({dev.get('device_type', 'unknown')}) "
+                        f"owner={dev.get('owner', 'unknown')} "
+                        f"files={len(dev.get('evidence_files', []))}")
+
+    # Determine OS from dominant device type (for playbook selection)
+    os_type = _detect_os_from_devices(device_map)
+    # Triage indicators still useful for initial severity classification
     indicator_hits = _scan_triage_indicators(inventory)
 
     _update_job(5, "inventory", "Complete", log_msg="Evidence inventory complete")
@@ -1515,33 +1551,36 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Phase 1b: Detect partition offsets for each disk image
     # ------------------------------------------------------------------
     image_offsets = {}  # image_path -> first filesystem partition offset
-    for img in inventory.get("disk_images", []):
-        try:
-            specialist = SLEUTHKIT_Specialist(evidence_path=img)
-            mmls_result = specialist.analyze_partition_table(img)
-            if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
-                # Find first NTFS/ext4/HFS+ partition
-                for part in mmls_result["partitions"]:
-                    desc = part.get("description", "").lower()
-                    start = part.get("start_sector", 0)
-                    if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                        image_offsets[img] = start
-                        _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start}")
-                        break
-                if img not in image_offsets and mmls_result["partitions"]:
-                    # Use first non-meta partition
-                    for part in mmls_result["partitions"]:
-                        start = part.get("start_sector", 0)
-                        if start > 0:
-                            image_offsets[img] = start
-                            _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (first partition)")
-                            break
-            if img not in image_offsets:
-                image_offsets[img] = 2048  # fallback to common default
-                _fe_log(job_id, f"Using default offset 2048 for {Path(img).name}")
-        except Exception as e:
-            image_offsets[img] = 2048
-            _fe_log(job_id, f"Partition detection failed for {Path(img).name}: {e}, using offset 2048")
+    # Phase 1b (revised): Detect partition offsets per device
+    for dev_id, dev in device_map.items():
+        for img in dev.get("evidence_files", []):
+            if img in inventory.get("disk_images", []):
+                try:
+                    specialist = SLEUTHKIT_Specialist(evidence_path=img)
+                    mmls_result = specialist.analyze_partition_table(img)
+                    if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
+                        # Find first NTFS/ext4/HFS+ partition
+                        for part in mmls_result["partitions"]:
+                            desc = part.get("description", "").lower()
+                            start = part.get("start_sector", 0)
+                            if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
+                                image_offsets[img] = start
+                                _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start}")
+                                break
+                        if img not in image_offsets and mmls_result["partitions"]:
+                            # Use first non-meta partition
+                            for part in mmls_result["partitions"]:
+                                start = part.get("start_sector", 0)
+                                if start > 0:
+                                    image_offsets[img] = start
+                                    _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (first partition)")
+                                    break
+                    if img not in image_offsets:
+                        image_offsets[img] = 2048  # fallback to common default
+                        _fe_log(job_id, f"Using default offset 2048 for {Path(img).name}")
+                except Exception as e:
+                    image_offsets[img] = 2048
+                    _fe_log(job_id, f"Partition detection failed for {Path(img).name}: {e}, using offset 2048")
 
     # ------------------------------------------------------------------
     # Phase 2: Prepare Case Work Directory
@@ -1570,6 +1609,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "total_size_bytes": inventory.get("total_size_bytes", 0),
     }
     _atomic_write(case_work_dir / "evidence" / "raw" / "manifest.json", json.dumps(manifest, indent=2, default=str))
+
+    # Write device and user maps
+    _atomic_write(
+        case_work_dir / "device_map.json",
+        json.dumps(device_map, indent=2, default=str)
+    )
+    _atomic_write(
+        case_work_dir / "user_map.json",
+        json.dumps(user_map, indent=2, default=str)
+    )
     if case_work_dir != Path(CASES_WORK_DIR) / f"{case_name}_findevil_{timestamp}":
         print(f"[FIND-EVIL] Case work dir fallback: {case_work_dir}")
 
@@ -1852,22 +1901,53 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"Failed to write execution plan: {e}")
 
     # ------------------------------------------------------------------
-    # Phase 3b: Execute Playbooks from Execution Plan
+    # Phase 3b: Execute Playbooks from Execution Plan (per-device)
     # ------------------------------------------------------------------
+    # Build per-device evidence lookup
+    device_evidence = {}  # device_id -> {ev_type: [paths]}
+    for dev_id, dev in device_map.items():
+        device_evidence[dev_id] = {
+            "disk_images": [], "memory_dumps": [], "pcaps": [],
+            "evtx_logs": [], "syslogs": [], "registry_hives": [],
+            "mobile_backups": [], "other_files": [],
+        }
+        for fpath in dev.get("evidence_files", []):
+            for ev_type in inventory:
+                if isinstance(inventory[ev_type], list) and fpath in inventory[ev_type]:
+                    device_evidence[dev_id][ev_type].append(fpath)
+
+    # Identify unattributed evidence (PCAPs, logs not tied to a device)
+    unattributed_ev = {}
+    for ev_type, files in inventory.items():
+        if not isinstance(files, list):
+            continue
+        unattr = [f for f in files
+                  if not any(f in device_evidence[d].get(ev_type, [])
+                             for d in device_evidence)]
+        if unattr:
+            unattributed_ev[ev_type] = unattr
+
     total_pb = len(execution_plan)
-    for pb_idx, playbook_id in enumerate(execution_plan):
-        pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
-        pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
-        _update_job(pb_progress_base, playbook_id, "Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name}")
+    for dev_id, dev in device_map.items():
+        dev_ev = device_evidence[dev_id]
+        _fe_log(job_id, f"\n{'='*60}")
+        _fe_log(job_id, f"Processing device: {dev_id} ({dev.get('device_type', 'unknown')})")
+        _fe_log(job_id, f"Owner: {dev.get('owner', 'unknown')}")
+        _fe_log(job_id, f"{'='*60}")
 
-        pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
-        pb_findings = []
-        any_step_ran = False
+        for pb_idx, playbook_id in enumerate(execution_plan):
+            pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
+            pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
+            _update_job(pb_progress_base, playbook_id, f"{dev_id}: Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name} [{dev_id}]")
 
-        for ev_type, step_templates in pb_steps_def.items():
-            if _abort:
-                break
-            evidence_items = ev.get(ev_type, [])
+            pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
+            pb_findings = []
+            any_step_ran = False
+
+            for ev_type, step_templates in pb_steps_def.items():
+                if _abort:
+                    break
+                evidence_items = dev_ev.get(ev_type, [])
             # If no evidence of this type, skip the steps for this evidence type
             # (but the playbook still "runs" — it just has no applicable evidence)
             if not evidence_items:
@@ -1923,6 +2003,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "function": function,
                         "params": params,
                         "evidence_file": item,
+                        "device_id": dev_id,
+                        "owner": dev.get("owner"),
                         "status": "running",
                         "started_at": datetime.now().isoformat(),
                     }
