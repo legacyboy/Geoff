@@ -566,10 +566,10 @@ class SuperTimeline:
                 if not line:
                     continue
 
-                # Match fls -p format
-                match = re.match(r'^([rvmldc]/[rda])\s+(\*?)(\d+)[\s-]+:\s+(.*)', line)
+                # Match fls -p format (handles compound inodes like 3519-144-6)
+                match = re.match(r'^([rvmldc]/[rda])\s+(\*?)([\d-]+)[:\t]+(.*)', line)
                 if not match:
-                    match = re.match(r'^([rvmldc]/[rda])\s+(\*?)(\d+)\s+(.*)', line)
+                    match = re.match(r'^([rvmldc]/[rda])\s+(\*?)(\S+)\s*:\s*(.*)', line)
                 if not match:
                     continue
 
