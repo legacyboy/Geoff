@@ -1911,209 +1911,209 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 v = v.replace("{image_stem}", item_stem)
                                 v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
                             params[k] = v
-                    # Convert numeric string params to int
-                    for k, v in list(params.items()):
-                        if isinstance(v, str) and v.isdigit():
-                            params[k] = int(v)
-                        elif isinstance(v, str) and v.lower() in ('true', 'false'):
-                            params[k] = v.lower() == 'true'
+                        # Convert numeric string params to int
+                        for k, v in list(params.items()):
+                            if isinstance(v, str) and v.isdigit():
+                                params[k] = int(v)
+                            elif isinstance(v, str) and v.lower() in ('true', 'false'):
+                                params[k] = v.lower() == 'true'
 
-                    # Idempotent step key — derive from findings (single source of truth)
-                    step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
-                    execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
+                        # Idempotent step key — derive from findings (single source of truth)
+                        step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+                        execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
 
-                    step_record = {
-                        "playbook": playbook_id,
-                        "step_key": step_key,
-                        "execution_hash": execution_hash,
-                        "module": module,
-                        "function": function,
-                        "params": params,
-                        "evidence_file": item,
-                        "device_id": dev_id,
-                        "owner": dev.get("owner"),
-                        "status": "running",
-                        "started_at": datetime.now().isoformat(),
-                    }
+                        step_record = {
+                            "playbook": playbook_id,
+                            "step_key": step_key,
+                            "execution_hash": execution_hash,
+                            "module": module,
+                            "function": function,
+                            "params": params,
+                            "evidence_file": item,
+                            "device_id": dev_id,
+                            "owner": dev.get("owner"),
+                            "status": "running",
+                            "started_at": datetime.now().isoformat(),
+                        }
 
-                    # Idempotency: skip if already completed with same inputs
-                    if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
-                        _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
-                        continue
+                        # Idempotency: skip if already completed with same inputs
+                        if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
+                            _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
+                            continue
 
-                    # Dependency enforcement: check playbook step requirements
-                    # PLAYBOOK_STEPS entries are tuples: (module, function, params)
-                    pb_steps_list = []
-                    for category, steps in PLAYBOOK_STEPS.get(playbook_id, {}).items():
-                        if isinstance(steps, list):
-                            pb_steps_list.extend(steps)
-                    step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
-                    # Tuples don't have 'requires' — dependency checking is for future dict-based steps
-                    if isinstance(step_def, dict) and step_def.get("requires"):
-                        for dep in step_def["requires"]:
-                            dep_completed = any(
-                                s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
-                                for s in findings
-                            )
-                            if not dep_completed:
-                                _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
-                                step_record = {
-                                    "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
-                                    "module": module, "function": function, "params": params,
-                                    "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
-                                    "status": "skipped", "error": f"dependency {dep} not met",
-                                    "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
-                                }
-                                findings.append(step_record)
-                                pb_findings.append(step_record)
-                                continue
+                        # Dependency enforcement: check playbook step requirements
+                        # PLAYBOOK_STEPS entries are tuples: (module, function, params)
+                        pb_steps_list = []
+                        for category, steps in PLAYBOOK_STEPS.get(playbook_id, {}).items():
+                            if isinstance(steps, list):
+                                pb_steps_list.extend(steps)
+                        step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
+                        # Tuples don't have 'requires' — dependency checking is for future dict-based steps
+                        if isinstance(step_def, dict) and step_def.get("requires"):
+                            for dep in step_def["requires"]:
+                                dep_completed = any(
+                                    s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
+                                    for s in findings
+                                )
+                                if not dep_completed:
+                                    _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
+                                    step_record = {
+                                        "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
+                                        "module": module, "function": function, "params": params,
+                                        "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
+                                        "status": "skipped", "error": f"dependency {dep} not met",
+                                        "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
+                                    }
+                                    findings.append(step_record)
+                                    pb_findings.append(step_record)
+                                    continue
 
-                    step_record = {
-                        "playbook": playbook_id,
-                        "step_key": step_key,
-                        "execution_hash": execution_hash,
-                        "module": module,
-                        "function": function,
-                        "params": params,
-                        "evidence_file": item,
-                        "device_id": dev_id,
-                        "owner": dev.get("owner"),
-                        "status": "running",
-                        "retries": 0,
-                        "max_retries": 2,
-                        "started_at": datetime.now().isoformat(),
-                    }
+                        step_record = {
+                            "playbook": playbook_id,
+                            "step_key": step_key,
+                            "execution_hash": execution_hash,
+                            "module": module,
+                            "function": function,
+                            "params": params,
+                            "evidence_file": item,
+                            "device_id": dev_id,
+                            "owner": dev.get("owner"),
+                            "status": "running",
+                            "retries": 0,
+                            "max_retries": 2,
+                            "started_at": datetime.now().isoformat(),
+                        }
 
-                    # Persist running state before execution (crash recovery)
-                    try:
-                        pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-                        pb_output.parent.mkdir(parents=True, exist_ok=True)
-                        pb_findings_running = pb_findings + [step_record]
-                        _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
-                    except Exception:
-                        pass  # Non-critical — best-effort state persistence
-
-                    # Retry logic for transient failures
-                    MAX_RETRIES = 2
-                    for attempt in range(MAX_RETRIES + 1):
+                        # Persist running state before execution (crash recovery)
                         try:
-                            result = _run_step_via_orchestrator(module, function, params)
-                            break
-                        except Exception as retry_exc:
-                            if attempt < MAX_RETRIES:
-                                _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
-                                time.sleep(1 * (attempt + 1))
-                                continue
-                            result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
+                            pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                            pb_output.parent.mkdir(parents=True, exist_ok=True)
+                            pb_findings_running = pb_findings + [step_record]
+                            _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
+                        except Exception:
+                            pass  # Non-critical — best-effort state persistence
 
-                    try:
-                        # Check for safe_run timeout indicators in result
-                        if isinstance(result, dict) and result.get("code") is not None:
-                            if result["code"] == -1:
-                                step_record["status"] = "failed"
-                                step_record["error"] = f"Timeout: {result.get('stderr', '')}"
-                                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
-                                steps_failed += 1
-                                _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
-                                findings.append(step_record)
-                                pb_findings.append(step_record)
-                                continue
-                            elif result["code"] < 0:
-                                step_record["status"] = "failed"
-                                step_record["error"] = f"Execution error: {result.get('stderr', '')}"
-                                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
-                                steps_failed += 1
-                                _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
-                                findings.append(step_record)
-                                pb_findings.append(step_record)
-                                continue
-                        
-                        step_status = result.get("status", "error")
-                        # If the tool was missing, skip (not a failure)
-                        if step_status == "error" and "not found" in str(result.get("error", "")).lower():
-                            step_record["status"] = "skipped"
-                            step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
-                            steps_skipped += 1
-                            _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
-                        elif step_status == "success":
-                            # Specialist tools return structured dicts without 'stdout'
-                            # Only validate stdout for safe_run results (have 'code' key)
-                            if isinstance(result, dict) and "code" in result:
-                                # safe_run result -- validate stdout
-                                stdout = result.get("stdout", "")
-                                if not stdout or len(stdout.strip()) < 10:
+                        # Retry logic for transient failures
+                        MAX_RETRIES = 2
+                        for attempt in range(MAX_RETRIES + 1):
+                            try:
+                                result = _run_step_via_orchestrator(module, function, params)
+                                break
+                            except Exception as retry_exc:
+                                if attempt < MAX_RETRIES:
+                                    _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
+                                    time.sleep(1 * (attempt + 1))
+                                    continue
+                                result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
+
+                        try:
+                            # Check for safe_run timeout indicators in result
+                            if isinstance(result, dict) and result.get("code") is not None:
+                                if result["code"] == -1:
                                     step_record["status"] = "failed"
-                                    step_record["error"] = f"Empty or invalid output from {module}.{function}"
-                                    step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                    step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                                    step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                     steps_failed += 1
+                                    _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
+                                    findings.append(step_record)
+                                    pb_findings.append(step_record)
+                                    continue
+                                elif result["code"] < 0:
+                                    step_record["status"] = "failed"
+                                    step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                                    step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
+                                    steps_failed += 1
+                                    _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
+                                    findings.append(step_record)
+                                    pb_findings.append(step_record)
+                                    continue
+                        
+                            step_status = result.get("status", "error")
+                            # If the tool was missing, skip (not a failure)
+                            if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                                step_record["status"] = "skipped"
+                                step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
+                                steps_skipped += 1
+                                _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
+                            elif step_status == "success":
+                                # Specialist tools return structured dicts without 'stdout'
+                                # Only validate stdout for safe_run results (have 'code' key)
+                                if isinstance(result, dict) and "code" in result:
+                                    # safe_run result -- validate stdout
+                                    stdout = result.get("stdout", "")
+                                    if not stdout or len(stdout.strip()) < 10:
+                                        step_record["status"] = "failed"
+                                        step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                                        step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                        steps_failed += 1
+                                    else:
+                                        step_record["status"] = "completed"
+                                        step_record["result"] = result
+                                        steps_completed += 1
                                 else:
+                                    # Specialist result -- trust status=success
                                     step_record["status"] = "completed"
                                     step_record["result"] = result
                                     steps_completed += 1
                             else:
-                                # Specialist result -- trust status=success
-                                step_record["status"] = "completed"
-                                step_record["result"] = result
-                                steps_completed += 1
-                        else:
+                                step_record["status"] = "failed"
+                                step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
+                                steps_failed += 1
+                                any_step_ran = True
+                                _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
+
+                            # Critic validation
+                            try:
+                                critic_val = geoff_critic.validate_tool_output(
+                                    tool_name=f"{module}.{function}",
+                                    tool_params=params,
+                                    raw_output=json.dumps(result, default=str)[:8000],
+                                    geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}",
+                                )
+                                step_record["critic"] = critic_val
+                                critic_results.append(critic_val)
+                                # Check for invalid IOCs flagged by critic
+                                if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
+                                    step_record["invalid_iocs"] = critic_val["invalid_iocs"]
+                                # Validate IOC formats from step result
+                                try:
+                                    result_iocs = {}
+                                    if isinstance(result, dict):
+                                        for ioc_key in ["iocs", "ips", "domains", "hashes", "urls", "emails"]:
+                                            if ioc_key in result and isinstance(result[ioc_key], (dict, list)):
+                                                result_iocs[ioc_key] = result[ioc_key] if isinstance(result[ioc_key], list) else list(result[ioc_key].values())
+                                    if result_iocs:
+                                        format_val = geoff_critic.validate_ioc_formats(result_iocs)
+                                        if format_val.get("format_issue_count", 0) > 0:
+                                            step_record["ioc_format_issues"] = format_val["format_issues"]
+                                except Exception:
+                                    pass  # Non-critical
+                                # Write validation to case validations/ directory
+                                try:
+                                    val_dir = case_work_dir / "validations"
+                                    val_dir.mkdir(exist_ok=True)
+                                    val_file = val_dir / f"{step_key.replace(':', '_')}.json"
+                                    _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
+                                except Exception:
+                                    pass  # Non-critical
+                            except Exception as ce:
+                                _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
+                                step_record["critic_error"] = str(ce)
+                        except Exception as e:
+                            _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
                             step_record["status"] = "failed"
-                            step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
+                            step_record["error"] = str(e)
                             steps_failed += 1
-                            any_step_ran = True
-                            _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
 
-                        # Critic validation
-                        try:
-                            critic_val = geoff_critic.validate_tool_output(
-                                tool_name=f"{module}.{function}",
-                                tool_params=params,
-                                raw_output=json.dumps(result, default=str)[:8000],
-                                geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}",
-                            )
-                            step_record["critic"] = critic_val
-                            critic_results.append(critic_val)
-                            # Check for invalid IOCs flagged by critic
-                            if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
-                                step_record["invalid_iocs"] = critic_val["invalid_iocs"]
-                            # Validate IOC formats from step result
-                            try:
-                                result_iocs = {}
-                                if isinstance(result, dict):
-                                    for ioc_key in ["iocs", "ips", "domains", "hashes", "urls", "emails"]:
-                                        if ioc_key in result and isinstance(result[ioc_key], (dict, list)):
-                                            result_iocs[ioc_key] = result[ioc_key] if isinstance(result[ioc_key], list) else list(result[ioc_key].values())
-                                if result_iocs:
-                                    format_val = geoff_critic.validate_ioc_formats(result_iocs)
-                                    if format_val.get("format_issue_count", 0) > 0:
-                                        step_record["ioc_format_issues"] = format_val["format_issues"]
-                            except Exception:
-                                pass  # Non-critical
-                            # Write validation to case validations/ directory
-                            try:
-                                val_dir = case_work_dir / "validations"
-                                val_dir.mkdir(exist_ok=True)
-                                val_file = val_dir / f"{step_key.replace(':', '_')}.json"
-                                _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
-                            except Exception:
-                                pass  # Non-critical
-                        except Exception as ce:
-                            _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
-                            step_record["critic_error"] = str(ce)
-                    except Exception as e:
-                        _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
-                        step_record["status"] = "failed"
-                        step_record["error"] = str(e)
-                        steps_failed += 1
+                        step_record["completed_at"] = datetime.now().isoformat()
+                        findings.append(step_record)
+                        pb_findings.append(step_record)
 
-                    step_record["completed_at"] = datetime.now().isoformat()
-                    findings.append(step_record)
-                    pb_findings.append(step_record)
-
-                    # CONTINUE_ON_FAILURE enforcement
-                    if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
-                        _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
-                        # Break out of all loops
-                        break
+                        # CONTINUE_ON_FAILURE enforcement
+                        if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
+                            _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
+                            # Break out of all loops
+                            break
 
         # Check if we broke out due to failure
         if not CONTINUE_ON_FAILURE:
