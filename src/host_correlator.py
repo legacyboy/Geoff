@@ -120,7 +120,7 @@ class HostCorrelator:
                 alias_to_user[username.lower()] = username
 
         for event in timeline_events:
-            owner = event.get("owner", "").lower()
+            owner = (event.get("owner") or "").lower() if event.get("owner") is not None else ""
             if owner in alias_to_user:
                 user_events[alias_to_user[owner]].append(event)
             elif owner:
