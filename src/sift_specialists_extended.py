@@ -1793,7 +1793,7 @@ class ExtendedOrchestrator:
             'sleuthkit': {
                 'category': 'Disk Forensics',
                 'functions': ['analyze_partition_table', 'analyze_filesystem',
-                              'list_files', 'extract_file', 'list_inodes', 'get_file_info'],
+                              'list_files', 'list_files_mactime', 'extract_file', 'list_inodes', 'get_file_info'],
                 'tools': ['mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat'],
             },
             'volatility': {

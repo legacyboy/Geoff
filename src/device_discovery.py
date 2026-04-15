@@ -97,8 +97,21 @@ class DeviceDiscovery:
             self._log("flat_layout",
                       "No subdirectory structure; grouping by evidence file")
             dev_idx = 0
+            # Group disk images by stem (e.g., image.E01, image.E02 → one device)
+            grouped_disks = {}
             for img in inventory.get("disk_images", []):
-                dev_id = Path(img).stem
+                stem = Path(img).stem
+                # Strip trailing segment number for EnCase/VHD: image.E01 → image
+                group_stem = re.sub(r'\.(E|e)\d+$', '', stem)
+                # Also handle .vhd, .vmdk, etc.
+                if group_stem == stem:
+                    group_stem = re.sub(r'\.(vhd|vmdk|vdi|raw|dd|img)$', '', stem, flags=re.IGNORECASE)
+                if group_stem not in grouped_disks:
+                    grouped_disks[group_stem] = []
+                grouped_disks[group_stem].append(img)
+
+            for group_stem, images in grouped_disks.items():
+                dev_id = group_stem
                 device_map[dev_id] = {
                     "device_id": dev_id,
                     "device_type": "unknown",
@@ -106,7 +119,7 @@ class DeviceDiscovery:
                     "owner": None,
                     "owner_confidence": "NONE",
                     "os_type": "unknown",
-                    "evidence_files": [img],
+                    "evidence_files": images,
                     "evidence_types": ["disk_images"],
                     "discovery_method": "disk_image_filename",
                     "metadata": {},

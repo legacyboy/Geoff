@@ -1138,8 +1138,15 @@ PLAYBOOK_STEPS = {
             ("logs", "parse_syslog", {"log_file": "{syslog}"}),
         ],
     },
-    "PB-SIFT-020": {  # Timeline Analysis — psort after log2timeline
+    "PB-SIFT-020": {  # Timeline Analysis — log2timeline + mactime + psort
         "disk_images": [
+            ("plaso", "create_timeline", {
+                "evidence_path": "{image}",
+                "output_file": "{output_dir}/timeline_{image_stem}.plaso",
+            }),
+            ("sleuthkit", "list_files_mactime", {
+                "image": "{image}", "offset": "{offset}",
+            }),
             ("plaso", "sort_timeline", {
                 "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
                 "output_format": "json_line",
