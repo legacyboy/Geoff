@@ -678,13 +678,14 @@ class PLASO_Specialist:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
             # Try multiple command variants for different plaso versions
-            # Modern: log2timeline.py --status_view none OUTPUT SOURCE
+            # 2024+:  log2timeline.py --storage_file OUTPUT SOURCE
+            # 2023:   log2timeline.py --status_view none OUTPUT SOURCE
             # Older:  log2timeline.py OUTPUT SOURCE
-            # Some:   log2timeline.py -o OUTPUT SOURCE
             variants = [
+                [system_python, self.log2timeline_path, '--storage_file', output_file, evidence_path],
                 [system_python, self.log2timeline_path, '--status_view', 'none', output_file, evidence_path],
                 [system_python, self.log2timeline_path, output_file, evidence_path],
-                [self.log2timeline_path, '--status_view', 'none', output_file, evidence_path],
+                [self.log2timeline_path, '--storage_file', output_file, evidence_path],
                 [self.log2timeline_path, output_file, evidence_path],
             ]
 
