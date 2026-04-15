@@ -765,7 +765,7 @@ class PLASO_Specialist:
                 cmd.extend(['--slice', filter_str])
             cmd.append(storage_file)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
 
             parsed = self._parse_psort_stdout(result.stdout)
 
