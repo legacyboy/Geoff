@@ -1143,7 +1143,7 @@ PLAYBOOK_STEPS = {
             ("plaso", "sort_timeline", {
                 "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
                 "output_format": "json_line",
-                "filter": None,
+                "filter_str": None,
             }),
         ],
     },

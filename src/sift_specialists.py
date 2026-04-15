@@ -285,6 +285,61 @@ class SLEUTHKIT_Specialist:
             'raw_output': result.get('raw_output', ''),
         }
 
+    def list_files_mactime(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
+        """fls -m — List files in mactime body format with MACB timestamps."""
+        args = ['-m', '']  # mactime body format, empty hostname
+        if offset is not None:
+            args.extend(['-o', str(offset)])
+        args.append(image)
+        raw = self.run('fls', args)
+        if raw['status'] != 'success':
+            return raw
+
+        # mactime body format: md5|path|inode|meta_type|file_type|mtime|atime|ctime|crtime
+        # or: md5|name|inode|meta_type|mode|uid|gid|size|atime|mtime|ctime|crtime
+        events = []
+        for line in raw['stdout'].splitlines():
+            parts = line.split('|')
+            if len(parts) < 9:
+                continue
+            path = parts[1] if len(parts) > 1 else ''
+            inode = parts[2] if len(parts) > 2 else ''
+            # Timestamps are Unix epoch (seconds)
+            timestamps = {}
+            ts_names = ['mtime', 'atime', 'ctime', 'crtime']
+            # In 13-field format: atime=8, mtime=9, ctime=10, crtime=11
+            # In 9-field format: mtime=5, atime=6, ctime=7, crtime=8
+            if len(parts) >= 12:
+                ts_indices = {8: 'atime', 9: 'mtime', 10: 'ctime', 11: 'crtime'}
+            else:
+                ts_indices = {5: 'mtime', 6: 'atime', 7: 'ctime', 8: 'crtime'}
+
+            for idx, name in ts_indices.items():
+                if idx < len(parts):
+                    try:
+                        ts_val = int(parts[idx])
+                        if ts_val > 0:
+                            timestamps[name] = ts_val
+                    except (ValueError, IndexError):
+                        pass
+
+            events.append({
+                'path': path,
+                'inode': inode,
+                'timestamps': timestamps,
+            })
+
+        return {
+            'tool': 'fls_mactime',
+            'image': image,
+            'offset': offset,
+            'status': 'success',
+            'total_events': len(events),
+            'events': events[:5000],
+            'raw_output': raw['stdout'][:50000],
+            'timestamp': datetime.now().isoformat()
+        }
+
     def list_inodes(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """ils - List inode information with parsed entries"""
         args = []
