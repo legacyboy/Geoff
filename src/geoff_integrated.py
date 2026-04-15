@@ -2330,7 +2330,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             device_map=device_map,
             findings=findings,
             case_work_dir=case_work_dir,
-            plaso_specialist=orchestrator.plaso_specialist if hasattr(orchestrator, 'plaso_specialist') else None,
+            plaso_specialist=orchestrator.plaso if hasattr(orchestrator, 'plaso') else None,
             job_id=job_id,
             fe_log_func=_fe_log,
         )
