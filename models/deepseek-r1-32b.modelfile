@@ -1,0 +1,22 @@
+# DeepSeek-R1-Distill-Qwen-32B Q4_K_M
+# Download GGUF from: https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF
+# File: DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf
+# SHA256: 7c63ceb85ad6c733d78e3e44e038528197e7fe8a86dbc3eb09912b21998bc62c
+# Size: 19851335840 bytes (~19.5 GB)
+# License: MIT
+
+FROM ./DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf
+
+TEMPLATE """{{- if .System }}{{ .System }}{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice .Messages $i)) 1}}
+{{- if eq .Role "user" }}<｜User｜>{{ .Content }}{{ end }}
+{{- if eq .Role "assistant" }}<｜Assistant｜>{{ .Content }}{{ end }}
+{{- if and $last (ne .Role "assistant") }}<｜Assistant｜>{{ end }}
+{{- end }}"""
+
+PARAMETER stop "<｜begin▁of▁sentence｜>"
+PARAMETER stop "<｜end▁of▁sentence｜>"
+PARAMETER stop "<｜User｜>"
+PARAMETER stop "<｜Assistant｜>"
+PARAMETER temperature 0.6

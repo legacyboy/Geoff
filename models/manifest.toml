@@ -1,0 +1,52 @@
+# GEOFF Local Models — Verified Downloads from HuggingFace
+#
+# For local profile, models are downloaded directly from the original
+# HuggingFace repos (bartowski's quantizations), SHA256-verified, and
+# then imported into Ollama via Modelfile. This provides full provenance
+# chain: you know exactly which GGUF file you're running.
+#
+# Cloud models are pulled from ollama.com registry with API key auth.
+#
+# Format: TOML
+
+[[models]]
+ollama_name = "deepseek-r1:32b"
+gguf_url = "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf"
+gguf_sha256 = "7c63ceb85ad6c733d78e3e44e038528197e7fe8a86dbc3eb09912b21998bc62c"
+gguf_size = 19851335840
+modelfile = "deepseek-r1-32b.modelfile"
+hf_repo = "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF"
+hf_file = "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf"
+license = "MIT"
+expected_architecture = "qwen2"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 32764897792
+description = "DeepSeek-R1-Distill-Qwen-32B Q4_K_M — reasoning/manager model"
+
+[[models]]
+ollama_name = "qwen2.5-coder:14b"
+gguf_url = "https://huggingface.co/bartowski/Qwen2.5-Coder-14B-GGUF/resolve/main/Qwen2.5-Coder-14B-Q4_K_M.gguf"
+gguf_sha256 = "51d6823ffba9b584860cdc23c4906d87641a66d9358f792ae0a14fcbcb585dec"
+gguf_size = 8988110880
+modelfile = "qwen2.5-coder-14b.modelfile"
+hf_repo = "bartowski/Qwen2.5-Coder-14B-GGUF"
+hf_file = "Qwen2.5-Coder-14B-Q4_K_M.gguf"
+license = "Apache-2.0"
+expected_architecture = "qwen2"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 14770033664
+description = "Qwen2.5-Coder-14B-Instruct Q4_K_M — forensicator/tool-execution model"
+
+[[models]]
+ollama_name = "qwen2.5:14b"
+gguf_url = "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+gguf_sha256 = "d989c91de35f32c18bdb8bec96a4b9fff2c3e5bca066503c63a5ca54dd537a4b"
+gguf_size = 8988110976
+modelfile = "qwen2.5-14b.modelfile"
+hf_repo = "bartowski/Qwen2.5-14B-Instruct-GGUF"
+hf_file = "Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+license = "Apache-2.0"
+expected_architecture = "qwen2"
+expected_quantization = "Q4_K_M"
+expected_parameter_count = 14770033664
+description = "Qwen2.5-14B-Instruct Q4_K_M — critic/validation model"

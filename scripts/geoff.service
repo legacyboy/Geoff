@@ -1,0 +1,40 @@
+# G.E.O.F.F. Systemd Service
+# Git-backed Evidence Operations Forensic Framework
+
+[Unit]
+Description=G.E.O.F.F. Digital Forensics Platform
+After=network.target
+
+[Service]
+Type=simple
+User=sansforensics
+Group=sansforensics
+
+# Working directory
+WorkingDirectory=/home/sansforensics
+
+# Environment variables
+Environment="GEOFF_EVIDENCE_PATH=/home/sansforensics/evidence-storage/cases"
+Environment="GEOFF_LOGS_DIR=/home/sansforensics/geoff-logs"
+Environment="GEOFF_GIT_DIR=/home/sansforensics/geoff-git"
+Environment="GEOFF_PORT=8080"
+Environment="OLLAMA_URL=http://192.168.1.31:11434"
+Environment="GEOFF_MODEL=qwen3-coder-next:cloud"
+Environment="PYTHONPATH=/home/sansforensics"
+
+# Main service
+ExecStart=/usr/bin/python3 /home/sansforensics/geoff_web.py
+
+# Auto-restart on failure
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=append:/home/sansforensics/geoff-service.log
+StandardError=append:/home/sansforensics/geoff-service.log
+
+[Install]
+WantedBy=multi-user.target
