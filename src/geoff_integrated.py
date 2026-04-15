@@ -1953,7 +1953,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 step_record = {
                                     "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
                                     "module": module, "function": function, "params": params,
-                                    "evidence_file": item, "status": "skipped", "error": f"dependency {dep} not met",
+                                    "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
+                                    "status": "skipped", "error": f"dependency {dep} not met",
                                     "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
                                 }
                                 findings.append(step_record)
@@ -1968,6 +1969,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         "function": function,
                         "params": params,
                         "evidence_file": item,
+                        "device_id": dev_id,
+                        "owner": dev.get("owner"),
                         "status": "running",
                         "retries": 0,
                         "max_retries": 2,
