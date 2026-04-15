@@ -710,6 +710,16 @@ def call_llm(user_message, context="", agent_type="manager"):
         return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
 
+def _extract_path_from_message(msg: str) -> str:
+    """Extract a filesystem path from a chat message."""
+    match = re.search(r'(/[a-zA-Z0-9._/-]+)', msg)
+    if match:
+        candidate = match.group(1)
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
 def detect_tool_request(message: str) -> dict:
     """Detect if user is asking to run a forensic tool - 100% coverage"""
     message_lower = message.lower()
@@ -2272,8 +2282,107 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             if STRICT_MODE:
                 raise
 
+    # End of per-device playbook loop
+    # Process unattributed evidence (PCAPs, logs not tied to a device)
+    if any(unattributed_ev.values()):
+        _fe_log(job_id, "\nProcessing unattributed evidence...")
+        for ev_type, files in unattributed_ev.items():
+            if not files:
+                continue
+            _fe_log(job_id, f"  Unattributed {ev_type}: {len(files)} files")
+            # Run relevant playbooks against unattributed evidence
+            for pb_idx, playbook_id in enumerate(execution_plan):
+                pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
+                for ev_t, step_templates in pb_steps_def.items():
+                    if ev_t == ev_type:
+                        items = files[:3]
+                        for item in items:
+                            # Run steps with device_id="unattributed"
+                            for module, function, params in step_templates:
+                                try:
+                                    step_key = f"{playbook_id}_unattributed_{module}_{function}"
+                                    params_resolved = _resolve_params(params, item, image_offsets, case_work_dir, output_dir, os_type, inventory)
+                                    if params_resolved is None:
+                                        params_resolved = params
+                                    result = orchestrator.run_playbook_step(playbook_id, {"module": module, "function": function, "params": params_resolved})
+                                    findings.append({
+                                        "playbook": playbook_id,
+                                        "module": module,
+                                        "function": function,
+                                        "device_id": "unattributed",
+                                        "owner": None,
+                                        "evidence_file": item,
+                                        "status": "completed" if isinstance(result, dict) and result.get("status") == "success" else "failed",
+                                        "result": result if isinstance(result, dict) else {"status": "unknown", "stdout": str(result)},
+                                        "started_at": datetime.now().isoformat(),
+                                        "completed_at": datetime.now().isoformat(),
+                                    })
+                                except Exception as e:
+                                    _log_error(f"Unattributed evidence step failed: {module}.{function}", e)
+
     # ------------------------------------------------------------------
-    # Phase 3b: Multi-Host Correlation
+    # Phase 3b-new: Super-Timeline Build
+    # ------------------------------------------------------------------
+    _update_job(90, "super-timeline", "Building unified timeline")
+    try:
+        super_tl = SuperTimeline()
+        super_timeline_path, super_timeline_events = super_tl.build(
+            device_map=device_map,
+            findings=findings,
+            case_work_dir=case_work_dir,
+            plaso_specialist=orchestrator.plaso_specialist if hasattr(orchestrator, 'plaso_specialist') else None,
+            job_id=job_id,
+            fe_log_func=_fe_log,
+        )
+        _fe_log(job_id, f"Super-timeline: {len(super_timeline_events)} events across {len(device_map)} devices")
+    except Exception as e:
+        _fe_log(job_id, f"Super-timeline build failed: {e}")
+        super_timeline_path = None
+        super_timeline_events = []
+
+    # ------------------------------------------------------------------
+    # Phase 3c-new: Behavioral Analysis (per device)
+    # ------------------------------------------------------------------
+    _update_job(93, "behavioral", "Analyzing process and file behavior")
+    try:
+        behavioral = BehavioralAnalyzer()
+        all_behavioral_flags = {}
+        for dev_id in device_map:
+            dev_findings = [f for f in findings if f.get("device_id") == dev_id]
+            dev_events = [e for e in super_timeline_events if e.get("device_id") == dev_id]
+            flags = behavioral.analyze(
+                device_id=dev_id,
+                findings=dev_findings,
+                timeline_events=dev_events,
+                call_llm_func=call_llm,
+            )
+            all_behavioral_flags[dev_id] = flags
+            if flags:
+                _fe_log(job_id, f"  {dev_id}: {len(flags)} behavioral flags")
+
+        # Tag super-timeline events with behavioral flags
+        if hasattr(super_tl, 'apply_behavioral_flags'):
+            super_tl.apply_behavioral_flags(super_timeline_events, all_behavioral_flags)
+    except Exception as e:
+        _fe_log(job_id, f"Behavioral analysis failed: {e}")
+        all_behavioral_flags = {}
+
+    # ------------------------------------------------------------------
+    # Phase 3d-new: Cross-Host Correlation
+    # ------------------------------------------------------------------
+    _update_job(95, "correlation", "Correlating activity across hosts")
+    try:
+        correlator = HostCorrelator()
+        correlated_users = correlator.correlate(
+            device_map=device_map,
+            user_map=user_map,
+            findings=findings,
+            timeline_events=super_timeline_events,
+        )
+        _fe_log(job_id, f"Correlated {len(correlated_users)} users across devices")
+    except Exception as e:
+        _fe_log(job_id, f"Cross-host correlation failed: {e}")
+        correlated_users = {}
     # ------------------------------------------------------------------
     _update_job(92, "correlation", "Cross-image timeline merge", log_msg="Merging timelines across disk images")
 
@@ -2340,313 +2449,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     "status": "failed",
                     "error": str(e),
                 })
-
-    # ------------------------------------------------------------------
-    # Phase 3c: User Activity Extraction (Cross-Host)
-    # ------------------------------------------------------------------
-    user_activity_summary = {}
-
-    # Try to extract per-user activity from merged or individual timelines
-    timeline_for_extraction = list(Path(output_dir).glob("timeline_*.plaso"))
-    merged_plaso = case_work_dir / "timeline" / "merged.plaso"
-    if merged_plaso.exists():
-        timeline_for_extraction = [merged_plaso]
-
-    if timeline_for_extraction:
-        _update_job(93, "correlation", "Extracting user activity across hosts", log_msg="Extracting per-user activity across hosts")
-        try:
-            # Plaso's json_line format puts user info in the 'message' field,
-            # NOT in top-level 'username'/'hostname' fields. We must parse
-            # the message field with regex patterns to extract them.
-            _USERNAME_PATTERNS = [
-                re.compile(r'\bAccount Name:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bUser Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bLogon Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bSubject:\s*([\\\w.\-]+)', re.IGNORECASE),
-            ]
-            _HOSTNAME_PATTERNS = [
-                re.compile(r'\bSource Network Address:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bWorkstation Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bComputer Name?:\s*([\\\w.\-]+)', re.IGNORECASE),
-                re.compile(r'\bSource Host:\s*([\\\w.\-]+)', re.IGNORECASE),
-            ]
-
-            # Focused event types for user activity (removed low-value 'filestat')
-            user_event_types = {
-                "windows:registry:userassist",
-                "windows:evt:4624", "windows:evt:4625", "windows:evt:4648", "windows:evt:4688",
-                "windows:evtx:4624", "windows:evtx:4625", "windows:evtx:4648", "windows:evtx:4688",
-                "shell:history",
-                "browser:chrome:history", "browser:firefox:history",
-                "santa:execution",
-            }
-
-            for tl_path in timeline_for_extraction:
-                try:
-                    # Use json_line format — each line is a complete JSON object
-                    psort_cmd = [
-                        "python3", "/usr/bin/psort.py",
-                        "-o", "json_line",
-                        str(tl_path),
-                    ]
-                    psort_result = safe_run(psort_cmd, timeout=300)
-
-                    if psort_result["code"] == 0 and psort_result["stdout"]:
-                        for line in psort_result["stdout"].strip().split("\n"):
-                            try:
-                                event = json.loads(line)
-                            except (json.JSONDecodeError, ValueError):
-                                continue
-
-                            # Try top-level fields first (some Plaso versions)
-                            username = event.get("username", "") or ""
-                            hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
-                            event_type = event.get("data_type", "")
-                            timestamp = event.get("datetime", "")
-                            message = event.get("message", "")
-
-                            # Fall back to message field regex extraction
-                            if not username:
-                                for pat in _USERNAME_PATTERNS:
-                                    m = pat.search(message)
-                                    if m:
-                                        username = m.group(1)
-                                        break
-                            if not hostname:
-                                for pat in _HOSTNAME_PATTERNS:
-                                    m = pat.search(message)
-                                    if m:
-                                        hostname = m.group(1)
-                                        break
-
-                            if not username:
-                                continue
-
-                            # Filter to user-relevant event types
-                            if event_type not in user_event_types and event_type:
-                                continue
-
-                            user_key = f"{username}@{hostname}" if hostname else username
-
-                            if user_key not in user_activity_summary:
-                                user_activity_summary[user_key] = {
-                                    "username": username,
-                                    "hosts": set(),
-                                    "event_types": {},
-                                    "timeline": [],
-                                    "lateral_movement_indicators": [],
-                                }
-
-                            user_activity_summary[user_key]["hosts"].add(hostname)
-                            user_activity_summary[user_key]["event_types"][event_type] = \
-                                user_activity_summary[user_key]["event_types"].get(event_type, 0) + 1
-
-                            if len(user_activity_summary[user_key]["timeline"]) < 100:
-                                user_activity_summary[user_key]["timeline"].append({
-                                    "timestamp": timestamp,
-                                    "event_type": event_type,
-                                    "host": hostname,
-                                    "detail": message[:200],
-                                })
-
-                    # Targeted queries for high-value Windows event IDs
-                    # Best source for lateral movement detection
-                    for evt_filter in ["4624", "4648", "4688"]:
-                        try:
-                            targeted_cmd = [
-                                "python3", "/usr/bin/psort.py",
-                                str(tl_path),
-                                f"event_identifier IS {evt_filter}",
-                                "-o", "json_line",
-                            ]
-                            targeted_result = safe_run(targeted_cmd, timeout=120)
-                            if targeted_result["code"] == 0 and targeted_result["stdout"]:
-                                for line in targeted_result["stdout"].strip().split("\n"):
-                                    try:
-                                        event = json.loads(line)
-                                    except (json.JSONDecodeError, ValueError):
-                                        continue
-
-                                    message = event.get("message", "")
-                                    username = event.get("username", "") or ""
-                                    hostname = event.get("hostname", "") or event.get("computer_name", "") or ""
-
-                                    # Extract from message if top-level fields empty
-                                    if not username:
-                                        for pat in _USERNAME_PATTERNS:
-                                            m = pat.search(message)
-                                            if m:
-                                                username = m.group(1)
-                                                break
-                                    if not hostname:
-                                        for pat in _HOSTNAME_PATTERNS:
-                                            m = pat.search(message)
-                                            if m:
-                                                hostname = m.group(1)
-                                                break
-
-                                    if not username:
-                                        continue
-                                    user_key = f"{username}@{hostname}" if hostname else username
-
-                                    if user_key not in user_activity_summary:
-                                        user_activity_summary[user_key] = {
-                                            "username": username,
-                                            "hosts": set(),
-                                            "event_types": {},
-                                            "timeline": [],
-                                            "lateral_movement_indicators": [],
-                                        }
-
-                                    # Track lateral movement: same user across multiple hosts
-                                    user_activity_summary[user_key]["hosts"].add(hostname)
-                                    if len(user_activity_summary[user_key]["hosts"]) > 1:
-                                        user_activity_summary[user_key]["lateral_movement_indicators"].append({
-                                            "type": "cross_host_activity",
-                                            "user": username,
-                                            "hosts": list(user_activity_summary[user_key]["hosts"]),
-                                            "event": message[:200],
-                                            "timestamp": event.get("datetime", ""),
-                                            "event_id": evt_filter,
-                                        })
-                        except Exception as e:
-                            _log_error(f"User activity event parsing for ID {evt_filter}", e)
-
-                except Exception as e:
-                    findings.append({
-                        "playbook": "PB-SIFT-016",
-                        "module": "plaso",
-                        "function": "extract_user_activity",
-                        "status": "failed",
-                        "error": str(e),
-                    })
-            # Convert sets to sorted lists for JSON serialization
-            for user_key in user_activity_summary:
-                user_activity_summary[user_key]["hosts"] = sorted(
-                    user_activity_summary[user_key]["hosts"]
-                )
-                # Deduplicate lateral movement indicators (max 50)
-                lmi = user_activity_summary[user_key]["lateral_movement_indicators"]
-                seen = set()
-                deduped = []
-                for indicator in lmi:
-                    sig = f"{indicator.get('type','')}:{indicator.get('timestamp','')}"
-                    if sig not in seen:
-                        seen.add(sig)
-                        deduped.append(indicator)
-                    if len(deduped) >= 50:
-                        break
-                user_activity_summary[user_key]["lateral_movement_indicators"] = deduped
-
-            if user_activity_summary:
-                findings.append({
-                    "playbook": "PB-SIFT-016",
-                    "module": "plaso",
-                    "function": "user_activity_extraction",
-                    "status": "completed",
-                    "result": {
-                        "users_tracked": len(user_activity_summary),
-                        "users_with_cross_host_activity": sum(
-                            1 for u in user_activity_summary.values()
-                            if len(u["hosts"]) > 1
-                        ),
-                        "lateral_movement_indicators": sum(
-                            len(u["lateral_movement_indicators"])
-                            for u in user_activity_summary.values()
-                        ),
-                    },
-                    "started_at": datetime.now().isoformat(),
-                    "completed_at": datetime.now().isoformat(),
-                })
-
-        except Exception as e:
-            findings.append({
-                "playbook": "PB-SIFT-016",
-                "module": "plaso",
-                "function": "user_activity_extraction",
-                "status": "failed",
-                "error": str(e),
-            })
-
-
-    # ------------------------------------------------------------------
-    # Phase 3d: LLM Analysis of Findings
-    # ------------------------------------------------------------------
-    _update_job(94, "analysis", "Analyzing findings with LLM", log_msg="LLM analyzing collected findings for patterns and conclusions")
-    try:
-        # Build a condensed summary of findings for LLM context
-        findings_summary = []
-        for f in findings:
-            if f.get("status") != "completed":
-                continue
-            result = f.get("result", {})
-            if not isinstance(result, dict):
-                continue
-            summary = {
-                "playbook": f.get("playbook", ""),
-                "module": f.get("module", ""),
-                "function": f.get("function", ""),
-            }
-            for key in ["total_strings", "ioc_counts", "event_count", "files_count",
-                        "partitions", "processes", "connections", "suspicious",
-                        "total_files", "deleted_files", "iocs", "registry_keys",
-                        "confidence", "severity", "category"]:
-                if key in result:
-                    val = result[key]
-                    if isinstance(val, (dict, list)) and len(str(val)) > 500:
-                        val = str(val)[:500] + "..."
-                    summary[key] = val
-            findings_summary.append(summary)
-
-        if findings_summary:
-            summary_text = json.dumps(findings_summary[:50], default=str)
-            if len(summary_text) > 8000:
-                summary_text = summary_text[:8000] + "..."
-
-            analysis_prompt = f"""Analyze the following forensic findings and provide:
-1. KEY_FINDINGS: 3-5 most important findings with confidence (POSSIBLE/CONFIRMED)
-2. ATTACK_TIMELINE: Chronological sequence of events (if timeline data exists)
-3. RECOMMENDATIONS: 2-3 actionable next steps for the investigator
-4. SUMMARY: One-paragraph executive summary
-
-Findings data:
-{summary_text}
-
-Evidence type: {os_type}
-Playbooks run: {', '.join(p['playbook_id'] for p in playbooks_run)}
-Anti-forensics detected: {('Yes' if 'ANTI-FORENSICS-CONFIRMED' in confidence_modifiers else 'No')}
-
-Respond in JSON format with keys: key_findings, attack_timeline, recommendations, summary"""
-
-            llm_analysis = call_llm(analysis_prompt, context="", agent_type="manager")
-
-            try:
-                json_match = re.search(r'\{.*\}', llm_analysis, re.DOTALL)
-                if json_match:
-                    analysis_result = json.loads(json_match.group())
-                else:
-                    analysis_result = {"raw_analysis": llm_analysis}
-            except (json.JSONDecodeError, ValueError):
-                analysis_result = {"raw_analysis": llm_analysis}
-
-            findings.append({
-                "playbook": "ANALYSIS",
-                "module": "llm",
-                "function": "analyze_findings",
-                "status": "completed",
-                "result": analysis_result,
-                "started_at": datetime.now().isoformat(),
-                "completed_at": datetime.now().isoformat(),
-            })
-    except Exception as e:
-        _log_error("LLM analysis failed", e)
-        findings.append({
-            "playbook": "ANALYSIS",
-            "module": "llm",
-            "function": "analyze_findings",
-            "status": "failed",
-            "error": str(e),
-        })
 
     # ------------------------------------------------------------------
     # Phase 4: Aggregate Findings & Severity
@@ -2723,7 +2525,10 @@ Respond in JSON format with keys: key_findings, attack_timeline, recommendations
         "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),
         "findings_detail": findings,
-        "user_activity_summary": user_activity_summary,
+        "user_activity_summary": correlated_users if 'correlated_users' in dir() else {},
+        "device_map": device_map if 'device_map' in dir() else {},
+        "user_map": user_map if 'user_map' in dir() else {},
+        "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if 'all_behavioral_flags' in dir() else {},
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
         "failures": [f for f in findings if f.get("status") == "failed"],
@@ -2756,6 +2561,27 @@ Respond in JSON format with keys: key_findings, attack_timeline, recommendations
         validate_investigation_state(investigation_state)
     except ValidationError as ve:
         report["schema_validation_warning"] = str(ve.message)
+
+    # ------------------------------------------------------------------
+    # Phase 5b: Narrative Report
+    # ------------------------------------------------------------------
+    _update_job(98, "narrative", "Generating human-readable report")
+    try:
+        narrator = NarrativeReportGenerator(call_llm_func=call_llm)
+        narrative_path = narrator.generate(
+            report_json=report,
+            device_map=device_map if 'device_map' in dir() else {},
+            user_map=user_map if 'user_map' in dir() else {},
+            super_timeline_path=str(super_timeline_path) if 'super_timeline_path' in dir() and super_timeline_path else "",
+            correlated_users=correlated_users if 'correlated_users' in dir() else {},
+            behavioral_flags=all_behavioral_flags if 'all_behavioral_flags' in dir() else {},
+            case_work_dir=case_work_dir,
+        )
+        report["narrative_report_path"] = str(narrative_path)
+        _fe_log(job_id, f"Narrative report: {narrative_path}")
+    except Exception as e:
+        _fe_log(job_id, f"Narrative report generation failed: {e}")
+        report["narrative_report_path"] = None
 
     # Write report
     report_path = case_work_dir / "reports" / "find_evil_report.json"
@@ -3208,7 +3034,7 @@ Available: 32 forensic functions across 9 specialist modules + REMnux.
 Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking).</div>
         </div>
         <div class="chat-input-area">
-            <input type="text" id="chat-input" placeholder="e.g., Run mmls on the narcos disk image..." onkeypress="if(event.key==='Enter') sendChat()">
+            <input type="text" id="chat-input" placeholder="Ask Geoff anything, or say 'start processing /path/to/evidence'..." onkeypress="if(event.key==='Enter') sendChat()">
             <button class="send-btn" onclick="sendChat()">Send</button>
         </div>
     </div>
@@ -3547,6 +3373,40 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                 html += '</table>';
             }
 
+            // Device Map
+            if (report.device_map && Object.keys(report.device_map).length > 0) {
+                html += '<h4 style="color:#58a6ff;margin-top:16px;">Devices Discovered</h4>';
+                html += '<table class="fe-pb-table"><tr><th>Device</th><th>Type</th><th>Owner</th><th>OS</th><th>Files</th></tr>';
+                for (const [devId, dev] of Object.entries(report.device_map)) {
+                    html += '<tr>';
+                    html += '<td>' + devId + '</td>';
+                    html += '<td>' + (dev.device_type || 'unknown') + '</td>';
+                    html += '<td>' + (dev.owner || '—') + '</td>';
+                    html += '<td>' + (dev.os_type || '—') + '</td>';
+                    html += '<td>' + (dev.evidence_files ? dev.evidence_files.length : 0) + '</td>';
+                    html += '</tr>';
+                }
+                html += '</table>';
+            }
+
+            // Behavioral Flags Summary
+            if (report.behavioral_flags_summary) {
+                const total = Object.values(report.behavioral_flags_summary).reduce((a,b) => a+b, 0);
+                if (total > 0) {
+                    html += '<h4 style="color:#f85149;margin-top:16px;">⚠ Behavioral Flags: ' + total + '</h4>';
+                    for (const [devId, count] of Object.entries(report.behavioral_flags_summary)) {
+                        if (count > 0) {
+                            html += '<p style="color:#d29922;">' + devId + ': ' + count + ' flags</p>';
+                        }
+                    }
+                }
+            }
+
+            // Narrative Report Link
+            if (report.narrative_report_path) {
+                html += '<p style="margin-top:12px;"><strong>📄 Narrative Report:</strong> ' + report.narrative_report_path + '</p>';
+            }
+
             if (report.case_work_dir) {
                 html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Report: ' + report.case_work_dir + '/reports/find_evil_report.json</p>';
             }
@@ -3587,6 +3447,60 @@ def chat():
 
         if not user_msg:
             return jsonify({'response': 'What would you like to look at?'})
+
+        # Check for ingestion/processing trigger
+        ingest_triggers = ['start processing', 'process evidence', 'ingest',
+                           'analyze evidence', 'find evil', 'begin investigation',
+                           'start analysis', 'run analysis']
+        user_msg_lower = user_msg.lower()
+        if any(trigger in user_msg_lower for trigger in ingest_triggers):
+            # Extract path if mentioned, otherwise use default
+            evidence_dir = _extract_path_from_message(user_msg) or EVIDENCE_BASE_DIR
+
+            if not Path(evidence_dir).exists():
+                return jsonify({
+                    'response': f"Evidence directory not found: {evidence_dir}\n"
+                                f"Default: {EVIDENCE_BASE_DIR}",
+                })
+
+            # Use the existing async find_evil mechanism
+            job_id = f"fe-{uuid.uuid4().hex[:12]}"
+            with _state_lock:
+                _find_evil_jobs[job_id] = {
+                    "status": "running",
+                    "progress_pct": 0.0,
+                    "current_playbook": "initializing",
+                    "current_step": "",
+                    "elapsed_seconds": 0.0,
+                    "started_at": datetime.now().isoformat(),
+                    "result": None,
+                    "error": None,
+                    "log": [{"time": datetime.now().strftime("%H:%M:%S"),
+                             "msg": f"Find Evil started from chat: {evidence_dir}"}],
+                }
+
+            def _run():
+                try:
+                    report = find_evil(evidence_dir, job_id=job_id)
+                    with _state_lock:
+                        _find_evil_jobs[job_id]["status"] = "complete"
+                        _find_evil_jobs[job_id]["result"] = report
+                except Exception as e:
+                    with _state_lock:
+                        _find_evil_jobs[job_id]["status"] = "error"
+                        _find_evil_jobs[job_id]["error"] = str(e)
+
+            threading.Thread(target=_run, daemon=True).start()
+
+            return jsonify({
+                'response': f"Roger that. Starting investigation on {evidence_dir}.\n"
+                            f"Job ID: {job_id}\n"
+                            f"I'll process all evidence, identify devices and users, "
+                            f"build a unified timeline, and generate a narrative report.\n\n"
+                            f"Poll /find-evil/status/{job_id} for progress.",
+                'investigation_started': True,
+                'job_id': job_id,
+            })
 
         # Detect if user wants to run a tool
         tool_request = detect_tool_request(user_msg)
