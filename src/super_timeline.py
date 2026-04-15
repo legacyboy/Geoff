@@ -227,6 +227,48 @@ class SuperTimeline:
     # Source-specific extraction methods
     # ----------------------------------------------------------------
 
+    @staticmethod
+    def _parse_mactime_body(raw: str) -> List[dict]:
+        """Parse fls -m mactime body format output.
+
+        Format: md5|path|inode|meta_type|file_type|atime|mtime|ctime|crtime
+        or:    md5|name|inode|meta_type|mode|uid|gid|size|atime|mtime|ctime|crtime
+        Timestamps are Unix epoch seconds (0 = not set).
+        """
+        events = []
+        for line in raw.splitlines():
+            parts = line.split('|')
+            if len(parts) < 9:
+                continue
+            # Determine format by number of fields
+            if len(parts) >= 12:
+                # 13-field format: md5|name|inode|meta_type|mode|uid|gid|size|atime|mtime|ctime|crtime
+                path = parts[1]
+                inode = parts[2]
+                ts_indices = {8: 'atime', 9: 'mtime', 10: 'ctime', 11: 'crtime'}
+            else:
+                # 9-field format: md5|path|inode|meta_type|file_type|atime|mtime|ctime|crtime
+                path = parts[1]
+                inode = parts[2]
+                ts_indices = {5: 'atime', 6: 'mtime', 7: 'ctime', 8: 'crtime'}
+
+            timestamps = {}
+            for idx, name in ts_indices.items():
+                if idx < len(parts):
+                    try:
+                        ts_val = int(parts[idx])
+                        if ts_val > 0:
+                            timestamps[name] = ts_val
+                    except (ValueError, IndexError):
+                        pass
+
+            events.append({
+                'path': path,
+                'inode': inode,
+                'timestamps': timestamps,
+            })
+        return events
+
     def _extract_plaso_events(self, case_work_dir: Path,
                                device_map: dict,
                                plaso_specialist: Any,
@@ -541,6 +583,67 @@ class SuperTimeline:
         events = []
         seen_paths = set()  # Deduplicate across playbooks
 
+        # First pass: process mactime (fls -m) events with real timestamps
+        for f in findings:
+            if f.get("module") != "sleuthkit" or f.get("function") != "list_files_mactime":
+                continue
+            device_id = f.get("device_id", "unknown")
+            owner = f.get("owner", "")
+            result = f.get("result", {})
+            mactime_events = result.get("events", [])
+            if not mactime_events and result.get("raw_output"):
+                # Parse mactime body format from raw_output
+                mactime_events = self._parse_mactime_body(result["raw_output"])
+
+            for evt in mactime_events:
+                path = evt.get("path", "")
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+
+                timestamps = evt.get("timestamps", {})
+                # Use crtime (creation) as primary, fall back to mtime
+                ts = ""
+                for ts_name in ["crtime", "mtime", "ctime", "atime"]:
+                    if timestamps.get(ts_name):
+                        try:
+                            from datetime import datetime, timezone
+                            dt = datetime.fromtimestamp(timestamps[ts_name], tz=timezone.utc)
+                            ts = dt.isoformat()[:19] + "Z"
+                            break
+                        except (ValueError, OSError, OverflowError):
+                            pass
+
+                is_dir = path.endswith("/") or evt.get("file_type", "").startswith("d")
+                event_type = "directory_listing" if is_dir else "file_creation"
+
+                # Extract owner from path
+                path_owner = owner
+                if not owner:
+                    user_match = re.search(r'(?:Users|Documents and Settings)/([^/\\\\]+)', path)
+                    if user_match:
+                        path_owner = user_match.group(1)
+
+                events.append({
+                    "timestamp": ts,
+                    "device_id": device_id,
+                    "owner": path_owner,
+                    "source_type": "sleuthkit",
+                    "source_parser": "fls_mactime",
+                    "event_type": event_type,
+                    "summary": path[:200],
+                    "detail": {
+                        "path": path,
+                        "inode": evt.get("inode", ""),
+                        "timestamps": timestamps,
+                    },
+                    "suspicious": False,
+                    "suspicion_reason": None,
+                    "behavioral_flags": [],
+                })
+
+        # Second pass: process fls -p events (no timestamps, path-only)
+        # Skip if mactime already produced events for same paths
         for f in findings:
             if f.get("module") != "sleuthkit":
                 continue
