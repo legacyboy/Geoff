@@ -8,6 +8,13 @@ import json
 import re
 import sys
 import subprocess
+
+# Load .env file before reading env vars
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 import tempfile
 import threading
 import time
