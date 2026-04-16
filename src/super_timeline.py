@@ -9,7 +9,7 @@ PCAP flows, and registry timestamps into a single sorted JSONL stream.
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
@@ -80,7 +80,6 @@ class SuperTimeline:
         try:
             ft = int(ts)
             if ft > 1e17:  # Likely FILETIME
-                from datetime import datetime, timedelta, timezone
                 epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
                 dt = epoch + timedelta(microseconds=ft // 10)
                 return dt.isoformat()[:19] + 'Z'
@@ -283,7 +282,7 @@ class SuperTimeline:
 
     def _extract_plaso_events(self, case_work_dir: Path,
                                device_map: dict,
-                               plaso_specialist: Any,
+                               plaso_specialist: Any,  # retained for API compatibility; not used
                                log_func) -> List[dict]:
         """
         Find and parse Plaso timeline events.
@@ -371,13 +370,25 @@ class SuperTimeline:
 
             try:
                 import subprocess
-                result = subprocess.run(
-                    ["/usr/bin/python3", "/usr/bin/psort.py",
-                     "-o", "json_line",
-                     "-w", str(json_line_out),
-                     str(plaso_path)],
-                    capture_output=True, text=True, timeout=3600
-                )
+                import sys as _sys
+                # Prefer the psort entry-point that ships with SIFT/REMnux.
+                # Fall back to the current interpreter so a virtualenv works too.
+                psort_candidates = [
+                    "/usr/bin/psort",           # Plaso 20200227+ entry-point
+                    "/usr/local/bin/psort",
+                    "/usr/bin/psort.py",        # older SIFT layout
+                ]
+                psort_bin = next((p for p in psort_candidates if Path(p).exists()), None)
+                if psort_bin:
+                    cmd = [psort_bin, "-o", "json_line", "-w", str(json_line_out), str(plaso_path)]
+                else:
+                    # Last resort: run psort.py through the current interpreter
+                    psort_script = "/usr/bin/psort.py"
+                    cmd = [_sys.executable, psort_script, "-o", "json_line", "-w", str(json_line_out), str(plaso_path)]
+                    if not Path(psort_script).exists():
+                        log_func(f"  psort not found; skipping {plaso_path.name}")
+                        continue
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
                 if result.returncode != 0:
                     log_func(f"  psort failed for {plaso_path.name}: {result.stderr[:200]}")
                     continue
@@ -437,7 +448,7 @@ class SuperTimeline:
         # otherwise magnitude-based heuristics
         timestamp_str = ""
         try:
-            if "Filetime" in class_name or ts_val > FILETIME_EPOCH:
+            if "Filetime" in class_name:
                 # Windows FILETIME: 100-nanosecond intervals since 1601-01-01
                 unix_seconds = (ts_val - FILETIME_EPOCH) / 10_000_000
                 dt = datetime.fromtimestamp(unix_seconds, tz=timezone.utc)
