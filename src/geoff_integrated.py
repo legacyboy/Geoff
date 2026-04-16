@@ -2643,14 +2643,15 @@ HTML_TEMPLATE = """
         
         .content.active { display: flex; flex-direction: column; }
         
-        /* Chat Styles */
-        #chat-content {
+        /* Investigation output — chat messages + live log stream */
+        #fe-output {
             flex: 1;
             overflow-y: auto;
-            padding: 20px;
+            padding: 16px 25px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
+            min-height: 0;
         }
         
         .message {
@@ -2795,64 +2796,72 @@ HTML_TEMPLATE = """
         /* Find Evil Tab Styles */
         #findevil-content {
             flex: 1;
-            overflow-y: auto;
-            padding: 20px 25px;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 16px;
         }
 
-        .fe-config {
+        /* Compact top bar: evidence dir input + run button */
+        .fe-top-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 25px;
             background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 16px;
+            border-bottom: 1px solid #30363d;
+            flex-shrink: 0;
         }
 
-        .fe-config label {
-            display: block;
+        .fe-top-bar label {
             color: #8b949e;
             font-size: 0.85rem;
-            margin-bottom: 6px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
-        .fe-config input[type="text"] {
-            width: 100%;
-            padding: 10px 14px;
+        .fe-top-bar input[type="text"] {
+            flex: 1;
+            padding: 8px 12px;
             background: #0d1117;
             border: 1px solid #30363d;
             border-radius: 6px;
             color: #c9d1d9;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             font-family: 'SF Mono', Monaco, monospace;
         }
 
-        .fe-config input:focus {
+        .fe-top-bar input:focus {
             outline: none;
             border-color: #58a6ff;
         }
 
         .fe-run-btn {
-            margin-top: 12px;
-            padding: 12px 28px;
+            padding: 9px 20px;
             background: #da3633;
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 700;
-            font-size: 1rem;
+            font-size: 0.95rem;
             transition: background 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .fe-run-btn:hover { background: #f85149; }
         .fe-run-btn:disabled { background: #484f58; cursor: not-allowed; }
 
+        #fe-progress-area {
+            flex-shrink: 0;
+            padding: 10px 25px 0;
+        }
+
         .fe-progress {
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 8px;
-            padding: 16px;
+            padding: 12px 16px;
         }
 
         .fe-progress-bar {
@@ -2985,39 +2994,27 @@ HTML_TEMPLATE = """
     </header>
     
     <div class="tabs">
-        <div class="tab active" onclick="showTab('chat')">💬 Chat</div>
+        <div class="tab active" onclick="showTab('findevil')">🔍 Find Evil</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
-        <div class="tab" onclick="showTab('findevil')">🔍 Find Evil</div>
     </div>
-    
-    <div id="chat" class="content active">
-        <div id="chat-content">
-            <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.
 
-Awaiting investigation directive. Provide case name or evidence path to begin systematic analysis.
-
-Available: 32 forensic functions across 9 specialist modules + REMnux.
-Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking).</div>
-        </div>
-        <div class="chat-input-area">
-            <input type="text" id="chat-input" placeholder="Ask Geoff anything, or say 'start processing /path/to/evidence'..." onkeypress="if(event.key==='Enter') sendChat()">
-            <button class="send-btn" onclick="sendChat()">Send</button>
-        </div>
-    </div>
-    
     <div id="evidence" class="content">
         <div id="evidence-content">
             <div class="loading">Loading evidence...</div>
         </div>
     </div>
 
-    <div id="findevil" class="content">
+    <div id="findevil" class="content active">
         <div id="findevil-content">
-            <div class="fe-config">
+
+            <!-- Top bar: evidence directory + run button -->
+            <div class="fe-top-bar">
                 <label for="fe-evidence-dir">Evidence Directory</label>
                 <input type="text" id="fe-evidence-dir" placeholder="/path/to/evidence (leave blank for default)">
                 <button class="fe-run-btn" id="fe-run-btn" onclick="runFindEvil()">🔍 Run Find Evil</button>
             </div>
+
+            <!-- Progress bar — shown while a job is running -->
             <div id="fe-progress-area" style="display:none;">
                 <div class="fe-progress">
                     <div class="fe-status-text">
@@ -3029,8 +3026,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                         <div class="fe-progress-fill" id="fe-progress-fill" style="width:0%">0%</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Unified output: chat messages + live log stream + results -->
+            <div id="fe-output">
+                <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.
+
+Awaiting investigation directive. Provide an evidence path above or ask me anything below.</div>
+
+                <!-- Live log stream — appended to when a job is running -->
                 <div id="fe-log" style="
-                    margin-top: 12px;
+                    display: none;
                     background: #0d1117;
                     border: 1px solid #30363d;
                     border-radius: 6px;
@@ -3038,12 +3044,21 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                     font-family: 'JetBrains Mono', 'Fira Code', monospace;
                     font-size: 12px;
                     color: #8b949e;
-                    max-height: 400px;
-                    overflow-y: auto;
                     line-height: 1.6;
                 "></div>
+
+                <!-- Results card — shown when job completes -->
+                <div id="fe-results-area" style="display:none;"></div>
             </div>
-            <div id="fe-results-area" style="display:none;"></div>
+
+            <!-- Chat input pinned at bottom -->
+            <div class="chat-input-area">
+                <input type="text" id="chat-input"
+                       placeholder="Ask Geoff anything, or say 'start processing /path/to/evidence'..."
+                       onkeypress="if(event.key==='Enter') sendChat()">
+                <button class="send-btn" onclick="sendChat()">Send</button>
+            </div>
+
         </div>
     </div>
     
@@ -3062,35 +3077,75 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(tab).classList.add('active');
-            if(tab === 'evidence') loadEvidence();
+            if (tab === 'evidence') loadEvidence();
         }
-        
+
+        // Append a message bubble to the unified output area and scroll to bottom.
         function addMessage(text, type) {
-            const chat = document.getElementById('chat-content');
+            const output = document.getElementById('fe-output');
             const div = document.createElement('div');
             div.className = 'message ' + type;
-            if(type === 'user') {
-                div.innerHTML = '<div class="label">You</div>' + text;
-            } else if(type === 'geoff') {
-                div.innerHTML = '<div class="label">Geoff</div>' + text;
-            } else if(type === 'tool-result') {
-                div.innerHTML = '<div class="label">Tool Output</div>' + text;
+            if (type === 'user') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'You';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.textContent = text;
+                div.appendChild(body);
+            } else if (type === 'geoff') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'Geoff';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.style.whiteSpace = 'pre-wrap';
+                body.textContent = text;
+                div.appendChild(body);
+            } else if (type === 'tool-result') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'Tool Output';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.textContent = text;
+                div.appendChild(body);
             } else {
                 div.textContent = text;
             }
-            chat.appendChild(div);
-            chat.scrollTop = chat.scrollHeight;
+            // Insert before the log and results divs so messages stay above them
+            const logDiv = document.getElementById('fe-log');
+            output.insertBefore(div, logDiv);
+            output.scrollTop = output.scrollHeight;
         }
-        
+
+        // Placeholder shown while waiting for the server response
+        let _thinkingDiv = null;
+        function _showThinking() {
+            _thinkingDiv = document.createElement('div');
+            _thinkingDiv.className = 'message system';
+            _thinkingDiv.textContent = 'Thinking...';
+            const logDiv = document.getElementById('fe-log');
+            document.getElementById('fe-output').insertBefore(_thinkingDiv, logDiv);
+            document.getElementById('fe-output').scrollTop = document.getElementById('fe-output').scrollHeight;
+        }
+        function _removeThinking() {
+            if (_thinkingDiv && _thinkingDiv.parentNode) {
+                _thinkingDiv.parentNode.removeChild(_thinkingDiv);
+            }
+            _thinkingDiv = null;
+        }
+
         async function sendChat() {
             const input = document.getElementById('chat-input');
             const text = input.value.trim();
-            if(!text) return;
-            
+            if (!text) return;
+
+            input.disabled = true;
             addMessage(text, 'user');
             input.value = '';
-            addMessage('Looking...', 'system');
-            
+            _showThinking();
+
             try {
                 const res = await authFetch('/chat', {
                     method: 'POST',
@@ -3098,68 +3153,44 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                     body: JSON.stringify({message: text})
                 });
                 const data = await res.json();
-                
-                const chat = document.getElementById('chat-content');
-                chat.removeChild(chat.lastChild);
-                
-                addMessage(data.response, 'geoff');
-                
-                if(data.tool_result) {
-                    addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
+                _removeThinking();
+
+                if (data.response) addMessage(data.response, 'geoff');
+                if (data.tool_result) addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
+
+                // If the chat triggered a Find Evil job, start the live stream
+                if (data.job_id) {
+                    _startFindEvilStream(data.job_id);
                 }
-                if(data.investigation_started) {
-                    addMessage('Investigation started for: ' + data.case_name + '\\nPolling progress every 10 seconds...', 'system');
-                    pollInvestigationStatus(data.case_name);
-                }
-            } catch(e) {
-                const chat = document.getElementById('chat-content');
-                chat.removeChild(chat.lastChild);
+            } catch (e) {
+                _removeThinking();
                 addMessage('Error: ' + e.message, 'system');
+            } finally {
+                input.disabled = false;
+                input.focus();
             }
         }
-        
-        let investigationPollInterval = null;
-        
-        async function pollInvestigationStatus(caseName) {
-            if(investigationPollInterval) clearInterval(investigationPollInterval);
-            
-            const poll = async () => {
-                try {
-                    const res = await authFetch('/investigation/status/' + caseName);
-                    if(res.ok) {
-                        const status = await res.json();
-                        
-                        if(status.status === 'complete') {
-                            addMessage(
-                                '**Investigation Complete**\\n' +
-                                'Case: ' + status.case + '\\n' +
-                                'Progress: 100%\\n' +
-                                'Total Time: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
-                                'system'
-                            );
-                            clearInterval(investigationPollInterval);
-                        } else if(status.status === 'running') {
-                            addMessage(
-                                '**Investigation Progress**\\n' +
-                                'Case: ' + status.case + '\\n' +
-                                'Phase: ' + status.phase + '\\n' +
-                                'Tool: ' + status.current_tool + '\\n' +
-                                'Progress: ' + status.progress_percent + '%\\n' +
-                                'Elapsed: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
-                                'system'
-                            );
-                        } else if(status.status === 'error') {
-                            addMessage('Investigation Error: ' + (status.details?.error || 'Unknown error'), 'system');
-                            clearInterval(investigationPollInterval);
-                        }
-                    }
-                } catch(e) {
-                    console.error('Poll error:', e);
-                }
-            };
-            
-            poll();
-            investigationPollInterval = setInterval(poll, 10000);
+
+        // Shared helper: prepare the UI for a new streaming job
+        function _startFindEvilStream(jobId) {
+            const progressArea = document.getElementById('fe-progress-area');
+            const logDiv = document.getElementById('fe-log');
+            const resultsArea = document.getElementById('fe-results-area');
+
+            // Reset state
+            progressArea.style.display = 'block';
+            logDiv.style.display = 'block';
+            logDiv.innerHTML = '';
+            resultsArea.style.display = 'none';
+            resultsArea.innerHTML = '';
+
+            document.getElementById('fe-pb-name').textContent = 'Starting...';
+            document.getElementById('fe-step-name').textContent = '';
+            document.getElementById('fe-elapsed').textContent = '0s';
+            document.getElementById('fe-progress-fill').style.width = '0%';
+            document.getElementById('fe-progress-fill').textContent = '0%';
+
+            pollFindEvilStatus(jobId);
         }
         
         async function loadEvidence() {
@@ -3241,20 +3272,12 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
         async function runFindEvil() {
             const evidenceDir = document.getElementById('fe-evidence-dir').value.trim();
             const btn = document.getElementById('fe-run-btn');
-            const progressArea = document.getElementById('fe-progress-area');
-            const resultsArea = document.getElementById('fe-results-area');
 
             btn.disabled = true;
             btn.textContent = '⏳ Running...';
-            progressArea.style.display = 'block';
-            resultsArea.style.display = 'none';
-            resultsArea.innerHTML = '';
 
-            document.getElementById('fe-pb-name').textContent = 'Starting...';
-            document.getElementById('fe-step-name').textContent = '';
-            document.getElementById('fe-elapsed').textContent = '0s';
-            document.getElementById('fe-progress-fill').style.width = '0%';
-            document.getElementById('fe-progress-fill').textContent = '0%';
+            const label = evidenceDir || 'default evidence directory';
+            addMessage('Starting Find Evil on ' + label + ' …', 'system');
 
             try {
                 const res = await authFetch('/find-evil', {
@@ -3265,19 +3288,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                 const data = await res.json();
 
                 if (data.job_id) {
-                    // Async mode — poll for progress
-                    pollFindEvilStatus(data.job_id);
+                    _startFindEvilStream(data.job_id);
                 } else if (data.status === 'error') {
                     showFindEvilError(data.error || 'Unknown error');
                     btn.disabled = false;
                     btn.textContent = '🔍 Run Find Evil';
                 } else {
-                    // Sync result (shouldn't happen but handle gracefully)
                     showFindEvilResults(data);
                     btn.disabled = false;
                     btn.textContent = '🔍 Run Find Evil';
                 }
-            } catch(e) {
+            } catch (e) {
                 showFindEvilError(e.message);
                 btn.disabled = false;
                 btn.textContent = '🔍 Run Find Evil';
@@ -3285,13 +3306,14 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
         }
 
         function pollFindEvilStatus(jobId) {
-            if(fePollInterval) clearInterval(fePollInterval);
+            if (fePollInterval) clearInterval(fePollInterval);
             let lastLogIndex = 0;
+            const output = document.getElementById('fe-output');
 
             const poll = async () => {
                 try {
                     const res = await authFetch('/find-evil/status/' + jobId);
-                    if(res.ok) {
+                    if (res.ok) {
                         const status = await res.json();
                         const pct = status.progress_pct || 0;
                         document.getElementById('fe-pb-name').textContent = status.current_playbook || '—';
@@ -3300,7 +3322,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                         document.getElementById('fe-progress-fill').style.width = pct + '%';
                         document.getElementById('fe-progress-fill').textContent = pct + '%';
 
-                        // Stream log entries
+                        // Stream log entries into the log div
                         if (status.log && status.log.length > lastLogIndex) {
                             const logDiv = document.getElementById('fe-log');
                             for (let i = lastLogIndex; i < status.log.length; i++) {
@@ -3313,18 +3335,18 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                                 else if (msg.includes('✗') || msg.includes('error') || msg.includes('fail')) color = '#f85149';
                                 else if (msg.includes('▶')) color = '#d29922';
                                 else if (msg.includes('⊘') || msg.includes('skip')) color = '#6e7681';
+                                else if (msg.includes('needs_review') || msg.includes('⚠')) color = '#d29922';
                                 line.style.color = color;
                                 line.textContent = time + '  ' + msg;
                                 logDiv.appendChild(line);
                             }
                             lastLogIndex = status.log.length;
-                            logDiv.scrollTop = logDiv.scrollHeight;
+                            output.scrollTop = output.scrollHeight;
                         }
 
                         if (status.status === 'complete') {
                             clearInterval(fePollInterval);
-                            const report = status.result || {};
-                            showFindEvilResults(report);
+                            showFindEvilResults(status.result || {});
                             document.getElementById('fe-run-btn').disabled = false;
                             document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
                         } else if (status.status === 'error') {
@@ -3334,7 +3356,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                             document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
                         }
                     }
-                } catch(e) {
+                } catch (e) {
                     console.error('Find Evil poll error:', e);
                 }
             };
@@ -3420,15 +3442,25 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
             html += '</div>';
             area.innerHTML = html;
+            // Scroll the unified output so results are visible
+            const out = document.getElementById('fe-output');
+            out.scrollTop = out.scrollHeight;
         }
 
         function showFindEvilError(msg) {
             const area = document.getElementById('fe-results-area');
             area.style.display = 'block';
-            area.innerHTML = '<div class="fe-results"><p style="color:#f85149;font-weight:600;">Error: ' + msg + '</p></div>';
+            const p = document.createElement('div');
+            p.className = 'fe-results';
+            const txt = document.createElement('p');
+            txt.style.cssText = 'color:#f85149;font-weight:600;';
+            txt.textContent = 'Error: ' + msg;
+            p.appendChild(txt);
+            area.innerHTML = '';
+            area.appendChild(p);
+            const out = document.getElementById('fe-output');
+            out.scrollTop = out.scrollHeight;
         }
-
-        loadEvidence();
     </script>
 </body>
 </html>
