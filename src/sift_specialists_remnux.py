@@ -193,8 +193,9 @@ class BINARY_IDENT_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def hashdeep_audit(self, target_dir: str) -> Dict[str, Any]:
+    def hashdeep_audit(self, target_file: str) -> Dict[str, Any]:
         """Generate multi-hash audit with hashdeep"""
+        target_dir = target_file  # accepts file or directory
         result = _run_tool('hashdeep', ['-r', '-l', '-c', 'md5,sha256,sha1', target_dir], timeout=600)
         if result['status'] != 'success':
             return result
@@ -244,8 +245,9 @@ class UNPACKING_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def pdfid_scan(self, pdf_file: str) -> Dict[str, Any]:
+    def pdfid_scan(self, target_file: str) -> Dict[str, Any]:
         """Identify PDF suspicious elements with pdfid"""
+        pdf_file = target_file
         result = _run_tool('pdfid', [pdf_file])
         if result['status'] != 'success':
             return result
@@ -274,8 +276,9 @@ class UNPACKING_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def pdf_parser(self, pdf_file: str) -> Dict[str, Any]:
+    def pdf_parser(self, target_file: str) -> Dict[str, Any]:
         """Extract streams and objects from PDF with pdf-parser"""
+        pdf_file = target_file
         result = _run_tool('pdf-parser', [pdf_file], timeout=120)
         if result['status'] != 'success':
             return result
@@ -299,8 +302,9 @@ class UNPACKING_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def oledump_scan(self, office_file: str) -> Dict[str, Any]:
+    def oledump_scan(self, target_file: str) -> Dict[str, Any]:
         """Extract macros and embedded content from Office docs with oledump"""
+        office_file = target_file
         result = _run_tool('oledump.py', [office_file], timeout=120)
         if result['status'] != 'success':
             # Try without .py extension
@@ -330,8 +334,9 @@ class UNPACKING_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def js_beautify(self, js_file: str, output_file: str = None) -> Dict[str, Any]:
+    def js_beautify(self, target_file: str, output_file: str = None) -> Dict[str, Any]:
         """Deobfuscate JavaScript with js-beautify"""
+        js_file = target_file
         out = output_file or js_file + '.beautified.js'
         result = _run_tool('js-beautify', ['-o', out, js_file])
         if result['status'] != 'success':
@@ -458,8 +463,9 @@ class DISASSEMBLY_Specialist:
 class ANTIVIRUS_Specialist:
     """Signature-based detection tools"""
 
-    def clamav_scan(self, target_path: str) -> Dict[str, Any]:
+    def clamav_scan(self, target_file: str) -> Dict[str, Any]:
         """Scan with ClamAV signatures"""
+        target_path = target_file
         result = _run_tool('clamscan', ['-r', '--no-summary', target_path], timeout=600)
         if result['status'] != 'success':
             return result
@@ -489,7 +495,7 @@ class ANTIVIRUS_Specialist:
 class NETWORK_SIM_Specialist:
     """Network simulation tools for dynamic analysis"""
 
-    def inetsim_check(self) -> Dict[str, Any]:
+    def inetsim_check(self, target_file: str = None) -> Dict[str, Any]:  # target_file unused; checks service availability
         """Check if INetSim is available and configured"""
         available = _check_tool_available('inetsim')
         if not available:
@@ -508,7 +514,7 @@ class NETWORK_SIM_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def fakedns_check(self) -> Dict[str, Any]:
+    def fakedns_check(self, target_file: str = None) -> Dict[str, Any]:  # target_file unused; checks service availability
         """Check if fakedns is available"""
         available = _check_tool_available('fakedns')
         if not available:

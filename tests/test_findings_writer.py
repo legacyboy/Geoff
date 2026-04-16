@@ -116,9 +116,11 @@ def test_in_memory_cap_limits_records(tmp_path, capsys):
     for i in range(6):
         fw.append(_make_record(f"step{i}"))
 
-    # Only 3 in memory
-    assert len(fw.all_records()) == 3
-    # But all 6 on disk
+    # all_records() falls back to disk when cap is hit — no findings lost
+    assert len(fw.all_records()) == 6
+    # Internal _records list is capped at max_in_memory
+    assert len(fw._records) == 3
+    # All 6 written to disk
     lines = (tmp_path / "findings.jsonl").read_text().splitlines()
     assert len(lines) == 6
 
