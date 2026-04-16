@@ -9,7 +9,7 @@ PCAP flows, and registry timestamps into a single sorted JSONL stream.
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
@@ -86,7 +86,6 @@ class SuperTimeline:
             if epoch_val > 1e12:  # Milliseconds
                 epoch_val /= 1000
             if 1e9 < epoch_val < 2e10:  # Reasonable epoch range (2001-2033)
-                from datetime import datetime, timezone
                 dt = datetime.fromtimestamp(epoch_val, tz=timezone.utc)
                 return dt.isoformat()[:19] + 'Z'
         except (ValueError, OverflowError, OSError):
@@ -274,95 +273,204 @@ class SuperTimeline:
                                plaso_specialist: Any,
                                log_func) -> List[dict]:
         """
-        Find .plaso files in case output, run psort -o json, parse output.
+        Find and parse Plaso timeline events.
+
+        Strategy: read existing .json_line files produced by psort during
+        playbook execution. Stream-parse line-by-line to handle multi-GB
+        files without OOM. Only fall back to running psort if no
+        .json_line files exist but .plaso files do.
 
         Each event is tagged with the device_id of the disk image that
         produced it (matched by filename).
-
-        Developer notes:
-        - Use plaso_specialist.sort_timeline() with output_format='json'
-          OR run psort directly via subprocess
-        - Parse the JSON output line-by-line (one JSON object per line)
-        - Key fields from Plaso JSON: datetime, timestamp_desc, source,
-          source_short, message, data_type, hostname, username,
-          computer_name, filename
-        - Map data_type to our event_type:
-            windows:evtx:* → login/process_execution
-            filestat → file_creation/file_access
-            windows:registry:* → registry_modification
-            chrome:history:* → browser_visit
-            etc.
         """
         events = []
+        MAX_PLASO_EVENTS = int(os.environ.get("GEOFF_MAX_PLASO_EVENTS", "50000"))
         output_dir = case_work_dir / "output"
-        plaso_files = list(output_dir.glob("*.plaso")) + \
-                      list((case_work_dir / "timeline").glob("*.plaso"))
+        timeline_dir = case_work_dir / "timeline"
 
-        for plaso_path in plaso_files:
-            # Determine which device this plaso file belongs to
-            device_id = self._match_plaso_to_device(plaso_path, device_map)
+        # --- Phase 1: Stream-parse existing .json_line files ---
+        json_line_files = list(output_dir.glob("*.json_line")) + \
+                          list(timeline_dir.glob("*.json_line"))
 
-            # Try plaso_specialist first, fall back to subprocess
-            psort_output = None
-            if plaso_specialist is not None:
+        # Deduplicate by picking newest if multiple match same stem
+        seen_stems = {}
+        for jlf in json_line_files:
+            stem = jlf.stem
+            if stem not in seen_stems or jlf.stat().st_mtime > seen_stems[stem].stat().st_mtime:
+                seen_stems[stem] = jlf
+        json_line_files = sorted(seen_stems.values())
+
+        if json_line_files:
+            for jlf in json_line_files:
+                device_id = self._match_plaso_to_device(jlf, device_map)
+                log_func(f"  Plaso: streaming {jlf.name} for device {device_id}")
+                count = 0
+                skipped = 0
                 try:
-                    result = plaso_specialist.sort_timeline(
-                        storage_file=str(plaso_path),
-                        output_format="json"
-                    )
-                    if result.get("status") == "success":
-                        psort_output = result.get("raw_output", result.get("stdout", ""))
-                except Exception:
-                    pass
+                    with open(jlf, 'r', encoding='utf-8', errors='replace') as f:
+                        for line in f:
+                            if len(events) >= MAX_PLASO_EVENTS:
+                                log_func(f"  Plaso: capped at {MAX_PLASO_EVENTS} events")
+                                break
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                raw = json.loads(line)
+                            except (json.JSONDecodeError, ValueError):
+                                continue
 
-            if not psort_output:
-                try:
-                    import subprocess
-                    result = subprocess.run(
-                        ["python3", "/usr/bin/psort.py", "-o", "json",
-                         str(plaso_path)],
-                        capture_output=True, text=True, timeout=600
-                    )
+                            # Skip null-timestamp events
+                            dt_obj = raw.get("date_time", {})
+                            ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
+                            FILETIME_EPOCH = 116444736000000000
+                            if (not ts_val or ts_val <= 0
+                                    or ts_val == -9223372036854775808
+                                    or ts_val == FILETIME_EPOCH):
+                                skipped += 1
+                                continue
 
-                    if result.returncode != 0:
-                        log_func(f"  psort failed for {plaso_path.name}: "
-                                 f"{result.stderr[:200]}")
-                        continue
-
-                    psort_output = result.stdout
-
+                            event = self._normalize_plaso_event_v2(raw, device_id, device_map)
+                            if event:
+                                events.append(event)
+                                count += 1
                 except Exception as e:
-                    log_func(f"  Plaso extraction error for {plaso_path.name}: {e}")
-                    continue
+                    log_func(f"  Plaso: error reading {jlf.name}: {e}")
+                log_func(f"  Plaso: {count} events from {jlf.name} ({skipped} skipped null timestamps)")
+            return events
 
-            if not psort_output:
+        # --- Phase 2: Safety-net — run psort if .json_line doesn't exist ---
+        plaso_files = list(output_dir.glob("*.plaso")) + \
+                      list(timeline_dir.glob("*.plaso"))
+
+        if not plaso_files:
+            return events
+
+        log_func(f"  Plaso: no .json_line files found; running psort for {len(plaso_files)} .plaso files")
+        for plaso_path in plaso_files:
+            device_id = self._match_plaso_to_device(plaso_path, device_map)
+            json_line_out = plaso_path.with_suffix('.json_line')
+
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["/usr/bin/python3", "/usr/bin/psort.py",
+                     "-o", "json_line",
+                     "-w", str(json_line_out),
+                     str(plaso_path)],
+                    capture_output=True, text=True, timeout=3600
+                )
+                if result.returncode != 0:
+                    log_func(f"  psort failed for {plaso_path.name}: {result.stderr[:200]}")
+                    continue
+            except Exception as e:
+                log_func(f"  Plaso extraction error for {plaso_path.name}: {e}")
                 continue
 
-            for line in psort_output.strip().split("\n"):
-                try:
-                    raw = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                event = self._normalize_plaso_event(raw, device_id,
-                                                    device_map)
-                if event:
-                    events.append(event)
+            # Stream-parse the output file we just wrote
+            if json_line_out.exists():
+                count = 0
+                with open(json_line_out, 'r', encoding='utf-8', errors='replace') as f:
+                    for line in f:
+                        if len(events) >= MAX_PLASO_EVENTS:
+                            break
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            raw = json.loads(line)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        dt_obj = raw.get("date_time", {})
+                        ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
+                        FILETIME_EPOCH = 116444736000000000
+                        if (not ts_val or ts_val <= 0
+                                or ts_val == -9223372036854775808
+                                or ts_val == FILETIME_EPOCH):
+                            continue
+                        event = self._normalize_plaso_event_v2(raw, device_id, device_map)
+                        if event:
+                            events.append(event)
+                            count += 1
+                log_func(f"  Plaso: {count} events from safety-net psort of {plaso_path.name}")
 
         return events
 
-    def _normalize_plaso_event(self, raw: dict, device_id: str,
-                                device_map: dict) -> Optional[dict]:
-        """Convert a single Plaso JSON event to our standard schema."""
-        timestamp = raw.get("datetime", raw.get("timestamp", ""))
-        if not timestamp:
+    def _normalize_plaso_event_v2(self, raw: dict, device_id: str,
+                                  device_map: dict) -> Optional[dict]:
+        """Convert a psort json_line event to our standard schema.
+
+        psort json_line format has:
+        - date_time.timestamp: integer (microseconds or 100ns depending on __class_name)
+        - date_time.__class_name: PosixTimeInMicroseconds, Filetime, etc.
+        - timestamp_desc: 'Last Visited', 'Content Modification Time', etc.
+        - data_type: 'firefox:places:bookmark', 'msiecf:url', etc.
+        - display_name: 'NTFS:\\path\\to\\file'
+        - message: human-readable summary
+        - parser: parser that produced the event
+        """
+        # Extract timestamp from nested date_time object
+        dt_obj = raw.get("date_time", {})
+        ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
+        class_name = dt_obj.get("__class_name", "") if isinstance(dt_obj, dict) else ""
+
+        # FILETIME epoch offset: 100ns intervals between 1601-01-01 and 1970-01-01
+        FILETIME_EPOCH = 116444736000000000
+
+        if not ts_val or ts_val <= 0 or ts_val == -9223372036854775808:
+            return None
+        # FILETIME epoch (zero-time) is effectively null
+        if ts_val == FILETIME_EPOCH:
+            return None
+
+        # Convert to ISO timestamp using __class_name when available,
+        # otherwise magnitude-based heuristics
+        timestamp_str = ""
+        try:
+            if "Filetime" in class_name or ts_val > FILETIME_EPOCH:
+                # Windows FILETIME: 100-nanosecond intervals since 1601-01-01
+                unix_seconds = (ts_val - FILETIME_EPOCH) / 10_000_000
+                dt = datetime.fromtimestamp(unix_seconds, tz=timezone.utc)
+                timestamp_str = dt.isoformat()[:19] + "Z"
+            elif "PosixTime" in class_name or "Microseconds" in class_name:
+                # Microseconds since Unix epoch
+                dt = datetime.fromtimestamp(ts_val / 1_000_000, tz=timezone.utc)
+                timestamp_str = dt.isoformat()[:19] + "Z"
+            elif ts_val > 10_000_000_000_000:
+                # Magnitude heuristic: > 10 trillion → likely microseconds
+                dt = datetime.fromtimestamp(ts_val / 1_000_000, tz=timezone.utc)
+                timestamp_str = dt.isoformat()[:19] + "Z"
+            elif ts_val > 10_000_000_000:
+                # 10 billion → 10 trillion → likely seconds
+                dt = datetime.fromtimestamp(ts_val, tz=timezone.utc)
+                timestamp_str = dt.isoformat()[:19] + "Z"
+            else:
+                # Small value — try as seconds
+                try:
+                    dt = datetime.fromtimestamp(ts_val, tz=timezone.utc)
+                    timestamp_str = dt.isoformat()[:19] + "Z"
+                except (ValueError, OSError, OverflowError):
+                    return None
+        except (ValueError, OSError, OverflowError):
+            return None
+
+        if not timestamp_str:
             return None
 
         data_type = raw.get("data_type", "")
         message = raw.get("message", "")
+        timestamp_desc = raw.get("timestamp_desc", "")
         username = raw.get("username", "")
-        hostname = raw.get("hostname",
-                          raw.get("computer_name", ""))
+        hostname = raw.get("hostname", raw.get("host", ""))
+        display_name = raw.get("display_name", "")
+        filename = raw.get("filename", "")
+
+        # Clean display_name — strip "NTFS:" prefix
+        filepath = display_name
+        if filepath.startswith("NTFS:"):
+            filepath = filepath[5:]
+        if not filepath and filename:
+            filepath = filename
 
         # Map data_type to our normalized event_type
         event_type = "other"
@@ -377,7 +485,7 @@ class SuperTimeline:
             else:
                 event_type = "windows_event"
         elif "filestat" in data_type:
-            desc = raw.get("timestamp_desc", "").lower()
+            desc = timestamp_desc.lower()
             if "creation" in desc:
                 event_type = "file_creation"
             elif "modification" in desc:
@@ -396,26 +504,46 @@ class SuperTimeline:
             event_type = "process_execution"
         elif "lnk" in data_type:
             event_type = "file_access"
+        elif "msiecf" in data_type:
+            event_type = "browser_visit"
+        elif "winevt" in data_type:
+            event_type = "windows_event"
 
-        # Determine owner from device_map
+        # Determine owner from device_map or username
         owner = device_map.get(device_id, {}).get("owner", "")
         if username and not owner:
             owner = username
 
+        # Extract username from filepath if still no owner
+        if not owner and filepath:
+            user_match = re.search(
+                r'(?:Users|Documents and Settings)[/\\\\]([^/\\\\]+)',
+                filepath
+            )
+            if user_match:
+                owner = user_match.group(1)
+
+        summary = message[:200] if message else f"{data_type} event"
+        if not message and filepath:
+            summary = filepath[:200]
+
         return {
-            "timestamp": timestamp,
+            "timestamp": timestamp_str,
             "device_id": device_id,
             "owner": owner,
             "source_type": "plaso",
             "source_parser": data_type,
             "event_type": event_type,
-            "summary": message[:200] if message else f"{data_type} event",
+            "summary": summary,
             "detail": {
                 k: v for k, v in raw.items()
                 if k in ("event_identifier", "source_name", "filename",
                          "username", "hostname", "url", "title",
                          "process_name", "command_line", "logon_type",
-                         "source_ip", "source_port")
+                         "source_ip", "source_port", "parser",
+                         "cached_filename", "visit_count",
+                         "places_title", "query",
+                         "sha256_hash", "inode")
             },
             "suspicious": False,
             "suspicion_reason": None,
@@ -424,15 +552,21 @@ class SuperTimeline:
 
     def _match_plaso_to_device(self, plaso_path: Path,
                                 device_map: dict) -> str:
-        """Match a .plaso file to a device_id based on filename."""
+        """Match a .plaso or .json_line file to a device_id based on filename."""
         stem = plaso_path.stem.lower()
+        # Strip common prefixes: timeline_ prefix from psort output naming
+        if stem.startswith("timeline_"):
+            stem = stem[len("timeline_"):]
         for dev_id, dev in device_map.items():
             # Check if plaso filename contains the device_id or
             # the disk image stem
             if dev_id.lower() in stem:
                 return dev_id
             for ef in dev.get("evidence_files", []):
-                if Path(ef).stem.lower() in stem:
+                ef_stem = Path(ef).stem.lower()
+                # Strip .E01, .E02 segment suffixes
+                ef_stem = re.sub(r'\.(e)\d+$', '', ef_stem)
+                if ef_stem in stem:
                     return dev_id
         # Fallback: first device
         return list(device_map.keys())[0] if device_map else "unknown"
@@ -607,7 +741,6 @@ class SuperTimeline:
                 for ts_name in ["crtime", "mtime", "ctime", "atime"]:
                     if timestamps.get(ts_name):
                         try:
-                            from datetime import datetime, timezone
                             dt = datetime.fromtimestamp(timestamps[ts_name], tz=timezone.utc)
                             ts = dt.isoformat()[:19] + "Z"
                             break

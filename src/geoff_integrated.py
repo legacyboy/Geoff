@@ -1661,7 +1661,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
         # Write .gitignore for case directory
         with open(case_work_dir / '.gitignore', 'w') as f:
-            f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n')
+            f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n*.plaso\n*.json_line\n*.csv\n*.jsonl\n')
         safe_git_commit('Initial case setup', base_path=str(case_work_dir))
     except Exception as e:
         _log_error(f"git init case_work_dir {case_work_dir}", e)
