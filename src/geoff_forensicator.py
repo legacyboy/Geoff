@@ -66,6 +66,20 @@ class ForensicatorAgent:
     - Returns raw results (no self-validation)
     """
 
+    ALLOWED_TOOLS = frozenset({
+        'mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat',
+        'vol.py', 'volatility3',
+        'strings', 'floss',
+        'regripper', 'rip.pl',
+        'log2timeline.py', 'psort.py', 'pinfo.py',
+        'tshark', 'tcpflow',
+        'die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx',
+        'pdfid', 'pdf-parser', 'oledump', 'oledump.py', 'js-beautify',
+        'radare2', 'r2',
+        'clamscan', 'clamdscan',
+        'cat', 'file', 'xxd', 'hexdump',
+    })
+
     def __init__(self, ollama_url: str = None):
         self.ollama_url = ollama_url or OLLAMA_URL_DEFAULT
         self.execution_log = []
@@ -166,6 +180,10 @@ Respond ONLY in JSON format:
         tool = cmd_info.get("tool", "")
         args = cmd_info.get("args", [])
         reason = cmd_info.get("reason", "")
+
+        if tool not in self.ALLOWED_TOOLS:
+            result["error"] = f"Tool '{tool}' not in allowlist"
+            return result
 
         result = {
             "tool": tool,
