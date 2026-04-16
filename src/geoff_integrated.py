@@ -977,6 +977,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-018": "Malware Analysis",
     "PB-SIFT-019": "Command & Control",
     "PB-SIFT-020": "Timeline Analysis",
+    "PB-SIFT-021": "Mobile Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1264,6 +1265,12 @@ PLAYBOOK_STEPS = {
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+    },
+    "PB-SIFT-021": {  # Mobile Forensics — iOS backups and Android data
+        "mobile_backups": [
+            ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
+            ("mobile", "analyze_android", {"data_dir": "{mobile}"}),
         ],
     },
 }
@@ -1822,6 +1829,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Timeline analysis — always run if disk images present (psort after log2timeline)
     if len(inventory["disk_images"]) > 0:
         execution_plan.append("PB-SIFT-020")
+
+    # Mobile forensics — run if mobile backup artifacts detected
+    if len(inventory["mobile_backups"]) > 0:
+        execution_plan.append("PB-SIFT-021")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-021", "reason": "No mobile backup artifacts detected"})
 
     # Cross-image correlation last (if multi-host)
     if len(inventory["disk_images"]) > 1:
@@ -3522,9 +3535,9 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             // Escape HTML first
             s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
             // Bold+italic, bold, italic, code, backtick
-            s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-            s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-            s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+            s = s.replace(/[*][*][*](.+?)[*][*][*]/g, '<strong><em>$1</em></strong>');
+            s = s.replace(/[*][*](.+?)[*][*]/g, '<strong>$1</strong>');
+            s = s.replace(/[*](.+?)[*]/g, '<em>$1</em>');
             s = s.replace(/`([^`]+)`/g, '<code style="background:#161b22;padding:1px 5px;border-radius:3px;font-size:0.85em;">$1</code>');
             return s;
         }
@@ -4068,6 +4081,10 @@ def find_evil_info():
             trigger = "If suspicious binary found during triage"
         elif pid == "PB-SIFT-019":
             trigger = "If C2 indicators found during triage"
+        elif pid == "PB-SIFT-020":
+            trigger = "If disk images present"
+        elif pid == "PB-SIFT-021":
+            trigger = "If mobile backup artifacts detected"
         elif pid == "PB-SIFT-016":
             trigger = "If multiple disk images found"
         else:
