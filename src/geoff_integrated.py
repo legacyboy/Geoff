@@ -37,6 +37,7 @@ _state_lock = threading.Lock()
 import requests
 from datetime import datetime
 from pathlib import Path
+from functools import wraps
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 
@@ -58,6 +59,21 @@ from behavioral_analyzer import BehavioralAnalyzer
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
+
+# Shell metacharacters that could enable command injection via evidence paths
+_UNSAFE_PATH_CHARS = re.compile(r'[;&|`$(){}[\]<>\\!\n\r\t]')
+
+
+def _validate_evidence_path(path: str) -> str:
+    """Validate an evidence path to prevent command injection.
+
+    Raises ValueError if the path contains shell metacharacters.
+    Returns the path unchanged if it is safe.
+    """
+    if _UNSAFE_PATH_CHARS.search(path):
+        raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
+    return path
+
 
 def _hash_file(path):
     """Compute SHA-256 hash of a file for chain of custody."""
@@ -113,6 +129,59 @@ def _atomic_append(path, data):
 
 
 MAX_STDOUT_SIZE = 50 * 1024 * 1024  # 50MB — prevent memory blowup from tool output
+
+# Max findings to keep in-memory before logging a warning. Findings are always
+# written to a JSONL file on disk; this limit only governs the in-memory list
+# used for aggregation/reporting at the end of a job.
+_MAX_IN_MEMORY_FINDINGS = int(os.environ.get("GEOFF_MAX_FINDINGS", "50000"))
+
+
+class FindingsWriter:
+    """Write step-record findings to a JSONL file as they complete.
+
+    Keeps a compact in-memory index (step_key → status) for fast idempotency
+    checks, avoiding the need to scan the full findings list on every step.
+    The full finding dicts are flushed to disk immediately and optionally
+    accumulated in memory up to *max_in_memory* entries.
+    """
+
+    def __init__(self, jsonl_path: Path, max_in_memory: int = _MAX_IN_MEMORY_FINDINGS):
+        self._path = jsonl_path
+        self._max = max_in_memory
+        self._index: dict = {}   # step_key -> status
+        self._records: list = [] # in-memory accumulation (capped)
+        self._lock = threading.Lock()
+        # Ensure parent dir exists
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def append(self, record: dict) -> None:
+        step_key = record.get("step_key", "")
+        status = record.get("status", "")
+        with self._lock:
+            self._index[step_key] = status
+            if len(self._records) < self._max:
+                self._records.append(record)
+            elif len(self._records) == self._max:
+                print(
+                    f"[GEOFF] FindingsWriter: in-memory cap ({self._max}) reached; "
+                    "further findings written to disk only.",
+                    flush=True,
+                )
+        # Write to JSONL outside the lock to avoid blocking
+        try:
+            with open(self._path, "a") as fh:
+                fh.write(json.dumps(record, default=str) + "\n")
+        except OSError as exc:
+            print(f"[GEOFF] FindingsWriter: failed to write {self._path}: {exc}", flush=True)
+
+    def is_completed(self, step_key: str) -> bool:
+        with self._lock:
+            return self._index.get(step_key) == "completed"
+
+    def all_records(self) -> list:
+        """Return all in-memory records (up to max_in_memory)."""
+        with self._lock:
+            return list(self._records)
 
 def _sanitize_path(path_str: str, allowed_base: str = "") -> str:
     """Sanitize file paths to prevent directory traversal attacks."""
@@ -395,6 +464,33 @@ app = Flask(__name__)
 CORS(app)
 
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
+
+# Optional API key for protecting all non-UI endpoints.
+# Set GEOFF_API_KEY in the environment or .env to enable authentication.
+# When unset, auth is disabled (backwards-compatible default).
+GEOFF_API_KEY = os.environ.get('GEOFF_API_KEY', '')
+
+
+def _require_auth(f):
+    """Decorator that enforces API key authentication when GEOFF_API_KEY is set.
+
+    Accepts the key via:
+      - X-API-Key: <key>  header
+      - Authorization: Bearer <key>  header
+    """
+    @wraps(f)
+    def _decorated(*args, **kwargs):
+        if not GEOFF_API_KEY:
+            return f(*args, **kwargs)
+        provided = (
+            request.headers.get('X-API-Key', '')
+            or request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
+        )
+        if not provided or provided != GEOFF_API_KEY:
+            return jsonify({'error': 'Unauthorized — provide a valid X-API-Key header'}), 401
+        return f(*args, **kwargs)
+    return _decorated
+
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
@@ -777,7 +873,6 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
         safe_run(['git', 'init'], cwd=case_work_path, timeout=30)
         safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, timeout=10)
         safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, timeout=10)
-        safe_run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
         safe_run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
 
     # Create subdirectories
@@ -1626,7 +1721,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Run PB-SIFT-000 (Triage) first to get the execution plan.
     # Then execute ONLY the playbooks listed in that plan.
-    findings = []
+    findings_writer = FindingsWriter(case_work_dir / "findings.jsonl")
     critic_results = []
     playbooks_run = []
     steps_completed = 0
@@ -1891,6 +1986,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 for item in items:
                     if _abort:
                         break
+                    # Validate evidence path before substitution to prevent command injection
+                    try:
+                        _validate_evidence_path(item)
+                    except ValueError as path_err:
+                        _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
+                        continue
                     item_stem = Path(item).stem
                     for module, function, raw_params in step_templates:
                         _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
@@ -1937,7 +2038,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         }
 
                         # Idempotency: skip if already completed with same inputs
-                        if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
+                        if findings_writer.is_completed(step_key):
                             _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
                             continue
 
@@ -1964,7 +2065,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         "status": "skipped", "error": f"dependency {dep} not met",
                                         "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
                                     }
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
 
@@ -2015,7 +2116,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                     steps_failed += 1
                                     _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
                                 elif result["code"] < 0:
@@ -2024,7 +2125,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
                                     steps_failed += 1
                                     _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
                         
@@ -2062,7 +2163,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 any_step_ran = True
                                 _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
 
-                            # Critic validation
+                            # Critic validation — mandatory: failures are surfaced as
+                            # needs_review flags rather than silently ignored.
                             try:
                                 critic_val = geoff_critic.validate_tool_output(
                                     tool_name=f"{module}.{function}",
@@ -2086,19 +2188,24 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         format_val = geoff_critic.validate_ioc_formats(result_iocs)
                                         if format_val.get("format_issue_count", 0) > 0:
                                             step_record["ioc_format_issues"] = format_val["format_issues"]
-                                except Exception:
-                                    pass  # Non-critical
+                                except Exception as ioc_exc:
+                                    _fe_log(job_id, f"  ⚠ IOC format validation error for {module}.{function}: {ioc_exc}")
+                                    step_record["ioc_format_validation_error"] = str(ioc_exc)
                                 # Write validation to case validations/ directory
                                 try:
                                     val_dir = case_work_dir / "validations"
                                     val_dir.mkdir(exist_ok=True)
                                     val_file = val_dir / f"{step_key.replace(':', '_')}.json"
                                     _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
-                                except Exception:
-                                    pass  # Non-critical
+                                except OSError as write_exc:
+                                    _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
                             except Exception as ce:
-                                _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
+                                # Critic unavailable or errored — mark step for human review
+                                # rather than silently accepting unvalidated findings.
+                                _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
                                 step_record["critic_error"] = str(ce)
+                                step_record["needs_review"] = True
+                                _fe_log(job_id, f"  ⚠ {module}.{function} marked needs_review (critic unavailable)")
                         except Exception as e:
                             _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
                             step_record["status"] = "failed"
@@ -2106,7 +2213,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             steps_failed += 1
 
                         step_record["completed_at"] = datetime.now().isoformat()
-                        findings.append(step_record)
+                        findings_writer.append(step_record)
                         pb_findings.append(step_record)
 
                         # CONTINUE_ON_FAILURE enforcement
@@ -2160,7 +2267,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                 _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
                 # Downgrade all findings across ALL playbooks and mark compromised
-                for f in findings:
+                for f in findings_writer.all_records():
                     if isinstance(f.get("result"), dict):
                         confidence = f["result"].get("confidence", "")
                         if confidence == "CONFIRMED":
@@ -2225,7 +2332,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     if params_resolved is None:
                                         params_resolved = params
                                     result = orchestrator.run_playbook_step(playbook_id, {"module": module, "function": function, "params": params_resolved})
-                                    findings.append({
+                                    findings_writer.append({
                                         "playbook": playbook_id,
                                         "module": module,
                                         "function": function,
@@ -2267,8 +2374,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     try:
         behavioral = BehavioralAnalyzer()
         all_behavioral_flags = {}
+        _all_findings = findings_writer.all_records()
         for dev_id in device_map:
-            dev_findings = [f for f in findings if f.get("device_id") == dev_id]
+            dev_findings = [f for f in _all_findings if f.get("device_id") == dev_id]
             dev_events = [e for e in super_timeline_events if e.get("device_id") == dev_id]
             flags = behavioral.analyze(
                 device_id=dev_id,
@@ -2296,7 +2404,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         correlated_users = correlator.correlate(
             device_map=device_map,
             user_map=user_map,
-            findings=findings,
+            findings=findings_writer.all_records(),
             timeline_events=super_timeline_events,
         )
         _fe_log(job_id, f"Correlated {len(correlated_users)} users across devices")
@@ -2328,7 +2436,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         evil_found = True
 
     # From specialist results
-    for f in findings:
+    for f in findings_writer.all_records():
         result = f.get("result", {})
         if not isinstance(result, dict):
             continue
@@ -2359,6 +2467,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
     critic_total = len(critic_results)
     critic_pct = (critic_approved / critic_total * 100) if critic_total > 0 else 100.0
+    needs_review_count = sum(1 for f in findings_writer.all_records() if f.get("needs_review"))
 
     elapsed = time.time() - start_time
 
@@ -2373,22 +2482,24 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "indicator_hits": indicator_hits,
         "playbooks_run": playbooks_run,
         "playbooks_total": total_pb,
-        "specialist_steps_executed": len(findings),
+        "specialist_steps_executed": steps_completed + steps_failed + steps_skipped,
         "steps_completed": steps_completed,
         "steps_failed": steps_failed,
         "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),
-        "findings_detail": findings,
+        "steps_needs_review": needs_review_count,
+        "findings_detail": findings_writer.all_records(),
+        "findings_jsonl": str(findings_writer._path),
         "user_activity_summary": correlated_users if 'correlated_users' in dir() else {},
         "device_map": device_map if 'device_map' in dir() else {},
         "user_map": user_map if 'user_map' in dir() else {},
         "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if 'all_behavioral_flags' in dir() else {},
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
-        "failures": [f for f in findings if f.get("status") == "failed"],
+        "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
         "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
-        "llm_analysis": next((f["result"] for f in findings if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
+        "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
     # ------------------------------------------------------------------
@@ -2406,9 +2517,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 "completed_at": f.get("completed_at"),
                 "result": f.get("result", {}),
             }
-            for i, f in enumerate(findings)
+            for i, f in enumerate(findings_writer.all_records())
         ],
-        "current_step": len(findings),
+        "current_step": steps_completed + steps_failed + steps_skipped,
     }
 
     try:
@@ -2476,6 +2587,7 @@ HTML_TEMPLATE = """
 <head>
     <title>Geoff DFIR</title>
     <meta charset="UTF-8">
+    <!-- GEOFF_API_KEY_META -->
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { 
@@ -2531,14 +2643,15 @@ HTML_TEMPLATE = """
         
         .content.active { display: flex; flex-direction: column; }
         
-        /* Chat Styles */
-        #chat-content {
+        /* Investigation output — chat messages + live log stream */
+        #fe-output {
             flex: 1;
             overflow-y: auto;
-            padding: 20px;
+            padding: 16px 25px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
+            min-height: 0;
         }
         
         .message {
@@ -2683,64 +2796,72 @@ HTML_TEMPLATE = """
         /* Find Evil Tab Styles */
         #findevil-content {
             flex: 1;
-            overflow-y: auto;
-            padding: 20px 25px;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 16px;
         }
 
-        .fe-config {
+        /* Compact top bar: evidence dir input + run button */
+        .fe-top-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 25px;
             background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 16px;
+            border-bottom: 1px solid #30363d;
+            flex-shrink: 0;
         }
 
-        .fe-config label {
-            display: block;
+        .fe-top-bar label {
             color: #8b949e;
             font-size: 0.85rem;
-            margin-bottom: 6px;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
-        .fe-config input[type="text"] {
-            width: 100%;
-            padding: 10px 14px;
+        .fe-top-bar input[type="text"] {
+            flex: 1;
+            padding: 8px 12px;
             background: #0d1117;
             border: 1px solid #30363d;
             border-radius: 6px;
             color: #c9d1d9;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             font-family: 'SF Mono', Monaco, monospace;
         }
 
-        .fe-config input:focus {
+        .fe-top-bar input:focus {
             outline: none;
             border-color: #58a6ff;
         }
 
         .fe-run-btn {
-            margin-top: 12px;
-            padding: 12px 28px;
+            padding: 9px 20px;
             background: #da3633;
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-weight: 700;
-            font-size: 1rem;
+            font-size: 0.95rem;
             transition: background 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .fe-run-btn:hover { background: #f85149; }
         .fe-run-btn:disabled { background: #484f58; cursor: not-allowed; }
 
+        #fe-progress-area {
+            flex-shrink: 0;
+            padding: 10px 25px 0;
+        }
+
         .fe-progress {
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 8px;
-            padding: 16px;
+            padding: 12px 16px;
         }
 
         .fe-progress-bar {
@@ -2873,39 +2994,27 @@ HTML_TEMPLATE = """
     </header>
     
     <div class="tabs">
-        <div class="tab active" onclick="showTab('chat')">💬 Chat</div>
+        <div class="tab active" onclick="showTab('findevil')">🔍 Find Evil</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
-        <div class="tab" onclick="showTab('findevil')">🔍 Find Evil</div>
     </div>
-    
-    <div id="chat" class="content active">
-        <div id="chat-content">
-            <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.
 
-Awaiting investigation directive. Provide case name or evidence path to begin systematic analysis.
-
-Available: 32 forensic functions across 9 specialist modules + REMnux.
-Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking).</div>
-        </div>
-        <div class="chat-input-area">
-            <input type="text" id="chat-input" placeholder="Ask Geoff anything, or say 'start processing /path/to/evidence'..." onkeypress="if(event.key==='Enter') sendChat()">
-            <button class="send-btn" onclick="sendChat()">Send</button>
-        </div>
-    </div>
-    
     <div id="evidence" class="content">
         <div id="evidence-content">
             <div class="loading">Loading evidence...</div>
         </div>
     </div>
 
-    <div id="findevil" class="content">
+    <div id="findevil" class="content active">
         <div id="findevil-content">
-            <div class="fe-config">
+
+            <!-- Top bar: evidence directory + run button -->
+            <div class="fe-top-bar">
                 <label for="fe-evidence-dir">Evidence Directory</label>
                 <input type="text" id="fe-evidence-dir" placeholder="/path/to/evidence (leave blank for default)">
                 <button class="fe-run-btn" id="fe-run-btn" onclick="runFindEvil()">🔍 Run Find Evil</button>
             </div>
+
+            <!-- Progress bar — shown while a job is running -->
             <div id="fe-progress-area" style="display:none;">
                 <div class="fe-progress">
                     <div class="fe-status-text">
@@ -2917,8 +3026,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                         <div class="fe-progress-fill" id="fe-progress-fill" style="width:0%">0%</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Unified output: chat messages + live log stream + results -->
+            <div id="fe-output">
+                <div class="message system">G.E.O.F.F. initialized. Evidence Operations Forensic Framework standing by.
+
+Awaiting investigation directive. Provide an evidence path above or ask me anything below.</div>
+
+                <!-- Live log stream — appended to when a job is running -->
                 <div id="fe-log" style="
-                    margin-top: 12px;
+                    display: none;
                     background: #0d1117;
                     border: 1px solid #30363d;
                     border-radius: 6px;
@@ -2926,174 +3044,143 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                     font-family: 'JetBrains Mono', 'Fira Code', monospace;
                     font-size: 12px;
                     color: #8b949e;
-                    max-height: 400px;
-                    overflow-y: auto;
                     line-height: 1.6;
                 "></div>
+
+                <!-- Results card — shown when job completes -->
+                <div id="fe-results-area" style="display:none;"></div>
             </div>
-            <div id="fe-results-area" style="display:none;"></div>
+
+            <!-- Chat input pinned at bottom -->
+            <div class="chat-input-area">
+                <input type="text" id="chat-input"
+                       placeholder="Ask Geoff anything, or say 'start processing /path/to/evidence'..."
+                       onkeypress="if(event.key==='Enter') sendChat()">
+                <button class="send-btn" onclick="sendChat()">Send</button>
+            </div>
+
         </div>
     </div>
     
     <script>
+        // Authenticated fetch — adds X-API-Key header when the server set one
+        const _geoffApiKey = document.querySelector('meta[name="geoff-api-key"]')?.content || '';
+        function authFetch(url, opts = {}) {
+            if (_geoffApiKey) {
+                opts.headers = Object.assign({}, opts.headers || {}, {'X-API-Key': _geoffApiKey});
+            }
+            return fetch(url, opts);
+        }
+
         function showTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(tab).classList.add('active');
-            if(tab === 'evidence') loadEvidence();
+            if (tab === 'evidence') loadEvidence();
         }
-        
+
+        // Append a message bubble to the unified output area and scroll to bottom.
         function addMessage(text, type) {
-            const chat = document.getElementById('chat-content');
+            const output = document.getElementById('fe-output');
             const div = document.createElement('div');
             div.className = 'message ' + type;
-            if(type === 'user') {
-                div.innerHTML = '<div class="label">You</div>' + text;
-            } else if(type === 'geoff') {
-                div.innerHTML = '<div class="label">Geoff</div>' + text;
-            } else if(type === 'tool-result') {
-                div.innerHTML = '<div class="label">Tool Output</div>' + text;
+            if (type === 'user') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'You';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.textContent = text;
+                div.appendChild(body);
+            } else if (type === 'geoff') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'Geoff';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.style.whiteSpace = 'pre-wrap';
+                body.textContent = text;
+                div.appendChild(body);
+            } else if (type === 'tool-result') {
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = 'Tool Output';
+                div.appendChild(label);
+                const body = document.createElement('span');
+                body.textContent = text;
+                div.appendChild(body);
             } else {
                 div.textContent = text;
             }
-            chat.appendChild(div);
-            chat.scrollTop = chat.scrollHeight;
+            // Insert before the log and results divs so messages stay above them
+            const logDiv = document.getElementById('fe-log');
+            output.insertBefore(div, logDiv);
+            output.scrollTop = output.scrollHeight;
         }
-        
+
+        // Placeholder shown while waiting for the server response
+        let _thinkingDiv = null;
+        function _showThinking() {
+            _thinkingDiv = document.createElement('div');
+            _thinkingDiv.className = 'message system';
+            _thinkingDiv.textContent = 'Thinking...';
+            const logDiv = document.getElementById('fe-log');
+            document.getElementById('fe-output').insertBefore(_thinkingDiv, logDiv);
+            document.getElementById('fe-output').scrollTop = document.getElementById('fe-output').scrollHeight;
+        }
+        function _removeThinking() {
+            if (_thinkingDiv && _thinkingDiv.parentNode) {
+                _thinkingDiv.parentNode.removeChild(_thinkingDiv);
+            }
+            _thinkingDiv = null;
+        }
+
         async function sendChat() {
             const input = document.getElementById('chat-input');
             const text = input.value.trim();
-            if(!text) return;
-            
+            if (!text) return;
+
+            input.disabled = true;
             addMessage(text, 'user');
             input.value = '';
-            addMessage('Looking...', 'system');
-            
+            _showThinking();
+
             try {
-                const res = await fetch('/chat', {
+                const res = await authFetch('/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({message: text})
                 });
                 const data = await res.json();
-                
-                const chat = document.getElementById('chat-content');
-                chat.removeChild(chat.lastChild);
-                
-                addMessage(data.response, 'geoff');
-                
-                if(data.tool_result) {
-                    addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
-                }
-                if(data.investigation_started) {
-                    addMessage('Investigation started for: ' + data.case_name + '\\nPolling progress every 10 seconds...', 'system');
-                    pollInvestigationStatus(data.case_name);
-                }
-            } catch(e) {
-                const chat = document.getElementById('chat-content');
-                chat.removeChild(chat.lastChild);
-                addMessage('Error: ' + e.message, 'system');
-            }
-        }
-        
-        let investigationPollInterval = null;
-        
-        async function pollInvestigationStatus(caseName) {
-            if(investigationPollInterval) clearInterval(investigationPollInterval);
-            
-            const poll = async () => {
-                try {
-                    const res = await fetch('/investigation/status/' + caseName);
-                    if(res.ok) {
-                        const status = await res.json();
-                        
-                        if(status.status === 'complete') {
-                            addMessage(
-                                '**Investigation Complete**\\n' +
-                                'Case: ' + status.case + '\\n' +
-                                'Progress: 100%\\n' +
-                                'Total Time: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
-                                'system'
-                            );
-                            clearInterval(investigationPollInterval);
-                        } else if(status.status === 'running') {
-                            addMessage(
-                                '**Investigation Progress**\\n' +
-                                'Case: ' + status.case + '\\n' +
-                                'Phase: ' + status.phase + '\\n' +
-                                'Tool: ' + status.current_tool + '\\n' +
-                                'Progress: ' + status.progress_percent + '%\\n' +
-                                'Elapsed: ' + (status.elapsed_seconds / 60).toFixed(1) + ' minutes',
-                                'system'
-                            );
-                        } else if(status.status === 'error') {
-                            addMessage('Investigation Error: ' + (status.details?.error || 'Unknown error'), 'system');
-                            clearInterval(investigationPollInterval);
-                        }
-                    }
-                } catch(e) {
-                    console.error('Poll error:', e);
-                }
-            };
-            
-            poll();
-            investigationPollInterval = setInterval(poll, 10000);
-        }
-        
-        async function loadEvidence() {
-            const container = document.getElementById('evidence-content');
-            container.innerHTML = '<div class="loading">Loading...</div>';
-            
-            try {
-                const res = await fetch('/cases');
-                const data = await res.json();
-                const cases = data.cases || {};
-                
-                if(Object.keys(cases).length === 0) {
-                    container.innerHTML = '<div class="loading">No cases found.</div>';
-                    return;
-                }
-                
-                let html = '<div class="case-list">';
-                for(const [caseName, files] of Object.entries(cases)) {
-                    html += '<div class="case-card">';
-                    html += '<div class="case-header">';
-                    html += '<span class="case-name">📁 ' + caseName + '</span>';
-                    html += '<span class="case-count">' + files.length + ' items</span>';
-                    html += '</div>';
-                    html += '<div class="case-files">';
-                    if(files.length === 0) {
-                        html += '<div class="file-item">Empty case</div>';
-                    } else {
-                        files.forEach(f => {
-                            const isDir = f.startsWith('[DIR]');
-                            const cls = isDir ? 'dir' : 'file';
-                            const display = isDir ? f.replace('[DIR] ', '') : f;
-                            html += '<div class="file-item ' + cls + '">' + display + '</div>';
-                        });
-                    }
-                    html += '</div></div>';
-                }
-                html += '</div>';
-                container.innerHTML = html;
-            } catch(e) {
-                container.innerHTML = '<div class="loading">Error loading evidence: ' + e.message + '</div>';
-            }
-        }
-        
-        // ---- Find Evil UI ----
-        let fePollInterval = null;
+                _removeThinking();
 
-        async function runFindEvil() {
-            const evidenceDir = document.getElementById('fe-evidence-dir').value.trim();
-            const btn = document.getElementById('fe-run-btn');
+                if (data.response) addMessage(data.response, 'geoff');
+                if (data.tool_result) addMessage(JSON.stringify(data.tool_result, null, 2), 'tool-result');
+
+                // If the chat triggered a Find Evil job, start the live stream
+                if (data.job_id) {
+                    _startFindEvilStream(data.job_id);
+                }
+            } catch (e) {
+                _removeThinking();
+                addMessage('Error: ' + e.message, 'system');
+            } finally {
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
+        // Shared helper: prepare the UI for a new streaming job
+        function _startFindEvilStream(jobId) {
             const progressArea = document.getElementById('fe-progress-area');
+            const logDiv = document.getElementById('fe-log');
             const resultsArea = document.getElementById('fe-results-area');
 
-            btn.disabled = true;
-            btn.textContent = '⏳ Running...';
+            // Reset state
             progressArea.style.display = 'block';
+            logDiv.style.display = 'block';
+            logDiv.innerHTML = '';
             resultsArea.style.display = 'none';
             resultsArea.innerHTML = '';
 
@@ -3103,8 +3190,97 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             document.getElementById('fe-progress-fill').style.width = '0%';
             document.getElementById('fe-progress-fill').textContent = '0%';
 
+            pollFindEvilStatus(jobId);
+        }
+        
+        async function loadEvidence() {
+            const container = document.getElementById('evidence-content');
+            container.innerHTML = '<div class="loading">Loading...</div>';
+
             try {
-                const res = await fetch('/find-evil', {
+                const res = await authFetch('/cases');
+                const data = await res.json();
+                const cases = data.cases || {};
+
+                container.innerHTML = '';
+
+                if (Object.keys(cases).length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'loading';
+                    empty.textContent = 'No cases found.';
+                    container.appendChild(empty);
+                    return;
+                }
+
+                const list = document.createElement('div');
+                list.className = 'case-list';
+
+                for (const [caseName, files] of Object.entries(cases)) {
+                    const card = document.createElement('div');
+                    card.className = 'case-card';
+
+                    const header = document.createElement('div');
+                    header.className = 'case-header';
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'case-name';
+                    nameSpan.textContent = '\uD83D\uDCC1 ' + caseName;
+
+                    const countSpan = document.createElement('span');
+                    countSpan.className = 'case-count';
+                    countSpan.textContent = files.length + ' items';
+
+                    header.appendChild(nameSpan);
+                    header.appendChild(countSpan);
+
+                    const filesDiv = document.createElement('div');
+                    filesDiv.className = 'case-files';
+
+                    if (files.length === 0) {
+                        const empty = document.createElement('div');
+                        empty.className = 'file-item';
+                        empty.textContent = 'Empty case';
+                        filesDiv.appendChild(empty);
+                    } else {
+                        files.forEach(f => {
+                            const isDir = f.startsWith('[DIR]');
+                            const item = document.createElement('div');
+                            item.className = 'file-item ' + (isDir ? 'dir' : 'file');
+                            item.textContent = isDir ? f.replace('[DIR] ', '') : f;
+                            filesDiv.appendChild(item);
+                        });
+                    }
+
+                    card.appendChild(header);
+                    card.appendChild(filesDiv);
+                    list.appendChild(card);
+                }
+
+                container.appendChild(list);
+            } catch (e) {
+                container.innerHTML = '';
+                const err = document.createElement('div');
+                err.className = 'loading';
+                err.textContent = 'Error loading evidence: ' + e.message;
+                container.appendChild(err);
+            }
+        }
+        
+        // ---- Find Evil UI ----
+        let fePollInterval = null;
+
+        async function runFindEvil() {
+            const evidenceDir = document.getElementById('fe-evidence-dir').value.trim();
+            const btn = document.getElementById('fe-run-btn');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Running...';
+
+            const label = evidenceDir || 'default evidence directory';
+            addMessage('Starting Find Evil on ' + label + ' …', 'system');
+
+            try {
+                const res = await authFetch('/find-evil', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ evidence_dir: evidenceDir || '' })
@@ -3112,19 +3288,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                 const data = await res.json();
 
                 if (data.job_id) {
-                    // Async mode — poll for progress
-                    pollFindEvilStatus(data.job_id);
+                    _startFindEvilStream(data.job_id);
                 } else if (data.status === 'error') {
                     showFindEvilError(data.error || 'Unknown error');
                     btn.disabled = false;
                     btn.textContent = '🔍 Run Find Evil';
                 } else {
-                    // Sync result (shouldn't happen but handle gracefully)
                     showFindEvilResults(data);
                     btn.disabled = false;
                     btn.textContent = '🔍 Run Find Evil';
                 }
-            } catch(e) {
+            } catch (e) {
                 showFindEvilError(e.message);
                 btn.disabled = false;
                 btn.textContent = '🔍 Run Find Evil';
@@ -3132,13 +3306,14 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
         }
 
         function pollFindEvilStatus(jobId) {
-            if(fePollInterval) clearInterval(fePollInterval);
+            if (fePollInterval) clearInterval(fePollInterval);
             let lastLogIndex = 0;
+            const output = document.getElementById('fe-output');
 
             const poll = async () => {
                 try {
-                    const res = await fetch('/find-evil/status/' + jobId);
-                    if(res.ok) {
+                    const res = await authFetch('/find-evil/status/' + jobId);
+                    if (res.ok) {
                         const status = await res.json();
                         const pct = status.progress_pct || 0;
                         document.getElementById('fe-pb-name').textContent = status.current_playbook || '—';
@@ -3147,7 +3322,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                         document.getElementById('fe-progress-fill').style.width = pct + '%';
                         document.getElementById('fe-progress-fill').textContent = pct + '%';
 
-                        // Stream log entries
+                        // Stream log entries into the log div
                         if (status.log && status.log.length > lastLogIndex) {
                             const logDiv = document.getElementById('fe-log');
                             for (let i = lastLogIndex; i < status.log.length; i++) {
@@ -3160,18 +3335,18 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                                 else if (msg.includes('✗') || msg.includes('error') || msg.includes('fail')) color = '#f85149';
                                 else if (msg.includes('▶')) color = '#d29922';
                                 else if (msg.includes('⊘') || msg.includes('skip')) color = '#6e7681';
+                                else if (msg.includes('needs_review') || msg.includes('⚠')) color = '#d29922';
                                 line.style.color = color;
                                 line.textContent = time + '  ' + msg;
                                 logDiv.appendChild(line);
                             }
                             lastLogIndex = status.log.length;
-                            logDiv.scrollTop = logDiv.scrollHeight;
+                            output.scrollTop = output.scrollHeight;
                         }
 
                         if (status.status === 'complete') {
                             clearInterval(fePollInterval);
-                            const report = status.result || {};
-                            showFindEvilResults(report);
+                            showFindEvilResults(status.result || {});
                             document.getElementById('fe-run-btn').disabled = false;
                             document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
                         } else if (status.status === 'error') {
@@ -3181,7 +3356,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
                             document.getElementById('fe-run-btn').textContent = '🔍 Run Find Evil';
                         }
                     }
-                } catch(e) {
+                } catch (e) {
                     console.error('Find Evil poll error:', e);
                 }
             };
@@ -3267,15 +3442,25 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
             html += '</div>';
             area.innerHTML = html;
+            // Scroll the unified output so results are visible
+            const out = document.getElementById('fe-output');
+            out.scrollTop = out.scrollHeight;
         }
 
         function showFindEvilError(msg) {
             const area = document.getElementById('fe-results-area');
             area.style.display = 'block';
-            area.innerHTML = '<div class="fe-results"><p style="color:#f85149;font-weight:600;">Error: ' + msg + '</p></div>';
+            const p = document.createElement('div');
+            p.className = 'fe-results';
+            const txt = document.createElement('p');
+            txt.style.cssText = 'color:#f85149;font-weight:600;';
+            txt.textContent = 'Error: ' + msg;
+            p.appendChild(txt);
+            area.innerHTML = '';
+            area.appendChild(p);
+            const out = document.getElementById('fe-output');
+            out.scrollTop = out.scrollHeight;
         }
-
-        loadEvidence();
     </script>
 </body>
 </html>
@@ -3288,10 +3473,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    # Inject the API key (if set) into a meta tag so the UI can authenticate
+    # its own fetch() calls without exposing the key in JS source.
+    key_meta = (
+        f'<meta name="geoff-api-key" content="{GEOFF_API_KEY}">'
+        if GEOFF_API_KEY else ''
+    )
+    return render_template_string(HTML_TEMPLATE.replace('<!-- GEOFF_API_KEY_META -->', key_meta))
 
 
 @app.route('/chat', methods=['POST'])
+@_require_auth
 def chat():
     """LLM-powered chat with tool detection"""
     user_msg = ''
@@ -3310,6 +3502,12 @@ def chat():
         if any(trigger in user_msg_lower for trigger in ingest_triggers):
             # Extract path if mentioned, otherwise use default
             evidence_dir = _extract_path_from_message(user_msg) or EVIDENCE_BASE_DIR
+
+            # Reject paths with shell metacharacters
+            try:
+                _validate_evidence_path(evidence_dir)
+            except ValueError as e:
+                return jsonify({'response': f"Evidence path rejected: {e}"})
 
             if not Path(evidence_dir).exists():
                 return jsonify({
@@ -3496,18 +3694,21 @@ def chat():
 
 
 @app.route('/cases', methods=['GET'])
+@_require_auth
 def list_cases():
     """Return ALL cases with ALL files"""
     return jsonify({'cases': get_all_cases()})
 
 
 @app.route('/tools', methods=['GET'])
+@_require_auth
 def list_tools():
     """Return available forensic tools"""
     return jsonify({'tools': get_available_tools_status()})
 
 
 @app.route('/run-tool', methods=['POST'])
+@_require_auth
 def run_tool():
     """Execute a forensic tool directly"""
     module = function = ''
@@ -3540,6 +3741,7 @@ def run_tool():
 
 
 @app.route('/critic/validate', methods=['POST'])
+@_require_auth
 def critic_validate():
     """Manually trigger critic validation"""
     try:
@@ -3567,6 +3769,7 @@ def critic_validate():
 
 
 @app.route('/critic/summary/<investigation_id>', methods=['GET'])
+@_require_auth
 def critic_summary(investigation_id):
     """Get validation summary for investigation"""
     try:
@@ -3577,6 +3780,7 @@ def critic_summary(investigation_id):
 
 
 @app.route('/investigation/status/<case_name>', methods=['GET'])
+@_require_auth
 def get_investigation_status(case_name):
     """Get status of background investigation for polling"""
     try:
@@ -3592,6 +3796,7 @@ def get_investigation_status(case_name):
 
 
 @app.route('/find-evil', methods=['POST'])
+@_require_auth
 def find_evil_route():
     """
     POST /find-evil
@@ -3610,6 +3815,12 @@ def find_evil_route():
     try:
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
+
+        # Reject paths containing shell metacharacters
+        try:
+            _validate_evidence_path(evidence_dir)
+        except ValueError as e:
+            return jsonify({"status": "error", "error": str(e)}), 400
 
         # Verify the directory exists before spawning a job
         if not Path(evidence_dir).exists():
@@ -3670,6 +3881,7 @@ def find_evil_route():
 
 
 @app.route('/find-evil/status/<job_id>', methods=['GET'])
+@_require_auth
 def find_evil_status(job_id):
     """
     GET /find-evil/status/<job_id>
@@ -3700,6 +3912,7 @@ def find_evil_status(job_id):
 
 
 @app.route('/find-evil', methods=['GET'])
+@_require_auth
 def find_evil_info():
     """GET /find-evil — Return usage info and supported playbooks"""
     playbook_list = []
