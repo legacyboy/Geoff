@@ -816,7 +816,7 @@ class SpecialistOrchestrator:
             'sleuthkit': {
                 'available': self.sleuthkit.tools_available,
                 'functions': ['analyze_partition_table', 'analyze_filesystem',
-                             'list_files', 'extract_file', 'list_inodes', 'get_file_info']
+                             'list_files', 'extract_file', 'list_inodes', 'get_file_info', 'list_deleted']
             },
             'volatility': {
                 'available': self.volatility.volatility_path is not None,

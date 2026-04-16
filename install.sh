@@ -120,6 +120,14 @@ else
 fi
 ok "Code ready at ${INSTALL_DIR}"
 
+# ── Create evidence directories ────────────────────────────────────────────
+info "Creating evidence storage directories..."
+sudo mkdir -p /home/sansforensics/evidence-storage/evidence
+sudo mkdir -p /home/sansforensics/evidence-storage/cases
+sudo chown -R sansforensics:sansforensics /home/sansforensics/evidence-storage 2>/dev/null || \
+    sudo chown -R "$(whoami):$(id -gn)" /home/sansforensics/evidence-storage 2>/dev/null || true
+ok "Evidence directories created"
+
 # ── Python virtual environment ─────────────────────────────────────────────
 info "Setting up Python environment..."
 python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || sudo python3 -m venv "${INSTALL_DIR}/venv" || sudo python3 -m venv "${INSTALL_DIR}/venv" || {

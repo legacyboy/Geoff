@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""DEPRECATED — This worker is superseded by the integrated find_evil() pipeline in geoff_integrated.py.
+All forensic analysis now uses ExtendedOrchestrator with behavioral analysis and timeline modules.
+See: geoff_integrated.py::find_evil()"""
+import warnings
+warnings.warn("geoff_investigation_worker.py is deprecated. Use find_evil() from geoff_integrated.py.", DeprecationWarning, stacklevel=2)
 """
 G.E.O.F.F. Investigation Worker
 Background process for long-running forensic investigations

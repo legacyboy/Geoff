@@ -65,13 +65,18 @@ _UNSAFE_PATH_CHARS = re.compile(r'[;&|`$(){}[\]<>\\!\n\r\t]')
 
 
 def _validate_evidence_path(path: str) -> str:
-    """Validate an evidence path to prevent command injection.
+    """Validate an evidence path to prevent command injection and path traversal.
 
-    Raises ValueError if the path contains shell metacharacters.
-    Returns the path unchanged if it is safe.
+    Raises ValueError if the path contains shell metacharacters or resolves
+    outside of allowed base directories.
     """
     if _UNSAFE_PATH_CHARS.search(path):
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
+    # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
+    real = os.path.realpath(path)
+    allowed_bases = [EVIDENCE_BASE_DIR, CASES_WORK_DIR]
+    if not any(real.startswith(base + os.sep) or real == base for base in allowed_bases if base):
+        raise ValueError(f"Evidence path resolves outside allowed directories: {path!r} → {real}")
     return path
 
 
@@ -179,9 +184,27 @@ class FindingsWriter:
             return self._index.get(step_key) == "completed"
 
     def all_records(self) -> list:
-        """Return all in-memory records (up to max_in_memory)."""
+        """Return all records, reading from JSONL if in-memory cap was hit."""
         with self._lock:
-            return list(self._records)
+            if len(self._records) < self._max:
+                return list(self._records)
+        # Cap was hit — read all records from JSONL for complete results
+        records = []
+        try:
+            if self._path.exists():
+                with open(self._path, 'r') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line:
+                            try:
+                                records.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+        except OSError as e:
+            print(f"[FindingsWriter] Failed to read JSONL {self._path}: {e}", flush=True)
+            with self._lock:
+                return list(self._records)
+        return records
 
 def _sanitize_path(path_str: str, allowed_base: str = "") -> str:
     """Sanitize file paths to prevent directory traversal attacks."""
@@ -881,30 +904,35 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     (case_work_path / "reports").mkdir(exist_ok=True)
     (case_work_path / "timeline").mkdir(exist_ok=True)
 
-    # Spawn background worker
-    worker_cmd = [
-        'python3',
-        '/home/sansforensics/geoff_worker.py',
-        case_name,
-        str(case_work_path)
-    ]
-    if evidence_path:
-        worker_cmd.append(evidence_path)
+    # Spawn find_evil pipeline in a background thread
+    fe_job_id = f"inv-{case_name}-{uuid.uuid4().hex[:8]}"
+    _find_evil_jobs[fe_job_id] = {
+        "status": "starting",
+        "case_name": case_name,
+        "evidence_path": evidence_path,
+        "work_dir": str(case_work_path),
+        "started_at": datetime.now().isoformat(),
+        "progress_pct": 0,
+    }
 
-    subprocess.Popen(
-        worker_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True
-    )
+    def _run_find_evil_bg():
+        try:
+            find_evil(evidence_path, job_id=fe_job_id)
+        except Exception as e:
+            _find_evil_jobs[fe_job_id]["status"] = "error"
+            _find_evil_jobs[fe_job_id]["error"] = str(e)
+
+    bg_thread = threading.Thread(target=_run_find_evil_bg, daemon=True)
+    bg_thread.start()
 
     return {
         "status": "started",
         "case": case_name,
         "work_directory": str(case_work_path),
+        "job_id": fe_job_id,
         "message": f"Investigation initiated for case: {case_name}",
-        "progress_file": str(case_work_path / "investigation_status.json"),
-        "note": "Background investigation running. Progress updates every 10 seconds."
+        "find_evil_status": f"/find-evil/status/{fe_job_id}",
+        "note": "Background investigation running via find_evil pipeline"
     }
 
 
@@ -1530,6 +1558,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     """
     start_time = time.time()
     evidence_path = Path(evidence_dir)
+
+    # Initialize variables to None early for proper None checks
+    device_map = None
+    user_map = None
+    correlated_users = None
+    all_behavioral_flags = None
+    confidence_modifiers = None
+    super_timeline_path = None
 
     if not evidence_path.exists():
         return {
@@ -2503,15 +2539,15 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "steps_needs_review": needs_review_count,
         "findings_detail": findings_writer.all_records(),
         "findings_jsonl": str(findings_writer._path),
-        "user_activity_summary": correlated_users if 'correlated_users' in dir() else {},
-        "device_map": device_map if 'device_map' in dir() else {},
-        "user_map": user_map if 'user_map' in dir() else {},
-        "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if 'all_behavioral_flags' in dir() else {},
+        "user_activity_summary": correlated_users if correlated_users is not None else {},
+        "device_map": device_map if device_map is not None else {},
+        "user_map": user_map if user_map is not None else {},
+        "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if all_behavioral_flags is not None else {},
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
         "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
-        "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
+        "confidence_modifiers": confidence_modifiers if confidence_modifiers is not None else [],
         "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
@@ -2548,11 +2584,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         narrator = NarrativeReportGenerator(call_llm_func=call_llm)
         narrative_path = narrator.generate(
             report_json=report,
-            device_map=device_map if 'device_map' in dir() else {},
-            user_map=user_map if 'user_map' in dir() else {},
-            super_timeline_path=str(super_timeline_path) if 'super_timeline_path' in dir() and super_timeline_path else "",
-            correlated_users=correlated_users if 'correlated_users' in dir() else {},
-            behavioral_flags=all_behavioral_flags if 'all_behavioral_flags' in dir() else {},
+            device_map=device_map if device_map is not None else {},
+            user_map=user_map if user_map is not None else {},
+            super_timeline_path=str(super_timeline_path) if super_timeline_path is not None and super_timeline_path else "",
+            correlated_users=correlated_users if correlated_users is not None else {},
+            behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
             case_work_dir=case_work_dir,
         )
         report["narrative_report_path"] = str(narrative_path)
@@ -2594,7 +2630,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 # HTML Template (with Find Evil tab)
 # ---------------------------------------------------------------------------
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -3940,15 +3976,29 @@ def critic_summary(investigation_id):
 @app.route('/investigation/status/<case_name>', methods=['GET'])
 @_require_auth
 def get_investigation_status(case_name):
-    """Get status of background investigation for polling"""
+    """Get status of background investigation via find_evil pipeline"""
     try:
-        status_file = Path(CASES_WORK_DIR) / case_name / "investigation_status.json"
-        if status_file.exists():
-            with open(status_file) as f:
-                status = json.load(f)
-            return jsonify(status)
-        else:
-            return jsonify({'status': 'not_found', 'case': case_name}), 404
+        # Check active find_evil jobs for this case
+        for job_id, job in _find_evil_jobs.items():
+            if case_name in job_id or job.get('case_name') == case_name:
+                return jsonify({
+                    'status': job.get('status', 'pending'),
+                    'case': case_name,
+                    'job_id': job_id,
+                    'progress_pct': job.get('progress_pct', 0),
+                    'current_playbook': job.get('current_playbook'),
+                    'current_step': job.get('current_step'),
+                })
+        # Check for completed investigation in case directory
+        case_dir = Path(CASES_WORK_DIR)
+        report_file = None
+        for d in sorted(case_dir.glob(f"{case_name}*")):
+            candidate = d / "reports" / "find_evil_report.json"
+            if candidate.exists():
+                report_file = candidate
+        if report_file:
+            return jsonify({'status': 'completed', 'case': case_name, 'report': str(report_file)})
+        return jsonify({'status': 'not_found', 'case': case_name}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
