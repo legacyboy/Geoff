@@ -55,13 +55,39 @@ def check_geoff():
         return False
 
 
+GEOFF_PIDFILE = os.path.join(GEOFF_DIR, "geoff.pid")
+
+
+def _kill_geoff_by_pid():
+    """Kill the Geoff process recorded in the pidfile, if available."""
+    try:
+        pid = int(Path(GEOFF_PIDFILE).read_text().strip())
+        # Try graceful SIGTERM first, then SIGKILL only if still running
+        subprocess.run(["kill", "-TERM", str(pid)], capture_output=True)
+        time.sleep(2)
+        subprocess.run(["kill", "-0", str(pid)], capture_output=True)
+        result = subprocess.run(["kill", "-0", str(pid)], capture_output=True)
+        if result.returncode == 0:
+            subprocess.run(["kill", "-KILL", str(pid)], capture_output=True)
+    except (FileNotFoundError, ValueError, OSError):
+        # Pidfile missing or stale — fall back to targeted pattern match using
+        # the exact script path to avoid hitting unrelated processes.
+        subprocess.run(
+            ["pkill", "-TERM", "-f", GEOFF_ENTRY],
+            capture_output=True,
+        )
+        time.sleep(2)
+        subprocess.run(
+            ["pkill", "-KILL", "-f", GEOFF_ENTRY],
+            capture_output=True,
+        )
+
+
 def restart_geoff():
     """Restart Geoff service using the venv python and .env config."""
     print(f"[{datetime.now()}] Restarting Geoff...")
 
-    # Kill any existing Geoff processes
-    subprocess.run(["pkill", "-9", "-f", "geoff_integrated.py"], capture_output=True)
-    time.sleep(2)
+    _kill_geoff_by_pid()
 
     # Build environment: system env + .env values
     env = dict(os.environ)
@@ -70,26 +96,35 @@ def restart_geoff():
     # Use venv python if available, fallback to system python3
     python_bin = GEOFF_VENV if Path(GEOFF_VENV).exists() else sys.executable
 
-    # Start Geoff
-    log_fh = open(GEOFF_LOG, "a")
-    subprocess.Popen(
-        [python_bin, GEOFF_ENTRY],
-        env=env,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        cwd=GEOFF_DIR,
-    )
+    # Start Geoff — keep log file handle open only for the duration of the call
+    try:
+        log_fh = open(GEOFF_LOG, "a")
+        proc = subprocess.Popen(
+            [python_bin, GEOFF_ENTRY],
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            cwd=GEOFF_DIR,
+        )
+        # Record PID for clean shutdown next time
+        try:
+            Path(GEOFF_PIDFILE).write_text(str(proc.pid))
+        except OSError:
+            pass
+    except OSError as exc:
+        print(f"[{datetime.now()}] Failed to start Geoff: {exc}")
+        return False
+    finally:
+        log_fh.close()
 
     # Wait for startup
     for _ in range(10):
         time.sleep(3)
         if check_geoff():
             print(f"[{datetime.now()}] Geoff restarted successfully")
-            log_fh.close()
             return True
 
     print(f"[{datetime.now()}] Failed to restart Geoff after 30s")
-    log_fh.close()
     return False
 
 

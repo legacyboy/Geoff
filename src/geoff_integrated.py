@@ -37,6 +37,7 @@ _state_lock = threading.Lock()
 import requests
 from datetime import datetime
 from pathlib import Path
+from functools import wraps
 from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 
@@ -58,6 +59,21 @@ from behavioral_analyzer import BehavioralAnalyzer
 # ---------------------------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------------------------
+
+# Shell metacharacters that could enable command injection via evidence paths
+_UNSAFE_PATH_CHARS = re.compile(r'[;&|`$(){}[\]<>\\!\n\r\t]')
+
+
+def _validate_evidence_path(path: str) -> str:
+    """Validate an evidence path to prevent command injection.
+
+    Raises ValueError if the path contains shell metacharacters.
+    Returns the path unchanged if it is safe.
+    """
+    if _UNSAFE_PATH_CHARS.search(path):
+        raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
+    return path
+
 
 def _hash_file(path):
     """Compute SHA-256 hash of a file for chain of custody."""
@@ -113,6 +129,59 @@ def _atomic_append(path, data):
 
 
 MAX_STDOUT_SIZE = 50 * 1024 * 1024  # 50MB — prevent memory blowup from tool output
+
+# Max findings to keep in-memory before logging a warning. Findings are always
+# written to a JSONL file on disk; this limit only governs the in-memory list
+# used for aggregation/reporting at the end of a job.
+_MAX_IN_MEMORY_FINDINGS = int(os.environ.get("GEOFF_MAX_FINDINGS", "50000"))
+
+
+class FindingsWriter:
+    """Write step-record findings to a JSONL file as they complete.
+
+    Keeps a compact in-memory index (step_key → status) for fast idempotency
+    checks, avoiding the need to scan the full findings list on every step.
+    The full finding dicts are flushed to disk immediately and optionally
+    accumulated in memory up to *max_in_memory* entries.
+    """
+
+    def __init__(self, jsonl_path: Path, max_in_memory: int = _MAX_IN_MEMORY_FINDINGS):
+        self._path = jsonl_path
+        self._max = max_in_memory
+        self._index: dict = {}   # step_key -> status
+        self._records: list = [] # in-memory accumulation (capped)
+        self._lock = threading.Lock()
+        # Ensure parent dir exists
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def append(self, record: dict) -> None:
+        step_key = record.get("step_key", "")
+        status = record.get("status", "")
+        with self._lock:
+            self._index[step_key] = status
+            if len(self._records) < self._max:
+                self._records.append(record)
+            elif len(self._records) == self._max:
+                print(
+                    f"[GEOFF] FindingsWriter: in-memory cap ({self._max}) reached; "
+                    "further findings written to disk only.",
+                    flush=True,
+                )
+        # Write to JSONL outside the lock to avoid blocking
+        try:
+            with open(self._path, "a") as fh:
+                fh.write(json.dumps(record, default=str) + "\n")
+        except OSError as exc:
+            print(f"[GEOFF] FindingsWriter: failed to write {self._path}: {exc}", flush=True)
+
+    def is_completed(self, step_key: str) -> bool:
+        with self._lock:
+            return self._index.get(step_key) == "completed"
+
+    def all_records(self) -> list:
+        """Return all in-memory records (up to max_in_memory)."""
+        with self._lock:
+            return list(self._records)
 
 def _sanitize_path(path_str: str, allowed_base: str = "") -> str:
     """Sanitize file paths to prevent directory traversal attacks."""
@@ -395,6 +464,33 @@ app = Flask(__name__)
 CORS(app)
 
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
+
+# Optional API key for protecting all non-UI endpoints.
+# Set GEOFF_API_KEY in the environment or .env to enable authentication.
+# When unset, auth is disabled (backwards-compatible default).
+GEOFF_API_KEY = os.environ.get('GEOFF_API_KEY', '')
+
+
+def _require_auth(f):
+    """Decorator that enforces API key authentication when GEOFF_API_KEY is set.
+
+    Accepts the key via:
+      - X-API-Key: <key>  header
+      - Authorization: Bearer <key>  header
+    """
+    @wraps(f)
+    def _decorated(*args, **kwargs):
+        if not GEOFF_API_KEY:
+            return f(*args, **kwargs)
+        provided = (
+            request.headers.get('X-API-Key', '')
+            or request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
+        )
+        if not provided or provided != GEOFF_API_KEY:
+            return jsonify({'error': 'Unauthorized — provide a valid X-API-Key header'}), 401
+        return f(*args, **kwargs)
+    return _decorated
+
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', "http://localhost:11434")
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
@@ -777,7 +873,6 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
         safe_run(['git', 'init'], cwd=case_work_path, timeout=30)
         safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_path, timeout=10)
         safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_path, timeout=10)
-        safe_run(['git', 'config', '--global', '--add', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
         safe_run(['git', 'config', '--local', 'safe.directory', str(case_work_path)], cwd=case_work_path, timeout=10)
 
     # Create subdirectories
@@ -1626,7 +1721,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Run PB-SIFT-000 (Triage) first to get the execution plan.
     # Then execute ONLY the playbooks listed in that plan.
-    findings = []
+    findings_writer = FindingsWriter(case_work_dir / "findings.jsonl")
     critic_results = []
     playbooks_run = []
     steps_completed = 0
@@ -1891,6 +1986,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 for item in items:
                     if _abort:
                         break
+                    # Validate evidence path before substitution to prevent command injection
+                    try:
+                        _validate_evidence_path(item)
+                    except ValueError as path_err:
+                        _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
+                        continue
                     item_stem = Path(item).stem
                     for module, function, raw_params in step_templates:
                         _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
@@ -1937,7 +2038,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         }
 
                         # Idempotency: skip if already completed with same inputs
-                        if any(s.get("step_key") == step_key and s.get("status") == "completed" for s in findings):
+                        if findings_writer.is_completed(step_key):
                             _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
                             continue
 
@@ -1964,7 +2065,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         "status": "skipped", "error": f"dependency {dep} not met",
                                         "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
                                     }
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
 
@@ -2015,7 +2116,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                     steps_failed += 1
                                     _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
                                 elif result["code"] < 0:
@@ -2024,7 +2125,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
                                     steps_failed += 1
                                     _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
-                                    findings.append(step_record)
+                                    findings_writer.append(step_record)
                                     pb_findings.append(step_record)
                                     continue
                         
@@ -2062,7 +2163,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 any_step_ran = True
                                 _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
 
-                            # Critic validation
+                            # Critic validation — mandatory: failures are surfaced as
+                            # needs_review flags rather than silently ignored.
                             try:
                                 critic_val = geoff_critic.validate_tool_output(
                                     tool_name=f"{module}.{function}",
@@ -2086,19 +2188,24 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         format_val = geoff_critic.validate_ioc_formats(result_iocs)
                                         if format_val.get("format_issue_count", 0) > 0:
                                             step_record["ioc_format_issues"] = format_val["format_issues"]
-                                except Exception:
-                                    pass  # Non-critical
+                                except Exception as ioc_exc:
+                                    _fe_log(job_id, f"  ⚠ IOC format validation error for {module}.{function}: {ioc_exc}")
+                                    step_record["ioc_format_validation_error"] = str(ioc_exc)
                                 # Write validation to case validations/ directory
                                 try:
                                     val_dir = case_work_dir / "validations"
                                     val_dir.mkdir(exist_ok=True)
                                     val_file = val_dir / f"{step_key.replace(':', '_')}.json"
                                     _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
-                                except Exception:
-                                    pass  # Non-critical
+                                except OSError as write_exc:
+                                    _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
                             except Exception as ce:
-                                _fe_log_with_exception(job_id, f"  ✗ Critic validation for {module}.{function}", ce)
+                                # Critic unavailable or errored — mark step for human review
+                                # rather than silently accepting unvalidated findings.
+                                _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
                                 step_record["critic_error"] = str(ce)
+                                step_record["needs_review"] = True
+                                _fe_log(job_id, f"  ⚠ {module}.{function} marked needs_review (critic unavailable)")
                         except Exception as e:
                             _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
                             step_record["status"] = "failed"
@@ -2106,7 +2213,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             steps_failed += 1
 
                         step_record["completed_at"] = datetime.now().isoformat()
-                        findings.append(step_record)
+                        findings_writer.append(step_record)
                         pb_findings.append(step_record)
 
                         # CONTINUE_ON_FAILURE enforcement
@@ -2160,7 +2267,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                 _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
                 # Downgrade all findings across ALL playbooks and mark compromised
-                for f in findings:
+                for f in findings_writer.all_records():
                     if isinstance(f.get("result"), dict):
                         confidence = f["result"].get("confidence", "")
                         if confidence == "CONFIRMED":
@@ -2225,7 +2332,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     if params_resolved is None:
                                         params_resolved = params
                                     result = orchestrator.run_playbook_step(playbook_id, {"module": module, "function": function, "params": params_resolved})
-                                    findings.append({
+                                    findings_writer.append({
                                         "playbook": playbook_id,
                                         "module": module,
                                         "function": function,
@@ -2267,8 +2374,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     try:
         behavioral = BehavioralAnalyzer()
         all_behavioral_flags = {}
+        _all_findings = findings_writer.all_records()
         for dev_id in device_map:
-            dev_findings = [f for f in findings if f.get("device_id") == dev_id]
+            dev_findings = [f for f in _all_findings if f.get("device_id") == dev_id]
             dev_events = [e for e in super_timeline_events if e.get("device_id") == dev_id]
             flags = behavioral.analyze(
                 device_id=dev_id,
@@ -2296,7 +2404,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         correlated_users = correlator.correlate(
             device_map=device_map,
             user_map=user_map,
-            findings=findings,
+            findings=findings_writer.all_records(),
             timeline_events=super_timeline_events,
         )
         _fe_log(job_id, f"Correlated {len(correlated_users)} users across devices")
@@ -2328,7 +2436,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         evil_found = True
 
     # From specialist results
-    for f in findings:
+    for f in findings_writer.all_records():
         result = f.get("result", {})
         if not isinstance(result, dict):
             continue
@@ -2359,6 +2467,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
     critic_total = len(critic_results)
     critic_pct = (critic_approved / critic_total * 100) if critic_total > 0 else 100.0
+    needs_review_count = sum(1 for f in findings_writer.all_records() if f.get("needs_review"))
 
     elapsed = time.time() - start_time
 
@@ -2373,22 +2482,24 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "indicator_hits": indicator_hits,
         "playbooks_run": playbooks_run,
         "playbooks_total": total_pb,
-        "specialist_steps_executed": len(findings),
+        "specialist_steps_executed": steps_completed + steps_failed + steps_skipped,
         "steps_completed": steps_completed,
         "steps_failed": steps_failed,
         "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),
-        "findings_detail": findings,
+        "steps_needs_review": needs_review_count,
+        "findings_detail": findings_writer.all_records(),
+        "findings_jsonl": str(findings_writer._path),
         "user_activity_summary": correlated_users if 'correlated_users' in dir() else {},
         "device_map": device_map if 'device_map' in dir() else {},
         "user_map": user_map if 'user_map' in dir() else {},
         "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if 'all_behavioral_flags' in dir() else {},
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
-        "failures": [f for f in findings if f.get("status") == "failed"],
+        "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
         "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
-        "llm_analysis": next((f["result"] for f in findings if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
+        "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
     # ------------------------------------------------------------------
@@ -2406,9 +2517,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 "completed_at": f.get("completed_at"),
                 "result": f.get("result", {}),
             }
-            for i, f in enumerate(findings)
+            for i, f in enumerate(findings_writer.all_records())
         ],
-        "current_step": len(findings),
+        "current_step": steps_completed + steps_failed + steps_skipped,
     }
 
     try:
@@ -2476,6 +2587,7 @@ HTML_TEMPLATE = """
 <head>
     <title>Geoff DFIR</title>
     <meta charset="UTF-8">
+    <!-- GEOFF_API_KEY_META -->
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { 
@@ -2936,6 +3048,15 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
     </div>
     
     <script>
+        // Authenticated fetch — adds X-API-Key header when the server set one
+        const _geoffApiKey = document.querySelector('meta[name="geoff-api-key"]')?.content || '';
+        function authFetch(url, opts = {}) {
+            if (_geoffApiKey) {
+                opts.headers = Object.assign({}, opts.headers || {}, {'X-API-Key': _geoffApiKey});
+            }
+            return fetch(url, opts);
+        }
+
         function showTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
@@ -2971,7 +3092,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             addMessage('Looking...', 'system');
             
             try {
-                const res = await fetch('/chat', {
+                const res = await authFetch('/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({message: text})
@@ -3004,7 +3125,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             
             const poll = async () => {
                 try {
-                    const res = await fetch('/investigation/status/' + caseName);
+                    const res = await authFetch('/investigation/status/' + caseName);
                     if(res.ok) {
                         const status = await res.json();
                         
@@ -3044,41 +3165,73 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
         async function loadEvidence() {
             const container = document.getElementById('evidence-content');
             container.innerHTML = '<div class="loading">Loading...</div>';
-            
+
             try {
-                const res = await fetch('/cases');
+                const res = await authFetch('/cases');
                 const data = await res.json();
                 const cases = data.cases || {};
-                
-                if(Object.keys(cases).length === 0) {
-                    container.innerHTML = '<div class="loading">No cases found.</div>';
+
+                container.innerHTML = '';
+
+                if (Object.keys(cases).length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'loading';
+                    empty.textContent = 'No cases found.';
+                    container.appendChild(empty);
                     return;
                 }
-                
-                let html = '<div class="case-list">';
-                for(const [caseName, files] of Object.entries(cases)) {
-                    html += '<div class="case-card">';
-                    html += '<div class="case-header">';
-                    html += '<span class="case-name">📁 ' + caseName + '</span>';
-                    html += '<span class="case-count">' + files.length + ' items</span>';
-                    html += '</div>';
-                    html += '<div class="case-files">';
-                    if(files.length === 0) {
-                        html += '<div class="file-item">Empty case</div>';
+
+                const list = document.createElement('div');
+                list.className = 'case-list';
+
+                for (const [caseName, files] of Object.entries(cases)) {
+                    const card = document.createElement('div');
+                    card.className = 'case-card';
+
+                    const header = document.createElement('div');
+                    header.className = 'case-header';
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'case-name';
+                    nameSpan.textContent = '\uD83D\uDCC1 ' + caseName;
+
+                    const countSpan = document.createElement('span');
+                    countSpan.className = 'case-count';
+                    countSpan.textContent = files.length + ' items';
+
+                    header.appendChild(nameSpan);
+                    header.appendChild(countSpan);
+
+                    const filesDiv = document.createElement('div');
+                    filesDiv.className = 'case-files';
+
+                    if (files.length === 0) {
+                        const empty = document.createElement('div');
+                        empty.className = 'file-item';
+                        empty.textContent = 'Empty case';
+                        filesDiv.appendChild(empty);
                     } else {
                         files.forEach(f => {
                             const isDir = f.startsWith('[DIR]');
-                            const cls = isDir ? 'dir' : 'file';
-                            const display = isDir ? f.replace('[DIR] ', '') : f;
-                            html += '<div class="file-item ' + cls + '">' + display + '</div>';
+                            const item = document.createElement('div');
+                            item.className = 'file-item ' + (isDir ? 'dir' : 'file');
+                            item.textContent = isDir ? f.replace('[DIR] ', '') : f;
+                            filesDiv.appendChild(item);
                         });
                     }
-                    html += '</div></div>';
+
+                    card.appendChild(header);
+                    card.appendChild(filesDiv);
+                    list.appendChild(card);
                 }
-                html += '</div>';
-                container.innerHTML = html;
-            } catch(e) {
-                container.innerHTML = '<div class="loading">Error loading evidence: ' + e.message + '</div>';
+
+                container.appendChild(list);
+            } catch (e) {
+                container.innerHTML = '';
+                const err = document.createElement('div');
+                err.className = 'loading';
+                err.textContent = 'Error loading evidence: ' + e.message;
+                container.appendChild(err);
             }
         }
         
@@ -3104,7 +3257,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
             document.getElementById('fe-progress-fill').textContent = '0%';
 
             try {
-                const res = await fetch('/find-evil', {
+                const res = await authFetch('/find-evil', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ evidence_dir: evidenceDir || '' })
@@ -3137,7 +3290,7 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
             const poll = async () => {
                 try {
-                    const res = await fetch('/find-evil/status/' + jobId);
+                    const res = await authFetch('/find-evil/status/' + jobId);
                     if(res.ok) {
                         const status = await res.json();
                         const pct = status.progress_pct || 0;
@@ -3288,10 +3441,17 @@ Playbook library: 19 PB-SIFT investigation protocols (all run, no cherry-picking
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    # Inject the API key (if set) into a meta tag so the UI can authenticate
+    # its own fetch() calls without exposing the key in JS source.
+    key_meta = (
+        f'<meta name="geoff-api-key" content="{GEOFF_API_KEY}">'
+        if GEOFF_API_KEY else ''
+    )
+    return render_template_string(HTML_TEMPLATE.replace('<!-- GEOFF_API_KEY_META -->', key_meta))
 
 
 @app.route('/chat', methods=['POST'])
+@_require_auth
 def chat():
     """LLM-powered chat with tool detection"""
     user_msg = ''
@@ -3310,6 +3470,12 @@ def chat():
         if any(trigger in user_msg_lower for trigger in ingest_triggers):
             # Extract path if mentioned, otherwise use default
             evidence_dir = _extract_path_from_message(user_msg) or EVIDENCE_BASE_DIR
+
+            # Reject paths with shell metacharacters
+            try:
+                _validate_evidence_path(evidence_dir)
+            except ValueError as e:
+                return jsonify({'response': f"Evidence path rejected: {e}"})
 
             if not Path(evidence_dir).exists():
                 return jsonify({
@@ -3496,18 +3662,21 @@ def chat():
 
 
 @app.route('/cases', methods=['GET'])
+@_require_auth
 def list_cases():
     """Return ALL cases with ALL files"""
     return jsonify({'cases': get_all_cases()})
 
 
 @app.route('/tools', methods=['GET'])
+@_require_auth
 def list_tools():
     """Return available forensic tools"""
     return jsonify({'tools': get_available_tools_status()})
 
 
 @app.route('/run-tool', methods=['POST'])
+@_require_auth
 def run_tool():
     """Execute a forensic tool directly"""
     module = function = ''
@@ -3540,6 +3709,7 @@ def run_tool():
 
 
 @app.route('/critic/validate', methods=['POST'])
+@_require_auth
 def critic_validate():
     """Manually trigger critic validation"""
     try:
@@ -3567,6 +3737,7 @@ def critic_validate():
 
 
 @app.route('/critic/summary/<investigation_id>', methods=['GET'])
+@_require_auth
 def critic_summary(investigation_id):
     """Get validation summary for investigation"""
     try:
@@ -3577,6 +3748,7 @@ def critic_summary(investigation_id):
 
 
 @app.route('/investigation/status/<case_name>', methods=['GET'])
+@_require_auth
 def get_investigation_status(case_name):
     """Get status of background investigation for polling"""
     try:
@@ -3592,6 +3764,7 @@ def get_investigation_status(case_name):
 
 
 @app.route('/find-evil', methods=['POST'])
+@_require_auth
 def find_evil_route():
     """
     POST /find-evil
@@ -3610,6 +3783,12 @@ def find_evil_route():
     try:
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
+
+        # Reject paths containing shell metacharacters
+        try:
+            _validate_evidence_path(evidence_dir)
+        except ValueError as e:
+            return jsonify({"status": "error", "error": str(e)}), 400
 
         # Verify the directory exists before spawning a job
         if not Path(evidence_dir).exists():
@@ -3670,6 +3849,7 @@ def find_evil_route():
 
 
 @app.route('/find-evil/status/<job_id>', methods=['GET'])
+@_require_auth
 def find_evil_status(job_id):
     """
     GET /find-evil/status/<job_id>
@@ -3700,6 +3880,7 @@ def find_evil_status(job_id):
 
 
 @app.route('/find-evil', methods=['GET'])
+@_require_auth
 def find_evil_info():
     """GET /find-evil — Return usage info and supported playbooks"""
     playbook_list = []
