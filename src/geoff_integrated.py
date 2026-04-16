@@ -3431,20 +3431,132 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 }
             }
 
-            // Narrative Report Link
-            if (report.narrative_report_path) {
-                html += '<p style="margin-top:12px;"><strong>📄 Narrative Report:</strong> ' + report.narrative_report_path + '</p>';
-            }
-
             if (report.case_work_dir) {
-                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Report: ' + report.case_work_dir + '/reports/find_evil_report.json</p>';
+                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Case: ' + report.case_work_dir + '</p>';
             }
 
             html += '</div>';
+
+            // Full narrative report section (fetched separately)
+            html += '<div id="fe-report-section" style="margin-top:16px;">';
+            if (report.narrative_report_path) {
+                const caseName = (report.title || '').replace('Find Evil Report \u2014 ', '');
+                html += '<button id="fe-report-btn" onclick="loadNarrativeReport(\'' + _escAttr(caseName) + '\')" '
+                      + 'style="background:#1f6feb;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:0.9rem;">'
+                      + '\u2139\ufe0f View Full Investigation Report</button>';
+                html += '<div id="fe-report-body" style="display:none;margin-top:16px;"></div>';
+            }
+            html += '</div>';
+
             area.innerHTML = html;
             // Scroll the unified output so results are visible
             const out = document.getElementById('fe-output');
             out.scrollTop = out.scrollHeight;
+        }
+
+        function _escAttr(s) {
+            return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        }
+
+        // Minimal markdown-to-HTML renderer for the narrative report
+        function _md2html(md) {
+            const lines = md.split('\n');
+            let html = '';
+            let inList = false;
+            let inTable = false;
+            for (let i = 0; i < lines.length; i++) {
+                let ln = lines[i];
+                // Close open structures on blank line
+                if (ln.trim() === '') {
+                    if (inList)  { html += '</ul>\n'; inList = false; }
+                    if (inTable) { html += '</table>\n'; inTable = false; }
+                    html += '<br>';
+                    continue;
+                }
+                // Horizontal rule
+                if (/^---+$/.test(ln.trim())) {
+                    if (inList)  { html += '</ul>\n'; inList = false; }
+                    if (inTable) { html += '</table>\n'; inTable = false; }
+                    html += '<hr style="border-color:#30363d;margin:12px 0;">\n';
+                    continue;
+                }
+                // Headers
+                const h3 = ln.match(/^### (.+)/);
+                const h2 = ln.match(/^## (.+)/);
+                const h1 = ln.match(/^# (.+)/);
+                if (h1) { html += '<h2 style="color:#58a6ff;margin:16px 0 8px;">' + _mdInline(h1[1]) + '</h2>\n'; continue; }
+                if (h2) { html += '<h3 style="color:#79c0ff;margin:14px 0 6px;">' + _mdInline(h2[1]) + '</h3>\n'; continue; }
+                if (h3) { html += '<h4 style="color:#adbac7;margin:12px 0 4px;">' + _mdInline(h3[1]) + '</h4>\n'; continue; }
+                // Table row
+                if (ln.startsWith('|')) {
+                    if (!inTable) { html += '<table style="border-collapse:collapse;width:100%;margin:6px 0;font-size:0.82rem;">'; inTable = true; }
+                    if (/^[|][-| ]+[|]$/.test(ln.trim())) continue; // separator row
+                    const cells = ln.split('|').slice(1,-1);
+                    html += '<tr>' + cells.map(c => '<td style="border:1px solid #30363d;padding:4px 8px;">' + _mdInline(c.trim()) + '</td>').join('') + '</tr>\n';
+                    continue;
+                }
+                if (inTable) { html += '</table>\n'; inTable = false; }
+                // List item
+                const li = ln.match(/^[-*] (.+)/);
+                if (li) {
+                    if (!inList) { html += '<ul style="margin:4px 0 4px 18px;padding:0;">'; inList = true; }
+                    html += '<li style="margin:2px 0;">' + _mdInline(li[1]) + '</li>\n';
+                    continue;
+                }
+                // Numbered list
+                const ol = ln.match(/^\\d+\\. (.+)/);
+                if (ol) {
+                    if (inList) { html += '</ul>\n'; inList = false; }
+                    html += '<p style="margin:2px 0;">' + _mdInline(ln) + '</p>\n';
+                    continue;
+                }
+                if (inList) { html += '</ul>\n'; inList = false; }
+                html += '<p style="margin:4px 0;">' + _mdInline(ln) + '</p>\n';
+            }
+            if (inList)  html += '</ul>\n';
+            if (inTable) html += '</table>\n';
+            return html;
+        }
+
+        function _mdInline(s) {
+            // Escape HTML first
+            s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            // Bold+italic, bold, italic, code, backtick
+            s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+            s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+            s = s.replace(/`([^`]+)`/g, '<code style="background:#161b22;padding:1px 5px;border-radius:3px;font-size:0.85em;">$1</code>');
+            return s;
+        }
+
+        async function loadNarrativeReport(caseName) {
+            const btn = document.getElementById('fe-report-btn');
+            const body = document.getElementById('fe-report-body');
+            if (!btn || !body) return;
+            btn.disabled = true;
+            btn.textContent = 'Loading report\u2026';
+            try {
+                const resp = await authFetch('/cases/' + encodeURIComponent(caseName) + '/report');
+                if (!resp.ok) {
+                    body.innerHTML = '<p style="color:#f85149;">Failed to load report (' + resp.status + ')</p>';
+                    body.style.display = 'block';
+                    return;
+                }
+                const md = await resp.text();
+                body.innerHTML = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;font-size:0.88rem;line-height:1.6;color:#c9d1d9;">'
+                               + _md2html(md) + '</div>';
+                body.style.display = 'block';
+                btn.textContent = '\u25b2 Hide Report';
+                btn.onclick = () => {
+                    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+                    btn.textContent = body.style.display === 'none' ? '\u2139\ufe0f View Full Investigation Report' : '\u25b2 Hide Report';
+                };
+            } catch(e) {
+                body.innerHTML = '<p style="color:#f85149;">Error: ' + e.message + '</p>';
+                body.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         function showFindEvilError(msg) {
@@ -3698,6 +3810,39 @@ def chat():
 def list_cases():
     """Return ALL cases with ALL files"""
     return jsonify({'cases': get_all_cases()})
+
+
+@app.route('/cases/<case_name>/report', methods=['GET'])
+@_require_auth
+def get_case_report(case_name):
+    """Return the narrative report markdown for a completed Find Evil case.
+
+    The case_name must consist only of alphanumeric characters, hyphens, and
+    underscores to prevent path traversal.
+    """
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', case_name)
+    if not safe_name:
+        return jsonify({'error': 'Invalid case name'}), 400
+
+    # Search CASES_WORK_DIR for a directory that starts with safe_name
+    cases_root = Path(CASES_WORK_DIR)
+    report_path = None
+    if cases_root.exists():
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if candidate.is_dir() and candidate.name.startswith(safe_name):
+                candidate_report = candidate / "reports" / "narrative_report.md"
+                if candidate_report.exists():
+                    report_path = candidate_report
+                    break
+
+    if not report_path:
+        return jsonify({'error': 'Report not found for this case'}), 404
+
+    try:
+        content = report_path.read_text(encoding='utf-8')
+        return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/tools', methods=['GET'])
