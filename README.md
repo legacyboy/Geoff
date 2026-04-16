@@ -48,7 +48,7 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              GEOFF Web Interface (Flask)                 │
-│  Find Evil • Chat • Evidence Browser • Narrative Report │
+│  Find Evil + Chat • Evidence Browser • Narrative Report  │
 └──────────────────────────┬──────────────────────────────┘
                            │
          ┌─────────────────┼─────────────────┐
@@ -187,6 +187,8 @@ Forensicator Output → Critic Validation → Git Commit
 
 **IOC Format Validation:** The critic validates extracted IOCs against expected formats — IP addresses, MD5/SHA1/SHA256 hashes, URLs, and email addresses.
 
+**Mandatory validation:** If the Critic is unavailable or errors, the step is flagged `needs_review: true` rather than silently accepted. The final report includes a `steps_needs_review` count. Steps are never silently passed without validation.
+
 ---
 
 ## Device Discovery
@@ -317,7 +319,13 @@ pip install -r requirements.txt
 export OLLAMA_URL="http://localhost:11434"
 export GEOFF_PROFILE=cloud
 
-# Or override per-agent
+# Optional: require API key on all endpoints
+export GEOFF_API_KEY="your-secret-key"
+
+# Optional: server port (default 8080)
+export GEOFF_PORT=8080
+
+# Or override individual models
 export GEOFF_MANAGER_MODEL="deepseek-v3.2:cloud"
 export GEOFF_FORENSICATOR_MODEL="qwen3-coder-next:cloud"
 export GEOFF_CRITIC_MODEL="qwen3.5:cloud"
@@ -328,37 +336,116 @@ python src/geoff_integrated.py
 ### Access
 
 - **Web UI**: http://localhost:8080
-- **Chat**: Conversational interface with tool execution + evidence ingestion
-- **Find Evil**: Autonomous investigation mode
-- **Narrative Report**: Human-readable investigation summary
+- **Console**: `python3 scripts/geoff_console.py`
+- **API**: REST endpoints at http://localhost:8080 (see below)
 
 ---
 
-## Usage
+## Interfaces
+
+### Web UI
+
+Two tabs:
+
+**Find Evil** (default) — the main investigation console. Contains:
+- Evidence directory input + **Run Find Evil** button at the top
+- Live progress bar (playbook / step / elapsed time) while a job runs
+- Unified scrollable output: chat message bubbles + streaming step-by-step log + results card
+- Chat input pinned at the bottom — ask questions or trigger investigations in natural language
+
+**Evidence** — browse all cases and their files.
+
+Chat and Find Evil share the same streaming output. Whether you click the button or type `"analyze /cases/incident42"` in the chat box, you get the same live log.
+
+### Console UI
+
+A terminal REPL with identical functionality — no browser needed:
+
+```bash
+python3 scripts/geoff_console.py
+python3 scripts/geoff_console.py --server http://10.0.0.5:8080 --key myapikey
+```
+
+Auto-loads `GEOFF_PORT` and `GEOFF_API_KEY` from `.env`.
+
+```
+geoff> analyze /cases/laptop.E01
+  ▶ Starting investigation on /cases/laptop.E01
+  Job: fe-a3b9c1
+
+[████████░░░░░░░░░░░░░░░░░░░░░░] 27%  PB-SIFT-001  >  fls_list_files  42s
+14:32:01  ▶ PB-SIFT-000: Triage Prioritization
+14:32:03  ✓ inventory complete — 1 disk, 0 memory
+14:32:05  ✗ fls_list_files failed — tool not found
+
+geoff> /cases
+geoff> /find-evil /mnt/evidence
+geoff> /status fe-a3b9c1      # reconnect to a running job
+geoff> /quit
+```
+
+Commands: `/find-evil [path]` · `/cases` · `/status <job_id>` · `/help` · `/quit`  
+Ctrl+C stops polling the current job without exiting. `NO_COLOR=1` disables ANSI output.
+
+### API
 
 **Find Evil (Autonomous):**
-```
+```bash
 curl -X POST http://localhost:8080/find-evil \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: yourkey' \
   -d '{"evidence_dir": "/path/to/evidence"}'
+# → { "job_id": "fe-abc123", "status": "running" }
+
+curl http://localhost:8080/find-evil/status/fe-abc123 \
+  -H 'X-API-Key: yourkey'
 ```
 
-**Chat Commands:**
-```
-"Start processing /cases/incident42"
-"Run mmls on the narcos disk image"
-"Extract strings from the malware sample"
-"Show me the timeline for this incident"
+**Chat:**
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: yourkey' \
+  -d '{"message": "Start processing /cases/incident42"}'
 ```
 
 **Geoff will:**
 1. Detect the request (tool execution or investigation)
 2. Execute via the appropriate specialist
-3. Validate with Critic
+3. Validate with Critic (marks `needs_review` if Critic unavailable)
 4. Run behavioral analysis
 5. Build super timeline
 6. Generate narrative report
 7. Commit everything to git
+
+---
+
+## Security
+
+### API Authentication
+
+Set `GEOFF_API_KEY` in `.env` to require authentication on all API endpoints:
+
+```bash
+echo "GEOFF_API_KEY=your-secret-key" >> .env
+```
+
+Pass the key via header:
+```bash
+curl -H 'X-API-Key: your-secret-key' http://localhost:8080/find-evil ...
+# or
+curl -H 'Authorization: Bearer your-secret-key' http://localhost:8080/find-evil ...
+```
+
+The web UI reads the key from a server-injected `<meta>` tag and includes it automatically in all fetch requests. When `GEOFF_API_KEY` is unset, authentication is disabled (backwards-compatible default for local use).
+
+### Evidence Path Validation
+
+All evidence paths are validated against a strict allowlist before use. Paths containing shell metacharacters (`;`, `&`, `|`, `` ` ``, `$`, `()`, etc.) are rejected to prevent command injection via maliciously named evidence files.
+
+### Memory Safety
+
+Findings are streamed to `findings.jsonl` on disk as each step completes rather than accumulated in memory. A compact in-memory index handles idempotency checks. This prevents OOM crashes on large evidence sets. The cap is configurable via `GEOFF_MAX_FINDINGS` (default: 50,000 in-memory entries).
 
 ---
 
@@ -369,8 +456,9 @@ case_work_dir/
 ├── device_map.json          # Device grouping + metadata
 ├── user_map.json            # User-to-device mapping
 ├── execution_plan.json      # Triage-generated plan
+├── findings.jsonl           # All step records, streamed to disk as they complete
 ├── output/
-│   ├── PB-SIFT-008.json     # Per-playbook findings
+│   ├── PB-SIFT-008.json     # Per-playbook findings (best-effort snapshot)
 │   └── PB-SIFT-012.json
 ├── validations/
 │   └── step_key.json        # Per-step critic results
