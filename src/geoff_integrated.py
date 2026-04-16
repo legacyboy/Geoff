@@ -1482,12 +1482,43 @@ def _scan_triage_indicators(inventory: dict) -> list:
         except (subprocess.TimeoutExpired, OSError, IOError):
             continue
     
+    # Phase 2b: Run strings against other_files (binaries without a disk image extension)
+    for fpath in inventory.get("other_files", []):
+        try:
+            file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0
+            if file_size > MAX_TRIAGE_STRINGS_SIZE:
+                continue
+            result = safe_run(
+                ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
+                timeout=60,
+            )
+            if result["code"] != 0:
+                continue
+            content_lower = result["stdout"].lower()
+            for category, keywords in TRIAGE_PATTERNS.items():
+                for kw in keywords:
+                    if len(kw) < MIN_PATTERN_LENGTH:
+                        continue
+                    if _is_indicator_match(content_lower, kw):
+                        hits.append({
+                            "category": category,
+                            "pattern": kw,
+                            "file": str(fpath),
+                            "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "confidence": "POSSIBLE",
+                            "source": "strings_scan",
+                        })
+                        break
+        except (subprocess.TimeoutExpired, OSError, IOError):
+            continue
+
     # Phase 3: Direct content scan for text-accessible evidence
+    # Include files with no extension (e.g. 'syslog', 'messages', 'secure')
     text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
                        ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
-                       ".ps1", ".vbs", ".js", ".html", ".php"}
+                       ".ps1", ".vbs", ".js", ".html", ".php", ""}
     max_read_bytes = 512 * 1024  # 512KB per file
-    
+
     for fpath in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + \
                 inventory.get("other_files", []):
         fpath_str = str(fpath)
@@ -2404,7 +2435,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         super_tl = SuperTimeline()
         super_timeline_path, super_timeline_events = super_tl.build(
             device_map=device_map,
-            findings=findings,
+            findings=findings_writer.all_records(),
             case_work_dir=case_work_dir,
             plaso_specialist=orchestrator.plaso if hasattr(orchestrator, 'plaso') else None,
             job_id=job_id,
@@ -2480,7 +2511,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             evil_found = True
         elif confidence == "POSSIBLE":
             possible_categories.add(hit["category"])
-    # Require 2+ distinct POSSIBLE categories to flag evil
+            # A single CRITICAL/HIGH indicator is sufficient evidence
+            if sev in ("CRITICAL", "HIGH"):
+                evil_found = True
+    # Also flag on 2+ distinct POSSIBLE categories of any severity
     if not evil_found and len(possible_categories) >= 2:
         evil_found = True
 
@@ -2527,6 +2561,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "os_type": os_type,
         "evil_found": evil_found,
         "severity": overall_severity,
+        "classification": classification,
+        "evidence_inventory": {
+            k: v for k, v in inventory.items()
+            if isinstance(v, list) and v
+        },
         "severity_distribution": severity_counts,
         "indicator_hits": indicator_hits,
         "playbooks_run": playbooks_run,
@@ -2617,7 +2656,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         'evidence_dir': evidence_dir,
         'evil_found': evil_found,
         'severity': overall_severity,
-        'steps_executed': len(findings),
+        'steps_executed': steps_completed + steps_failed + steps_skipped,
         'elapsed_seconds': round(elapsed, 1),
         'description': f"Find Evil run on {evidence_dir}",
     })
