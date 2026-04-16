@@ -600,6 +600,27 @@ class NarrativeReportGenerator:
                 _scan((result.get("stdout", "") or "")[:102400])
                 _scan((result.get("raw_output", "") or "")[:102400])
 
+        # Source 4: raw text evidence files (syslogs, evtx_logs, other_files)
+        # Capped at 512KB per file to limit memory use
+        inv = report_json.get("evidence_inventory", {})
+        text_ev = (
+            inv.get("syslogs", [])
+            + inv.get("evtx_logs", [])
+            + inv.get("other_files", [])
+        )
+        for fpath in text_ev:
+            try:
+                size = os.path.getsize(fpath)
+                if size > 5 * 1024 * 1024:
+                    continue
+                with open(fpath, "rb") as fh:
+                    raw = fh.read(524288)
+                # Replace null bytes with newlines so adjacent embedded strings
+                # don't merge when decoded (e.g. strings extracted from binaries)
+                _scan(raw.replace(b'\x00', b'\n').decode("utf-8", errors="ignore"))
+            except OSError:
+                continue
+
         return {k: sorted(v) for k, v in buckets.items() if v}
 
     # ----------------------------------------------------------------
