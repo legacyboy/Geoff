@@ -3224,7 +3224,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'case-name';
-                    nameSpan.textContent = '\uD83D\uDCC1 ' + caseName;
+                    nameSpan.textContent = '\U0001F4C1 ' + caseName;
 
                     const countSpan = document.createElement('span');
                     countSpan.className = 'case-count';
