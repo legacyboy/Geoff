@@ -72,6 +72,14 @@ def _validate_evidence_path(path: str) -> str:
     """
     if _UNSAFE_PATH_CHARS.search(path):
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
+    # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
+    real = os.path.realpath(path)
+    allowed_bases = [b for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR] if b]
+    # Only enforce the base-dir check when at least one allowed base is configured
+    if allowed_bases and not any(
+        real.startswith(base + os.sep) or real == base for base in allowed_bases
+    ):
+        raise ValueError(f"Evidence path resolves outside allowed directories: {path!r} → {real}")
     return path
 
 
@@ -179,7 +187,20 @@ class FindingsWriter:
             return self._index.get(step_key) == "completed"
 
     def all_records(self) -> list:
-        """Return all in-memory records (up to max_in_memory)."""
+        """Return all records. Falls back to disk when in-memory cap is exceeded."""
+        with self._lock:
+            cap_exceeded = len(self._records) >= self._max
+        if cap_exceeded and self._path.exists():
+            records = []
+            try:
+                with open(self._path) as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line:
+                            records.append(json.loads(line))
+                return records
+            except (OSError, json.JSONDecodeError):
+                pass
         with self._lock:
             return list(self._records)
 
@@ -1200,16 +1221,41 @@ PLAYBOOK_STEPS = {
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
         ],
     },
-    "PB-SIFT-017": {  # REMnux Malware Analysis
-        "disk_images": [
-            ("remnux", "die_scan", {"target_file": "{image}"}),
-            ("remnux", "clamav_scan", {"target_file": "{image}"}),
-        ],
-        "memory_dumps": [
-            ("remnux", "floss_strings", {"target_file": "{mem}"}),
-        ],
+    "PB-SIFT-017": {  # REMnux Malware Analysis — full 15-tool coverage
+        # General-purpose tools run on all binary evidence types
         "other_files": [
-            ("remnux", "exiftool_scan", {"target_file": "{file}"}),
+            ("remnux", "die_scan",       {"target_file": "{file}"}),
+            ("remnux", "exiftool_scan",  {"target_file": "{file}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{file}"}),
+            ("remnux", "ssdeep_hash",    {"target_file": "{file}"}),
+            ("remnux", "hashdeep_audit", {"target_file": "{file}"}),
+            ("remnux", "floss_strings",  {"target_file": "{file}"}),
+            ("remnux", "radare2_analyze",{"target_file": "{file}"}),
+            ("remnux", "peframe_scan",   {"target_file": "{file}"}),
+            ("remnux", "upx_unpack",     {"target_file": "{file}"}),
+            # Document/script analysis — specialists return clean errors for wrong types
+            ("remnux", "pdfid_scan",     {"target_file": "{file}"}),
+            ("remnux", "pdf_parser",     {"target_file": "{file}"}),
+            ("remnux", "oledump_scan",   {"target_file": "{file}"}),
+            ("remnux", "js_beautify",    {"target_file": "{file}"}),
+        ],
+        # Memory dumps — string extraction and AV scan
+        "memory_dumps": [
+            ("remnux", "floss_strings",  {"target_file": "{mem}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{mem}"}),
+            ("remnux", "ssdeep_hash",    {"target_file": "{mem}"}),
+        ],
+        # Disk images — AV scan and metadata
+        "disk_images": [
+            ("remnux", "die_scan",       {"target_file": "{image}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{image}"}),
+            ("remnux", "exiftool_scan",  {"target_file": "{image}"}),
+            ("remnux", "hashdeep_audit", {"target_file": "{image}"}),
+        ],
+        # Network captures — C2 infrastructure simulation check
+        "pcaps": [
+            ("remnux", "inetsim_check",  {"target_file": "{pcap}"}),
+            ("remnux", "fakedns_check",  {"target_file": "{pcap}"}),
         ],
     },
     "PB-SIFT-018": {  # Malware Analysis SOP
@@ -1557,6 +1603,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     device_map, user_map = device_disc.discover(evidence_path, inventory)
     _fe_log(job_id, f"Discovered {len(device_map)} devices, {len(user_map)} users")
 
+    # If no devices were resolved (log-only or standalone file evidence), synthesise
+    # a single "unknown" device so the per-device playbook loop always runs.
+    if not device_map:
+        all_evidence = (
+            inventory["disk_images"] + inventory["memory_dumps"] + inventory["pcaps"]
+            + inventory["evtx_logs"] + inventory["syslogs"] + inventory["registry_hives"]
+            + inventory["mobile_backups"] + inventory["other_files"]
+        )
+        device_map = {
+            "host-unknown": {
+                "device_id": "host-unknown",
+                "device_type": "unknown",
+                "owner": "unknown",
+                "os_type": "unknown",
+                "evidence_files": all_evidence,
+            }
+        }
+        _fe_log(job_id, "  No devices resolved — created synthetic host-unknown device")
+
     for dev_id, dev in device_map.items():
         _fe_log(job_id, f"  Device: {dev_id} ({dev.get('device_type', 'unknown')}) "
                         f"owner={dev.get('owner', 'unknown')} "
@@ -1806,18 +1871,27 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
 
-    # Add malware playbooks if suspicious binaries found
+    # Add malware playbooks when:
+    #   a) triage output flagged a suspicious binary keyword, OR
+    #   b) indicator_hits found anything evil (triage content/strings scan hit), OR
+    #   c) other_files are present (dropped binaries, scripts, docs to analyse)
     suspicious_binary_found = False
     for f in triage_findings:
         result_str = json.dumps(f.get("result", f.get("error", "")), default=str).lower()
         if any(kw in result_str for kw in ["malware", "suspicious", "malicious", "trojan", "backdoor", "ransomware"]):
             suspicious_binary_found = True
             break
-    if suspicious_binary_found:
+    malware_analysis_warranted = (
+        suspicious_binary_found
+        or len(indicator_hits) > 0
+        or len(inventory["other_files"]) > 0
+    )
+    if malware_analysis_warranted:
         execution_plan.extend(["PB-SIFT-017", "PB-SIFT-018"])
     else:
-        skipped_playbooks.append({"id": "PB-SIFT-017", "reason": "No suspicious binary surfaced during triage"})
-        skipped_playbooks.append({"id": "PB-SIFT-018", "reason": "No suspicious binary surfaced during triage"})
+        reason = "No suspicious binary, indicator hits, or standalone files found"
+        skipped_playbooks.append({"id": "PB-SIFT-017", "reason": reason})
+        skipped_playbooks.append({"id": "PB-SIFT-018", "reason": reason})
 
     # Timeline analysis — always run if disk images present (psort after log2timeline)
     if len(inventory["disk_images"]) > 0:
@@ -1890,7 +1964,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     elif "web_shell" in hit_categories or "initial_access" in hit_categories:
         classification = "External Breach"
         severity = "HIGH"
-    elif suspicious_binary_found:
+    elif malware_analysis_warranted:
         classification = "Malware"
         severity = "HIGH"
     elif "exfiltration" in hit_categories:
@@ -2222,92 +2296,92 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             # Break out of all loops
                             break
 
-        # Check if we broke out due to failure
-        if not CONTINUE_ON_FAILURE:
-            failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
-            if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings[-3:]):
-                break
-
-        # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
-        # retroactively downgrade ALL findings and mark them compromised.
-        # Uses word-boundary matching for single-word keywords to avoid false
-        # positives (e.g. "del" matching "model", "delete", "delivered").
-        if playbook_id == "PB-SIFT-012":
-            anti_forensics_keywords = [
-                "log clear", "event log clear", "timestomp",
-                "anti-forensic", "wevtutil", "sdelete",
-                "eraser", "bleachbit", "cipher /w", "fsutil",
-                "ccleaner", "secure delete",
-            ]
-            anti_forensics_hit = False
-            for step in pb_findings:
-                result = step.get("result", {})
-                if not isinstance(result, dict):
-                    continue
-                # Check structured anti_forensics_detected field first
-                if result.get("anti_forensics_detected"):
-                    anti_forensics_hit = True
+            # Check if we broke out due to failure
+            if not CONTINUE_ON_FAILURE:
+                failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
+                if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings_writer.all_records()[-3:]):
                     break
-                # String match with word boundaries for single words
-                result_str = json.dumps(result, default=str).lower()
-                for kw in anti_forensics_keywords:
-                    if " " in kw:
-                        # Multi-word: substring match is safe
-                        if kw in result_str:
-                            anti_forensics_hit = True
-                            break
-                    else:
-                        # Single-word: word boundary match to avoid false positives
-                        if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
-                            anti_forensics_hit = True
-                            break
+
+            # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
+            # retroactively downgrade ALL findings and mark them compromised.
+            # Uses word-boundary matching for single-word keywords to avoid false
+            # positives (e.g. "del" matching "model", "delete", "delivered").
+            if playbook_id == "PB-SIFT-012":
+                anti_forensics_keywords = [
+                    "log clear", "event log clear", "timestomp",
+                    "anti-forensic", "wevtutil", "sdelete",
+                    "eraser", "bleachbit", "cipher /w", "fsutil",
+                    "ccleaner", "secure delete",
+                ]
+                anti_forensics_hit = False
+                for step in pb_findings:
+                    result = step.get("result", {})
+                    if not isinstance(result, dict):
+                        continue
+                    # Check structured anti_forensics_detected field first
+                    if result.get("anti_forensics_detected"):
+                        anti_forensics_hit = True
+                        break
+                    # String match with word boundaries for single words
+                    result_str = json.dumps(result, default=str).lower()
+                    for kw in anti_forensics_keywords:
+                        if " " in kw:
+                            # Multi-word: substring match is safe
+                            if kw in result_str:
+                                anti_forensics_hit = True
+                                break
+                        else:
+                            # Single-word: word boundary match to avoid false positives
+                            if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
+                                anti_forensics_hit = True
+                                break
+                    if anti_forensics_hit:
+                        break
                 if anti_forensics_hit:
-                    break
-            if anti_forensics_hit:
-                confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
-                _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
-                # Downgrade all findings across ALL playbooks and mark compromised
-                for f in findings_writer.all_records():
-                    if isinstance(f.get("result"), dict):
-                        confidence = f["result"].get("confidence", "")
-                        if confidence == "CONFIRMED":
-                            f["result"]["confidence"] = "POSSIBLE"
-                        elif confidence == "POSSIBLE":
-                            f["result"]["confidence"] = "UNVERIFIED"
-                        # Mark all findings as potentially compromised
-                        if "compromised_by" not in f["result"]:
-                            f["result"]["compromised_by"] = []
-                        if "anti-forensics" not in f["result"]["compromised_by"]:
-                            f["result"]["compromised_by"].append("anti-forensics")
-                        f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
+                    confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                    _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                    # Downgrade all findings across ALL playbooks and mark compromised
+                    for f in findings_writer.all_records():
+                        if isinstance(f.get("result"), dict):
+                            confidence = f["result"].get("confidence", "")
+                            if confidence == "CONFIRMED":
+                                f["result"]["confidence"] = "POSSIBLE"
+                            elif confidence == "POSSIBLE":
+                                f["result"]["confidence"] = "UNVERIFIED"
+                            # Mark all findings as potentially compromised
+                            if "compromised_by" not in f["result"]:
+                                f["result"]["compromised_by"] = []
+                            if "anti-forensics" not in f["result"]["compromised_by"]:
+                                f["result"]["compromised_by"].append("anti-forensics")
+                            f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
 
-        playbooks_run.append({
-            "playbook_id": playbook_id,
-            "steps_attempted": len(pb_findings),
-            "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
-            "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
-            "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
-        })
+            playbooks_run.append({
+                "playbook_id": playbook_id,
+                "steps_attempted": len(pb_findings),
+                "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+                "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+                "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+            })
 
-        # Git commit after each playbook — part of transaction, not optional
-        try:
-            # Write playbook findings to output dir
-            pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-            # Compact large step results before writing
-            for step in pb_findings:
-                if isinstance(step.get("result"), dict):
-                    step["result"] = _compact_step_result(step["result"], case_work_dir)
-            _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
-            git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
-            if git_result["status"] == "failed":
-                _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
-                # In STRICT_MODE, treat git commit failure as step failure
+            # Git commit after each playbook — part of transaction, not optional
+            try:
+                # Write playbook findings to output dir
+                pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                # Compact large step results before writing
+                for step in pb_findings:
+                    if isinstance(step.get("result"), dict):
+                        step["result"] = _compact_step_result(step["result"], case_work_dir)
+                _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
+                git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+                if git_result["status"] == "failed":
+                    _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
+                    # In STRICT_MODE, treat git commit failure as step failure
+                    if STRICT_MODE:
+                        raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
+            except Exception as gce:
+                _fe_log(job_id, f"  git commit failed: {gce}")
                 if STRICT_MODE:
-                    raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
-        except Exception as gce:
-            _fe_log(job_id, f"  git commit failed: {gce}")
-            if STRICT_MODE:
-                raise
+                    raise
 
     # End of per-device playbook loop
     # Process unattributed evidence (PCAPs, logs not tied to a device)
