@@ -1801,52 +1801,71 @@ class ExtendedOrchestrator:
             'timestamp': datetime.now().isoformat(),
         }
 
+    @staticmethod
+    def _probe(binary: str) -> bool:
+        """Return True if binary is found in PATH."""
+        return subprocess.run(['which', binary], capture_output=True).returncode == 0
+
     def get_available_tools(self) -> Dict[str, Any]:
-        """List all available tools and functions – 100% coverage."""
+        """List all available tools with live availability probing."""
+
+        def avail(binaries: list) -> Dict[str, bool]:
+            return {b: self._probe(b) for b in binaries}
+
+        # Probe Python evtx library availability
+        evtx_available = False
+        try:
+            import importlib
+            evtx_available = importlib.util.find_spec('evtx') is not None
+        except Exception:
+            pass
+
         tools = {
             'sleuthkit': {
                 'category': 'Disk Forensics',
                 'functions': ['analyze_partition_table', 'analyze_filesystem',
                               'list_files', 'list_files_mactime', 'extract_file', 'list_inodes', 'get_file_info'],
-                'tools': ['mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat'],
+                'tool_availability': avail(['mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat']),
             },
             'volatility': {
                 'category': 'Memory Forensics',
                 'functions': ['process_list', 'network_scan', 'find_malware',
                               'scan_registry', 'dump_process'],
-                'tools': ['volatility3', 'vol.py'],
+                'tool_availability': avail(['vol.py', 'vol', 'volatility3']),
             },
             'strings': {
                 'category': 'IOC Extraction',
                 'functions': ['extract_strings'],
-                'tools': ['strings', 'floss'],
+                'tool_availability': avail(['strings', 'floss']),
             },
             'registry': {
                 'category': 'Windows Registry',
                 'functions': ['parse_hive', 'extract_user_assist', 'extract_shellbags',
                               'extract_mounted_devices', 'extract_usb_devices',
                               'extract_autoruns', 'extract_services', 'scan_all_hives'],
-                'tools': ['RegRipper (rip.pl)', 'Python-Registry'],
+                'tool_availability': avail(['perl']),
+                'notes': 'rip.pl (RegRipper) and Python-Registry are probed at runtime',
             },
             'plaso': {
                 'category': 'Timeline Analysis',
                 'functions': ['create_timeline', 'sort_timeline', 'analyze_storage'],
-                'tools': ['log2timeline.py', 'psort.py', 'pinfo.py'],
+                'tool_availability': avail(['log2timeline.py', 'psort.py', 'pinfo.py']),
             },
             'network': {
                 'category': 'Network Forensics',
                 'functions': ['analyze_pcap', 'extract_flows', 'extract_http'],
-                'tools': ['tshark', 'tcpflow', 'NetworkMiner'],
+                'tool_availability': avail(['tshark', 'tcpflow']),
             },
             'logs': {
                 'category': 'Log Analysis',
                 'functions': ['parse_evtx', 'parse_syslog'],
-                'tools': ['python-evtx', 'custom parsers'],
+                'tool_availability': {'python-evtx': evtx_available},
             },
             'mobile': {
                 'category': 'Mobile Forensics',
                 'functions': ['analyze_ios_backup', 'analyze_android'],
-                'tools': ['iLEAPP', 'ALEAPP'],
+                'tool_availability': {},
+                'notes': 'Pure-Python (plistlib, sqlite3) — no external binaries required',
             },
             'remnux': {
                 'category': 'REMnux Malware Analysis',
@@ -1856,11 +1875,22 @@ class ExtendedOrchestrator:
                     'radare2_analyze', 'floss_strings', 'clamav_scan',
                     'inetsim_check', 'fakedns_check',
                 ] if self.remnux else [],
-                'tools': ['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx',
-                          'pdfid', 'pdf-parser', 'oledump', 'js-beautify', 'radare2',
-                          'floss', 'clamscan', 'inetsim', 'fakedns'],
+                'tool_availability': avail([
+                    'die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx',
+                    'pdfid', 'pdf-parser.py', 'oledump.py', 'js-beautify', 'r2',
+                    'floss', 'clamscan', 'inetsim', 'fakedns',
+                ]),
             },
         }
+
+        # Annotate each module with an overall readiness flag
+        for module_info in tools.values():
+            availability = module_info.get('tool_availability', {})
+            if availability:
+                module_info['ready'] = any(availability.values())
+            else:
+                # No external binaries required (pure-Python)
+                module_info['ready'] = True
 
         return tools
 

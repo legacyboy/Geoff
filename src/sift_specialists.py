@@ -671,8 +671,20 @@ class VOLATILITY_Specialist:
 class STRINGS_Specialist:
     """Specialist for string extraction and IOC analysis with full parsing"""
 
+    def __init__(self):
+        result = subprocess.run(['which', 'strings'], capture_output=True)
+        self.strings_available = result.returncode == 0
+
     def extract_strings(self, file_path: str, min_length: int = 4, encoding: str = 'ascii') -> Dict[str, Any]:
         """Extract strings from binary with IOC categorization"""
+        if not self.strings_available:
+            return {
+                'tool': 'strings',
+                'file': file_path,
+                'status': 'error',
+                'error': 'strings binary not found in PATH — install binutils',
+                'timestamp': datetime.now().isoformat(),
+            }
         cmd = ['strings', '-n', str(min_length)]
         if encoding == 'unicode':
             cmd.extend(['-e', 'l'])
