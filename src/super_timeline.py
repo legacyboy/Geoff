@@ -17,6 +17,12 @@ from typing import Dict, List, Tuple, Optional, Any
 # Maximum events to hold in memory for behavioral analysis
 MAX_IN_MEMORY_EVENTS = 100_000
 
+# FILETIME epoch offset: 100ns intervals between 1601-01-01 and 1970-01-01
+FILETIME_EPOCH = 116444736000000000
+
+# Null timestamp sentinels to skip
+NULL_TIMESTAMPS = {0, -9223372036854775808, FILETIME_EPOCH}
+
 # Standard event schema
 EVENT_SCHEMA = {
     "timestamp": "",           # ISO-8601 UTC
@@ -268,6 +274,13 @@ class SuperTimeline:
             })
         return events
 
+    @staticmethod
+    def _is_null_plaso_timestamp(ts_val) -> bool:
+        """Check if a Plaso timestamp is null/invalid."""
+        if not ts_val or ts_val <= 0:
+            return True
+        return ts_val in NULL_TIMESTAMPS
+
     def _extract_plaso_events(self, case_work_dir: Path,
                                device_map: dict,
                                plaso_specialist: Any,
@@ -284,21 +297,30 @@ class SuperTimeline:
         produced it (matched by filename).
         """
         events = []
-        MAX_PLASO_EVENTS = int(os.environ.get("GEOFF_MAX_PLASO_EVENTS", "50000"))
+        try:
+            MAX_PLASO_EVENTS = int(os.environ.get("GEOFF_MAX_PLASO_EVENTS", "50000"))
+        except ValueError:
+            MAX_PLASO_EVENTS = 50000
         output_dir = case_work_dir / "output"
         timeline_dir = case_work_dir / "timeline"
 
         # --- Phase 1: Stream-parse existing .json_line files ---
-        json_line_files = list(output_dir.glob("*.json_line")) + \
-                          list(timeline_dir.glob("*.json_line"))
+        json_line_files = []
+        for d in [output_dir, timeline_dir]:
+            if d.exists():
+                json_line_files.extend(d.glob("*.json_line"))
 
         # Deduplicate by picking newest if multiple match same stem
         seen_stems = {}
         for jlf in json_line_files:
             stem = jlf.stem
-            if stem not in seen_stems or jlf.stat().st_mtime > seen_stems[stem].stat().st_mtime:
-                seen_stems[stem] = jlf
-        json_line_files = sorted(seen_stems.values())
+            try:
+                mtime = jlf.stat().st_mtime
+            except OSError:
+                continue
+            if stem not in seen_stems or mtime > seen_stems[stem][1]:
+                seen_stems[stem] = (jlf, mtime)
+        json_line_files = sorted([v[0] for v in seen_stems.values()])
 
         if json_line_files:
             for jlf in json_line_files:
@@ -321,12 +343,8 @@ class SuperTimeline:
                                 continue
 
                             # Skip null-timestamp events
-                            dt_obj = raw.get("date_time", {})
-                            ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
-                            FILETIME_EPOCH = 116444736000000000
-                            if (not ts_val or ts_val <= 0
-                                    or ts_val == -9223372036854775808
-                                    or ts_val == FILETIME_EPOCH):
+                            ts_val = raw.get("date_time", {}).get("timestamp", 0) if isinstance(raw.get("date_time"), dict) else 0
+                            if self._is_null_plaso_timestamp(ts_val):
                                 skipped += 1
                                 continue
 
@@ -381,18 +399,16 @@ class SuperTimeline:
                             raw = json.loads(line)
                         except (json.JSONDecodeError, ValueError):
                             continue
-                        dt_obj = raw.get("date_time", {})
-                        ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
-                        FILETIME_EPOCH = 116444736000000000
-                        if (not ts_val or ts_val <= 0
-                                or ts_val == -9223372036854775808
-                                or ts_val == FILETIME_EPOCH):
+                        ts_val = raw.get("date_time", {}).get("timestamp", 0) if isinstance(raw.get("date_time"), dict) else 0
+                        if self._is_null_plaso_timestamp(ts_val):
                             continue
                         event = self._normalize_plaso_event_v2(raw, device_id, device_map)
                         if event:
                             events.append(event)
                             count += 1
                 log_func(f"  Plaso: {count} events from safety-net psort of {plaso_path.name}")
+            else:
+                log_func(f"  psort succeeded but {json_line_out.name} not found — skipping")
 
         return events
 
@@ -414,13 +430,7 @@ class SuperTimeline:
         ts_val = dt_obj.get("timestamp", 0) if isinstance(dt_obj, dict) else 0
         class_name = dt_obj.get("__class_name", "") if isinstance(dt_obj, dict) else ""
 
-        # FILETIME epoch offset: 100ns intervals between 1601-01-01 and 1970-01-01
-        FILETIME_EPOCH = 116444736000000000
-
-        if not ts_val or ts_val <= 0 or ts_val == -9223372036854775808:
-            return None
-        # FILETIME epoch (zero-time) is effectively null
-        if ts_val == FILETIME_EPOCH:
+        if self._is_null_plaso_timestamp(ts_val):
             return None
 
         # Convert to ISO timestamp using __class_name when available,
@@ -565,7 +575,7 @@ class SuperTimeline:
             for ef in dev.get("evidence_files", []):
                 ef_stem = Path(ef).stem.lower()
                 # Strip .E01, .E02 segment suffixes
-                ef_stem = re.sub(r'\.(e)\d+$', '', ef_stem)
+                ef_stem = re.sub(r'\.[eE]\d+$', '', ef_stem)
                 if ef_stem in stem:
                     return dev_id
         # Fallback: first device
