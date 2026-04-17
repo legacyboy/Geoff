@@ -90,20 +90,34 @@ if [[ "$SKIP_DEPS" == false ]]; then
         # Tshark (needs non-interactive setup)
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
         sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
-        # Volatility3 - try apt first, fallback to pip
-        if ! command -v volatility3 &>/dev/null; then
+        # Volatility3 - only install if missing
+        # Check for 'vol' (the actual binary) in system and venv
+        vol_found=false
+        if command -v vol &>/dev/null; then
+            vol_found=true
+            info "Volatility3 already installed (vol: $(command -v vol))"
+        elif [ -f "${INSTALL_DIR}/venv/bin/vol" ]; then
+            vol_found=true
+            info "Volatility3 already in venv (${INSTALL_DIR}/venv/bin/vol)"
+        fi
+        if [ "$vol_found" = false ]; then
             info "Installing volatility3..."
-            sudo apt-get install -y -qq volatility3 2>/dev/null || true
-            if ! command -v volatility3 &>/dev/null; then
-                info "Volatility3 apt install failed, trying pip..."
-                sudo apt-get install -y -qq python3-pip 2>/dev/null || true
-                sudo pip3 install volatility3 --break-system-packages 2>/dev/null || \
-                    sudo pip3 install volatility3 2>/dev/null || true
-                if [ -d "${INSTALL_DIR}/venv" ]; then
-                    source "${INSTALL_DIR}/venv/bin/activate" 2>/dev/null && \
-                        pip install volatility3 2>/dev/null || true
-                    deactivate 2>/dev/null || true
-                fi
+            sudo apt-get install -y -qq python3-pip 2>/dev/null || true
+            sudo pip3 install volatility3 --break-system-packages 2>/dev/null || \
+                sudo pip3 install volatility3 2>/dev/null || true
+            # Also install into venv if it exists
+            if [ -d "${INSTALL_DIR}/venv" ]; then
+                source "${INSTALL_DIR}/venv/bin/activate" 2>/dev/null && \
+                    pip install volatility3 2>/dev/null || true
+                deactivate 2>/dev/null || true
+            fi
+            # Verify install
+            if command -v vol &>/dev/null; then
+                ok "Volatility3 installed (vol: $(command -v vol))"
+            elif [ -f "${INSTALL_DIR}/venv/bin/vol" ]; then
+                ok "Volatility3 installed in venv"
+            else
+                warn "Volatility3 installation may have failed — check manually"
             fi
         fi
         # Install REMnux distro for malware analysis tools
