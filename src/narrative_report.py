@@ -8,6 +8,7 @@ fallback if the LLM is unavailable.
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Callable, Optional
@@ -81,7 +82,15 @@ class NarrativeReportGenerator:
         sections["findings"] = self._generate_findings_section(
             behavioral_flags, report_json)
 
-        # 6. Conclusion & Recommendations
+        # 6. IOC Extraction
+        iocs = self._extract_iocs(report_json, behavioral_flags)
+        sections["iocs"] = iocs
+
+        # 7. Attack Chain Synthesis (the interpretation layer)
+        sections["attack_chain"] = self._synthesize_attack_chain(
+            report_json, behavioral_flags, correlated_users, iocs)
+
+        # 8. Conclusion & Recommendations
         sections["conclusion"] = self._generate_conclusion(
             report_json, behavioral_flags, correlated_users)
 
@@ -511,6 +520,328 @@ class NarrativeReportGenerator:
         return "\n".join(lines)
 
     # ----------------------------------------------------------------
+    # IOC Extraction
+    # ----------------------------------------------------------------
+
+    # Private IP ranges — excluded from extracted IOCs
+    _PRIV_IP = re.compile(
+        r'^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|0\.0\.0\.0|255\.)')
+
+    def _extract_iocs(self, report_json: dict,
+                      behavioral_flags: dict) -> Dict[str, List[str]]:
+        """Extract and deduplicate IOCs from all evidence sources.
+
+        Scans indicator_hits, behavioral flag evidence dicts, and tool stdout
+        for IPs (public only), file hashes, URLs, registry keys, Windows file
+        paths, and email addresses. Returns dict of sorted lists.
+        """
+        buckets: Dict[str, set] = {
+            "ip_addresses":  set(),
+            "file_hashes":   set(),
+            "urls":          set(),
+            "registry_keys": set(),
+            "file_paths":    set(),
+            "email_addresses": set(),
+        }
+
+        def _scan(text: str) -> None:
+            if not text or not isinstance(text, str):
+                return
+            # Public IPv4
+            for m in re.finditer(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b', text):
+                ip = m.group(0)
+                if all(0 <= int(x) <= 255 for x in ip.split('.')):
+                    if not self._PRIV_IP.match(ip):
+                        buckets["ip_addresses"].add(ip)
+            # MD5 / SHA1 / SHA256 hashes
+            for m in re.finditer(r'\b[0-9a-fA-F]{32,64}\b', text):
+                h = m.group(0).lower()
+                if len(h) in (32, 40, 64):
+                    buckets["file_hashes"].add(h)
+            # URLs
+            for m in re.finditer(r'https?://[^\s"\'<>\r\n]{4,}', text):
+                buckets["urls"].add(m.group(0).rstrip('.,)'))
+            # Windows registry keys
+            for m in re.finditer(
+                    r'(?:HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)'
+                    r'[\\\/][^\s"\'<>\r\n]+',
+                    text, re.IGNORECASE):
+                buckets["registry_keys"].add(m.group(0))
+            # Windows file paths (min 10 chars to reduce noise)
+            for m in re.finditer(
+                    r'[A-Za-z]:\\(?:[^\\\/:*?"<>|\r\n]+\\)*[^\\\/:*?"<>|\r\n]{2,}',
+                    text):
+                p = m.group(0).rstrip('.,)')
+                if len(p) >= 10:
+                    buckets["file_paths"].add(p)
+            # Email addresses
+            for m in re.finditer(
+                    r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', text):
+                buckets["email_addresses"].add(m.group(0).lower())
+
+        # Source 1: triage indicator hits
+        for hit in report_json.get("indicator_hits", []):
+            _scan(hit.get("file", ""))
+            _scan(hit.get("pattern", ""))
+            _scan(hit.get("raw_match", ""))
+
+        # Source 2: behavioral flag evidence dicts
+        for dev_flags in behavioral_flags.values():
+            for flag in dev_flags:
+                ev = flag.get("evidence", {})
+                if isinstance(ev, dict):
+                    for v in ev.values():
+                        _scan(str(v) if v is not None else "")
+
+        # Source 3: tool stdout (capped to first 100KB to avoid scanning huge outputs)
+        for finding in report_json.get("findings_detail", []):
+            result = finding.get("result", {})
+            if isinstance(result, dict):
+                _scan((result.get("stdout", "") or "")[:102400])
+                _scan((result.get("raw_output", "") or "")[:102400])
+
+        # Source 4: raw text evidence files (syslogs, evtx_logs, other_files)
+        # Capped at 512KB per file to limit memory use
+        inv = report_json.get("evidence_inventory", {})
+        text_ev = (
+            inv.get("syslogs", [])
+            + inv.get("evtx_logs", [])
+            + inv.get("other_files", [])
+        )
+        for fpath in text_ev:
+            try:
+                size = os.path.getsize(fpath)
+                if size > 5 * 1024 * 1024:
+                    continue
+                with open(fpath, "rb") as fh:
+                    raw = fh.read(524288)
+                # Replace null bytes with newlines so adjacent embedded strings
+                # don't merge when decoded (e.g. strings extracted from binaries)
+                _scan(raw.replace(b'\x00', b'\n').decode("utf-8", errors="ignore"))
+            except OSError:
+                continue
+
+        return {k: sorted(v) for k, v in buckets.items() if v}
+
+    # ----------------------------------------------------------------
+    # Attack Chain Synthesis
+    # ----------------------------------------------------------------
+
+    # Maps MITRE ATT&CK technique IDs to kill-chain phase names
+    _MITRE_PHASES = {
+        "T1566": "Initial Access", "T1190": "Initial Access",
+        "T1133": "Initial Access", "T1078": "Initial Access",
+        "T1059": "Execution", "T1204": "Execution",
+        "T1053": "Execution/Persistence", "T1047": "Execution",
+        "T1547": "Persistence", "T1060": "Persistence",
+        "T1112": "Persistence", "T1543": "Persistence",
+        "T1036": "Defense Evasion", "T1070": "Defense Evasion",
+        "T1027": "Defense Evasion", "T1140": "Defense Evasion",
+        "T1003": "Credential Access", "T1110": "Credential Access",
+        "T1555": "Credential Access",
+        "T1046": "Discovery", "T1083": "Discovery", "T1082": "Discovery",
+        "T1021": "Lateral Movement", "T1076": "Lateral Movement",
+        "T1041": "Exfiltration", "T1048": "Exfiltration",
+        "T1071": "Command & Control", "T1105": "Command & Control",
+    }
+
+    def _synthesize_attack_chain(self, report_json: dict,
+                                  behavioral_flags: dict,
+                                  correlated_users: dict,
+                                  iocs: dict) -> str:
+        """Produce a holistic attack narrative using the LLM (or template fallback).
+
+        This is the key interpretation layer — it takes all the evidence and
+        produces a coherent 'what happened' story with MITRE ATT&CK mapping,
+        attribution assessment, key evidence anchors, and specific recommended
+        actions.
+        """
+        evil = report_json.get("evil_found", False)
+        severity = report_json.get("severity", "INFO")
+        devices = list(report_json.get("device_map", {}).keys())
+        users = list(report_json.get("user_map", {}).keys()) if isinstance(
+            report_json.get("user_map"), dict) else []
+
+        # Collect all behavioral flags sorted by severity
+        all_flags: List[dict] = []
+        for dev_id, flags in behavioral_flags.items():
+            for f in flags:
+                fc = dict(f)
+                fc["_device"] = dev_id
+                all_flags.append(fc)
+        sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        all_flags.sort(key=lambda f: sev_order.get(f.get("severity", "LOW"), 4))
+
+        # Collect lateral movement indicators across all users
+        lateral_indicators = []
+        for udata in correlated_users.values():
+            lateral_indicators.extend(udata.get("lateral_movement_indicators", []))
+
+        # Indicator hit categories
+        hit_categories = sorted(set(
+            h.get("category", "") for h in report_json.get("indicator_hits", [])
+            if h.get("category")))
+
+        if self.call_llm:
+            # Build a concise evidence summary for the prompt
+            flags_text = ""
+            for f in all_flags[:15]:
+                flags_text += (
+                    f"  [{f.get('severity')}] [{f.get('_device')}] "
+                    f"{f.get('summary', '')} "
+                    f"(MITRE: {', '.join(f.get('mitre_att_ck', []))})\n"
+                )
+
+            lateral_text = ""
+            for li in lateral_indicators[:5]:
+                lateral_text += (
+                    f"  {li.get('timestamp','')} — {li.get('from_device','')} → "
+                    f"{li.get('to_device','')} via {li.get('method','')}\n"
+                )
+
+            ioc_summary = ", ".join([
+                f"{len(v)} {k.replace('_',' ')}"
+                for k, v in iocs.items() if v
+            ]) or "none extracted"
+
+            prompt = f"""You are a senior DFIR analyst writing the interpretation section of a forensic report.
+
+INVESTIGATION VERDICT: {'COMPROMISE CONFIRMED' if evil else 'NO CONFIRMED COMPROMISE'}
+OVERALL SEVERITY: {severity}
+DEVICES EXAMINED: {', '.join(devices) or 'unknown'}
+USERS INVOLVED: {', '.join(users) or 'unknown'}
+TRIAGE CATEGORIES HIT: {', '.join(hit_categories) or 'none'}
+IOCs EXTRACTED: {ioc_summary}
+
+TOP BEHAVIORAL FLAGS:
+{flags_text or '  None detected.'}
+LATERAL MOVEMENT:
+{lateral_text or '  None detected.'}
+
+Write the following sections. Be factual — cite specific evidence. Use "appears to", "likely", "consistent with" for inferences. Do not invent timestamps or file names not in the evidence.
+
+## Attack Narrative
+[3-5 paragraphs. What happened, in chronological order. How did the attacker get in? What did they do? How did we detect it?]
+
+## MITRE ATT\u0026CK Techniques Observed
+[Bullet list: Txxxx — Technique Name — supporting evidence]
+
+## Attribution Assessment
+[Insider threat, external attacker, or undetermined? Confidence level and reasoning.]
+
+## Key Evidence
+[5-8 bullet points: the most significant individual findings that anchor the above narrative]
+
+## Recommended Actions
+[5-7 specific, prioritised containment and remediation steps for THIS investigation]"""
+
+            try:
+                return self.call_llm(prompt, "", agent_type="manager")
+            except Exception:
+                pass  # fall through to template
+
+        # ---- Template fallback ----
+        return self._template_attack_chain(
+            evil, severity, all_flags, lateral_indicators,
+            hit_categories, devices, users)
+
+    def _template_attack_chain(self, evil: bool, severity: str,
+                                all_flags: List[dict],
+                                lateral_indicators: List[dict],
+                                hit_categories: List[str],
+                                devices: List[str],
+                                users: List[str]) -> str:
+        """Template-based attack chain when LLM is unavailable."""
+        lines = []
+
+        # Narrative
+        lines.append("## Attack Narrative\n")
+        if not evil:
+            lines.append(
+                "No confirmed compromise was identified during this investigation. "
+                "The evidence examined did not reveal definitive indicators of "
+                "malicious activity, though the following anomalies were noted for "
+                "awareness.")
+        else:
+            lines.append(
+                f"This investigation identified indicators of compromise on "
+                f"{len(devices)} device(s) involving {len(users)} user account(s). "
+                f"Overall severity was assessed as **{severity}**.")
+            if hit_categories:
+                lines.append(
+                    f"\nTriage scanning identified hits in the following categories: "
+                    f"{', '.join(hit_categories)}.")
+            if lateral_indicators:
+                lines.append(
+                    f"\nLateral movement was detected: "
+                    f"{len(lateral_indicators)} cross-device event(s) observed.")
+
+        # MITRE phases observed from flag technique tags
+        lines.append("\n## MITRE ATT&CK Techniques Observed\n")
+        phase_map: Dict[str, List[str]] = {}
+        for flag in all_flags:
+            for tid in flag.get("mitre_att_ck", []):
+                # Strip sub-technique suffix for phase lookup
+                phase = self._MITRE_PHASES.get(tid.split('.')[0], "Other")
+                phase_map.setdefault(phase, [])
+                entry = f"{tid} — {flag.get('summary', '')[:80]}"
+                if entry not in phase_map[phase]:
+                    phase_map[phase].append(entry)
+        if phase_map:
+            for phase in ["Initial Access", "Execution", "Persistence",
+                          "Defense Evasion", "Credential Access", "Discovery",
+                          "Lateral Movement", "Exfiltration",
+                          "Command & Control", "Other",
+                          "Execution/Persistence"]:
+                if phase in phase_map:
+                    lines.append(f"**{phase}:**")
+                    for entry in phase_map[phase][:5]:
+                        lines.append(f"- {entry}")
+        else:
+            lines.append("No MITRE ATT&CK techniques mapped from behavioral flags.")
+
+        # Attribution
+        lines.append("\n## Attribution Assessment\n")
+        if lateral_indicators:
+            lines.append(
+                "Lateral movement between internal devices suggests a targeted "
+                "intrusion rather than opportunistic malware. Confidence: **MEDIUM**.")
+        elif any(f.get("severity") == "CRITICAL" for f in all_flags):
+            lines.append(
+                "CRITICAL severity findings indicate deliberate action. "
+                "Attribution requires further investigation. Confidence: **LOW**.")
+        else:
+            lines.append(
+                "Insufficient evidence to determine attribution. "
+                "Manual review of flagged items is recommended.")
+
+        # Key evidence
+        lines.append("\n## Key Evidence\n")
+        for flag in all_flags[:8]:
+            lines.append(
+                f"- **[{flag.get('severity')}]** [{flag.get('_device', '')}] "
+                f"{flag.get('summary', '')}")
+
+        # Recommended actions
+        lines.append("\n## Recommended Actions\n")
+        if evil:
+            lines.append("1. Isolate affected device(s) from the network immediately")
+            lines.append("2. Preserve all evidence — do not reboot or modify systems")
+            lines.append("3. Reset credentials for all users active on affected devices")
+            if lateral_indicators:
+                lines.append("4. Audit all systems the compromised account(s) accessed")
+            lines.append("5. Engage IR team for full forensic acquisition if not done")
+            lines.append("6. Review and harden authentication (MFA, privileged access)")
+            lines.append("7. File incident report with relevant compliance / legal teams")
+        else:
+            lines.append("1. Review all flagged behavioral anomalies manually")
+            lines.append("2. Verify that flagged processes and file paths are legitimate")
+            lines.append("3. Consider expanding evidence scope if anomalies are unexplained")
+            lines.append("4. Ensure endpoint security tooling is current on all devices")
+
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------
     # Markdown rendering
     # ----------------------------------------------------------------
 
@@ -561,6 +892,18 @@ class NarrativeReportGenerator:
 
 ---
 
+## Indicators of Compromise
+
+{self._render_ioc_table(sections.get('iocs', {}))}
+
+---
+
+## Investigation Synthesis
+
+{sections.get('attack_chain', 'No synthesis generated.')}
+
+---
+
 ## Conclusion & Recommendations
 
 {sections.get('conclusion', 'No conclusion generated.')}
@@ -568,7 +911,36 @@ class NarrativeReportGenerator:
 ---
 
 *Report generated by G.E.O.F.F. (Git-backed Evidence Operations Forensic Framework)*
-*This report summarizes automated analysis. All findings should be verified by a qualified examiner.*
+*This report summarises automated analysis. All findings should be verified by a qualified examiner.*
 """
 
         return md
+
+    def _render_ioc_table(self, iocs: dict) -> str:
+        """Render extracted IOCs as markdown tables grouped by type."""
+        if not iocs:
+            return "No indicators of compromise were extracted from this investigation."
+
+        labels = {
+            "ip_addresses":    "IP Addresses",
+            "file_hashes":     "File Hashes",
+            "urls":            "URLs",
+            "registry_keys":   "Registry Keys",
+            "file_paths":      "File Paths",
+            "email_addresses": "Email Addresses",
+        }
+        lines = []
+        for key, label in labels.items():
+            values = iocs.get(key, [])
+            if not values:
+                continue
+            lines.append(f"**{label}** ({len(values)})\n")
+            lines.append("| Value |")
+            lines.append("|-------|")
+            for v in values[:50]:  # cap at 50 per category
+                lines.append(f"| `{v}` |")
+            if len(values) > 50:
+                lines.append(f"| *(+{len(values)-50} more — see findings_jsonl)* |")
+            lines.append("")
+        return "\n".join(lines) if lines else \
+            "No indicators of compromise were extracted."

@@ -83,10 +83,43 @@ if [[ "$SKIP_DEPS" == false ]]; then
     if command -v apt-get >/dev/null; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
-            sleuthkit volatility3 ssdeep hashdeep exiftool plaso-tools \
-            regripper tshark 2>/dev/null || true
+            sleuthkit ssdeep hashdeep exiftool plaso-tools \
+            regripper 2>/dev/null || true
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
         sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
+        # Tshark (needs non-interactive setup)
+        echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
+        sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
+        # Volatility3 - only install if missing
+        # Check for 'vol' or 'volatility3' binary (SIFT may ship either) in system and venv
+        vol_found=false
+        if command -v vol &>/dev/null || command -v volatility3 &>/dev/null; then
+            vol_found=true
+            info "Volatility3 already installed ($(command -v vol 2>/dev/null || command -v volatility3 2>/dev/null))"
+        elif [ -f "${INSTALL_DIR}/venv/bin/vol" ] || [ -f "${INSTALL_DIR}/venv/bin/volatility3" ]; then
+            vol_found=true
+            info "Volatility3 already in venv"
+        fi
+        if [ "$vol_found" = false ]; then
+            info "Installing volatility3..."
+            sudo apt-get install -y -qq python3-pip 2>/dev/null || true
+            sudo pip3 install volatility3 --break-system-packages 2>/dev/null || \
+                sudo pip3 install volatility3 2>/dev/null || true
+            # Also install into venv if it exists
+            if [ -d "${INSTALL_DIR}/venv" ]; then
+                source "${INSTALL_DIR}/venv/bin/activate" 2>/dev/null && \
+                    pip install volatility3 2>/dev/null || true
+                deactivate 2>/dev/null || true
+            fi
+            # Verify install
+            if command -v vol &>/dev/null; then
+                ok "Volatility3 installed (vol: $(command -v vol))"
+            elif [ -f "${INSTALL_DIR}/venv/bin/vol" ]; then
+                ok "Volatility3 installed in venv"
+            else
+                warn "Volatility3 installation may have failed — check manually"
+            fi
+        fi
         # Install REMnux distro for malware analysis tools
         if ! command -v remnux &>/dev/null; then
             info "Installing REMnux distro (addon mode)..."
@@ -103,6 +136,63 @@ if [[ "$SKIP_DEPS" == false ]]; then
     elif command -v yum >/dev/null; then
         sudo yum install -y python3-pip git curl jq 2>/dev/null || true
     fi
+
+    # Create wrapper scripts for Python-only forensic tools
+    VENV_BIN="${INSTALL_DIR}/venv/bin"
+    if [ -d "$VENV_BIN" ]; then
+        info "Creating forensic tool wrappers..."
+        # pdfid wrapper (Python module, not a CLI binary)
+        cat > "${VENV_BIN}/pdfid" << 'PDFID_EOF'
+#!/bin/bash
+exec python3 -m pdfid "$@"
+PDFID_EOF
+        chmod +x "${VENV_BIN}/pdfid"
+        # die wrapper (fallback to 'file' command when Detect It Easy CLI unavailable)
+        cat > "${VENV_BIN}/die" << 'DIE_EOF'
+#!/bin/bash
+if command -v diec >/dev/null 2>&1; then
+    exec diec "$@"
+else
+    exec file "$@"
+fi
+DIE_EOF
+        chmod +x "${VENV_BIN}/die"
+        ok "Forensic tool wrappers created"
+    fi
+
+    # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 9)
+    info "Setting up Zimmerman forensic tools..."
+    ZIMMERMAN_DIR="${INSTALL_DIR}/zimmerman_tools"
+    sudo mkdir -p "$ZIMMERMAN_DIR"
+    if ! command -v dotnet >/dev/null 2>&1; then
+        info "Installing .NET 9 runtime for Zimmerman tools..."
+        curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 9.0 --runtime-only 2>/dev/null || \
+            sudo apt-get install -y -qq dotnet-runtime-9.0 2>/dev/null || \
+            warn "dotnet install failed — Zimmerman tools will be unavailable"
+        # Add dotnet to PATH if installed via script
+        export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
+    fi
+    if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd; do
+            if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
+                info "  Downloading ${tool}..."
+                # Download from Zimmerman's distribution (net9 builds)
+                curl -sL "https://download.ericzimmermanstools.com/net9/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
+                    unzip -q -o "/tmp/${tool}.zip" -d "$ZIMMERMAN_DIR" 2>/dev/null && \
+                    # Flatten subdirectories (some zips extract into subdirs)
+                    find "$ZIMMERMAN_DIR" -mindepth 2 -type f -exec mv -n {} "$ZIMMERMAN_DIR/" \; 2>/dev/null && \
+                    find "$ZIMMERMAN_DIR" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null && \
+                    rm -f "/tmp/${tool}.zip" || \
+                    warn "Failed to download ${tool}"
+            else
+                info "  ${tool} already present"
+            fi
+        done
+        ok "Zimmerman tools ready"
+    else
+        warn "dotnet not available — Zimmerman tools skipped"
+    fi
+
     ok "System dependencies installed"
 fi
 
@@ -119,6 +209,14 @@ else
     cd "$INSTALL_DIR"
 fi
 ok "Code ready at ${INSTALL_DIR}"
+
+# ── Create evidence directories ────────────────────────────────────────────
+info "Creating evidence storage directories..."
+sudo mkdir -p /home/sansforensics/evidence-storage/evidence
+sudo mkdir -p /home/sansforensics/evidence-storage/cases
+sudo chown -R sansforensics:sansforensics /home/sansforensics/evidence-storage 2>/dev/null || \
+    sudo chown -R "$(whoami):$(id -gn)" /home/sansforensics/evidence-storage 2>/dev/null || true
+ok "Evidence directories created"
 
 # ── Python virtual environment ─────────────────────────────────────────────
 info "Setting up Python environment..."

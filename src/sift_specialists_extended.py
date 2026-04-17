@@ -2217,23 +2217,410 @@ class MACOS_Specialist:
 # ExtendedOrchestrator (includes remnux reference)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# PHOTORec Specialist
+# ---------------------------------------------------------------------------
+
+class PHOTOREC_Specialist:
+    """Specialist for file carving with PhotoRec — batch mode support."""
+
+    def __init__(self):
+        self.photorec_path = self._find_tool('photorec')
+
+    def _find_tool(self, tool: str) -> Optional[str]:
+        result = subprocess.run(['which', tool], capture_output=True)
+        return tool if result.returncode == 0 else None
+
+    def _check_fallback_tools(self) -> List[str]:
+        """Check for carving fallback tools (foremost is preferred)."""
+        fallbacks = []
+        for tool in ['foremost', 'scalpel']:
+            if subprocess.run(['which', tool], capture_output=True).returncode == 0:
+                fallbacks.append(tool)
+        return fallbacks
+
+    # -- public API ----------------------------------------------------------
+
+    def recover_files(self, image: str, output_dir: str, file_types: Optional[List[str]] = None,
+                      partition: int = 1, mode: str = 'paranoid') -> Dict[str, Any]:
+        """Recover files from disk image using PhotoRec in batch mode.
+
+        Note: PhotoRec is primarily designed for interactive use. This method
+        attempts batch mode via config file, but may fail. If batch mode fails,
+        returns error with fallback suggestion.
+        """
+        if not self.photorec_path:
+            fallbacks = self._check_fallback_tools()
+            if fallbacks:
+                return {
+                    'tool': 'photorec',
+                    'status': 'error',
+                    'error': f'PhotoRec not found, but {fallbacks[0]} is available as fallback',
+                    'suggestion': f'Use {fallbacks[0]} instead for file carving',
+                    'timestamp': datetime.now().isoformat(),
+                }
+            return {
+                'tool': 'photorec',
+                'status': 'error',
+                'error': 'PhotoRec not found — install testdisk package',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        # Try batch mode first
+        batch_result = self._recover_files_batch_mode(image, output_dir, file_types, partition, mode)
+        if batch_result['status'] == 'success':
+            return batch_result
+
+        return {
+            'tool': 'photorec',
+            'status': 'error',
+            'error': 'PhotoRec batch mode failed — use interactive mode or fallback tool',
+            'suggestion': batch_result.get('error', 'Run photorec manually with config file'),
+            'fallback_tools': self._check_fallback_tools(),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def _recover_files_batch_mode(self, image: str, output_dir: str, file_types: Optional[List[str]],
+                                    partition: int, mode: str) -> Dict[str, Any]:
+        """Attempt batch mode PhotoRec execution."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.cfg', delete=False) as f:
+            cfg_content = f"""/seq 1
+/partition {partition}
+/mode {0 if mode == 'quick' else 1}
+"""
+            f.write(cfg_content)
+            config_file = f.name
+
+        try:
+            cmd = [
+                'photorec',
+                '/d', output_dir,
+                '/cmd', image, str(partition),
+                'options,fileopt,paranoid,search'
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            recovered_files = list(Path(output_dir).glob('*'))
+
+            return {
+                'tool': 'photorec',
+                'status': 'success' if len(recovered_files) > 0 else 'error',
+                'returncode': result.returncode,
+                'recovered_count': len(recovered_files),
+                'output_dir': output_dir,
+                'timestamp': datetime.now().isoformat(),
+                'stderr': result.stderr[:2000] if result.stderr else '',
+                'note': 'PhotoRec batch mode support is limited. For reliable recovery, use interactive mode or fallback tools.',
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                'tool': 'photorec',
+                'status': 'timeout',
+                'error': 'PhotoRec command timed out after 10 minutes',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'photorec',
+                'status': 'error',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat(),
+            }
+        finally:
+            try:
+                os.unlink(config_file)
+            except:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# VSS (Volume Shadow Copy) Specialist
+# ---------------------------------------------------------------------------
+
+class VSS_Specialist:
+    """Specialist for Volume Shadow Copy extraction and analysis."""
+
+    def __init__(self):
+        self.vshadowmount_available = self._check_tool('vshadowmount')
+        self.fls_available = self._check_tool('fls')
+
+    def _check_tool(self, tool: str) -> bool:
+        result = subprocess.run(['which', tool], capture_output=True)
+        return result.returncode == 0
+
+    # -- public API ----------------------------------------------------------
+
+    def list_vss(self, image: str) -> Dict[str, Any]:
+        """List available Volume Shadow Copies in disk image."""
+        if not self.vshadowmount_available:
+            return {
+                'tool': 'vshadowmount',
+                'status': 'error',
+                'error': 'vshadowmount not found — install libvshadow utils (xmount package)',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = ['vshadowmount', image, tmpdir]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                return {
+                    'tool': 'vshadowmount',
+                    'status': 'error',
+                    'error': 'Failed to mount image for VSS enumeration',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            vss_dirs = [d.name for d in Path(tmpdir).iterdir() if d.is_dir() and d.name.startswith('vss')]
+            vss_nums = [int(d.replace('vss', '')) for d in vss_dirs if d.replace('vss', '').isdigit()]
+
+            return {
+                'tool': 'vshadowmount',
+                'image': image,
+                'status': 'success',
+                'vss_count': len(vss_nums),
+                'vss_numbers': vss_nums,
+                'timestamp': datetime.now().isoformat(),
+            }
+
+    def mount_vss(self, image: str, vss_num: int, mount_point: str) -> Dict[str, Any]:
+        """Mount a specific Volume Shadow Copy."""
+        if not self.vshadowmount_available:
+            return {
+                'tool': 'vshadowmount',
+                'status': 'error',
+                'error': 'vshadowmount not found',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        Path(mount_point).mkdir(parents=True, exist_ok=True)
+        cmd = ['vshadowmount', '-o', str(vss_num), image, mount_point]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+        if result.returncode != 0:
+            return {
+                'tool': 'vshadowmount',
+                'status': 'error',
+                'error': f'Failed to mount VSS#{vss_num}',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        return {
+            'tool': 'vshadowmount',
+            'image': image,
+            'vss_number': vss_num,
+            'mount_point': mount_point,
+            'status': 'success',
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_vss_files(self, image: str, output_dir: str,
+                          vss_numbers: Optional[List[int]] = None,
+                          interesting_extensions: List[str] = None) -> Dict[str, Any]:
+        """Extract files from VSS snapshots."""
+        list_result = self.list_vss(image)
+        if list_result['status'] != 'success':
+            return list_result
+
+        vss_nums = vss_numbers or list_result.get('vss_numbers', [])
+        if not vss_nums:
+            return {
+                'tool': 'vss_extract',
+                'status': 'error',
+                'error': 'No VSS snapshots found',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        interesting_extensions = interesting_extensions or [
+            '.doc', '.docx', '.xls', '.xlsx', '.pdf', '.ntds.dit',
+            '.lnk', '.ps1', '.exe', '.dll',
+        ]
+
+        extracted = []
+        for vss_num in vss_nums:
+            mount_point = tempfile.mkdtemp()
+            mount_result = self.mount_vss(image, vss_num, mount_point)
+
+            if mount_result['status'] != 'success':
+                subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
+                continue
+
+            for ext in interesting_extensions:
+                for matched in Path(mount_point).rglob(f'*{ext}'):
+                    if matched.is_file():
+                        extracted.append({
+                            'vss_number': vss_num,
+                            'source_path': str(matched),
+                            'size': matched.stat().st_size,
+                        })
+
+            subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
+            shutil.rmtree(mount_point, ignore_errors=True)
+
+        return {
+            'tool': 'vss_extract',
+            'image': image,
+            'vss_count': len(vss_nums),
+            'status': 'success' if extracted else 'warning',
+            'extracted_count': len(extracted),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def analyze_vss_timeline(self, image: str) -> Dict[str, Any]:
+        """Build timeline across VSS snapshots."""
+        list_result = self.list_vss(image)
+        if list_result['status'] != 'success':
+            return list_result
+
+        vss_nums = list_result.get('vss_numbers', [])
+        if not vss_nums:
+            return {
+                'tool': 'vss_timeline',
+                'status': 'error',
+                'error': 'No VSS snapshots found',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        events = []
+        for vss_num in vss_nums:
+            mount_point = tempfile.mkdtemp()
+            mount_result = self.mount_vss(image, vss_num, mount_point)
+
+            if mount_result['status'] != 'success':
+                subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
+                continue
+
+            cmd = ['find', mount_point, '-type', 'f', '-printf', '%T@ %p\n']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    parts = line.strip().split(' ', 1)
+                    if len(parts) == 2:
+                        try:
+                            events.append({
+                                'path': parts[1],
+                                'timestamp': int(float(parts[0])),
+                                'source': f'VSS{vss_num}',
+                            })
+                        except ValueError:
+                            pass
+
+            subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
+            shutil.rmtree(mount_point, ignore_errors=True)
+
+        events.sort(key=lambda x: x.get('timestamp', 0) or 0)
+        return {
+            'tool': 'vss_timeline',
+            'image': image,
+            'vss_count': len(vss_nums),
+            'status': 'success',
+            'event_count': len(events),
+            'events': events[:1000],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Zimmerman Tools Specialist
+# ---------------------------------------------------------------------------
+
+class ZIMMERMAN_Specialist:
+    """Specialist for Eric Zimmerman's forensic tools (.NET DLLs)."""
+
+    def __init__(self, tools_dir: str = '/opt/geoff/zimmerman_tools'):
+        self.tools_dir = Path(tools_dir)
+        self.dotnet_available = self._check_dotnet()
+
+    def _check_dotnet(self) -> bool:
+        result = subprocess.run(['which', 'dotnet'], capture_output=True)
+        return result.returncode == 0
+
+    def _find_tool_dll(self, tool_name: str) -> Optional[Path]:
+        dll_map = {
+            'evtx': 'EvtxECmd.dll',
+            'mft': 'MFTECmd.dll',
+            'strings': 'bstrings.dll',
+            'shellbags': 'ShellBagsExplorer.dll',
+            'amcache': 'AmcacheParser.dll',
+            'srum': 'SrumECmd.dll',
+        }
+        dll_name = dll_map.get(tool_name, f'{tool_name.capitalize()}.dll')
+        dll_path = self.tools_dir / dll_name
+        return dll_path if dll_path.exists() else None
+
+    # -- public API ----------------------------------------------------------
+
+    def parse_evtx_zimmerman(self, evtx_file: str, output_csv: str) -> Dict[str, Any]:
+        """Parse EVTX using EvtxECmd.dll."""
+        return self._run_dotnet_tool('evtx', evtx_file, output_csv, '-of csv')
+
+    def parse_mft(self, mft_file: str, output_csv: str) -> Dict[str, Any]:
+        """Parse MFT using MFTECmd.dll."""
+        return self._run_dotnet_tool('mft', mft_file, output_csv, '-of csv')
+
+    def extract_strings_zimmerman(self, file: str, output: str, min_length: int = 4) -> Dict[str, Any]:
+        """Extract strings using bstrings.dll."""
+        return self._run_dotnet_tool('strings', file, output, f'-min {min_length}')
+
+    def shellbags_parse(self, hive: str, output_csv: str) -> Dict[str, Any]:
+        """Parse ShellBags using ShellBagsExplorer.dll."""
+        return self._run_dotnet_tool('shellbags', hive, output_csv, '-of csv')
+
+    def amcache_parse(self, hive: str, output_csv: str) -> Dict[str, Any]:
+        """Parse AmCache using AmcacheParser.dll."""
+        return self._run_dotnet_tool('amcache', hive, output_csv, '-of csv')
+
+    def srum_parse(self, srum_db: str, output_csv: str) -> Dict[str, Any]:
+        """Parse SRUM using SrumECmd.dll."""
+        return self._run_dotnet_tool('srum', srum_db, output_csv, '-of csv')
+
+    def _run_dotnet_tool(self, tool_name: str, input_path: str, output: str, extra_args: str) -> Dict[str, Any]:
+        """Run Zimmerman tool DLL."""
+        if not self.dotnet_available:
+            return {'tool': tool_name, 'status': 'error', 'error': 'dotnet not found', 'timestamp': datetime.now().isoformat()}
+
+        dll_path = self._find_tool_dll(tool_name)
+        if not dll_path:
+            return {'tool': tool_name, 'status': 'error', 'error': f'{dll_path.name} not found', 'timestamp': datetime.now().isoformat()}
+
+        cmd = ['dotnet', str(dll_path), '-f', input_path, '-o', output] + extra_args.split()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        event_count = 0
+        if Path(output).exists():
+            with open(output, 'r') as f:
+                event_count = sum(1 for _ in f) - 1
+
+        return {
+            'tool': tool_name,
+            'input': input_path,
+            'output': output,
+            'status': 'success' if result.returncode == 0 else 'error',
+            'returncode': result.returncode,
+            'event_count': event_count,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# ExtendedOrchestrator (includes new specialists)
+# ---------------------------------------------------------------------------
+
 class ExtendedOrchestrator:
-    """Extended orchestrator with 100% tool coverage – includes remnux module."""
+    """Extended orchestrator with all specialists."""
 
     def __init__(self, evidence_base: str):
         self.evidence_base = Path(evidence_base)
 
-        # Import from original specialists
-        from sift_specialists import (
-            SLEUTHKIT_Specialist, VOLATILITY_Specialist,
-            STRINGS_Specialist,
-        )
-
+        from sift_specialists import SLEUTHKIT_Specialist, VOLATILITY_Specialist, STRINGS_Specialist
         self.sleuthkit = SLEUTHKIT_Specialist(evidence_base)
         self.volatility = VOLATILITY_Specialist()
         self.strings = STRINGS_Specialist()
 
-        # Extended specialists
         self.registry = REGISTRY_Specialist()
         self.plaso = PLASO_Specialist()
         self.network = NETWORK_Specialist()
@@ -2244,7 +2631,11 @@ class ExtendedOrchestrator:
         self.jumplist = JUMPLIST_Specialist()
         self.macos = MACOS_Specialist()
 
-        # REMnux specialist (lazy import to handle missing module gracefully)
+        # New specialists
+        self.photorec = PHOTOREC_Specialist()
+        self.vss = VSS_Specialist()
+        self.zimmerman = ZIMMERMAN_Specialist()
+
         try:
             from sift_specialists_remnux import REMNUX_Orchestrator
             self.remnux = REMNUX_Orchestrator()
@@ -2252,7 +2643,6 @@ class ExtendedOrchestrator:
             self.remnux = None
 
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a playbook step with appropriate specialist."""
         module = step.get('module')
         function = step.get('function')
         params = step.get('params', {})
@@ -2266,6 +2656,9 @@ class ExtendedOrchestrator:
             'network': self.network,
             'logs': self.logs,
             'mobile': self.mobile,
+            'photorec': self.photorec,
+            'vss': self.vss,
+            'zimmerman': self.zimmerman,
             'remnux': self.remnux,
             'browser': self.browser,
             'email': self.email,
@@ -2278,62 +2671,74 @@ class ExtendedOrchestrator:
             func = getattr(specialist, function)
             return func(**params)
 
-        # Delegate to REMnux orchestrator for remnux-prefixed functions
         if module == 'remnux' and self.remnux is not None:
             return self.remnux.run_playbook_step(investigation_id, step)
 
-        return {
-            'status': 'error',
-            'error': f'Unknown module {module} or function {function}',
-            'timestamp': datetime.now().isoformat(),
-        }
+        return {'status': 'error', 'error': f'Unknown module {module}', 'timestamp': datetime.now().isoformat()}
+
+    @staticmethod
+    def _probe(binary: str) -> bool:
+        return subprocess.run(['which', binary], capture_output=True).returncode == 0
 
     def get_available_tools(self) -> Dict[str, Any]:
-        """List all available tools and functions – 100% coverage."""
-        tools = {
+        def avail(binaries: list) -> Dict[str, bool]:
+            return {b: self._probe(b) for b in binaries}
+
+        evtx_available = False
+        try:
+            import importlib
+            evtx_available = importlib.util.find_spec('Evtx') is not None
+        except Exception:
+            pass
+
+        return {
             'sleuthkit': {
                 'category': 'Disk Forensics',
-                'functions': ['analyze_partition_table', 'analyze_filesystem',
-                              'list_files', 'list_files_mactime', 'extract_file', 'list_inodes', 'get_file_info'],
-                'tools': ['mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat'],
+                'functions': ['analyze_partition_table', 'analyze_filesystem', 'list_files', 'list_files_mactime', 'extract_file', 'list_inodes', 'get_file_info', 'list_deleted'],
+                'tool_availability': avail(['mmls', 'fsstat', 'fls', 'icat', 'istat', 'ils', 'blkls', 'jcat']),
             },
             'volatility': {
                 'category': 'Memory Forensics',
-                'functions': ['process_list', 'network_scan', 'find_malware',
-                              'scan_registry', 'dump_process'],
-                'tools': ['volatility3', 'vol.py'],
+                'functions': ['process_list', 'network_scan', 'find_malware', 'scan_registry', 'dump_process'],
+                'tool_availability': {'volatility': any([self._probe('volatility3'), self._probe('vol.py'), self._probe('vol')])},
             },
-            'strings': {
-                'category': 'IOC Extraction',
-                'functions': ['extract_strings'],
-                'tools': ['strings', 'floss'],
-            },
+            'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {
                 'category': 'Windows Registry',
-                'functions': ['parse_hive', 'extract_user_assist', 'extract_shellbags',
-                              'extract_mounted_devices', 'extract_usb_devices',
-                              'extract_autoruns', 'extract_services', 'scan_all_hives'],
-                'tools': ['RegRipper (rip.pl)', 'Python-Registry'],
+                'functions': ['parse_hive', 'extract_shellbags', 'extract_autoruns', 'extract_services'],
+                'tool_availability': avail(['rip.pl']),
             },
             'plaso': {
                 'category': 'Timeline Analysis',
                 'functions': ['create_timeline', 'sort_timeline', 'analyze_storage'],
-                'tools': ['log2timeline.py', 'psort.py', 'pinfo.py'],
+                'tool_availability': avail(['log2timeline.py', 'psort.py', 'pinfo.py']),
             },
             'network': {
                 'category': 'Network Forensics',
                 'functions': ['analyze_pcap', 'extract_flows', 'extract_http'],
-                'tools': ['tshark', 'tcpflow', 'NetworkMiner'],
+                'tool_availability': avail(['tshark', 'tcpflow']),
             },
-            'logs': {
-                'category': 'Log Analysis',
-                'functions': ['parse_evtx', 'parse_syslog'],
-                'tools': ['python-evtx', 'custom parsers'],
-            },
+            'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_syslog'], 'tool_availability': {'python-evtx': evtx_available}},
             'mobile': {
                 'category': 'Mobile Forensics',
                 'functions': ['analyze_ios_backup', 'analyze_android'],
-                'tools': ['iLEAPP', 'ALEAPP'],
+                'tool_availability': {},
+                'notes': 'Pure-Python',
+            },
+            'photorec': {
+                'category': 'File Carving',
+                'functions': ['recover_files'],
+                'tool_availability': avail(['photorec', 'foremost']),
+            },
+            'vss': {
+                'category': 'Volume Shadow Copies',
+                'functions': ['list_vss', 'mount_vss', 'extract_vss_files', 'analyze_vss_timeline'],
+                'tool_availability': avail(['vshadowmount']),
+            },
+            'zimmerman': {
+                'category': 'Windows Analysis',
+                'functions': ['parse_evtx_zimmerman', 'parse_mft', 'extract_strings_zimmerman', 'shellbags_parse', 'amcache_parse', 'srum_parse'],
+                'tool_availability': avail(['dotnet']),
             },
             'browser': {
                 'category': 'Browser Forensics',
@@ -2361,29 +2766,7 @@ class ExtendedOrchestrator:
                     'die_scan', 'exiftool_scan', 'peframe_scan', 'ssdeep_hash', 'hashdeep_audit',
                     'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
                     'radare2_analyze', 'floss_strings', 'clamav_scan',
-                    'inetsim_check', 'fakedns_check',
                 ] if self.remnux else [],
-                'tools': ['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx',
-                          'pdfid', 'pdf-parser', 'oledump', 'js-beautify', 'radare2',
-                          'floss', 'clamscan', 'inetsim', 'fakedns'],
+                'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'r2', 'floss']),
             },
         }
-
-        return tools
-
-
-if __name__ == '__main__':
-    orch = ExtendedOrchestrator('/tmp')
-    tools = orch.get_available_tools()
-
-    print("SIFT Tool Specialists - 100% Coverage (Full Parsed Output)")
-    print("=" * 60)
-
-    for tool, info in tools.items():
-        print(f"\n{tool.upper()} - {info['category']}")
-        print(f"  Functions: {len(info['functions'])}")
-        print(f"  Tools: {', '.join(info['tools'])}")
-
-    total_functions = sum(len(info['functions']) for info in tools.values())
-    print(f"\nTotal Functions: {total_functions}")
-    print("Coverage: 100% (10 specialist modules incl. remnux)")
