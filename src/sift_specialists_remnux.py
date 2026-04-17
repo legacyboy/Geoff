@@ -659,7 +659,7 @@ class REMNUX_Orchestrator:
     def get_available_tools(self) -> Dict[str, Any]:
         """List all REMnux tools and their availability"""
         tools = {
-            'die': _check_tool_available('die') or _check_tool_available('diec'),
+            'die': _check_tool_available('die') or _check_tool_available('diec') or _check_tool_available('file'),
             'exiftool': _check_tool_available('exiftool'),
             'peframe': _check_tool_available('peframe'),
             'ssdeep': _check_tool_available('ssdeep'),
