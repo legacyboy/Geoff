@@ -152,17 +152,48 @@ This prevents false confidence in evidence that may have been tampered with.
 
 ## Tool Coverage
 
-| Category | Tools | Functions |
-|----------|-------|-----------|
-| **Disk** | SleuthKit (mmls, fls, fsstat, icat, istat, ils) | Partition detection, filesystem analysis, file extraction |
-| **Memory** | Volatility3 | pslist, netscan, malware detection, registry, dump |
-| **IOC Extraction** | strings | URL, IP, email, registry path extraction |
-| **Registry** | RegRipper | Hive parsing, UserAssist, ShellBags, USB, autoruns, services |
-| **Timeline** | Plaso (log2timeline, psort) | Timeline creation, filtering, correlation |
-| **Network** | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic |
-| **Logs** | python-evtx | Windows Event Log, syslog parsing |
-| **Mobile** | iLEAPP-style | iOS backup, Android data analysis |
-| **Malware** | REMnux (die, exiftool, peframe, oledump, etc.) | 15 tool wrappers, 5 specialist classes |
+| Category | Specialist | Tools | Functions |
+|----------|-----------|-------|----------|
+| **Disk** | sleuthkit | SleuthKit (mmls, fls, fsstat, icat, istat, ils, blkls, blkcat, blkcalc, blkstat, ifind, ffind, tsk_recover) | Partition detection, filesystem analysis, file extraction, deleted file recovery, block-level analysis |
+| **Recovery** | photorec | PhotoRec, Foremost, Scalpel | File carving from unallocated space, deleted file recovery, fragmented file recovery |
+| **Memory** | volatility | Volatility3 | pslist, netscan, malfind, registry hive extraction, process dump |
+| **IOC Extraction** | strings | strings, bulk_extractor, floss | URL, IP, email, credit card, registry path extraction |
+| **Registry** | registry | RegRipper (rip.pl), Python-Registry | Hive parsing, UserAssist, ShellBags, USB, autoruns, services, mounted devices |
+| **Windows Analysis** | zimmerman | Eric Zimmerman Tools (EvtxECmd, MFTECmd, bstrings, ShellBagsExplorer, AmcacheParser, SRUMDB2) | Event log parsing, MFT timeline, string extraction, shellbag analysis, AmCache execution history, SRUM resource usage |
+| **VSS** | vss | vshadowmount, ewfmount | Shadow copy enumeration, VSS mounting, file extraction from shadow copies, cross-VSS timeline |
+| **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
+| **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
+| **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
+| **Mobile** | mobile | Pure-Python (plistlib, sqlite3) | iOS backup analysis, Android data extraction |
+| **Malware** | remnux | REMnux suite (die, exiftool, peframe, oledump, pdfid, upx, r2, clamav, ssdeep, hashdeep) | 15 tool wrappers, 5 specialist classes |
+| **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
+| **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
+| **Antivirus** | remnux | ClamAV | Signature-based malware detection |
+
+### SANS SIFT Workstation Compatibility
+
+Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary runtime environment. The following SIFT tools are leveraged:
+
+| SIFT Tool | Geoff Specialist | Status |
+|-----------|----------------|--------|
+| SleuthKit | sleuthkit | ✅ Full coverage |
+| Volatility3 | volatility | ✅ Installed via pip (not in SIFT apt — see [Issue #628](https://github.com/teamdfir/sift/issues/628)) |
+| PhotoRec | photorec | ✅ Batch mode with foremost/scalpel fallback |
+| RegRipper | registry | ✅ Full coverage |
+| Plaso | plaso | ✅ Full coverage |
+| tshark | network | ✅ Non-interactive installer |
+| tcpflow | network | ✅ Full coverage |
+| vshadowmount | vss | ✅ Full coverage |
+| ewfmount | sleuthkit/vss | ✅ E01 mounting support |
+| bulk_extractor | strings | ✅ Full coverage |
+| hashdeep/ssdeep | remnux | ✅ Full coverage |
+| Zimmerman Tools | zimmerman | ✅ Auto-download via installer |
+| REMnux | remnux | ✅ Full coverage |
+| Scalpel/Foremost | photorec | ✅ Carving fallback chain |
+| ClamAV | remnux | ✅ Full coverage |
+| dotnet | zimmerman | ✅ Required for Zimmerman DLLs |
+
+**Note:** Volatility3 was removed from the SIFT 2026.03.24 release due to installer crashes from community plugin git cloning ([teamdfir/sift#628](https://github.com/teamdfir/sift/issues/628)). Geoff's installer works around this by installing Volatility3 directly via pip.
 
 **YARA has been intentionally removed.** Static signature matching provides limited forensic value compared to behavioral analysis.
 

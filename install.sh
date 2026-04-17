@@ -83,10 +83,29 @@ if [[ "$SKIP_DEPS" == false ]]; then
     if command -v apt-get >/dev/null; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
-            sleuthkit volatility3 ssdeep hashdeep exiftool plaso-tools \
-            regripper tshark 2>/dev/null || true
+            sleuthkit ssdeep hashdeep exiftool plaso-tools \
+            regripper 2>/dev/null || true
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
         sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
+        # Tshark (needs non-interactive setup)
+        echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
+        sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
+        # Volatility3 - try apt first, fallback to pip
+        if ! command -v volatility3 &>/dev/null; then
+            info "Installing volatility3..."
+            sudo apt-get install -y -qq volatility3 2>/dev/null || true
+            if ! command -v volatility3 &>/dev/null; then
+                info "Volatility3 apt install failed, trying pip..."
+                sudo apt-get install -y -qq python3-pip 2>/dev/null || true
+                sudo pip3 install volatility3 --break-system-packages 2>/dev/null || \
+                    sudo pip3 install volatility3 2>/dev/null || true
+                if [ -d "${INSTALL_DIR}/venv" ]; then
+                    source "${INSTALL_DIR}/venv/bin/activate" 2>/dev/null && \
+                        pip install volatility3 2>/dev/null || true
+                    deactivate 2>/dev/null || true
+                fi
+            fi
+        fi
         # Install REMnux distro for malware analysis tools
         if ! command -v remnux &>/dev/null; then
             info "Installing REMnux distro (addon mode)..."
@@ -103,6 +122,34 @@ if [[ "$SKIP_DEPS" == false ]]; then
     elif command -v yum >/dev/null; then
         sudo yum install -y python3-pip git curl jq 2>/dev/null || true
     fi
+    # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 6 DLLs)
+    info "Setting up Zimmerman forensic tools..."
+    ZIMMERMAN_DIR="${INSTALL_DIR}/zimmerman_tools"
+    sudo mkdir -p "$ZIMMERMAN_DIR"
+    if ! command -v dotnet >/dev/null 2>&1; then
+        info "Installing .NET 6 runtime for Zimmerman tools..."
+        sudo apt-get install -y -qq dotnet-runtime-6.0 2>/dev/null || \
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0 --runtime-only 2>/dev/null || \
+            warn "dotnet install failed — Zimmerman tools will be unavailable"
+    fi
+    if command -v dotnet >/dev/null 2>&1; then
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SRUMDB2; do
+            if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
+                info "  Downloading ${tool}..."
+                # Download from Zimmerman's GitHub releases
+                curl -sL "https://f001.backblazeb2.com/file/EricZimmermanTools/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
+                    unzip -q -o "/tmp/${tool}.zip" -d "$ZIMMERMAN_DIR" 2>/dev/null && \
+                    rm -f "/tmp/${tool}.zip" || \
+                    warn "Failed to download ${tool}"
+            else
+                info "  ${tool} already present"
+            fi
+        done
+        ok "Zimmerman tools ready"
+    else
+        warn "dotnet not available — Zimmerman tools skipped"
+    fi
+
     ok "System dependencies installed"
 fi
 

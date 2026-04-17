@@ -71,3 +71,13 @@
     - **T1003.006:** DCSync
 - [ ] **Scope Identification:** Flag which accounts are likely compromised based on artifacts.
 - [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.
+
+## VSS Credential Extraction
+
+- [ ] **VSS NTDS.dit Recovery:** Run `vss.extract_vss_files(image, output_dir, interesting_extensions=['.dit'])` to recover `NTDS.dit` from shadow copies — common credential theft technique extracts via VSS.
+- [ ] **VSS SAM Recovery:** Run `vss.extract_vss_files(image, output_dir, interesting_extensions=['.sam'])` to recover SAM hive backups from shadow copies.
+
+## Volatility Memory Analysis
+
+- [ ] **Memory Credential Dump:** Run `volatility.process_list(memory_dump)` to identify credential-related processes (`lsass.exe`, `mimikatz.exe`).
+- [ ] **Registry Hive Extraction:** Run `volatility.scan_registry(memory_dump)` to extract registry hives from memory — may contain cached credentials.

@@ -111,3 +111,12 @@
 - [ ] **Severity Scoring:** Score by severity — any confirmed anti-forensics activity elevates overall case severity to **HIGH** minimum.
 - [ ] **Confidence Downgrade Directive:** If any anti-forensics finding is scored **HIGH** or **CRITICAL**, emit a confidence downgrade directive in the findings output. This directive must set the confidence modifier **ANTI-FORENSICS-CONFIRMED** and must be read by the orchestrator. Upon receiving this modifier, the orchestrator must retroactively re-score all findings already emitted in the current case from **CONFIRMED** to **POSSIBLE** and from **POSSIBLE** to **UNVERIFIED**. Flag this downgrade explicitly in the final report.
 - [ ] **Final Output:** Output structured findings file for analyst handoff.
+
+## VSS Anti-Forensics Detection
+
+- [ ] **VSS Deletion Check:** Run `vss.list_vss(image)` — if no VSS snapshots exist on a system that should have them, flag as potential anti-forensics (vssadmin delete shadows).
+- [ ] **VSS Timeline Analysis:** Run `vss.analyze_vss_timeline(image)` on surviving shadow copies to reconstruct pre-deletion file state.
+
+## PhotoRec for Deleted Files
+
+- [ ] **Deep Carving:** Run `photorec.recover_files(image, output_dir)` to recover files that were securely deleted or wiped — PhotoRec carves from raw blocks, bypassing filesystem metadata.
