@@ -122,22 +122,24 @@ if [[ "$SKIP_DEPS" == false ]]; then
     elif command -v yum >/dev/null; then
         sudo yum install -y python3-pip git curl jq 2>/dev/null || true
     fi
-    # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 6 DLLs)
+    # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 9)
     info "Setting up Zimmerman forensic tools..."
     ZIMMERMAN_DIR="${INSTALL_DIR}/zimmerman_tools"
     sudo mkdir -p "$ZIMMERMAN_DIR"
     if ! command -v dotnet >/dev/null 2>&1; then
-        info "Installing .NET 6 runtime for Zimmerman tools..."
-        sudo apt-get install -y -qq dotnet-runtime-6.0 2>/dev/null || \
-            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0 --runtime-only 2>/dev/null || \
+        info "Installing .NET 9 runtime for Zimmerman tools..."
+        curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 9.0 --runtime-only 2>/dev/null || \
+            sudo apt-get install -y -qq dotnet-runtime-9.0 2>/dev/null || \
             warn "dotnet install failed — Zimmerman tools will be unavailable"
+        # Add dotnet to PATH if installed via script
+        export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
     fi
-    if command -v dotnet >/dev/null 2>&1; then
+    if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
         for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SRUMDB2; do
             if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
-                # Download from Zimmerman's GitHub releases
-                curl -sL "https://f001.backblazeb2.com/file/EricZimmermanTools/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
+                # Download from Zimmerman's distribution (net9 builds)
+                curl -sL "https://download.ericzimmermanstools.com/net9/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
                     unzip -q -o "/tmp/${tool}.zip" -d "$ZIMMERMAN_DIR" 2>/dev/null && \
                     rm -f "/tmp/${tool}.zip" || \
                     warn "Failed to download ${tool}"
