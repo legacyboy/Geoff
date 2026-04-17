@@ -8,12 +8,12 @@ Two checks: 1) Are claimed findings actually in the raw output? 2) Any obvious n
 import json
 import subprocess
 import re
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import sys
-import os
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,7 +32,7 @@ class GeoffCritic:
     """
 
     def __init__(self, ollama_url: str = None,
-                 model: str = "qwen3-coder-next:cloud"):
+                 model: str = os.environ.get("GEOFF_CRITIC_MODEL", "qwen3.5:cloud")):
         self.ollama_url = ollama_url or os.environ.get('OLLAMA_URL', 'http://localhost:11434')
         self.model = model
         self._api_key = os.environ.get('OLLAMA_API_KEY', '')
@@ -248,7 +248,7 @@ Respond in JSON:
         }
 
     def commit_validation(self, investigation_id: str, validation_result: Dict,
-                         base_path: str = "/home/claw/.openclaw/workspace/geoff-private"):
+                         base_path: str = os.environ.get("GEOFF_GIT_DIR", "/tmp/geoff-validations")):
         """Commit validation result to git for reproducibility"""
 
         validation_dir = Path(base_path) / "validations"
@@ -287,7 +287,7 @@ Respond in JSON:
             return False
 
     def get_validation_summary(self, investigation_id: str,
-                              base_path: str = "/home/claw/.openclaw/workspace/geoff-private") -> Dict:
+                              base_path: str = os.environ.get("GEOFF_GIT_DIR", "/tmp/geoff-validations")) -> Dict:
         """Get summary of all validations for an investigation"""
 
         validation_dir = Path(base_path) / "validations"

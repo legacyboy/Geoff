@@ -466,13 +466,15 @@ class VOLATILITY_Specialist:
 
     def _find_volatility(self) -> Optional[str]:
         for path in ['/usr/local/bin/volatility3', '/usr/bin/volatility3',
-                     '/usr/local/bin/vol.py', '/usr/bin/vol.py']:
+                     '/usr/local/bin/vol.py', '/usr/bin/vol.py',
+                     '/usr/local/bin/vol', '/usr/bin/vol']:
             if Path(path).exists():
                 return path
-        # Try which
-        result = subprocess.run(['which', 'vol.py'], capture_output=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
+        # Try which (check vol first, then vol.py)
+        for cmd in ['vol', 'vol.py', 'volatility3']:
+            result = subprocess.run(['which', cmd], capture_output=True)
+            if result.returncode == 0:
+                return result.stdout.strip().decode() if isinstance(result.stdout, bytes) else result.stdout.strip()
         return None
 
     def run(self, plugin: str, memory_dump: str, **kwargs) -> Dict[str, Any]:
@@ -671,8 +673,20 @@ class VOLATILITY_Specialist:
 class STRINGS_Specialist:
     """Specialist for string extraction and IOC analysis with full parsing"""
 
+    def __init__(self):
+        result = subprocess.run(['which', 'strings'], capture_output=True)
+        self.strings_available = result.returncode == 0
+
     def extract_strings(self, file_path: str, min_length: int = 4, encoding: str = 'ascii') -> Dict[str, Any]:
         """Extract strings from binary with IOC categorization"""
+        if not self.strings_available:
+            return {
+                'tool': 'strings',
+                'file': file_path,
+                'status': 'error',
+                'error': 'strings binary not found in PATH — install binutils',
+                'timestamp': datetime.now().isoformat(),
+            }
         cmd = ['strings', '-n', str(min_length)]
         if encoding == 'unicode':
             cmd.extend(['-e', 'l'])
@@ -804,7 +818,7 @@ class SpecialistOrchestrator:
             'sleuthkit': {
                 'available': self.sleuthkit.tools_available,
                 'functions': ['analyze_partition_table', 'analyze_filesystem',
-                             'list_files', 'extract_file', 'list_inodes', 'get_file_info']
+                             'list_files', 'extract_file', 'list_inodes', 'get_file_info', 'list_deleted']
             },
             'volatility': {
                 'available': self.volatility.volatility_path is not None,

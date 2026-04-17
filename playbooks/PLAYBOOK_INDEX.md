@@ -29,8 +29,8 @@ Playbooks are numbered following the MITRE ATT&CK kill chain order.
 | **PB-SIFT-016** | Cross-Image Correlation | Multi-host analysis to reconstruct attack paths and calculate blast radius. Always runs last if multiple hosts. | ✅ Active |
 | **PB-SIFT-017** | REMnux Malware Analysis | Static malware analysis using REMnux tools (die, peframe, pdfid, radare2, etc.). Only runs if suspicious binary surfaced. | ✅ Active |
 | **PB-SIFT-018** | Malware Analysis SOP | Systematic malware analysis covering entry vector, static/dynamic analysis, and reporting. Only runs if suspicious binary surfaced. | ✅ Active |
-
 | **PB-SIFT-019** | Command & Control | C2 infrastructure, beaconing, DNS tunneling, and persistent C2 channels. Runs when C2 indicators found in triage. | ✅ Active |
+| **PB-SIFT-020** | Timeline Analysis | Temporal event reconstruction using Plaso and SleuthKit mactime. Always runs when disk images present. | ✅ Active |
 
 ---
 When starting a new case, Geoff must:
@@ -41,5 +41,6 @@ When starting a new case, Geoff must:
 5. PB-SIFT-016 must always be the last entry if more than one host is in scope.
 6. PB-SIFT-017 and PB-SIFT-018 are only included if a suspicious binary is surfaced during triage.
 7. PB-SIFT-019 is included when C2 indicators are found during triage.
+8. PB-SIFT-020 is always included when disk images are present in the evidence inventory.
 
-**Location:** `/opt/geoff/playbooks/`
+**Location:** `playbooks/` (relative to project root)

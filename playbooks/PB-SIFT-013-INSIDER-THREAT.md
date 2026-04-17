@@ -120,3 +120,9 @@
 ---
 
 **⚠️ Analysis Note:** Cloud artifacts on a local image represent only one side of the picture. Findings here should be correlated with cloud-side logs (Entra ID sign-in logs, M365 Unified Audit Log, Azure Monitor) for full fidelity. Flag all cloud IOCs for follow-up cloud log review.
+
+## Zimmerman Program Execution Analysis
+
+- [ ] **AmCache History:** Run `zimmerman.amcache_parse(hive, output_csv)` to extract full program execution history — identifies tools used by insider (e.g., exfiltration utilities, keyloggers).
+- [ ] **ShellBags Access History:** Run `zimmerman.shellbags_parse(hive, output_csv)` to trace directory access patterns — reveals which sensitive folders the insider accessed.
+- [ ] **SRUM Resource Usage:** Run `zimmerman.srum_parse(srum_db, output_csv)` to correlate application network/CPU usage — identifies data exfiltration spikes.

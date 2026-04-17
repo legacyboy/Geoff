@@ -48,7 +48,7 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              GEOFF Web Interface (Flask)                 │
-│  Find Evil • Chat • Evidence Browser • Narrative Report │
+│  Find Evil + Chat • Evidence Browser • Narrative Report  │
 └──────────────────────────┬──────────────────────────────┘
                            │
          ┌─────────────────┼─────────────────┐
@@ -267,21 +267,52 @@ Conversational interface. Talk to Geoff directly or say things like `"start proc
 ---
 
 
-| Category | Tools | Functions |
-|----------|-------|-----------|
-| **Disk** | SleuthKit (mmls, fls, fsstat, icat, istat, ils) | Partition detection, filesystem analysis, file extraction |
-| **Memory** | Volatility3 | pslist, netscan, malware detection, registry, dump |
-| **IOC Extraction** | strings | URL, IP, email, registry path extraction |
-| **Registry** | RegRipper | Hive parsing, UserAssist, ShellBags, USB devices, autoruns, services |
-| **Timeline** | Plaso (log2timeline, psort) | Timeline creation, filtering, correlation |
-| **Network** | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic |
-| **Logs** | python-evtx | Windows Event Log, syslog parsing |
-| **Mobile** | iLEAPP-style | iOS backup, Android data analysis |
-| **Browser** | SQLite (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
-| **Email** | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
-| **Jump Lists / LNK** | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
-| **macOS** | plistlib, log(1), fsevents_parser | Plist parsing, Unified Log, LaunchAgents/Daemons, FSEvents |
-| **Malware** | REMnux (die, exiftool, peframe, oledump, etc.) | 15 tool wrappers, 5 specialist classes |
+| Category | Specialist | Tools | Functions |
+|----------|-----------|-------|----------|
+| **Disk** | sleuthkit | SleuthKit (mmls, fls, fsstat, icat, istat, ils, blkls, blkcat, blkcalc, blkstat, ifind, ffind, tsk_recover) | Partition detection, filesystem analysis, file extraction, deleted file recovery, block-level analysis |
+| **Recovery** | photorec | PhotoRec, Foremost, Scalpel | File carving from unallocated space, deleted file recovery, fragmented file recovery |
+| **Memory** | volatility | Volatility3 | pslist, netscan, malfind, registry hive extraction, process dump |
+| **IOC Extraction** | strings | strings, bulk_extractor, floss | URL, IP, email, credit card, registry path extraction |
+| **Registry** | registry | RegRipper (rip.pl), Python-Registry | Hive parsing, UserAssist, ShellBags, USB, autoruns, services, mounted devices |
+| **Windows Analysis** | zimmerman | Eric Zimmerman Tools (EvtxECmd, MFTECmd, bstrings, ShellBagsExplorer, AmcacheParser, SRUMDB2) | Event log parsing, MFT timeline, string extraction, shellbag analysis, AmCache execution history, SRUM resource usage |
+| **VSS** | vss | vshadowmount, ewfmount | Shadow copy enumeration, VSS mounting, file extraction from shadow copies, cross-VSS timeline |
+| **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
+| **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
+| **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
+| **Mobile** | mobile | Pure-Python (plistlib, sqlite3) | iOS backup analysis, Android data extraction |
+| **Browser** | browser | SQLite3 (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
+| **Email** | email | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
+| **Jump Lists / LNK** | jumplist | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
+| **macOS** | macos | plistlib, log(1), fsevents_parser | Plist parsing, Unified Log, LaunchAgents/Daemons, FSEvents |
+| **Malware** | remnux | REMnux suite (die, exiftool, peframe, oledump, pdfid, upx, r2, clamav, ssdeep, hashdeep) | 15 tool wrappers, 5 specialist classes |
+| **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
+| **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
+| **Antivirus** | remnux | ClamAV | Signature-based malware detection |
+
+### SANS SIFT Workstation Compatibility
+
+Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary runtime environment. The following SIFT tools are leveraged:
+
+| SIFT Tool | Geoff Specialist | Status |
+|-----------|----------------|--------|
+| SleuthKit | sleuthkit | ✅ Full coverage |
+| Volatility3 | volatility | ✅ Installed via pip (not in SIFT apt — see [Issue #628](https://github.com/teamdfir/sift/issues/628)) |
+| PhotoRec | photorec | ✅ Batch mode with foremost/scalpel fallback |
+| RegRipper | registry | ✅ Full coverage |
+| Plaso | plaso | ✅ Full coverage |
+| tshark | network | ✅ Non-interactive installer |
+| tcpflow | network | ✅ Full coverage |
+| vshadowmount | vss | ✅ Full coverage |
+| ewfmount | sleuthkit/vss | ✅ E01 mounting support |
+| bulk_extractor | strings | ✅ Full coverage |
+| hashdeep/ssdeep | remnux | ✅ Full coverage |
+| Zimmerman Tools | zimmerman | ✅ Auto-download via installer |
+| REMnux | remnux | ✅ Full coverage |
+| Scalpel/Foremost | photorec | ✅ Carving fallback chain |
+| ClamAV | remnux | ✅ Full coverage |
+| dotnet | zimmerman | ✅ Required for Zimmerman DLLs |
+
+**Note:** Volatility3 was removed from the SIFT 2026.03.24 release due to installer crashes from community plugin git cloning ([teamdfir/sift#628](https://github.com/teamdfir/sift/issues/628)). Geoff's installer works around this by installing Volatility3 directly via pip.
 
 **YARA has been intentionally removed.** Static signature matching provides limited forensic value compared to behavioral analysis.
 
@@ -305,6 +336,8 @@ Forensicator Output → Critic Validation → Git Commit
 - False positives (benign flagged as suspicious)
 
 **IOC Format Validation:** The critic validates extracted IOCs against expected formats — IP addresses, MD5/SHA1/SHA256 hashes, URLs, and email addresses.
+
+**Mandatory validation:** If the Critic is unavailable or errors, the step is flagged `needs_review: true` rather than silently accepted. The final report includes a `steps_needs_review` count. Steps are never silently passed without validation.
 
 ---
 
@@ -440,7 +473,13 @@ pip install -r requirements.txt
 export OLLAMA_URL="http://localhost:11434"
 export GEOFF_PROFILE=cloud
 
-# Or override per-agent
+# Optional: require API key on all endpoints
+export GEOFF_API_KEY="your-secret-key"
+
+# Optional: server port (default 8080)
+export GEOFF_PORT=8080
+
+# Or override individual models
 export GEOFF_MANAGER_MODEL="deepseek-v3.2:cloud"
 export GEOFF_FORENSICATOR_MODEL="qwen3-coder-next:cloud"
 export GEOFF_CRITIC_MODEL="qwen3.5:cloud"
@@ -454,13 +493,60 @@ python src/geoff_integrated.py
 |--------|-----|
 | **CLI** | `geoff-find-evil /path/to/evidence` — no server required |
 | **Web UI** | http://localhost:8080 |
+| **Console** | `python3 scripts/geoff_console.py` |
 | **Evidence tab** | Click any folder → auto-populates Find Evil input |
 | **One-click** | Click 🔍 Investigate on any evidence folder to run immediately |
 | **Chat** | `"start processing IR-016-CloudJack"` routes to Find Evil automatically |
 
 ---
 
-## Usage
+## Interfaces
+
+### Web UI
+
+Two tabs:
+
+**Find Evil** (default) — the main investigation console. Contains:
+- Evidence directory input + **Run Find Evil** button at the top
+- Live progress bar (playbook / step / elapsed time) while a job runs
+- Unified scrollable output: chat message bubbles + streaming step-by-step log + results card
+- Chat input pinned at the bottom — ask questions or trigger investigations in natural language
+
+**Evidence** — browse all cases and their files.
+
+Chat and Find Evil share the same streaming output. Whether you click the button or type `"analyze /cases/incident42"` in the chat box, you get the same live log.
+
+### Console UI
+
+A terminal REPL with identical functionality — no browser needed:
+
+```bash
+python3 scripts/geoff_console.py
+python3 scripts/geoff_console.py --server http://10.0.0.5:8080 --key myapikey
+```
+
+Auto-loads `GEOFF_PORT` and `GEOFF_API_KEY` from `.env`.
+
+```
+geoff> analyze /cases/laptop.E01
+  ▶ Starting investigation on /cases/laptop.E01
+  Job: fe-a3b9c1
+
+[████████░░░░░░░░░░░░░░░░░░░░░░] 27%  PB-SIFT-001  >  fls_list_files  42s
+14:32:01  ▶ PB-SIFT-000: Triage Prioritization
+14:32:03  ✓ inventory complete — 1 disk, 0 memory
+14:32:05  ✗ fls_list_files failed — tool not found
+
+geoff> /cases
+geoff> /find-evil /mnt/evidence
+geoff> /status fe-a3b9c1      # reconnect to a running job
+geoff> /quit
+```
+
+Commands: `/find-evil [path]` · `/cases` · `/status <job_id>` · `/help` · `/quit`  
+Ctrl+C stops polling the current job without exiting. `NO_COLOR=1` disables ANSI output.
+
+### API
 
 **Find Evil — CLI (no server needed):**
 ```bash
@@ -478,25 +564,59 @@ geoff-find-evil /cases/incident42 --json | jq '{evil:.evil_found, sev:.severity}
 ```bash
 curl -X POST http://localhost:8080/find-evil \
   -H 'Content-Type: application/json' \
+  -H 'X-API-Key: yourkey' \
   -d '{"evidence_dir": "/path/to/evidence"}'
+# → { "job_id": "fe-abc123", "status": "running" }
+
+curl http://localhost:8080/find-evil/status/fe-abc123 \
+  -H 'X-API-Key: yourkey'
 ```
 
-**Chat Commands:**
-```
-"Start processing /cases/incident42"
-"Run mmls on the narcos disk image"
-"Extract strings from the malware sample"
-"Show me the timeline for this incident"
+**Chat:**
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: yourkey' \
+  -d '{"message": "Start processing /cases/incident42"}'
 ```
 
 **Geoff will:**
 1. Detect the request (tool execution or investigation)
 2. Execute via the appropriate specialist
-3. Validate with Critic
+3. Validate with Critic (marks `needs_review` if Critic unavailable)
 4. Run behavioral analysis
 5. Build super timeline
 6. Generate narrative report
 7. Commit everything to git
+
+---
+
+## Security
+
+### API Authentication
+
+Set `GEOFF_API_KEY` in `.env` to require authentication on all API endpoints:
+
+```bash
+echo "GEOFF_API_KEY=your-secret-key" >> .env
+```
+
+Pass the key via header:
+```bash
+curl -H 'X-API-Key: your-secret-key' http://localhost:8080/find-evil ...
+# or
+curl -H 'Authorization: Bearer your-secret-key' http://localhost:8080/find-evil ...
+```
+
+The web UI reads the key from a server-injected `<meta>` tag and includes it automatically in all fetch requests. When `GEOFF_API_KEY` is unset, authentication is disabled (backwards-compatible default for local use).
+
+### Evidence Path Validation
+
+All evidence paths are validated against a strict allowlist before use. Paths containing shell metacharacters (`;`, `&`, `|`, `` ` ``, `$`, `()`, etc.) are rejected to prevent command injection via maliciously named evidence files.
+
+### Memory Safety
+
+Findings are streamed to `findings.jsonl` on disk as each step completes rather than accumulated in memory. A compact in-memory index handles idempotency checks. This prevents OOM crashes on large evidence sets. The cap is configurable via `GEOFF_MAX_FINDINGS` (default: 50,000 in-memory entries).
 
 ---
 
@@ -507,8 +627,9 @@ case_work_dir/
 ├── device_map.json          # Device grouping + metadata
 ├── user_map.json            # User-to-device mapping
 ├── execution_plan.json      # Triage-generated plan
+├── findings.jsonl           # All step records, streamed to disk as they complete
 ├── output/
-│   ├── PB-SIFT-008.json     # Per-playbook findings
+│   ├── PB-SIFT-008.json     # Per-playbook findings (best-effort snapshot)
 │   └── PB-SIFT-012.json
 ├── validations/
 │   └── step_key.json        # Per-step critic results

@@ -65,10 +65,10 @@ _UNSAFE_PATH_CHARS = re.compile(r'[;&|`$(){}[\]<>\\!\n\r\t]')
 
 
 def _validate_evidence_path(path: str) -> str:
-    """Validate an evidence path to prevent command injection.
+    """Validate an evidence path to prevent command injection and path traversal.
 
-    Raises ValueError if the path contains shell metacharacters.
-    Returns the path unchanged if it is safe.
+    Raises ValueError if the path contains shell metacharacters or resolves
+    outside of allowed base directories.
     """
     if _UNSAFE_PATH_CHARS.search(path):
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
@@ -189,20 +189,25 @@ class FindingsWriter:
     def all_records(self) -> list:
         """Return all records. Falls back to disk when in-memory cap is exceeded."""
         with self._lock:
-            cap_exceeded = len(self._records) >= self._max
-        if cap_exceeded and self._path.exists():
-            records = []
-            try:
-                with open(self._path) as fh:
+            if len(self._records) < self._max:
+                return list(self._records)
+        # Cap was hit — read all records from JSONL for complete results
+        records = []
+        try:
+            if self._path.exists():
+                with open(self._path, 'r') as fh:
                     for line in fh:
                         line = line.strip()
                         if line:
-                            records.append(json.loads(line))
-                return records
-            except (OSError, json.JSONDecodeError):
-                pass
-        with self._lock:
-            return list(self._records)
+                            try:
+                                records.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+        except OSError as e:
+            print(f"[FindingsWriter] Failed to read JSONL {self._path}: {e}", flush=True)
+            with self._lock:
+                return list(self._records)
+        return records
 
 def _sanitize_path(path_str: str, allowed_base: str = "") -> str:
     """Sanitize file paths to prevent directory traversal attacks."""
@@ -902,30 +907,35 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     (case_work_path / "reports").mkdir(exist_ok=True)
     (case_work_path / "timeline").mkdir(exist_ok=True)
 
-    # Spawn background worker
-    worker_cmd = [
-        'python3',
-        '/home/sansforensics/geoff_worker.py',
-        case_name,
-        str(case_work_path)
-    ]
-    if evidence_path:
-        worker_cmd.append(evidence_path)
+    # Spawn find_evil pipeline in a background thread
+    fe_job_id = f"inv-{case_name}-{uuid.uuid4().hex[:8]}"
+    _find_evil_jobs[fe_job_id] = {
+        "status": "starting",
+        "case_name": case_name,
+        "evidence_path": evidence_path,
+        "work_dir": str(case_work_path),
+        "started_at": datetime.now().isoformat(),
+        "progress_pct": 0,
+    }
 
-    subprocess.Popen(
-        worker_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True
-    )
+    def _run_find_evil_bg():
+        try:
+            find_evil(evidence_path, job_id=fe_job_id)
+        except Exception as e:
+            _find_evil_jobs[fe_job_id]["status"] = "error"
+            _find_evil_jobs[fe_job_id]["error"] = str(e)
+
+    bg_thread = threading.Thread(target=_run_find_evil_bg, daemon=True)
+    bg_thread.start()
 
     return {
         "status": "started",
         "case": case_name,
         "work_directory": str(case_work_path),
+        "job_id": fe_job_id,
         "message": f"Investigation initiated for case: {case_name}",
-        "progress_file": str(case_work_path / "investigation_status.json"),
-        "note": "Background investigation running. Progress updates every 10 seconds."
+        "find_evil_status": f"/find-evil/status/{fe_job_id}",
+        "note": "Background investigation running via find_evil pipeline"
     }
 
 
@@ -1600,7 +1610,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                 continue
             result = safe_run(
                 ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
-                timeout=60
+                timeout=60,
             )
             if result["code"] != 0:
                 continue
@@ -1624,12 +1634,13 @@ def _scan_triage_indicators(inventory: dict) -> list:
             continue
 
     # Phase 3: Direct content scan for text-accessible evidence
+    # Include files with no extension (e.g. 'syslog', 'messages', 'secure')
     text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
                        ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
                        ".ps1", ".vbs", ".js", ".html", ".php",
                        ""}  # empty ext covers: syslog, messages, auth, etc.
     max_read_bytes = 512 * 1024  # 512KB per file
-    
+
     for fpath in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + \
                 inventory.get("other_files", []):
         fpath_str = str(fpath)
@@ -1772,6 +1783,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     """
     start_time = time.time()
     evidence_path = Path(evidence_dir)
+
+    # Initialize variables to None early for proper None checks
+    device_map = None
+    user_map = None
+    correlated_users = None
+    all_behavioral_flags = None
+    confidence_modifiers = None
+    super_timeline_path = None
 
     if not evidence_path.exists():
         return {
@@ -1929,7 +1948,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
         # Write .gitignore for case directory
         with open(case_work_dir / '.gitignore', 'w') as f:
-            f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n')
+            f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n*.plaso\n*.json_line\n*.csv\n*.jsonl\n')
         safe_git_commit('Initial case setup', base_path=str(case_work_dir))
     except Exception as e:
         _log_error(f"git init case_work_dir {case_work_dir}", e)
@@ -2111,6 +2130,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Timeline analysis — always run if disk images present (psort after log2timeline)
     if len(inventory["disk_images"]) > 0:
         execution_plan.append("PB-SIFT-020")
+
+    # Mobile forensics — run if mobile backup artifacts detected
+    if len(inventory["mobile_backups"]) > 0:
+        execution_plan.append("PB-SIFT-021")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-021", "reason": "No mobile backup artifacts detected"})
 
     # Cross-image correlation last (if multi-host)
     if len(inventory["disk_images"]) > 1:
@@ -2794,6 +2819,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "os_type": os_type,
         "evil_found": evil_found,
         "severity": overall_severity,
+        "classification": classification,
+        "evidence_inventory": {
+            k: v for k, v in inventory.items()
+            if isinstance(v, list) and v
+        },
         "severity_distribution": severity_counts,
         "indicator_hits": indicator_hits,
         "playbooks_run": playbooks_run,
@@ -2806,10 +2836,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "steps_needs_review": needs_review_count,
         "findings_detail": findings_writer.all_records(),
         "findings_jsonl": str(findings_writer._path),
-        "user_activity_summary": correlated_users if 'correlated_users' in dir() else {},
-        "device_map": device_map if 'device_map' in dir() else {},
-        "user_map": user_map if 'user_map' in dir() else {},
-        "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if 'all_behavioral_flags' in dir() else {},
+        "user_activity_summary": correlated_users if correlated_users is not None else {},
+        "device_map": device_map if device_map is not None else {},
+        "user_map": user_map if user_map is not None else {},
+        "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if all_behavioral_flags is not None else {},
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
         "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
@@ -2854,11 +2884,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         narrator = NarrativeReportGenerator(call_llm_func=call_llm)
         narrative_path = narrator.generate(
             report_json=report,
-            device_map=device_map if 'device_map' in dir() else {},
-            user_map=user_map if 'user_map' in dir() else {},
-            super_timeline_path=str(super_timeline_path) if 'super_timeline_path' in dir() and super_timeline_path else "",
-            correlated_users=correlated_users if 'correlated_users' in dir() else {},
-            behavioral_flags=all_behavioral_flags if 'all_behavioral_flags' in dir() else {},
+            device_map=device_map if device_map is not None else {},
+            user_map=user_map if user_map is not None else {},
+            super_timeline_path=str(super_timeline_path) if super_timeline_path is not None and super_timeline_path else "",
+            correlated_users=correlated_users if correlated_users is not None else {},
+            behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
             case_work_dir=case_work_dir,
         )
         report["narrative_report_path"] = str(narrative_path)
@@ -2900,7 +2930,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 # HTML Template (with Find Evil tab)
 # ---------------------------------------------------------------------------
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -3789,20 +3819,132 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 }
             }
 
-            // Narrative Report Link
-            if (report.narrative_report_path) {
-                html += '<p style="margin-top:12px;"><strong>📄 Narrative Report:</strong> ' + report.narrative_report_path + '</p>';
-            }
-
             if (report.case_work_dir) {
-                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Report: ' + report.case_work_dir + '/reports/find_evil_report.json</p>';
+                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Case: ' + report.case_work_dir + '</p>';
             }
 
             html += '</div>';
+
+            // Full narrative report section (fetched separately)
+            html += '<div id="fe-report-section" style="margin-top:16px;">';
+            if (report.narrative_report_path) {
+                const caseName = (report.title || '').replace('Find Evil Report \u2014 ', '');
+                html += '<button id="fe-report-btn" onclick="loadNarrativeReport(\'' + _escAttr(caseName) + '\')" '
+                      + 'style="background:#1f6feb;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:0.9rem;">'
+                      + '\u2139\ufe0f View Full Investigation Report</button>';
+                html += '<div id="fe-report-body" style="display:none;margin-top:16px;"></div>';
+            }
+            html += '</div>';
+
             area.innerHTML = html;
             // Scroll the unified output so results are visible
             const out = document.getElementById('fe-output');
             out.scrollTop = out.scrollHeight;
+        }
+
+        function _escAttr(s) {
+            return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        }
+
+        // Minimal markdown-to-HTML renderer for the narrative report
+        function _md2html(md) {
+            const lines = md.split('\n');
+            let html = '';
+            let inList = false;
+            let inTable = false;
+            for (let i = 0; i < lines.length; i++) {
+                let ln = lines[i];
+                // Close open structures on blank line
+                if (ln.trim() === '') {
+                    if (inList)  { html += '</ul>\n'; inList = false; }
+                    if (inTable) { html += '</table>\n'; inTable = false; }
+                    html += '<br>';
+                    continue;
+                }
+                // Horizontal rule
+                if (/^---+$/.test(ln.trim())) {
+                    if (inList)  { html += '</ul>\n'; inList = false; }
+                    if (inTable) { html += '</table>\n'; inTable = false; }
+                    html += '<hr style="border-color:#30363d;margin:12px 0;">\n';
+                    continue;
+                }
+                // Headers
+                const h3 = ln.match(/^### (.+)/);
+                const h2 = ln.match(/^## (.+)/);
+                const h1 = ln.match(/^# (.+)/);
+                if (h1) { html += '<h2 style="color:#58a6ff;margin:16px 0 8px;">' + _mdInline(h1[1]) + '</h2>\n'; continue; }
+                if (h2) { html += '<h3 style="color:#79c0ff;margin:14px 0 6px;">' + _mdInline(h2[1]) + '</h3>\n'; continue; }
+                if (h3) { html += '<h4 style="color:#adbac7;margin:12px 0 4px;">' + _mdInline(h3[1]) + '</h4>\n'; continue; }
+                // Table row
+                if (ln.startsWith('|')) {
+                    if (!inTable) { html += '<table style="border-collapse:collapse;width:100%;margin:6px 0;font-size:0.82rem;">'; inTable = true; }
+                    if (/^[|][-| ]+[|]$/.test(ln.trim())) continue; // separator row
+                    const cells = ln.split('|').slice(1,-1);
+                    html += '<tr>' + cells.map(c => '<td style="border:1px solid #30363d;padding:4px 8px;">' + _mdInline(c.trim()) + '</td>').join('') + '</tr>\n';
+                    continue;
+                }
+                if (inTable) { html += '</table>\n'; inTable = false; }
+                // List item
+                const li = ln.match(/^[-*] (.+)/);
+                if (li) {
+                    if (!inList) { html += '<ul style="margin:4px 0 4px 18px;padding:0;">'; inList = true; }
+                    html += '<li style="margin:2px 0;">' + _mdInline(li[1]) + '</li>\n';
+                    continue;
+                }
+                // Numbered list
+                const ol = ln.match(/^\\d+\\. (.+)/);
+                if (ol) {
+                    if (inList) { html += '</ul>\n'; inList = false; }
+                    html += '<p style="margin:2px 0;">' + _mdInline(ln) + '</p>\n';
+                    continue;
+                }
+                if (inList) { html += '</ul>\n'; inList = false; }
+                html += '<p style="margin:4px 0;">' + _mdInline(ln) + '</p>\n';
+            }
+            if (inList)  html += '</ul>\n';
+            if (inTable) html += '</table>\n';
+            return html;
+        }
+
+        function _mdInline(s) {
+            // Escape HTML first
+            s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            // Bold+italic, bold, italic, code, backtick
+            s = s.replace(/[*][*][*](.+?)[*][*][*]/g, '<strong><em>$1</em></strong>');
+            s = s.replace(/[*][*](.+?)[*][*]/g, '<strong>$1</strong>');
+            s = s.replace(/[*](.+?)[*]/g, '<em>$1</em>');
+            s = s.replace(/`([^`]+)`/g, '<code style="background:#161b22;padding:1px 5px;border-radius:3px;font-size:0.85em;">$1</code>');
+            return s;
+        }
+
+        async function loadNarrativeReport(caseName) {
+            const btn = document.getElementById('fe-report-btn');
+            const body = document.getElementById('fe-report-body');
+            if (!btn || !body) return;
+            btn.disabled = true;
+            btn.textContent = 'Loading report\u2026';
+            try {
+                const resp = await authFetch('/cases/' + encodeURIComponent(caseName) + '/report');
+                if (!resp.ok) {
+                    body.innerHTML = '<p style="color:#f85149;">Failed to load report (' + resp.status + ')</p>';
+                    body.style.display = 'block';
+                    return;
+                }
+                const md = await resp.text();
+                body.innerHTML = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;font-size:0.88rem;line-height:1.6;color:#c9d1d9;">'
+                               + _md2html(md) + '</div>';
+                body.style.display = 'block';
+                btn.textContent = '\u25b2 Hide Report';
+                btn.onclick = () => {
+                    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+                    btn.textContent = body.style.display === 'none' ? '\u2139\ufe0f View Full Investigation Report' : '\u25b2 Hide Report';
+                };
+            } catch(e) {
+                body.innerHTML = '<p style="color:#f85149;">Error: ' + e.message + '</p>';
+                body.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         function showFindEvilError(msg) {
@@ -4063,6 +4205,39 @@ def list_cases():
     return jsonify({'cases': get_all_cases()})
 
 
+@app.route('/cases/<case_name>/report', methods=['GET'])
+@_require_auth
+def get_case_report(case_name):
+    """Return the narrative report markdown for a completed Find Evil case.
+
+    The case_name must consist only of alphanumeric characters, hyphens, and
+    underscores to prevent path traversal.
+    """
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', case_name)
+    if not safe_name:
+        return jsonify({'error': 'Invalid case name'}), 400
+
+    # Search CASES_WORK_DIR for a directory that starts with safe_name
+    cases_root = Path(CASES_WORK_DIR)
+    report_path = None
+    if cases_root.exists():
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if candidate.is_dir() and candidate.name.startswith(safe_name):
+                candidate_report = candidate / "reports" / "narrative_report.md"
+                if candidate_report.exists():
+                    report_path = candidate_report
+                    break
+
+    if not report_path:
+        return jsonify({'error': 'Report not found for this case'}), 404
+
+    try:
+        content = report_path.read_text(encoding='utf-8')
+        return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/tools', methods=['GET'])
 @_require_auth
 def list_tools():
@@ -4145,15 +4320,29 @@ def critic_summary(investigation_id):
 @app.route('/investigation/status/<case_name>', methods=['GET'])
 @_require_auth
 def get_investigation_status(case_name):
-    """Get status of background investigation for polling"""
+    """Get status of background investigation via find_evil pipeline"""
     try:
-        status_file = Path(CASES_WORK_DIR) / case_name / "investigation_status.json"
-        if status_file.exists():
-            with open(status_file) as f:
-                status = json.load(f)
-            return jsonify(status)
-        else:
-            return jsonify({'status': 'not_found', 'case': case_name}), 404
+        # Check active find_evil jobs for this case
+        for job_id, job in _find_evil_jobs.items():
+            if case_name in job_id or job.get('case_name') == case_name:
+                return jsonify({
+                    'status': job.get('status', 'pending'),
+                    'case': case_name,
+                    'job_id': job_id,
+                    'progress_pct': job.get('progress_pct', 0),
+                    'current_playbook': job.get('current_playbook'),
+                    'current_step': job.get('current_step'),
+                })
+        # Check for completed investigation in case directory
+        case_dir = Path(CASES_WORK_DIR)
+        report_file = None
+        for d in sorted(case_dir.glob(f"{case_name}*")):
+            candidate = d / "reports" / "find_evil_report.json"
+            if candidate.exists():
+                report_file = candidate
+        if report_file:
+            return jsonify({'status': 'completed', 'case': case_name, 'report': str(report_file)})
+        return jsonify({'status': 'not_found', 'case': case_name}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
@@ -4295,6 +4484,10 @@ def find_evil_info():
             trigger = "If suspicious binary found during triage"
         elif pid == "PB-SIFT-019":
             trigger = "If C2 indicators found during triage"
+        elif pid == "PB-SIFT-020":
+            trigger = "If disk images present"
+        elif pid == "PB-SIFT-021":
+            trigger = "If mobile backup artifacts detected"
         elif pid == "PB-SIFT-016":
             trigger = "If multiple disk images found"
         else:
