@@ -136,6 +136,30 @@ if [[ "$SKIP_DEPS" == false ]]; then
     elif command -v yum >/dev/null; then
         sudo yum install -y python3-pip git curl jq 2>/dev/null || true
     fi
+
+    # Create wrapper scripts for Python-only forensic tools
+    VENV_BIN="${INSTALL_DIR}/venv/bin"
+    if [ -d "$VENV_BIN" ]; then
+        info "Creating forensic tool wrappers..."
+        # pdfid wrapper (Python module, not a CLI binary)
+        cat > "${VENV_BIN}/pdfid" << 'PDFID_EOF'
+#!/bin/bash
+exec python3 -m pdfid "$@"
+PDFID_EOF
+        chmod +x "${VENV_BIN}/pdfid"
+        # die wrapper (fallback to 'file' command when Detect It Easy CLI unavailable)
+        cat > "${VENV_BIN}/die" << 'DIE_EOF'
+#!/bin/bash
+if command -v diec >/dev/null 2>&1; then
+    exec diec "$@"
+else
+    exec file "$@"
+fi
+DIE_EOF
+        chmod +x "${VENV_BIN}/die"
+        ok "Forensic tool wrappers created"
+    fi
+
     # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 9)
     info "Setting up Zimmerman forensic tools..."
     ZIMMERMAN_DIR="${INSTALL_DIR}/zimmerman_tools"
@@ -155,6 +179,9 @@ if [[ "$SKIP_DEPS" == false ]]; then
                 # Download from Zimmerman's distribution (net9 builds)
                 curl -sL "https://download.ericzimmermanstools.com/net9/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
                     unzip -q -o "/tmp/${tool}.zip" -d "$ZIMMERMAN_DIR" 2>/dev/null && \
+                    # Flatten subdirectories (some zips extract into subdirs)
+                    find "$ZIMMERMAN_DIR" -mindepth 2 -type f -exec mv -n {} "$ZIMMERMAN_DIR/" \; 2>/dev/null && \
+                    find "$ZIMMERMAN_DIR" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null && \
                     rm -f "/tmp/${tool}.zip" || \
                     warn "Failed to download ${tool}"
             else

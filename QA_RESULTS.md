@@ -928,3 +928,11 @@ Total test batches: 8
 - HTTP status: 000
 - Attempting restart...
 - Restart result: HTTP 200
+
+---
+## QA Run: 2026-04-17 11:00:01 CDT — Scenario: single_dd_image
+### Find Evil on single DD image
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-d0d90b128d30","message":"Find Evil job started. Poll /find-evil/status/fe-d0d90b128d30 for progress.","status":"running"}
+
