@@ -149,7 +149,7 @@ if [[ "$SKIP_DEPS" == false ]]; then
         export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
     fi
     if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
-        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SRUMDB2; do
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd; do
             if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
                 # Download from Zimmerman's distribution (net9 builds)
