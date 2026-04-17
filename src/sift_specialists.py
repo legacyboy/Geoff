@@ -27,32 +27,10 @@ class SLEUTHKIT_Specialist:
             available[tool] = result.returncode == 0
         return available
 
-    def run(self, tool: str, args: List[str]) -> Dict[str, Any]:
-        if not self.tools_available.get(tool, False):
-            return {
-                'tool': tool,
-                'status': 'error',
-                'error': f'{tool} not found in PATH',
-                'timestamp': datetime.now().isoformat()
-            }
-        try:
-            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=300)
-            return {
-                'tool': tool,
-                'status': 'success' if result.returncode == 0 else 'error',
-                'returncode': result.returncode,
-                'stdout': result.stdout,
-                'stderr': result.stderr,
-                'timestamp': datetime.now().isoformat()
-            }
-        except subprocess.TimeoutExpired:
-            return {'tool': tool, 'status': 'timeout', 'error': 'Command timed out after 5 minutes', 'timestamp': datetime.now().isoformat()}
-        except Exception as e:
-            return {'tool': tool, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
-
     def analyze_partition_table(self, disk_image: str) -> Dict[str, Any]:
         """mmls - Display partition layout with parsed partition entries"""
-        raw = self.run('mmls', [disk_image])
+        segments = self._find_image_segments(disk_image)
+        raw = self.run('mmls', segments)
         if raw['status'] != 'success':
             return raw
 
@@ -114,15 +92,270 @@ class SLEUTHKIT_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
+    def _find_image_segments(self, image_path: str) -> List[str]:
+        """Find all segments of a split DD image (e.g. SCHARDT.001, .002, .003).
+
+        Looks for files in the same directory with incrementing numeric suffixes
+        matching the basename pattern. For single files (E01, single DD), returns [image_path].
+        """
+        p = Path(image_path)
+        if not p.exists():
+            return [image_path]
+
+        # If it's an E01 file (or similar single-file format), return as-is
+        if p.suffix.lower() in ('.e01', '.e02', '.e03', '.img', '.dd', '.bin', '.raw'):
+            # Check if this looks like a segment file (ends with .NNN)
+            stem = p.stem
+            # Check if the extension is like .001, .002, etc.
+            segment_suffix = p.suffix
+            if segment_suffix and re.match(r'^\d+$', segment_suffix.lstrip('.')):
+                # This file looks like a segment — find siblings
+                base_name = p.stem  # e.g. SCHARDT
+                dir_path = p.parent
+                # Find all files matching base_name.NNN in same directory
+                segments = []
+                for f in sorted(dir_path.iterdir()):
+                    if f.is_file() and f.stem == base_name:
+                        # Verify the suffix is numeric
+                        ext = f.suffix.lstrip('.')
+                        if ext.isdigit():
+                            segments.append(str(f))
+                if segments:
+                    return segments
+                return [image_path]
+            return [image_path]
+
+        # For non-standard extensions, try segment detection anyway
+        stem = p.stem
+        segment_suffix = p.suffix
+        if segment_suffix and re.match(r'^\d+$', segment_suffix.lstrip('.')):
+            dir_path = p.parent
+            segments = []
+            for f in sorted(dir_path.iterdir()):
+                if f.is_file() and f.stem == stem:
+                    ext = f.suffix.lstrip('.')
+                    if ext.isdigit():
+                        segments.append(str(f))
+            if segments:
+                return segments
+
+        return [image_path]
+
+    def _detect_partition(self, image_path: str) -> List[Dict[str, Any]]:
+        """Run mmls to find partition offsets and filesystem types.
+
+        Returns a list of partitions with keys:
+          - offset: sector number (start_sector)
+          - fs_type: filesystem type string (ntfs, ext4, fat32, etc.)
+          - description: full description string from mmls output
+        """
+        segments = self._find_image_segments(image_path)
+        raw = self.run('mmls', segments)
+        if raw['status'] != 'success':
+            return []
+
+        partitions = []
+        for line in raw['stdout'].splitlines():
+            line = line.strip()
+            if not line or line.startswith('DOS') or line.startswith('Slot') or line.startswith('---') or line.startswith('Offset') or line.startswith('Units') or line == '':
+                continue
+            if line.startswith('0') and '-------' in line:
+                continue
+            if line.startswith('0') and 'Meta' in line[:20]:
+                continue
+            # Try format with slot prefix: 002:  000:000   0000000063   0009510479   0009510417   NTFS...
+            match = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if match:
+                desc = match.group(4).strip()
+                # Extract fs_type from description (e.g. "NTFS / exFAT (0x07)" -> "ntfs")
+                fs_type = self._extract_fs_type(desc)
+                partitions.append({
+                    'offset': int(match.group(1)),
+                    'fs_type': fs_type,
+                    'description': desc
+                })
+                continue
+            # Try simpler format: start end length description
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    desc = ' '.join(parts[3:])
+                    fs_type = self._extract_fs_type(desc)
+                    partitions.append({
+                        'offset': int(parts[0]),
+                        'fs_type': fs_type,
+                        'description': desc
+                    })
+                except ValueError:
+                    pass
+
+        return partitions
+
+    @staticmethod
+    def _extract_fs_type(description: str) -> str:
+        """Extract filesystem type from mmls description string."""
+        lower = description.lower()
+        # Map TSK hex codes and common names to canonical type strings
+        fs_map = {
+            'ntfs': 'ntfs',
+            'ntfs/': 'ntfs',
+            'fat': 'fat',
+            'fat32': 'fat32',
+            'exfat': 'exfat',
+            'ext': 'ext',
+            'ext2': 'ext2',
+            'ext3': 'ext3',
+            'ext4': 'ext4',
+            'ufs': 'ufs',
+            'ufs2': 'ufs2',
+            'hfs': 'hfs',
+            'hfsx': 'hfsx',
+            'udf': 'udf',
+            'ffs': 'ffs',
+            'swap': 'swap',
+            'none': 'none',
+        }
+        # Also map hex codes like 0x07 -> ntfs, 0x0b -> fat32, etc.
+        hex_map = {
+            '0x07': 'ntfs',
+            '0x0b': 'fat32',
+            '0x0c': 'fat32',
+            '0x06': 'fat',
+            '0x00': 'none',
+            '0x83': 'ext',
+            '0x82': 'swap',
+        }
+        for code, fs in hex_map.items():
+            if code in lower:
+                return fs
+        for key, fs in fs_map.items():
+            if key in lower:
+                return fs
+        return ''
+
+    def run(self, tool: str, args: List[str]) -> Dict[str, Any]:
+        if not self.tools_available.get(tool, False):
+            return {
+                'tool': tool,
+                'status': 'error',
+                'error': f'{tool} not found in PATH',
+                'timestamp': datetime.now().isoformat()
+            }
+        try:
+            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': tool,
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout,
+                'stderr': result.stderr,
+                'timestamp': datetime.now().isoformat()
+            }
+        except subprocess.TimeoutExpired:
+            return {'tool': tool, 'status': 'timeout', 'error': 'Command timed out after 5 minutes', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': tool, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def _run_with_segments(self, tool: str, base_image: str,
+                           base_args: Optional[List[str]] = None,
+                           extra_partitions: Optional[List[str]] = None,
+                           graceful: bool = True) -> Dict[str, Any]:
+        """Run a sleuthkit tool with auto-detected image segments and partitions.
+
+        Args:
+            tool: sleuthkit tool name (fls, fsstat, icat, etc.)
+            base_image: the image path to analyze
+            base_args: extra arguments to pass to the tool
+            extra_partitions: pre-detected partitions (offset/fs_type) to use
+            graceful: if True, handle truncated/partial image errors gracefully
+        """
+        # Auto-detect partitions if not provided
+        partitions = extra_partitions if extra_partitions else self._detect_partition(base_image)
+
+        # Auto-detect image segments
+        segments = self._find_image_segments(base_image)
+
+        # Build the argument list
+        cmd_args = list(base_args) if base_args else []
+
+        # If partitions were detected and no offset is already specified, use first partition offset
+        offset_provided = False
+        for i, a in enumerate(cmd_args):
+            if a == '-o' and i + 1 < len(cmd_args):
+                offset_provided = True
+                break
+
+        if not offset_provided and partitions:
+            # Try to find a filesystem partition (skip unused/meta)
+            target_partition = None
+            for p in partitions:
+                if p.get('fs_type') and p['fs_type'] != 'none':
+                    target_partition = p
+                    break
+            if target_partition is None and partitions:
+                target_partition = partitions[0]
+            if target_partition and target_partition.get('offset') is not None:
+                cmd_args.extend(['-o', str(target_partition['offset'])])
+                # Add -f flag with detected filesystem type
+                if target_partition.get('fs_type'):
+                    cmd_args.extend(['-f', target_partition['fs_type']])
+
+        # Pass all image segments as arguments
+        for seg in segments:
+            cmd_args.append(seg)
+
+        raw = self.run(tool, cmd_args)
+
+        # Handle partial/truncated image errors gracefully
+        if not offset_provided and partitions and raw['status'] == 'error':
+            stderr_lower = raw.get('stderr', '').lower()
+            # Check for common truncated/partial image errors
+            if any(kw in stderr_lower for kw in ['bitmap', 'block', 'unallocated', 'cannot determine',
+                                                   'truncat', 'partial', 'corrupt', 'bad magic',
+                                                   'invalid superblock', 'bad superblock']):
+                # If the error is about bitmap/read failure, try with explicit fs type
+                if any(p.get('fs_type') for p in partitions):
+                    alt_args = list(base_args) if base_args else []
+                    # Pick the best partition
+                    best = None
+                    for p in partitions:
+                        if p.get('fs_type') and p['fs_type'] != 'none':
+                            best = p
+                            break
+                    if best is None:
+                        best = partitions[0]
+                    if best and best.get('fs_type'):
+                        alt_args.extend(['-o', str(best['offset']), '-f', best['fs_type']])
+                    for seg in segments:
+                        alt_args.append(seg)
+                    alt_raw = self.run(tool, alt_args)
+                    if alt_raw['status'] == 'success':
+                        # Merge: return success with partial warning
+                        return {
+                            'tool': tool,
+                            'status': 'success_with_partial',
+                            'returncode': 0,
+                            'stdout': alt_raw['stdout'],
+                            'stderr': raw.get('stderr', ''),
+                            'note': 'Recovered via partition auto-detection; original call returned partial results',
+                            'timestamp': datetime.now().isoformat()
+                        }
+
+        return raw
+
     def analyze_filesystem(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """fsstat - Display filesystem statistics with parsed structure"""
         args = []
         if offset is not None:
             args = ['-o', str(offset)]
-        args.append(image)
-        raw = self.run('fsstat', args)
-        if raw['status'] != 'success':
-            return raw
+        args.append(image)  # will be replaced by _run_with_segments segments
+        raw = self._run_with_segments('fsstat', image, base_args=args)
+        if raw['status'] in ('error', 'timeout'):
+            # Return as-is for timeout, but mark success_with_partial gracefully
+            if raw['status'] == 'success_with_partial':
+                pass  # fall through to parsing below
+            else:
+                return raw
 
         fs_info = {
             'file_system_type': '',
@@ -177,11 +410,15 @@ class SLEUTHKIT_Specialist:
         args.append('-p')  # Prepend path
         if offset is not None:
             args.extend(['-o', str(offset)])
-        args.append(image)
+        args.append(image)  # will be replaced by _run_with_segments
         if inode:
-            args.append(str(inode))
-        raw = self.run('fls', args)
-        if raw['status'] != 'success':
+            args.extend(['-f', inode] if not isinstance(inode, str) else [inode])
+        raw = self._run_with_segments('fls', image, base_args=args)
+        if raw['status'] == 'success_with_partial':
+            # Normalize the status for downstream parsing
+            raw = dict(raw)
+            raw['status'] = 'success'
+        elif raw['status'] != 'success':
             return raw
 
         files = []
@@ -247,13 +484,20 @@ class SLEUTHKIT_Specialist:
         if offset is not None:
             args = ['-o', str(offset)]
         args.extend([image, str(inode)])
-        raw = self.run('icat', args)
+        raw = self._run_with_segments('icat', image, base_args=args)
+        if raw['status'] == 'success_with_partial':
+            raw = dict(raw)
+            raw['status'] = 'success'
         if raw['status'] == 'success':
             try:
                 Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                # Write binary content
+                # Determine final args for icat call (segments will be appended by _run_with_segments)
+                cmd_args = list(args)
+                segments = self._find_image_segments(image)
+                for seg in segments:
+                    cmd_args.append(seg)
                 Path(output_path).write_bytes(
-                    subprocess.run(['icat'] + args, capture_output=True, timeout=300).stdout
+                    subprocess.run(['icat'] + cmd_args, capture_output=True, timeout=300).stdout
                 )
                 size = Path(output_path).stat().st_size
                 return {
@@ -290,9 +534,12 @@ class SLEUTHKIT_Specialist:
         args = ['-m', '']  # mactime body format, empty hostname
         if offset is not None:
             args.extend(['-o', str(offset)])
-        args.append(image)
-        raw = self.run('fls', args)
-        if raw['status'] != 'success':
+        args.append(image)  # replaced by _run_with_segments
+        raw = self._run_with_segments('fls', image, base_args=args)
+        if raw['status'] == 'success_with_partial':
+            raw = dict(raw)
+            raw['status'] = 'success'
+        elif raw['status'] != 'success':
             return raw
 
         # mactime body format: md5|path|inode|meta_type|file_type|mtime|atime|ctime|crtime
@@ -345,9 +592,12 @@ class SLEUTHKIT_Specialist:
         args = []
         if offset is not None:
             args = ['-o', str(offset)]
-        args.append(image)
-        raw = self.run('ils', args)
-        if raw['status'] != 'success':
+        args.append(image)  # replaced by _run_with_segments
+        raw = self._run_with_segments('ils', image, base_args=args)
+        if raw['status'] == 'success_with_partial':
+            raw = dict(raw)
+            raw['status'] = 'success'
+        elif raw['status'] != 'success':
             return raw
 
         inodes = []
@@ -385,9 +635,12 @@ class SLEUTHKIT_Specialist:
         args = []
         if offset is not None:
             args = ['-o', str(offset)]
-        args.extend([image, str(inode)])
-        raw = self.run('istat', args)
-        if raw['status'] != 'success':
+        args.extend([image, str(inode)])  # image replaced by _run_with_segments
+        raw = self._run_with_segments('istat', image, base_args=args)
+        if raw['status'] == 'success_with_partial':
+            raw = dict(raw)
+            raw['status'] = 'success'
+        elif raw['status'] != 'success':
             return raw
 
         info = {
