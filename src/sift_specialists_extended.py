@@ -2200,7 +2200,7 @@ class ExtendedOrchestrator:
         evtx_available = False
         try:
             import importlib
-            evtx_available = importlib.util.find_spec('evtx') is not None
+            evtx_available = importlib.util.find_spec('Evtx') is not None
         except Exception:
             pass
 
@@ -2213,7 +2213,7 @@ class ExtendedOrchestrator:
             'volatility': {
                 'category': 'Memory Forensics',
                 'functions': ['process_list', 'network_scan', 'find_malware', 'scan_registry', 'dump_process'],
-                'tool_availability': avail(['volatility3', 'vol.py']),
+                'tool_availability': avail(['volatility3', 'vol.py', 'vol']),
             },
             'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {

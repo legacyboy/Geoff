@@ -875,3 +875,34 @@ Total test batches: 8
 - HTTP status: 000
 - Attempting restart...
 - Restart result: HTTP 000
+
+---
+## QA Run: 2026-04-17 10:15:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-4bd897c81f3a","message":"Find Evil job started. Poll /find-evil/status/fe-4bd897c81f3a for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-c2ee1b36a85a","message":"Find Evil job started. Poll /find-evil/status/fe-c2ee1b36a85a for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-f9c5e4d82bee","message":"Find Evil job started. Poll /find-evil/status/fe-f9c5e4d82bee for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-17 10:30:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '../../../etc/passwd' \u2192 /etc/passwd","status":"error"}
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Error opening image file (raw_open: file \"/etc/shadow\" - Permission denied)\n","stdout":"","timestamp":"2026-04-17T15:30:02.000168","tool":"fls"}
+

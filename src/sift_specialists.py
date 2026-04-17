@@ -466,13 +466,15 @@ class VOLATILITY_Specialist:
 
     def _find_volatility(self) -> Optional[str]:
         for path in ['/usr/local/bin/volatility3', '/usr/bin/volatility3',
-                     '/usr/local/bin/vol.py', '/usr/bin/vol.py']:
+                     '/usr/local/bin/vol.py', '/usr/bin/vol.py',
+                     '/usr/local/bin/vol', '/usr/bin/vol']:
             if Path(path).exists():
                 return path
-        # Try which
-        result = subprocess.run(['which', 'vol.py'], capture_output=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
+        # Try which (check vol first, then vol.py)
+        for cmd in ['vol', 'vol.py', 'volatility3']:
+            result = subprocess.run(['which', cmd], capture_output=True)
+            if result.returncode == 0:
+                return result.stdout.strip().decode() if isinstance(result.stdout, bytes) else result.stdout.strip()
         return None
 
     def run(self, plugin: str, memory_dump: str, **kwargs) -> Dict[str, Any]:
