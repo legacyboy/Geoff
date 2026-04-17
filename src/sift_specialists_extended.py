@@ -2213,7 +2213,7 @@ class ExtendedOrchestrator:
             'volatility': {
                 'category': 'Memory Forensics',
                 'functions': ['process_list', 'network_scan', 'find_malware', 'scan_registry', 'dump_process'],
-                'tool_availability': avail(['volatility3', 'vol.py', 'vol']),
+                'tool_availability': {'volatility': any([self._probe('volatility3'), self._probe('vol.py'), self._probe('vol')])},
             },
             'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {
