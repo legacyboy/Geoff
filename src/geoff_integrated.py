@@ -1005,7 +1005,9 @@ PLAYBOOK_NAMES = {
 TRIAGE_PATTERNS = {
     "ransomware": [".locked", ".encrypted", ".crypt", "readme_decrypt", "how_to_decrypt",
                    "recover_files", ".locky", ".cerber", ".sage", ".globe",
-                   "your_files_are", "ransom_note", "decrypt_instructions"],
+                   "your_files_are", "ransom_note", "decrypt_instructions",
+                   "vssadmin delete", "wbadmin delete", "bcdedit /set",
+                   "wipe_mbr", "destroy_vss", "epmntdrv", "hermetic"],
     "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
                          "creddump", "cachedump", "secretsdump"],
     "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
@@ -1013,18 +1015,26 @@ TRIAGE_PATTERNS = {
     "persistence": ["autorun", "run_once", "scheduled_task", "startup",
                     "wmi_subscription", "com_hijack", "shell:"],
     "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
-                    "rsync", "scp", "sftp", "ftp_upload", "exfil"],
+                    "rsync", "scp", "sftp", "ftp_upload", "exfil",
+                    "inbox_rule", "forward_to", "forwardingrule", "mailforward",
+                    "s3 sync", "attacker-exfil"],
     "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
-                      "timestomp", "timemodify", "ccleaner", "bleachbit"],
+                      "timestomp", "timemodify", "ccleaner", "bleachbit",
+                      "shred -u", "history -c"],
     "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
                   "shell=", "eval(", "base64_decode", "webshell"],
     "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
                "wmic", "msbuild", "installutil", "msiexec"],
     "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
-            "cobaltstrike", "teamserver", "metasploit"],
+            "cobaltstrike", "teamserver", "metasploit", "reverse_shell",
+            ".onion", "stratum+tcp://"],
     "cryptominer": ["xmrig", "minexmr", "xmrpool", "moneroocean", "supportxmr",
                     "stratum+tcp", "cryptonight", "randomx", "monero", "coinhive",
                     "minergate", "nicehash", "pool.minexmr"],
+    "rootkit": ["rootkit", "sys_call_table", "syscall_hook", "hooking",
+                "hide_pid", "hide_port", "process_hide", "module_hide",
+                "lkm", "kthreadd_helper", "insmod", "kernel_module",
+                "LD_PRELOAD", "__intercepted_"],
 }
 
 SEVERITY_MAP = {
@@ -1038,6 +1048,7 @@ SEVERITY_MAP = {
     "lolbin": "MEDIUM",
     "c2": "CRITICAL",
     "cryptominer": "HIGH",
+    "rootkit": "CRITICAL",
 }
 
 # Map each playbook to its specialist steps.
@@ -1999,6 +2010,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     if "ransomware" in hit_categories:
         classification = "Ransomware"
+        severity = "CRITICAL"
+    elif "rootkit" in hit_categories:
+        classification = "Rootkit"
         severity = "CRITICAL"
     elif "c2" in hit_categories:
         classification = "Command & Control"
