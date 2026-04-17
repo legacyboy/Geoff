@@ -1022,6 +1022,9 @@ TRIAGE_PATTERNS = {
                "wmic", "msbuild", "installutil", "msiexec"],
     "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
             "cobaltstrike", "teamserver", "metasploit"],
+    "cryptominer": ["xmrig", "minexmr", "xmrpool", "moneroocean", "supportxmr",
+                    "stratum+tcp", "cryptonight", "randomx", "monero", "coinhive",
+                    "minergate", "nicehash", "pool.minexmr"],
 }
 
 SEVERITY_MAP = {
@@ -1034,6 +1037,7 @@ SEVERITY_MAP = {
     "web_shell": "HIGH",
     "lolbin": "MEDIUM",
     "c2": "CRITICAL",
+    "cryptominer": "HIGH",
 }
 
 # Map each playbook to its specialist steps.
@@ -1564,8 +1568,16 @@ def _scan_triage_indicators(inventory: dict) -> list:
                         break  # one hit per category per file
         except (OSError, IOError, PermissionError):
             continue  # can't read, skip silently
-    
-    return hits
+
+    # Deduplicate: keep first hit per (category, file) pair across all phases
+    seen = set()
+    deduped = []
+    for h in hits:
+        key = (h["category"], h["file"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(h)
+    return deduped
 
 
 def _tool_available(module: str, function: str) -> bool:
@@ -1999,6 +2011,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity = "HIGH"
     elif "web_shell" in hit_categories or "initial_access" in hit_categories:
         classification = "External Breach"
+        severity = "HIGH"
+    elif "cryptominer" in hit_categories:
+        classification = "Cryptominer"
         severity = "HIGH"
     elif "exfiltration" in hit_categories:
         classification = "Exfiltration"
