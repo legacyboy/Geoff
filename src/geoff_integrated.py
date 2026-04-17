@@ -998,6 +998,10 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-018": "Malware Analysis",
     "PB-SIFT-019": "Command & Control",
     "PB-SIFT-020": "Timeline Analysis",
+    "PB-SIFT-021": "Mobile Analysis",
+    "PB-SIFT-022": "Browser Forensics",
+    "PB-SIFT-023": "Email Forensics",
+    "PB-SIFT-024": "macOS Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1063,6 +1067,22 @@ SEVERITY_MAP = {
     "ot_attack": "CRITICAL",
 }
 
+# MITRE ATT&CK technique IDs per indicator category (Enterprise ATT&CK v14).
+MITRE_TAGS = {
+    "ransomware":        ["T1486", "T1490", "T1489"],
+    "credential_theft":  ["T1003", "T1558", "T1552"],
+    "lateral_movement":  ["T1021", "T1570", "T1563"],
+    "persistence":       ["T1053", "T1547", "T1543", "T1542"],
+    "exfiltration":      ["T1048", "T1567", "T1020"],
+    "anti_forensics":    ["T1070", "T1485", "T1027"],
+    "web_shell":         ["T1505.003", "T1190"],
+    "lolbin":            ["T1218", "T1059", "T1053"],
+    "c2":                ["T1071", "T1095", "T1573"],
+    "cryptominer":       ["T1496"],
+    "rootkit":           ["T1014", "T1543.003"],
+    "ot_attack":         ["T0855", "T0816", "T0879"],
+}
+
 # Map each playbook to its specialist steps.
 # Steps that require evidence types not present will be skipped at runtime
 # (tool-missing check), but the playbook itself always "runs" (even if all
@@ -1100,9 +1120,12 @@ PLAYBOOK_STEPS = {
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
             ("registry", "extract_services", {"system_path": "{hive}"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("jumplist", "parse_lnk_files", {"directory": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -1154,6 +1177,10 @@ PLAYBOOK_STEPS = {
         ],
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
+            ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
         ],
     },
     "PB-SIFT-008": {  # Malware Hunting
@@ -1339,6 +1366,44 @@ PLAYBOOK_STEPS = {
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
     },
+    "PB-SIFT-021": {  # Mobile Analysis
+        "mobile_backups": [
+            ("mobile", "analyze_ios_backup", {"backup_path": "{mobile}"}),
+            ("mobile", "analyze_android", {"data_dir": "{mobile}"}),
+        ],
+    },
+    "PB-SIFT-022": {  # Browser Forensics
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "other_files": [
+            ("browser", "extract_history", {"db_path": "{file}"}),
+            ("browser", "extract_cookies", {"db_path": "{file}"}),
+            ("browser", "extract_downloads", {"db_path": "{file}"}),
+            ("browser", "extract_saved_passwords", {"db_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-023": {  # Email Forensics
+        "other_files": [
+            ("email", "analyze_pst", {"pst_path": "{file}"}),
+            ("email", "analyze_mbox", {"mbox_path": "{file}"}),
+            ("email", "analyze_eml", {"eml_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-024": {  # macOS Forensics
+        "disk_images": [
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "syslogs": [
+            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+        "other_files": [
+            ("macos", "parse_plist", {"plist_path": "{file}"}),
+            ("macos", "parse_unified_log", {"log_path": "{file}"}),
+            ("macos", "analyze_launch_agents", {"directory": "{file}"}),
+        ],
+    },
 }
 
 
@@ -1483,7 +1548,8 @@ def _scan_triage_indicators(inventory: dict) -> list:
                 if _is_indicator_match(fpath, pattern):
                     hits.append({"category": category, "pattern": pattern, "file": fpath,
                                  "severity": SEVERITY_MAP.get(category, "MEDIUM"),
-                                 "confidence": "POSSIBLE", "source": "filename_scan"})
+                                 "confidence": "POSSIBLE", "source": "filename_scan",
+                                 "mitre_techniques": MITRE_TAGS.get(category, [])})
                     break  # one hit per pattern is enough
     
     # Phase 2: Run strings against disk images and memory dumps
@@ -1515,6 +1581,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
                             "source": "strings_scan",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break  # one hit per category per file
         except (subprocess.TimeoutExpired, OSError, IOError):
@@ -1550,6 +1617,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
                             "source": "strings_scan_other",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break
         except (subprocess.TimeoutExpired, OSError, IOError):
@@ -1587,6 +1655,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
                             "source": "content_scan",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break  # one hit per category per file
         except (OSError, IOError, PermissionError):
@@ -1601,6 +1670,69 @@ def _scan_triage_indicators(inventory: dict) -> list:
             seen.add(key)
             deduped.append(h)
     return deduped
+
+
+def _reconstruct_attack_chain(findings: list, indicator_hits: list, device_map: dict) -> dict:
+    """Compute dwell time and reconstruct lateral movement path from findings.
+
+    Returns a dict with:
+      - first_seen_ts: ISO timestamp of earliest artefact
+      - last_seen_ts: ISO timestamp of most recent artefact
+      - dwell_days: float (None if timestamps unavailable)
+      - lateral_movement_path: list of device IDs in order of first activity
+      - mitre_techniques_observed: deduplicated list of all ATT&CK IDs seen
+      - kill_chain_phases: set of categories observed (triage + findings)
+    """
+    timestamps: list = []
+    device_first_seen: dict = {}  # device_id -> earliest ISO ts
+
+    for f in findings:
+        for ts_key in ("started_at", "completed_at"):
+            ts = f.get(ts_key)
+            if ts:
+                timestamps.append(ts)
+        dev = f.get("device_id")
+        ts = f.get("started_at") or f.get("completed_at")
+        if dev and ts:
+            if dev not in device_first_seen or ts < device_first_seen[dev]:
+                device_first_seen[dev] = ts
+
+    first_ts = min(timestamps) if timestamps else None
+    last_ts = max(timestamps) if timestamps else None
+
+    dwell_days = None
+    if first_ts and last_ts:
+        try:
+            from datetime import datetime as _dt
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            # Strip sub-second and TZ offset for simple comparison
+            t0 = _dt.fromisoformat(first_ts[:19])
+            t1 = _dt.fromisoformat(last_ts[:19])
+            dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
+        except Exception:
+            pass
+
+    # Lateral movement path: devices sorted by first activity
+    lateral_path = sorted(device_first_seen.keys(),
+                          key=lambda d: device_first_seen[d])
+
+    # Collect all ATT&CK techniques from indicator hits
+    mitre_seen: list = []
+    kill_chain_phases: set = set()
+    for hit in indicator_hits:
+        kill_chain_phases.add(hit.get("category", ""))
+        for t in hit.get("mitre_techniques", []):
+            if t not in mitre_seen:
+                mitre_seen.append(t)
+
+    return {
+        "first_seen_ts": first_ts,
+        "last_seen_ts": last_ts,
+        "dwell_days": dwell_days,
+        "lateral_movement_path": lateral_path,
+        "mitre_techniques_observed": mitre_seen,
+        "kill_chain_phases": sorted(kill_chain_phases - {""}),
+    }
 
 
 def _tool_available(module: str, function: str) -> bool:
@@ -1937,10 +2069,22 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if os_type == "linux":
         execution_plan.append("PB-SIFT-014")
     if os_type == "macos":
-        pass  # No macOS-specific playbook; generic disk playbooks handle it
+        execution_plan.append("PB-SIFT-024")
+
+    # Mobile analysis — auto-trigger when mobile backups are present
+    if inventory["mobile_backups"]:
+        execution_plan.append("PB-SIFT-021")
 
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
+
+    # Browser forensics — always run (relevant for insider threat, credential theft, etc.)
+    execution_plan.append("PB-SIFT-022")
+
+    # Email forensics — run when email-like files are present
+    email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
+    if any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"]):
+        execution_plan.append("PB-SIFT-023")
 
     # Add malware playbooks when:
     #   a) triage output flagged a suspicious binary keyword, OR
@@ -2632,6 +2776,17 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     elapsed = time.time() - start_time
 
+    # Dwell time and lateral movement chain
+    try:
+        attack_chain = _reconstruct_attack_chain(
+            findings=findings_writer.all_records(),
+            indicator_hits=indicator_hits,
+            device_map=device_map if 'device_map' in dir() else {},
+        )
+    except Exception as _ac_err:
+        _fe_log(job_id, f"Attack chain reconstruction failed: {_ac_err}")
+        attack_chain = {}
+
     report = {
         "title": f"Find Evil Report — {case_name}",
         "generated_at": datetime.now().isoformat(),
@@ -2662,6 +2817,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
         "classification": classification if 'classification' in dir() else "Unknown",
         "evidence_inventory": {k: v for k, v in inventory.items() if isinstance(v, list)},
+        "attack_chain": attack_chain,
         "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
