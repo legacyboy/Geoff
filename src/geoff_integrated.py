@@ -1492,11 +1492,47 @@ def _scan_triage_indicators(inventory: dict) -> list:
                         break  # one hit per category per file
         except (subprocess.TimeoutExpired, OSError, IOError):
             continue
-    
+
+    # Phase 2b: strings scan on other_files that are binary (Phase 3 handles text files)
+    _phase3_exts = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
+                    ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
+                    ".ps1", ".vbs", ".js", ".html", ".php", ""}
+    for fpath in inventory.get("other_files", []):
+        if Path(str(fpath)).suffix.lower() in _phase3_exts:
+            continue  # Phase 3 will do a direct content scan instead
+        try:
+            file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0
+            if file_size > MAX_TRIAGE_STRINGS_SIZE:
+                continue
+            result = safe_run(
+                ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
+                timeout=60
+            )
+            if result["code"] != 0:
+                continue
+            content_lower = result["stdout"].lower()
+            for category, keywords in TRIAGE_PATTERNS.items():
+                for kw in keywords:
+                    if len(kw) < MIN_PATTERN_LENGTH:
+                        continue
+                    if _is_indicator_match(content_lower, kw):
+                        hits.append({
+                            "category": category,
+                            "pattern": kw,
+                            "file": str(fpath),
+                            "severity": SEVERITY_MAP.get(category, "MEDIUM"),
+                            "confidence": "POSSIBLE",
+                            "source": "strings_scan_other",
+                        })
+                        break
+        except (subprocess.TimeoutExpired, OSError, IOError):
+            continue
+
     # Phase 3: Direct content scan for text-accessible evidence
     text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
                        ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
-                       ".ps1", ".vbs", ".js", ".html", ".php"}
+                       ".ps1", ".vbs", ".js", ".html", ".php",
+                       ""}  # empty ext covers: syslog, messages, auth, etc.
     max_read_bytes = 512 * 1024  # 512KB per file
     
     for fpath in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + \
@@ -1964,12 +2000,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     elif "web_shell" in hit_categories or "initial_access" in hit_categories:
         classification = "External Breach"
         severity = "HIGH"
+    elif "exfiltration" in hit_categories:
+        classification = "Exfiltration"
+        severity = "HIGH"
     elif malware_analysis_warranted:
         classification = "Malware"
         severity = "HIGH"
-    elif "exfiltration" in hit_categories:
-        classification = "Exfiltration"
-        severity = "MEDIUM"
 
     # Emit the Phase 12 execution plan
     execution_plan_output = {
@@ -2128,7 +2164,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             for dep in step_def["requires"]:
                                 dep_completed = any(
                                     s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
-                                    for s in findings
+                                    for s in findings_writer.all_records()
                                 )
                                 if not dep_completed:
                                     _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
@@ -2429,7 +2465,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         super_tl = SuperTimeline()
         super_timeline_path, super_timeline_events = super_tl.build(
             device_map=device_map,
-            findings=findings,
+            findings=findings_writer.all_records(),
             case_work_dir=case_work_dir,
             plaso_specialist=orchestrator.plaso if hasattr(orchestrator, 'plaso') else None,
             job_id=job_id,
@@ -2495,7 +2531,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     evil_found = False
 
     # From triage indicators — only POSSIBLE confidence from string/filename hits
-    # evil_found requires CONFIRMED findings or multiple distinct-category POSSIBLE hits
+    # evil_found requires CONFIRMED, or single CRITICAL/HIGH hit, or 2+ distinct POSSIBLE categories
     possible_categories = set()
     for hit in indicator_hits:
         sev = hit["severity"]
@@ -2503,9 +2539,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
         if confidence == "CONFIRMED":
             evil_found = True
+        elif sev in ("CRITICAL", "HIGH"):
+            evil_found = True  # single high-severity hit is enough
         elif confidence == "POSSIBLE":
             possible_categories.add(hit["category"])
-    # Require 2+ distinct POSSIBLE categories to flag evil
     if not evil_found and len(possible_categories) >= 2:
         evil_found = True
 
@@ -2573,6 +2610,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
         "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
+        "classification": classification if 'classification' in dir() else "Unknown",
+        "evidence_inventory": {k: v for k, v in inventory.items() if isinstance(v, list)},
         "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
@@ -2642,7 +2681,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         'evidence_dir': evidence_dir,
         'evil_found': evil_found,
         'severity': overall_severity,
-        'steps_executed': len(findings),
+        'steps_executed': steps_completed + steps_failed + steps_skipped,
         'elapsed_seconds': round(elapsed, 1),
         'description': f"Find Evil run on {evidence_dir}",
     })
