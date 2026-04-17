@@ -1009,20 +1009,28 @@ TRIAGE_PATTERNS = {
                    "vssadmin delete", "wbadmin delete", "bcdedit /set",
                    "wipe_mbr", "destroy_vss", "epmntdrv", "hermetic"],
     "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
-                         "creddump", "cachedump", "secretsdump"],
+                         "creddump", "cachedump", "secretsdump", "dcsync",
+                         "kerberoast", "asrep_roast", "golden ticket", "rubeus",
+                         "invoke-kerberoast"],
     "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
-                         "paexec", "cmbexec", "dcom", "atexec"],
+                         "paexec", "cmbexec", "dcom", "atexec",
+                         "nsenter", "container_escape", "docker.sock",
+                         "chroot /host", "privileged_container", "pivot_root"],
     "persistence": ["autorun", "run_once", "scheduled_task", "startup",
-                    "wmi_subscription", "com_hijack", "shell:"],
+                    "wmi_subscription", "com_hijack", "shell:",
+                    "uefi", "bootkit", "flashrom", "spi_flash",
+                    "survive_reinstall", "uefi_dxe", "dxe_driver"],
     "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
                     "rsync", "scp", "sftp", "ftp_upload", "exfil",
                     "inbox_rule", "forward_to", "forwardingrule", "mailforward",
                     "s3 sync", "attacker-exfil"],
     "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
                       "timestomp", "timemodify", "ccleaner", "bleachbit",
-                      "shred -u", "history -c"],
+                      "shred", "history -c", "drop table", "drop database",
+                      "dd if=/dev/urandom", "wipe_free_space"],
     "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
-                  "shell=", "eval(", "base64_decode", "webshell"],
+                  "shell=", "eval(", "base64_decode", "webshell",
+                  "xp_cmdshell", "sqlmap", "union select", "proxylogon"],
     "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
                "wmic", "msbuild", "installutil", "msiexec"],
     "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
@@ -1035,6 +1043,9 @@ TRIAGE_PATTERNS = {
                 "hide_pid", "hide_port", "process_hide", "module_hide",
                 "lkm", "kthreadd_helper", "insmod", "kernel_module",
                 "LD_PRELOAD", "__intercepted_"],
+    "ot_attack": ["modbus", "scada", "plc_attack", "safety_bypass", "sis_bypass",
+                  "setpoint_override", "industroyer", "ot_sabotage",
+                  "scada_exploit", "industrial_control", "dnp3", "iec-61850"],
 }
 
 SEVERITY_MAP = {
@@ -1049,6 +1060,7 @@ SEVERITY_MAP = {
     "c2": "CRITICAL",
     "cryptominer": "HIGH",
     "rootkit": "CRITICAL",
+    "ot_attack": "CRITICAL",
 }
 
 # Map each playbook to its specialist steps.
@@ -2011,6 +2023,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if "ransomware" in hit_categories:
         classification = "Ransomware"
         severity = "CRITICAL"
+    elif "ot_attack" in hit_categories:
+        classification = "OT/ICS Attack"
+        severity = "CRITICAL"
     elif "rootkit" in hit_categories:
         classification = "Rootkit"
         severity = "CRITICAL"
@@ -2031,6 +2046,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity = "HIGH"
     elif "exfiltration" in hit_categories:
         classification = "Exfiltration"
+        severity = "HIGH"
+    elif "persistence" in hit_categories:
+        classification = "Persistence/Implant"
+        severity = "HIGH"
+    elif "anti_forensics" in hit_categories:
+        classification = "Destructive/Anti-Forensics"
         severity = "HIGH"
     elif malware_analysis_warranted:
         classification = "Malware"
