@@ -3329,7 +3329,7 @@ HTML_TEMPLATE = """
             <!-- Top bar: evidence directory + run button -->
             <div class="fe-top-bar">
                 <label for="fe-evidence-dir">Evidence Directory</label>
-                <input type="text" id="fe-evidence-dir" placeholder="/path/to/evidence (leave blank for default)">
+                <input type="text" id="fe-evidence-dir" placeholder="Paste a folder name or full path…">
                 <button class="fe-run-btn" id="fe-run-btn" onclick="runFindEvil()">🔍 Run Find Evil</button>
             </div>
 
@@ -3390,6 +3390,15 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             }
             return fetch(url, opts);
         }
+
+        // Evidence base directory (injected by server)
+        const EVIDENCE_BASE_DIR = '<!-- GEOFF_EVIDENCE_BASE_DIR -->';
+
+        // Pre-fill the evidence directory input with the server's base path
+        document.addEventListener('DOMContentLoaded', () => {
+            const inp = document.getElementById('fe-evidence-dir');
+            if (inp && EVIDENCE_BASE_DIR) inp.value = EVIDENCE_BASE_DIR;
+        });
 
         function showTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -3540,6 +3549,21 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
                     const header = document.createElement('div');
                     header.className = 'case-header';
+                    header.title = 'Click to load this case into Find Evil';
+                    header.style.cursor = 'pointer';
+
+                    const fullPath = EVIDENCE_BASE_DIR
+                        ? EVIDENCE_BASE_DIR.replace(/\/+$/, '') + '/' + caseName
+                        : caseName;
+
+                    header.addEventListener('click', () => {
+                        document.getElementById('fe-evidence-dir').value = fullPath;
+                        // Switch to Find Evil tab
+                        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.tab[onclick*="findevil"]').classList.add('active');
+                        document.getElementById('findevil').classList.add('active');
+                    });
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'case-name';
@@ -3549,8 +3573,23 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     countSpan.className = 'case-count';
                     countSpan.textContent = files.length + ' items';
 
+                    const investigateBtn = document.createElement('button');
+                    investigateBtn.textContent = '🔍 Investigate';
+                    investigateBtn.style.cssText = 'margin-left:8px;padding:2px 8px;font-size:11px;cursor:pointer;background:#238636;color:#fff;border:none;border-radius:4px;';
+                    investigateBtn.title = 'Load into Find Evil and run';
+                    investigateBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        document.getElementById('fe-evidence-dir').value = fullPath;
+                        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.tab[onclick*="findevil"]').classList.add('active');
+                        document.getElementById('findevil').classList.add('active');
+                        runFindEvil();
+                    });
+
                     header.appendChild(nameSpan);
                     header.appendChild(countSpan);
+                    header.appendChild(investigateBtn);
 
                     const filesDiv = document.createElement('div');
                     filesDiv.className = 'case-files';
@@ -3798,7 +3837,12 @@ def index():
         f'<meta name="geoff-api-key" content="{GEOFF_API_KEY}">'
         if GEOFF_API_KEY else ''
     )
-    return render_template_string(HTML_TEMPLATE.replace('<!-- GEOFF_API_KEY_META -->', key_meta))
+    evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
+    return render_template_string(
+        HTML_TEMPLATE
+        .replace('<!-- GEOFF_API_KEY_META -->', key_meta)
+        .replace('<!-- GEOFF_EVIDENCE_BASE_DIR -->', evidence_base_js)
+    )
 
 
 @app.route('/chat', methods=['POST'])
@@ -4134,6 +4178,15 @@ def find_evil_route():
     try:
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
+
+        # If not an absolute path or doesn't exist as-is, try joining with EVIDENCE_BASE_DIR
+        # so the user can paste just a folder name from the evidence tab (e.g. "IR-016-CloudJack")
+        if evidence_dir and not Path(evidence_dir).is_absolute():
+            evidence_dir = os.path.join(EVIDENCE_BASE_DIR, evidence_dir)
+        elif evidence_dir and not Path(evidence_dir).exists() and EVIDENCE_BASE_DIR:
+            candidate = os.path.join(EVIDENCE_BASE_DIR, os.path.basename(evidence_dir))
+            if Path(candidate).exists():
+                evidence_dir = candidate
 
         # Reject paths containing shell metacharacters
         try:
