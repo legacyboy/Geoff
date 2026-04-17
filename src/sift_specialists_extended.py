@@ -2067,7 +2067,7 @@ class ZIMMERMAN_Specialist:
             'strings': 'bstrings.dll',
             'shellbags': 'ShellBagsExplorer.dll',
             'amcache': 'AmcacheParser.dll',
-            'srum': 'SRUMDB2.dll',
+            'srum': 'SrumECmd.dll',
         }
         dll_name = dll_map.get(tool_name, f'{tool_name.capitalize()}.dll')
         dll_path = self.tools_dir / dll_name
@@ -2096,7 +2096,7 @@ class ZIMMERMAN_Specialist:
         return self._run_dotnet_tool('amcache', hive, output_csv, '-of csv')
 
     def srum_parse(self, srum_db: str, output_csv: str) -> Dict[str, Any]:
-        """Parse SRUM using SRUMDB2.dll."""
+        """Parse SRUM using SrumECmd.dll."""
         return self._run_dotnet_tool('srum', srum_db, output_csv, '-of csv')
 
     def _run_dotnet_tool(self, tool_name: str, input_path: str, output: str, extra_args: str) -> Dict[str, Any]:
