@@ -115,3 +115,14 @@
 - [ ] **SpamMimic Detection:** Flag suspicious "spam-like" text in documents or emails that may be steganographic.
 - [ ] **Text Decoding:** Use SpamMimic decoder or similar tools to reveal hidden messages in seemingly random text.
 - [ ] **Email Attachment Analysis:** Check email attachments for embedded data using steganographic techniques.
+
+## VSS Deletion Analysis
+
+- [ ] **VSS Enumeration:** Run `vss.list_vss(image)` to check if Volume Shadow Copies exist — ransomware commonly deletes VSS via `vssadmin delete shadows`.
+- [ ] **VSS File Extraction:** If VSS snapshots survived, run `vss.extract_vss_files(image, output_dir)` to recover pre-encryption file versions.
+- [ ] **VSS Timeline:** Run `vss.analyze_vss_timeline(image)` to determine when shadow copies were created/modified — compare against ransomware execution timeline.
+
+## Zimmerman Analysis
+
+- [ ] **AmCache Execution History:** Run `zimmerman.amcache_parse(hive, output_csv)` to identify ransomware binary execution history — even if the binary was deleted.
+- [ ] **MFT Timeline:** Run `zimmerman.parse_mft(mft_file, output_csv)` for detailed file creation/modification timeline — tracks ransomware file encryption activity.

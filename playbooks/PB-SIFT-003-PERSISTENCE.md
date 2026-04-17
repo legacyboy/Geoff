@@ -87,3 +87,9 @@
     - **T1546.012:** Image File Execution Options
 - [ ] **Persistence Timeline:** Establish persistence timeline — when was it installed, how long has the attacker had a foothold.
 - [ ] **Final Output:** Score by severity — output structured findings file for analyst handoff.
+
+## Zimmerman Registry Analysis
+
+- [ ] **AmCache Execution History:** Run `zimmerman.amcache_parse(hive, output_csv)` on `Amcache.hve` to extract program execution history — reveals persistent applications even if uninstalled.
+- [ ] **ShellBags Analysis:** Run `zimmerman.shellbags_parse(hive, output_csv)` on `USRCLASS.DAT` to extract folder access history — reveals directories accessed by persistent mechanisms.
+- [ ] **SRUM Database:** Run `zimmerman.srum_parse(srum_db, output_csv)` on `SRUMDB.dat` to extract application resource usage — reveals persistent tools consuming network/CPU.

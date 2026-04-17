@@ -48,3 +48,12 @@ Reconstruct temporal event sequences across all evidence sources using Plaso (lo
 - PB-SIFT-012 (Anti-Forensics): Timeline anomalies may indicate timestomping
 - PB-SIFT-016 (Cross-Image Correlation): Timeline events feed into cross-host analysis
 - PB-SIFT-009 (Ransomware): Mass encryption events visible in timeline
+
+## Zimmerman MFT Timeline
+
+- [ ] **MFT Parsing:** Run `zimmerman.parse_mft(mft_file, output_csv)` using MFTECmd for the most comprehensive MFT timeline — includes Standard Information and File Name timestamps (MACB times).
+- [ ] **EVTX Timeline:** Run `zimmerman.parse_evtx_zimmerman(evtx_file, output_csv)` using EvtxECmd for detailed event log timeline — superior to python-evtx for complex event correlation.
+
+## VSS Cross-Timeline
+
+- [ ] **VSS Timeline:** Run `vss.analyze_vss_timeline(image)` to build timeline across shadow copies — reveals pre-deletion file states and version history.

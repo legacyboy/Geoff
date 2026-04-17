@@ -132,3 +132,13 @@
 - [ ] **Attacker IP:** Extract source IP from logs (e.g., `192.168.56.102` in CTF scenarios).
 - [ ] **File Upload Path:** Identify where uploaded files were written (e.g., `/uploads/`, `/temp/`).
 - [ ] **Post-Exploitation:** Document commands executed via web shell (check access logs for `?cmd=` parameters).
+
+## VSS & Shadow Copy Analysis
+
+- [ ] **VSS Enumeration:** Run `vss.list_vss(image)` to discover Volume Shadow Copies — may contain pre-attack file versions.
+- [ ] **VSS File Extraction:** Run `vss.extract_vss_files(image, output_dir)` to pull files of interest from each shadow copy.
+- [ ] **VSS Timeline:** Run `vss.analyze_vss_timeline(image)` to build timeline of file modifications across shadow copies.
+
+## PhotoRec File Carving
+
+- [ ] **Carved Recovery:** Run `photorec.recover_files(image, output_dir)` as a fallback if SleuthKit recovery misses deleted files — especially useful for fragmented or partially overwritten files.
