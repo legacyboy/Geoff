@@ -56,16 +56,50 @@ def _run_tool(tool: str, args: List[str], timeout: int = 300) -> Dict[str, Any]:
 
 def _check_tool_available(tool_name: str) -> bool:
     """Check if a tool is available on PATH"""
+    # Also check for diec (Detect It Easy console) as 'die' alternative
+    if tool_name == 'die':
+        result = subprocess.run(['which', 'diec'], capture_output=True)
+        if result.returncode == 0:
+            return True
+        # die not available as CLI — will be reported as unavailable
     result = subprocess.run(['which', tool_name], capture_output=True)
     return result.returncode == 0
+
+
+def _check_python_module(module_name: str) -> bool:
+    """Check if a Python module is importable"""
+    try:
+        import importlib.util
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
 
 
 class BINARY_IDENT_Specialist:
     """Static analysis: file identification, metadata, PE structure"""
 
     def die_scan(self, target_file: str) -> Dict[str, Any]:
-        """Detect packers, compilers, and signatures with die (Detect It Easy)"""
-        result = _run_tool('die', [target_file])
+        """Detect packers, compilers, and signatures with die/diec (Detect It Easy)"""
+        # Use diec (console version) if available, fall back to die
+        die_cmd = 'diec' if _check_tool_available('diec') else 'die'
+        if die_cmd == 'die' and not _check_tool_available('die'):
+            # Neither diec nor die available — use file command as fallback
+            result = _run_tool('file', [target_file])
+            if result['status'] != 'success':
+                return result
+            return {
+                'tool': 'die',
+                'function': 'die_scan',
+                'status': 'success',
+                'file': target_file,
+                'packers': [],
+                'compilers': [],
+                'signatures': [],
+                'file_type': result.get('stdout', '').strip(),
+                'note': 'Detect It Easy not available; used file command as fallback',
+                'timestamp': datetime.now().isoformat()
+            }
+        result = _run_tool(die_cmd, [target_file])
         if result['status'] != 'success':
             return result
 
@@ -246,7 +280,13 @@ class UNPACKING_Specialist:
 
     def pdfid_scan(self, pdf_file: str) -> Dict[str, Any]:
         """Identify PDF suspicious elements with pdfid"""
-        result = _run_tool('pdfid', [pdf_file])
+        # Use python3 -m pdfid if pdfid CLI not on PATH
+        pdfid_cmd = 'pdfid' if _check_tool_available('pdfid') else None
+        if pdfid_cmd:
+            result = _run_tool('pdfid', [pdf_file])
+        else:
+            # Fallback to python -m pdfid
+            result = _run_tool('python3', ['-m', 'pdfid', pdf_file])
         if result['status'] != 'success':
             return result
 
@@ -619,13 +659,13 @@ class REMNUX_Orchestrator:
     def get_available_tools(self) -> Dict[str, Any]:
         """List all REMnux tools and their availability"""
         tools = {
-            'die': _check_tool_available('die'),
+            'die': _check_tool_available('die') or _check_tool_available('diec'),
             'exiftool': _check_tool_available('exiftool'),
             'peframe': _check_tool_available('peframe'),
             'ssdeep': _check_tool_available('ssdeep'),
             'hashdeep': _check_tool_available('hashdeep'),
             'upx': _check_tool_available('upx'),
-            'pdfid': _check_tool_available('pdfid'),
+            'pdfid': _check_tool_available('pdfid') or _check_python_module('pdfid'),
             'pdf-parser': _check_tool_available('pdf-parser'),
             'oledump': _check_tool_available('oledump') or _check_tool_available('oledump.py'),
             'js-beautify': _check_tool_available('js-beautify'),
