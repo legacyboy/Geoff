@@ -91,14 +91,14 @@ if [[ "$SKIP_DEPS" == false ]]; then
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
         sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
         # Volatility3 - only install if missing
-        # Check for 'vol' (the actual binary) in system and venv
+        # Check for 'vol' or 'volatility3' binary (SIFT may ship either) in system and venv
         vol_found=false
-        if command -v vol &>/dev/null; then
+        if command -v vol &>/dev/null || command -v volatility3 &>/dev/null; then
             vol_found=true
-            info "Volatility3 already installed (vol: $(command -v vol))"
-        elif [ -f "${INSTALL_DIR}/venv/bin/vol" ]; then
+            info "Volatility3 already installed ($(command -v vol 2>/dev/null || command -v volatility3 2>/dev/null))"
+        elif [ -f "${INSTALL_DIR}/venv/bin/vol" ] || [ -f "${INSTALL_DIR}/venv/bin/volatility3" ]; then
             vol_found=true
-            info "Volatility3 already in venv (${INSTALL_DIR}/venv/bin/vol)"
+            info "Volatility3 already in venv"
         fi
         if [ "$vol_found" = false ]; then
             info "Installing volatility3..."
