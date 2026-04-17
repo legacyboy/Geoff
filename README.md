@@ -72,9 +72,9 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
   │ Orchestrator  │  │ Validation   │
   └───────┬───────┘  └──────────────┘
           │
-   ┌──────┼──────┬──────┬──────┬──────┬──────┬──────┐
-   ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼
- SleuthKit Vol  Registry  Plaso  Net   Logs  Mobile  REMnux Browser Email macOS
+   ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼
+Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 ```
 
 ### Key Architecture Concepts
@@ -232,9 +232,40 @@ When PB-SIFT-012 detects anti-forensics indicators, it **retroactively downgrade
 
 This prevents false confidence in evidence that may have been tampered with.
 
+## Web Interface
+
+Start the server then open **http://localhost:8080**.
+
+```bash
+python src/geoff_integrated.py
+```
+
+The UI has three tabs:
+
+### 🔍 Find Evil
+
+The evidence directory input is pre-filled with the server's configured evidence path so you always know what the default is. Edit it to point anywhere, or paste just a subfolder name — Geoff resolves it against the base path automatically.
+
+```
+/home/sansforensics/evidence-storage/evidence/IR-016-CloudJack
+                    ↑ pre-filled                ↑ or just paste this
+```
+
+### 📁 Evidence
+
+Lists every subfolder in your evidence directory. Each entry has two ways to kick off an investigation:
+
+- **Click the folder name** — copies the full path into the Find Evil input and switches to that tab, ready to run
+- **Click 🔍 Investigate** — does the same and immediately starts the run
+
+No copy-pasting paths. No switching tabs manually.
+
+### 💬 Chat
+
+Conversational interface. Talk to Geoff directly or say things like `"start processing IR-016-CloudJack"` and it will route to Find Evil automatically.
+
 ---
 
-## Tool Coverage
 
 | Category | Tools | Functions |
 |----------|-------|-----------|
@@ -419,11 +450,13 @@ python src/geoff_integrated.py
 
 ### Access
 
-- **CLI**: `geoff-find-evil /path/to/evidence` — no server required
-- **Web UI**: http://localhost:8080
-- **Chat**: Conversational interface with tool execution + evidence ingestion
-- **Find Evil**: Autonomous investigation mode
-- **Narrative Report**: Human-readable investigation summary
+| Method | How |
+|--------|-----|
+| **CLI** | `geoff-find-evil /path/to/evidence` — no server required |
+| **Web UI** | http://localhost:8080 |
+| **Evidence tab** | Click any folder → auto-populates Find Evil input |
+| **One-click** | Click 🔍 Investigate on any evidence folder to run immediately |
+| **Chat** | `"start processing IR-016-CloudJack"` routes to Find Evil automatically |
 
 ---
 
