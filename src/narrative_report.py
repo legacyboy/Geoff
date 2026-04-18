@@ -39,9 +39,15 @@ class NarrativeReportGenerator:
     def generate(self, report_json: dict, device_map: dict,
                  user_map: dict, super_timeline_path: str,
                  correlated_users: dict, behavioral_flags: dict,
-                 case_work_dir: Path) -> Path:
+                 case_work_dir: Path,
+                 step_evidence_anchors: Optional[List[dict]] = None) -> Path:
         """
         Generate the full narrative report.
+
+        Args:
+            step_evidence_anchors: Optional list of evidence_chain dicts from
+                completed find_evil steps (CRITICAL/HIGH significance), used to
+                anchor the attack chain narrative to specific artifacts.
 
         Returns:
             Path to narrative_report.md
@@ -88,7 +94,8 @@ class NarrativeReportGenerator:
 
         # 7. Attack Chain Synthesis (the interpretation layer)
         sections["attack_chain"] = self._synthesize_attack_chain(
-            report_json, behavioral_flags, correlated_users, iocs)
+            report_json, behavioral_flags, correlated_users, iocs,
+            step_evidence_anchors=step_evidence_anchors or [])
 
         # 8. Conclusion & Recommendations
         sections["conclusion"] = self._generate_conclusion(
@@ -648,13 +655,15 @@ class NarrativeReportGenerator:
     def _synthesize_attack_chain(self, report_json: dict,
                                   behavioral_flags: dict,
                                   correlated_users: dict,
-                                  iocs: dict) -> str:
+                                  iocs: dict,
+                                  step_evidence_anchors: Optional[List[dict]] = None) -> str:
         """Produce a holistic attack narrative using the LLM (or template fallback).
 
         This is the key interpretation layer — it takes all the evidence and
         produces a coherent 'what happened' story with MITRE ATT&CK mapping,
         attribution assessment, key evidence anchors, and specific recommended
-        actions.
+        actions. Each claim in the narrative must be traceable to a specific
+        artifact in step_evidence_anchors.
         """
         evil = report_json.get("evil_found", False)
         severity = report_json.get("severity", "INFO")
@@ -704,6 +713,20 @@ class NarrativeReportGenerator:
                 for k, v in iocs.items() if v
             ]) or "none extracted"
 
+            # Build evidence anchor text — each item is traceable to a specific
+            # artifact, tool, and observation from the execution pipeline.
+            anchors = step_evidence_anchors or []
+            anchor_text = ""
+            for a in anchors[:20]:
+                note = a.get("analyst_note") or ""
+                indicators = ", ".join(a.get("threat_indicators") or [])
+                anchor_text += (
+                    f"  [{a.get('significance','?')}] {a.get('tool','')} "
+                    f"on {a.get('evidence_file','?')}: {note}"
+                    + (f" | indicators: {indicators}" if indicators else "")
+                    + "\n"
+                )
+
             prompt = f"""You are a senior DFIR analyst writing the interpretation section of a forensic report.
 
 INVESTIGATION VERDICT: {'COMPROMISE CONFIRMED' if evil else 'NO CONFIRMED COMPROMISE'}
@@ -717,23 +740,30 @@ TOP BEHAVIORAL FLAGS:
 {flags_text or '  None detected.'}
 LATERAL MOVEMENT:
 {lateral_text or '  None detected.'}
+VERIFIED EVIDENCE ANCHORS (tool → artifact → finding):
+{anchor_text or '  No high-significance anchors available.'}
 
-Write the following sections. Be factual — cite specific evidence. Use "appears to", "likely", "consistent with" for inferences. Do not invent timestamps or file names not in the evidence.
+Write the following sections. ACCURACY RULES:
+- Every factual claim in Attack Narrative and Key Evidence MUST cite a specific artifact from the VERIFIED EVIDENCE ANCHORS above (tool name + file name)
+- Use format: "... (source: <tool> on <file>)" when citing an anchor
+- Use "appears to", "likely", "consistent with" for inferences — never present inferences as facts
+- Do NOT invent file names, timestamps, offsets, or tool outputs not present in the anchors or flags above
+- If evidence is insufficient for a section, write "Insufficient evidence to assess" rather than speculating
 
 ## Attack Narrative
-[3-5 paragraphs. What happened, in chronological order. How did the attacker get in? What did they do? How did we detect it?]
+[3-5 paragraphs. Chronological account of what happened, citing specific evidence anchors. How did the attacker get in? What did they do? How was it detected?]
 
 ## MITRE ATT\u0026CK Techniques Observed
-[Bullet list: Txxxx — Technique Name — supporting evidence]
+[Bullet list: Txxxx — Technique Name — specific supporting evidence anchor]
 
 ## Attribution Assessment
-[Insider threat, external attacker, or undetermined? Confidence level and reasoning.]
+[Insider threat, external attacker, or undetermined? Confidence level and reasoning. Cite specific evidence.]
 
 ## Key Evidence
-[5-8 bullet points: the most significant individual findings that anchor the above narrative]
+[5-8 bullet points: the most significant individual findings, each with: artifact path, tool used, and specific observation]
 
 ## Recommended Actions
-[5-7 specific, prioritised containment and remediation steps for THIS investigation]"""
+[5-7 specific, prioritised containment and remediation steps for THIS investigation based on the evidence above]"""
 
             try:
                 return self.call_llm(prompt, "", agent_type="manager")
