@@ -697,6 +697,19 @@ Your role is to conduct thorough, systematic forensic analysis using established
 
 *REMnux Malware Analysis:* Static/dynamic analysis, binary identification, unpacking, disassembly, AV scanning
 
+**Analytical Reasoning Protocol:**
+When answering a forensic question, structure your reasoning as:
+1. **Hypothesis** — State what you are testing (e.g., "Testing whether persistence was established via registry Run key")
+2. **Evidence** — Cite the specific artifact, tool result, file path, offset, or log entry that supports or refutes the hypothesis
+3. **Assessment** — State your conclusion with confidence level ("confirmed", "likely", "possible", "no evidence")
+Do not provide a raw data dump. Every claim must be traceable to a named artifact.
+
+**Accuracy Requirements:**
+- Only assert findings that are directly evidenced by a specific artifact you can name
+- When citing a finding, always include: source file, tool used, and the specific field/value observed
+- Use "appears to", "consistent with", or "no evidence of" for inferences vs. confirmed facts
+- If the available context does not contain the answer, say explicitly: "The current evidence does not support a conclusion on this"
+
 **Operational Protocol:**
 - Respond with clear, technical accuracy
 - When instructed to investigate, execute systematically without unnecessary clarification
@@ -706,9 +719,9 @@ Your role is to conduct thorough, systematic forensic analysis using established
 
 **Response Standards:**
 - Professional, objective tone
-- Evidence-based conclusions
-- Clear identification of IOCs and suspicious activity
-- Structured reporting suitable for legal documentation"""
+- Evidence-based conclusions with explicit artifact citations
+- Clear identification of IOCs and suspicious activity with source references
+- Structured investigative narrative suitable for legal documentation (not a raw execution log)"""
 
 
 def call_llm(user_message, context="", agent_type="manager"):
@@ -823,6 +836,107 @@ Respond ONLY in valid JSON (no extra text):
 
     _fe_log(job_id, f"  ⚠ Manager LLM unavailable — using proposed plan ({len(proposed_plan)} playbooks)")
     return proposed_plan
+
+
+def _manager_generate_correction(
+    module: str, function: str, result: dict,
+    forensicator_notes: dict, critic_issues: list,
+) -> dict:
+    """
+    Self-correction: Manager generates a revised analysis when Critic rejects the original.
+    Returns dict with corrected analyst_note, threat_indicators, and correction_reasoning.
+    Returns {} if LLM is unavailable.
+    """
+    result_summary = json.dumps(result, default=str)[:2000]
+    issues_text = "; ".join(str(i) for i in critic_issues[:5]) if critic_issues else "sanity check failed"
+    original_note = forensicator_notes.get("analyst_note") or "(none)"
+    indicators = forensicator_notes.get("threat_indicators") or []
+
+    prompt = f"""You are the Manager agent in a DFIR investigation. The Critic rejected a forensic analysis step.
+
+STEP: {module}.{function}
+TOOL RESULT (excerpt):
+{result_summary}
+
+ORIGINAL ANALYSIS: {original_note}
+ORIGINAL INDICATORS: {indicators}
+
+CRITIC ISSUES: {issues_text}
+
+Generate a corrected analysis that:
+1. Only claims what is directly supported by the tool result excerpt above
+2. Does not invent file names, offsets, paths, or timestamps not present in the output
+3. Uses precise language: "output contains X" not "likely Y"
+4. Cites the specific artifact or field in the tool output for each claim
+
+Respond ONLY in valid JSON (no extra text):
+{{
+    "analyst_note": "one precise sentence citing what the tool output actually shows",
+    "threat_indicators": ["indicators directly evidenced in the output, or empty list"],
+    "correction_reasoning": "brief explanation of what was wrong and what was corrected"
+}}"""
+
+    try:
+        response = _call_manager_llm(prompt, timeout=60)
+        m = re.search(r'\{.*\}', response, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+    except Exception as e:
+        print(f"[MANAGER] Correction generation failed for {module}.{function}: {e}")
+    return {}
+
+
+def _self_check_chat_response(user_msg: str, context: str, response: str) -> str:
+    """
+    Self-correction for chat: verifies the response is grounded in available context.
+    If unsupported claims are detected, regenerates once with an explicit correction prompt.
+    Returns the original response if the LLM is unavailable or the response is short.
+    """
+    if len(response) < 80 or len(context) < 30:
+        return response
+
+    check_prompt = f"""You are a forensic accuracy reviewer. Determine whether this response makes claims NOT supported by the context.
+
+CONTEXT:
+{context[:3000]}
+
+USER QUESTION: {user_msg[:500]}
+
+RESPONSE TO CHECK:
+{response[:2000]}
+
+Does the response invent file names, tool outputs, findings, paths, or timestamps that are NOT present in the context above?
+
+Respond ONLY in valid JSON:
+{{"grounded": true, "issues": []}}
+or
+{{"grounded": false, "issues": ["list specific unsupported claims"]}}"""
+
+    try:
+        check_raw = _call_manager_llm(check_prompt, timeout=30)
+        m = re.search(r'\{.*\}', check_raw, re.DOTALL)
+        if not m:
+            return response
+        check_result = json.loads(m.group())
+        if check_result.get("grounded", True):
+            return response
+        issues = check_result.get("issues") or []
+        if not issues:
+            return response
+
+        # Regenerate with correction prompt
+        correction_prompt = (
+            f"{GEOFF_PROMPT}\n\n{context}\n\n"
+            f"User: {user_msg}\n\n"
+            f"Note: A prior draft response contained these accuracy issues: "
+            f"{'; '.join(str(i) for i in issues[:3])}. "
+            f"Provide a corrected response that only references evidence present in the context above. "
+            f"If the context does not contain sufficient information, say so explicitly.\n\nGeoff:"
+        )
+        corrected = _call_manager_llm(correction_prompt, timeout=90)
+        return corrected if corrected.strip() else response
+    except Exception:
+        return response
 
 
 def _extract_path_from_message(msg: str) -> str:
@@ -2609,8 +2723,28 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         _fe_log(job_id, f"  🔍 Forensicator [{sig}]: {note}")
                                     if forensicator_notes.get("follow_up_needed"):
                                         _fe_log(job_id, f"  ↳ Follow-up: {forensicator_notes.get('follow_up_reason', '')}")
+                                    # Accuracy validation: evidence chain anchors each finding
+                                    # to a specific artifact, tool, and observation.
+                                    step_record["evidence_chain"] = {
+                                        "artifact": function,
+                                        "evidence_file": item,
+                                        "tool": f"{module}.{function}",
+                                        "playbook": playbook_id,
+                                        "significance": sig,
+                                        "analyst_note": forensicator_notes.get("analyst_note"),
+                                        "threat_indicators": forensicator_notes.get("threat_indicators", []),
+                                        "follow_up_needed": forensicator_notes.get("follow_up_needed", False),
+                                        "follow_up_reason": forensicator_notes.get("follow_up_reason"),
+                                    }
                                 except Exception as fe:
                                     _fe_log(job_id, f"  ⚠ Forensicator unavailable for {module}.{function}: {fe}")
+                                    step_record["evidence_chain"] = {
+                                        "artifact": function,
+                                        "evidence_file": item,
+                                        "tool": f"{module}.{function}",
+                                        "playbook": playbook_id,
+                                        "significance": "UNKNOWN",
+                                    }
 
                             # Build Critic analysis string from Forensicator output so the
                             # Critic is checking a real interpretation, not a placeholder.
@@ -2635,16 +2769,54 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
                                     step_record["invalid_iocs"] = critic_val["invalid_iocs"]
 
-                                # Enforce Critic verdict — demote to UNVERIFIED when sanity fails
+                                # Enforce Critic verdict with self-correction
                                 if isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
-                                    if step_record.get("status") == "completed":
-                                        step_record["status"] = "completed_unverified"
-                                        step_record["needs_review"] = True
-                                        steps_unverified += 1
                                     issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
-                                    step_record["unverified_reason"] = issues[:5]
                                     short = "; ".join(str(i) for i in issues[:2]) if issues else "sanity check failed"
-                                    _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
+                                    _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
+
+                                    # Self-correction: Manager generates revised analysis → re-validate with Critic
+                                    correction = _manager_generate_correction(
+                                        module=module, function=function,
+                                        result=result,
+                                        forensicator_notes=forensicator_notes,
+                                        critic_issues=issues,
+                                    )
+                                    corrected = False
+                                    if correction:
+                                        corrected_analysis = (
+                                            f"Find Evil auto-run (corrected): {playbook_id} → {module}.{function}\n"
+                                            f"Corrected analysis: {correction.get('analyst_note', '')}\n"
+                                            f"Corrected indicators: {', '.join(correction.get('threat_indicators', []))}"
+                                        )
+                                        try:
+                                            critic_retry = geoff_critic.validate_tool_output(
+                                                tool_name=f"{module}.{function}",
+                                                tool_params=params,
+                                                raw_output=json.dumps(result, default=str)[:8000],
+                                                geoff_analysis=corrected_analysis,
+                                            )
+                                            if isinstance(critic_retry, dict) and critic_retry.get("passes_sanity") is True:
+                                                # Correction accepted — update step with corrected interpretation
+                                                step_record["forensicator"]["analyst_note"] = correction.get("analyst_note", forensicator_notes.get("analyst_note"))
+                                                step_record["forensicator"]["threat_indicators"] = correction.get("threat_indicators", forensicator_notes.get("threat_indicators", []))
+                                                step_record["self_corrected"] = True
+                                                step_record["correction_reasoning"] = correction.get("correction_reasoning", "")
+                                                step_record["critic"] = critic_retry
+                                                critic_results.append(critic_retry)
+                                                _fe_log(job_id, f"  ✓ Self-correction accepted by Critic for {module}.{function}")
+                                                corrected = True
+                                        except Exception as retry_ce:
+                                            _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
+
+                                    if not corrected:
+                                        # Correction failed or unavailable — demote to unverified
+                                        if step_record.get("status") == "completed":
+                                            step_record["status"] = "completed_unverified"
+                                            step_record["needs_review"] = True
+                                            steps_unverified += 1
+                                        step_record["unverified_reason"] = issues[:5]
+                                        _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
                                 elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is True:
                                     _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
                                 # Validate IOC formats from step result
@@ -3055,6 +3227,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     _update_job(98, "narrative", "Generating human-readable report")
     try:
         narrator = NarrativeReportGenerator(call_llm_func=call_llm)
+        # Collect CRITICAL/HIGH evidence anchors for traceable narrative citations
+        step_evidence_anchors = [
+            f["evidence_chain"]
+            for f in findings_writer.all_records()
+            if isinstance(f.get("evidence_chain"), dict)
+            and f["evidence_chain"].get("significance") in ("CRITICAL", "HIGH")
+        ][:30]
         narrative_path = narrator.generate(
             report_json=report,
             device_map=device_map if device_map is not None else {},
@@ -3063,6 +3242,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             correlated_users=correlated_users if correlated_users is not None else {},
             behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
             case_work_dir=case_work_dir,
+            step_evidence_anchors=step_evidence_anchors,
         )
         report["narrative_report_path"] = str(narrative_path)
         _fe_log(job_id, f"Narrative report: {narrative_path}")
@@ -4969,6 +5149,9 @@ def chat():
 
         # Call LLM
         response = call_llm(user_msg, context, agent_type="manager")
+
+        # Self-correction: verify the response is grounded in the available context
+        response = _self_check_chat_response(user_msg, context, response)
 
         result = {'response': response}
         if tool_result:
