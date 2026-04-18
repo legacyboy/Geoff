@@ -1735,6 +1735,485 @@ class MOBILE_Specialist:
 
 
 # ---------------------------------------------------------------------------
+# BROWSER_Specialist  (Chrome/Firefox/Edge/Safari history & cookies)
+# ---------------------------------------------------------------------------
+
+class BROWSER_Specialist:
+    """Extract browser forensic artefacts from SQLite databases on disk."""
+
+    _CHROME_HISTORY_SQL = (
+        "SELECT url, title, visit_count, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 500"
+    )
+    _CHROME_DOWNLOADS_SQL = (
+        "SELECT target_path, tab_url, total_bytes, start_time, end_time FROM downloads ORDER BY start_time DESC LIMIT 200"
+    )
+    _CHROME_COOKIES_SQL = (
+        "SELECT host_key, name, path, creation_utc, last_access_utc, is_secure FROM cookies ORDER BY last_access_utc DESC LIMIT 500"
+    )
+    _FIREFOX_HISTORY_SQL = (
+        "SELECT url, title, visit_count, last_visit_date FROM moz_places ORDER BY last_visit_date DESC LIMIT 500"
+    )
+    _FIREFOX_DOWNLOADS_SQL = (
+        "SELECT content, dateAdded, lastModified FROM moz_bookmarks b JOIN moz_places p ON b.fk=p.id WHERE b.type=3 LIMIT 200"
+    )
+
+    def _query_sqlite(self, db_path: str, sql: str) -> list:
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(sql)
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    def extract_history(self, db_path: str) -> Dict[str, Any]:
+        """Extract browser history from a Chrome/Firefox history database."""
+        p = Path(db_path)
+        browser = "chrome" if p.name.lower() in ("history", "places.sqlite") else "unknown"
+        sql = self._CHROME_HISTORY_SQL if browser == "chrome" or p.name.lower() == "history" else self._FIREFOX_HISTORY_SQL
+        rows = self._query_sqlite(db_path, sql)
+        return {
+            "tool": "browser_history",
+            "db_path": db_path,
+            "browser_hint": browser,
+            "status": "success" if rows and "error" not in rows[0] else "error",
+            "record_count": len(rows),
+            "records": rows[:200],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def extract_cookies(self, db_path: str) -> Dict[str, Any]:
+        """Extract browser cookies from a Chrome Cookies database."""
+        rows = self._query_sqlite(db_path, self._CHROME_COOKIES_SQL)
+        return {
+            "tool": "browser_cookies",
+            "db_path": db_path,
+            "status": "success" if rows and "error" not in rows[0] else "error",
+            "record_count": len(rows),
+            "records": rows[:200],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def extract_downloads(self, db_path: str) -> Dict[str, Any]:
+        """Extract download history from a Chrome history database."""
+        rows = self._query_sqlite(db_path, self._CHROME_DOWNLOADS_SQL)
+        return {
+            "tool": "browser_downloads",
+            "db_path": db_path,
+            "status": "success" if rows and "error" not in rows[0] else "error",
+            "record_count": len(rows),
+            "records": rows[:200],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def extract_saved_passwords(self, db_path: str) -> Dict[str, Any]:
+        """List saved password origins (not decrypted values) from a Chrome Login Data database."""
+        sql = "SELECT origin_url, username_value, date_created FROM logins ORDER BY date_created DESC LIMIT 200"
+        rows = self._query_sqlite(db_path, sql)
+        return {
+            "tool": "browser_saved_passwords",
+            "db_path": db_path,
+            "status": "success" if rows and "error" not in rows[0] else "error",
+            "record_count": len(rows),
+            "records": rows[:200],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# EMAIL_Specialist  (PST/OST via readpst, mbox via Python, .eml parsing)
+# ---------------------------------------------------------------------------
+
+class EMAIL_Specialist:
+    """Forensic extraction from email archives: PST/OST, mbox, and .eml files."""
+
+    def _run(self, cmd: list, timeout: int = 120) -> Dict[str, Any]:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return {"stdout": r.stdout[:8000], "stderr": r.stderr[:2000], "returncode": r.returncode}
+        except FileNotFoundError:
+            return {"stdout": "", "stderr": f"Tool not found: {cmd[0]}", "returncode": -1}
+        except subprocess.TimeoutExpired:
+            return {"stdout": "", "stderr": "timeout", "returncode": -1}
+        except Exception as e:
+            return {"stdout": "", "stderr": str(e), "returncode": -1}
+
+    def analyze_pst(self, pst_path: str) -> Dict[str, Any]:
+        """Convert PST/OST to mbox using readpst and summarise folder structure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._run(["readpst", "-o", tmp, "-S", pst_path], timeout=180)
+            folders: List[str] = []
+            msg_count = 0
+            if r["returncode"] == 0:
+                for root, dirs, files in os.walk(tmp):
+                    rel = os.path.relpath(root, tmp)
+                    if rel != ".":
+                        folders.append(rel)
+                    msg_count += len([f for f in files if f.endswith(".eml") or f.endswith(".txt")])
+            return {
+                "tool": "readpst",
+                "pst_path": pst_path,
+                "status": "success" if r["returncode"] == 0 else "error",
+                "folder_count": len(folders),
+                "folders": folders[:50],
+                "message_count_estimate": msg_count,
+                "stderr": r["stderr"][:500] if r["returncode"] != 0 else "",
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def analyze_mbox(self, mbox_path: str) -> Dict[str, Any]:
+        """Parse an mbox file and return header summary for each message."""
+        import mailbox
+        try:
+            mbox = mailbox.mbox(mbox_path)
+            messages: List[Dict[str, str]] = []
+            for msg in mbox:
+                messages.append({
+                    "from": msg.get("From", ""),
+                    "to": msg.get("To", ""),
+                    "subject": msg.get("Subject", ""),
+                    "date": msg.get("Date", ""),
+                    "message_id": msg.get("Message-ID", ""),
+                })
+                if len(messages) >= 500:
+                    break
+            return {
+                "tool": "mbox_parser",
+                "mbox_path": mbox_path,
+                "status": "success",
+                "message_count": len(messages),
+                "messages": messages,
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "mbox_parser",
+                "mbox_path": mbox_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def analyze_eml(self, eml_path: str) -> Dict[str, Any]:
+        """Parse a single .eml file and extract headers + attachment names."""
+        import email as email_lib
+        try:
+            with open(eml_path, "rb") as fh:
+                msg = email_lib.message_from_bytes(fh.read())
+            attachments: List[str] = []
+            for part in msg.walk():
+                fn = part.get_filename()
+                if fn:
+                    attachments.append(fn)
+            return {
+                "tool": "eml_parser",
+                "eml_path": eml_path,
+                "status": "success",
+                "from": msg.get("From", ""),
+                "to": msg.get("To", ""),
+                "subject": msg.get("Subject", ""),
+                "date": msg.get("Date", ""),
+                "message_id": msg.get("Message-ID", ""),
+                "attachment_count": len(attachments),
+                "attachments": attachments,
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "eml_parser",
+                "eml_path": eml_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+
+# ---------------------------------------------------------------------------
+# JUMPLIST_Specialist  (LNK files, Recent Apps, Jump Lists, TypedPaths)
+# ---------------------------------------------------------------------------
+
+class JUMPLIST_Specialist:
+    """Parse Windows LNK shortcut files and Jump List databases."""
+
+    _LNK_MAGIC = b"\x4c\x00\x00\x00"  # Shell Link header signature
+
+    def _read_lnk_header(self, path: str) -> Dict[str, Any]:
+        """Extract basic LNK metadata using python-lnk or raw struct parsing."""
+        try:
+            import LnkParse3  # type: ignore
+            with open(path, "rb") as fh:
+                lnk = LnkParse3.lnk_file(fh)
+            info = lnk.get_json()
+            return {
+                "target_path": info.get("data", {}).get("description", ""),
+                "working_dir": info.get("data", {}).get("working_dir", ""),
+                "creation_time": str(info.get("header", {}).get("creation_time", "")),
+                "modification_time": str(info.get("header", {}).get("modification_time", "")),
+                "access_time": str(info.get("header", {}).get("access_time", "")),
+                "file_size": info.get("header", {}).get("file_size", 0),
+                "attributes": info.get("header", {}).get("file_attributes_flags", []),
+                "machine_id": info.get("extra", {}).get("DISTRIBUTED_LINK_TRACKER_BLOCK", {}).get("machine_id", ""),
+            }
+        except ImportError:
+            pass
+        # Fallback: raw struct read of first 76 bytes (Shell Link Header)
+        try:
+            with open(path, "rb") as fh:
+                header = fh.read(76)
+            if len(header) < 76 or header[:4] != self._LNK_MAGIC:
+                return {"error": "not a valid LNK file"}
+            import struct
+            attrs, = struct.unpack_from("<I", header, 24)
+            file_size, = struct.unpack_from("<I", header, 52)
+            return {"attributes": attrs, "file_size": file_size, "raw_parse": True}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def parse_lnk_files(self, directory: str) -> Dict[str, Any]:
+        """Walk a directory recursively and parse all .lnk files found."""
+        results: List[Dict[str, Any]] = []
+        try:
+            base = Path(directory)
+            for lnk_path in base.rglob("*.lnk"):
+                info = self._read_lnk_header(str(lnk_path))
+                info["lnk_path"] = str(lnk_path)
+                results.append(info)
+                if len(results) >= 1000:
+                    break
+        except Exception as e:
+            return {
+                "tool": "lnk_parser",
+                "directory": directory,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+        return {
+            "tool": "lnk_parser",
+            "directory": directory,
+            "status": "success",
+            "lnk_count": len(results),
+            "records": results[:500],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def parse_jump_lists(self, directory: str) -> Dict[str, Any]:
+        """List AutomaticDestinations and CustomDestinations jump list files."""
+        auto: List[str] = []
+        custom: List[str] = []
+        try:
+            base = Path(directory)
+            for p in base.rglob("*.automaticDestinations-ms"):
+                auto.append(str(p))
+            for p in base.rglob("*.customDestinations-ms"):
+                custom.append(str(p))
+        except Exception as e:
+            return {
+                "tool": "jump_list_parser",
+                "directory": directory,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+        return {
+            "tool": "jump_list_parser",
+            "directory": directory,
+            "status": "success",
+            "automatic_count": len(auto),
+            "custom_count": len(custom),
+            "automatic_destinations": auto[:100],
+            "custom_destinations": custom[:100],
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def parse_recent_apps(self, ntuser_path: str) -> Dict[str, Any]:
+        """Extract RecentDocs and TypedPaths from NTUSER.DAT using RegRipper."""
+        import shutil
+        results: Dict[str, Any] = {
+            "tool": "recentapps_parser",
+            "ntuser_path": ntuser_path,
+            "timestamp": datetime.now().isoformat(),
+        }
+        rip = shutil.which("rip.pl") or shutil.which("rip")
+        if not rip:
+            results["status"] = "error"
+            results["error"] = "RegRipper (rip.pl) not found"
+            return results
+        entries: List[str] = []
+        for plugin in ("recentdocs", "typedurls", "typedpaths"):
+            try:
+                r = subprocess.run(
+                    [rip, "-r", ntuser_path, "-p", plugin],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if r.stdout.strip():
+                    entries.extend(r.stdout.strip().splitlines())
+            except Exception:
+                pass
+        results["status"] = "success"
+        results["record_count"] = len(entries)
+        results["records"] = entries[:500]
+        return results
+
+
+# ---------------------------------------------------------------------------
+# MACOS_Specialist  (HFS+/APFS, plist, unified log, launchd)
+# ---------------------------------------------------------------------------
+
+class MACOS_Specialist:
+    """macOS-specific forensic artefact extraction."""
+
+    def parse_plist(self, plist_path: str) -> Dict[str, Any]:
+        """Parse a binary or XML plist file and return its contents as JSON."""
+        try:
+            with open(plist_path, "rb") as fh:
+                data = plistlib.load(fh)
+            def _serialise(obj):
+                if isinstance(obj, bytes):
+                    return obj.hex()
+                if isinstance(obj, dict):
+                    return {k: _serialise(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple)):
+                    return [_serialise(i) for i in obj]
+                return obj
+            return {
+                "tool": "plist_parser",
+                "plist_path": plist_path,
+                "status": "success",
+                "data": _serialise(data),
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "plist_parser",
+                "plist_path": plist_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def parse_unified_log(self, log_path: str) -> Dict[str, Any]:
+        """Extract entries from a macOS Unified Log (.logarchive or .tracev3) using log(1)."""
+        try:
+            r = subprocess.run(
+                ["log", "show", "--style", "json", log_path],
+                capture_output=True, text=True, timeout=120,
+            )
+            if r.returncode != 0:
+                return {
+                    "tool": "unified_log_parser",
+                    "log_path": log_path,
+                    "status": "error",
+                    "error": r.stderr[:500],
+                    "timestamp": datetime.now().isoformat(),
+                }
+            try:
+                events = json.loads(r.stdout)
+            except json.JSONDecodeError:
+                events = r.stdout.splitlines()[:1000]
+            return {
+                "tool": "unified_log_parser",
+                "log_path": log_path,
+                "status": "success",
+                "event_count": len(events) if isinstance(events, list) else 0,
+                "events": events[:500] if isinstance(events, list) else [],
+                "timestamp": datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {
+                "tool": "unified_log_parser",
+                "log_path": log_path,
+                "status": "error",
+                "error": "log(1) command not available (not macOS or not in PATH)",
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "unified_log_parser",
+                "log_path": log_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def analyze_launch_agents(self, directory: str) -> Dict[str, Any]:
+        """Walk LaunchAgents / LaunchDaemons directories and parse each plist."""
+        agents: List[Dict[str, Any]] = []
+        suspicious_keys = {"RunAtLoad", "StartInterval", "StartCalendarInterval",
+                           "KeepAlive", "ProgramArguments"}
+        try:
+            base = Path(directory)
+            for plist_path in base.rglob("*.plist"):
+                try:
+                    with open(plist_path, "rb") as fh:
+                        data = plistlib.load(fh)
+                    entry: Dict[str, Any] = {
+                        "path": str(plist_path),
+                        "label": data.get("Label", ""),
+                        "program": data.get("Program", data.get("ProgramArguments", [])),
+                        "run_at_load": data.get("RunAtLoad", False),
+                        "suspicious_keys": [k for k in suspicious_keys if k in data],
+                    }
+                    agents.append(entry)
+                except Exception:
+                    agents.append({"path": str(plist_path), "error": "parse_failed"})
+                if len(agents) >= 500:
+                    break
+        except Exception as e:
+            return {
+                "tool": "launch_agent_analyzer",
+                "directory": directory,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+        return {
+            "tool": "launch_agent_analyzer",
+            "directory": directory,
+            "status": "success",
+            "agent_count": len(agents),
+            "agents": agents,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    def analyze_fseventsd(self, fseventsd_path: str) -> Dict[str, Any]:
+        """Extract FSEvents log entries using fsevents-parser if available."""
+        try:
+            r = subprocess.run(
+                ["fsevents_parser", fseventsd_path],
+                capture_output=True, text=True, timeout=120,
+            )
+            lines = r.stdout.splitlines()
+            return {
+                "tool": "fseventsd_parser",
+                "fseventsd_path": fseventsd_path,
+                "status": "success" if r.returncode == 0 else "error",
+                "line_count": len(lines),
+                "lines": lines[:500],
+                "stderr": r.stderr[:500] if r.returncode != 0 else "",
+                "timestamp": datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {
+                "tool": "fseventsd_parser",
+                "fseventsd_path": fseventsd_path,
+                "status": "error",
+                "error": "fsevents_parser not found",
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "fseventsd_parser",
+                "fseventsd_path": fseventsd_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+
+# ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes remnux reference)
 # ---------------------------------------------------------------------------
 
@@ -2147,6 +2626,10 @@ class ExtendedOrchestrator:
         self.network = NETWORK_Specialist()
         self.logs = LOG_Specialist()
         self.mobile = MOBILE_Specialist()
+        self.browser = BROWSER_Specialist()
+        self.email = EMAIL_Specialist()
+        self.jumplist = JUMPLIST_Specialist()
+        self.macos = MACOS_Specialist()
 
         # New specialists
         self.photorec = PHOTOREC_Specialist()
@@ -2177,6 +2660,10 @@ class ExtendedOrchestrator:
             'vss': self.vss,
             'zimmerman': self.zimmerman,
             'remnux': self.remnux,
+            'browser': self.browser,
+            'email': self.email,
+            'jumplist': self.jumplist,
+            'macos': self.macos,
         }
 
         specialist = specialist_map.get(module)
@@ -2252,6 +2739,26 @@ class ExtendedOrchestrator:
                 'category': 'Windows Analysis',
                 'functions': ['parse_evtx_zimmerman', 'parse_mft', 'extract_strings_zimmerman', 'shellbags_parse', 'amcache_parse', 'srum_parse'],
                 'tool_availability': avail(['dotnet']),
+            },
+            'browser': {
+                'category': 'Browser Forensics',
+                'functions': ['extract_history', 'extract_cookies', 'extract_downloads', 'extract_saved_passwords'],
+                'tools': ['sqlite3 (Chrome/Firefox DBs)'],
+            },
+            'email': {
+                'category': 'Email Forensics',
+                'functions': ['analyze_pst', 'analyze_mbox', 'analyze_eml'],
+                'tools': ['readpst', 'mailbox (stdlib)', 'email (stdlib)'],
+            },
+            'jumplist': {
+                'category': 'Windows Artefacts',
+                'functions': ['parse_lnk_files', 'parse_jump_lists', 'parse_recent_apps'],
+                'tools': ['LnkParse3', 'RegRipper (recentdocs, typedurls)'],
+            },
+            'macos': {
+                'category': 'macOS Forensics',
+                'functions': ['parse_plist', 'parse_unified_log', 'analyze_launch_agents', 'analyze_fseventsd'],
+                'tools': ['plistlib (stdlib)', 'log(1)', 'fsevents_parser'],
             },
             'remnux': {
                 'category': 'REMnux Malware Analysis',

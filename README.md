@@ -72,9 +72,9 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
   │ Orchestrator  │  │ Validation   │
   └───────┬───────┘  └──────────────┘
           │
-   ┌──────┼──────┬──────┬──────┬──────┬──────┬──────┐
-   ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼
- SleuthKit Vol  Registry  Plaso  Net   Logs  Mobile  REMnux
+   ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼
+Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 ```
 
 ### Key Architecture Concepts
@@ -101,13 +101,63 @@ User → Manager → Forensicator → Tools → Critic → Git → Report
 
 ## Find Evil
 
-**One endpoint. Zero prompting. Full auto-triage.**
+**One command. Zero prompting. Full auto-triage.**
 
+### Command Line (fastest)
+
+```bash
+# Run an investigation
+geoff-find-evil /path/to/evidence
+
+# Save full JSON report to a file
+geoff-find-evil /path/to/evidence -o report.json
+
+# Pipe JSON to jq for scripting
+geoff-find-evil /path/to/evidence --json | jq '.classification'
+
+# Disable colour (for log files / CI)
+geoff-find-evil /path/to/evidence --no-color
+
+# Fail hard on any step error
+geoff-find-evil /path/to/evidence --strict
 ```
+
+**Exit codes:** `0` = clean, `1` = evil found, `2` = error
+
+**Example output:**
+```
+  Geoff DFIR — Find Evil
+  Evidence: /evidence/IR-016-CloudJack
+
+08:42:01  ▶ PB-SIFT-000: Triage Prioritization
+08:42:01    Classification: Exfiltration | Severity: HIGH
+08:42:02  ▶ PB-SIFT-001: Initial Access [host-unknown]
+08:42:03  ▶ PB-SIFT-005: Credential Theft [host-unknown]
+...
+
+┌────────────────────────────────────────────────────────────┐
+│           GEOFF FIND EVIL — INVESTIGATION COMPLETE         │
+├────────────────────────────────────────────────────────────┤
+│  Evil found:           YES                                 │
+│  Classification:       Exfiltration                        │
+│  Severity:             HIGH                                │
+│  Playbooks run:        14                                  │
+│  Steps completed:      47  (0 failed)                      │
+│  Elapsed:              12.3s                               │
+│  MITRE techniques:     T1048, T1567, T1020                 │
+│  Case directory:       /tmp/geoff-cases/IR-016-...         │
+└────────────────────────────────────────────────────────────┘
+```
+
+### HTTP API
+
+```bash
 curl -X POST http://localhost:8080/find-evil \
   -H 'Content-Type: application/json' \
   -d '{"evidence_dir": "/path/to/evidence"}'
 ```
+
+### Chat
 
 Or via chat: `"Geoff, start processing /path/to/evidence"`
 
@@ -139,6 +189,40 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 | Multiple disk images (correlation) | PB-SIFT-016 | HIGH |
 | Malware sample | PB-SIFT-017, PB-SIFT-018, PB-SIFT-019 | HIGH |
 
+### MITRE ATT&CK Tagging
+
+Every indicator hit is tagged with relevant ATT&CK technique IDs:
+
+| Category | MITRE Techniques |
+|:---------|:----------------|
+| Ransomware | T1486, T1490, T1489 |
+| Credential Theft | T1003, T1558, T1552 |
+| Lateral Movement | T1021, T1570, T1563 |
+| Persistence | T1053, T1547, T1543, T1542 |
+| Exfiltration | T1048, T1567, T1020 |
+| Anti-Forensics | T1070, T1485, T1027 |
+| Web Shell | T1505.003, T1190 |
+| C2 | T1071, T1095, T1573 |
+| Rootkit | T1014, T1543.003 |
+| OT/ICS Attack | T0855, T0816, T0879 |
+
+The final report includes `attack_chain.mitre_techniques_observed` — a deduplicated list of all techniques seen across the investigation.
+
+### Attack Chain Reconstruction
+
+The report includes a `attack_chain` field:
+
+```json
+{
+  "first_seen_ts": "2024-01-10T08:00:00",
+  "last_seen_ts":  "2024-01-15T12:01:00",
+  "dwell_days":    5.17,
+  "lateral_movement_path": ["host-A", "host-B", "host-C"],
+  "mitre_techniques_observed": ["T1003", "T1021", "T1048"],
+  "kill_chain_phases": ["credential_theft", "lateral_movement", "exfiltration"]
+}
+```
+
 ### Anti-Forensics Cascade
 
 When PB-SIFT-012 detects anti-forensics indicators, it **retroactively downgrades all findings** across all devices:
@@ -148,9 +232,40 @@ When PB-SIFT-012 detects anti-forensics indicators, it **retroactively downgrade
 
 This prevents false confidence in evidence that may have been tampered with.
 
+## Web Interface
+
+Start the server then open **http://localhost:8080**.
+
+```bash
+python src/geoff_integrated.py
+```
+
+The UI has three tabs:
+
+### 🔍 Find Evil
+
+The evidence directory input is pre-filled with the server's configured evidence path so you always know what the default is. Edit it to point anywhere, or paste just a subfolder name — Geoff resolves it against the base path automatically.
+
+```
+/home/sansforensics/evidence-storage/evidence/IR-016-CloudJack
+                    ↑ pre-filled                ↑ or just paste this
+```
+
+### 📁 Evidence
+
+Lists every subfolder in your evidence directory. Each entry has two ways to kick off an investigation:
+
+- **Click the folder name** — copies the full path into the Find Evil input and switches to that tab, ready to run
+- **Click 🔍 Investigate** — does the same and immediately starts the run
+
+No copy-pasting paths. No switching tabs manually.
+
+### 💬 Chat
+
+Conversational interface. Talk to Geoff directly or say things like `"start processing IR-016-CloudJack"` and it will route to Find Evil automatically.
+
 ---
 
-## Tool Coverage
 
 | Category | Specialist | Tools | Functions |
 |----------|-----------|-------|----------|
@@ -165,6 +280,10 @@ This prevents false confidence in evidence that may have been tampered with.
 | **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
 | **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
 | **Mobile** | mobile | Pure-Python (plistlib, sqlite3) | iOS backup analysis, Android data extraction |
+| **Browser** | browser | SQLite3 (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
+| **Email** | email | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
+| **Jump Lists / LNK** | jumplist | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
+| **macOS** | macos | plistlib, log(1), fsevents_parser | Plist parsing, Unified Log, LaunchAgents/Daemons, FSEvents |
 | **Malware** | remnux | REMnux suite (die, exiftool, peframe, oledump, pdfid, upx, r2, clamav, ssdeep, hashdeep) | 15 tool wrappers, 5 specialist classes |
 | **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
 | **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
@@ -238,31 +357,35 @@ Output: `device_map.json` + `user_map.json` in the case directory.
 
 ## Playbook Library
 
-20 PB-SIFT playbooks organized by MITRE ATT&CK kill chain:
+25 PB-SIFT playbooks organized by MITRE ATT&CK kill chain:
 
-| ID | Playbook | Phase |
-|----|----------|-------|
-| PB-SIFT-000 | Triage (mandatory entry point) | Triage |
-| PB-SIFT-001 | Initial Access | Initial Access |
-| PB-SIFT-002 | Execution | Execution |
-| PB-SIFT-003 | Persistence | Persistence |
-| PB-SIFT-004 | Privilege Escalation | Privilege Escalation |
-| PB-SIFT-005 | Credential Access | Credential Access |
-| PB-SIFT-006 | Lateral Movement | Lateral Movement |
-| PB-SIFT-007 | Exfiltration | Exfiltration |
-| PB-SIFT-008 | Malware Hunting | Impact |
-| PB-SIFT-009 | Ransomware | Impact |
-| PB-SIFT-010 | Living-off-the-Land | Execution |
-| PB-SIFT-011 | Browser Forensics | Collection |
-| PB-SIFT-012 | Anti-Forensics | Defense Evasion |
-| PB-SIFT-013 | Insider Threat | Collection |
-| PB-SIFT-014 | Linux | Discovery |
-| PB-SIFT-015 | macOS | Discovery |
-| PB-SIFT-016 | Correlation | Command & Control |
-| PB-SIFT-017 | REMnux Malware Analysis | Impact |
-| PB-SIFT-018 | Malware Analysis SOP | Impact |
-| PB-SIFT-019 | Command & Control | Command & Control |
-| PB-SIFT-020 | Timeline Analysis | Collection |
+| ID | Playbook | Phase | Auto-triggered when |
+|----|----------|-------|---------------------|
+| PB-SIFT-000 | Triage (mandatory entry point) | Triage | Always |
+| PB-SIFT-001 | Initial Access | Initial Access | Always (core) |
+| PB-SIFT-002 | Execution | Execution | Always (core) |
+| PB-SIFT-003 | Persistence | Persistence | Always (core) — UserAssist, ShellBags, LNK files |
+| PB-SIFT-004 | Privilege Escalation | Privilege Escalation | Always (core) |
+| PB-SIFT-005 | Credential Access | Credential Access | Always (core) |
+| PB-SIFT-006 | Lateral Movement | Lateral Movement | Disk images present |
+| PB-SIFT-007 | Exfiltration | Exfiltration | Disk images — USB devices, mounted drives |
+| PB-SIFT-008 | Malware Hunting | Impact | Disk images present |
+| PB-SIFT-009 | Ransomware | Impact | Always |
+| PB-SIFT-010 | Living-off-the-Land | Execution | Disk images present |
+| PB-SIFT-011 | Web Shell Detection | Defense Evasion | PCAPs present |
+| PB-SIFT-012 | Anti-Forensics | Defense Evasion | Disk images present |
+| PB-SIFT-013 | Insider Threat | Collection | Always |
+| PB-SIFT-014 | Linux Forensics | Discovery | OS detected as linux |
+| PB-SIFT-015 | Data Staging | Collection | Disk images present |
+| PB-SIFT-016 | Cross-Image Correlation | Lateral Movement | 2+ disk images |
+| PB-SIFT-017 | REMnux Malware Analysis | Impact | Suspicious files / indicator hits |
+| PB-SIFT-018 | Malware Analysis SOP | Impact | Suspicious files / indicator hits |
+| PB-SIFT-019 | Command & Control | Command & Control | C2 indicators detected |
+| PB-SIFT-020 | Timeline Analysis | Collection | Disk images present |
+| PB-SIFT-021 | Mobile Analysis | Collection | Mobile backup files detected |
+| PB-SIFT-022 | Browser Forensics | Collection | Always (browser DBs analysed if found) |
+| PB-SIFT-023 | Email Forensics | Collection | .pst/.ost/.mbox/.eml files present |
+| PB-SIFT-024 | macOS Forensics | Discovery | OS detected as macos |
 
 **PB-SIFT-000 is mandatory** — it runs first, performs triage, and emits the execution plan. Only playbooks in the execution plan are run.
 
@@ -366,9 +489,14 @@ python src/geoff_integrated.py
 
 ### Access
 
-- **Web UI**: http://localhost:8080
-- **Console**: `python3 scripts/geoff_console.py`
-- **API**: REST endpoints at http://localhost:8080 (see below)
+| Method | How |
+|--------|-----|
+| **CLI** | `geoff-find-evil /path/to/evidence` — no server required |
+| **Web UI** | http://localhost:8080 |
+| **Console** | `python3 scripts/geoff_console.py` |
+| **Evidence tab** | Click any folder → auto-populates Find Evil input |
+| **One-click** | Click 🔍 Investigate on any evidence folder to run immediately |
+| **Chat** | `"start processing IR-016-CloudJack"` routes to Find Evil automatically |
 
 ---
 
@@ -420,7 +548,19 @@ Ctrl+C stops polling the current job without exiting. `NO_COLOR=1` disables ANSI
 
 ### API
 
-**Find Evil (Autonomous):**
+**Find Evil — CLI (no server needed):**
+```bash
+# Basic run
+geoff-find-evil /cases/incident42
+
+# Save JSON report
+geoff-find-evil /cases/incident42 -o /cases/incident42/report.json
+
+# Script-friendly: JSON to stdout, evil-found = exit 1
+geoff-find-evil /cases/incident42 --json | jq '{evil:.evil_found, sev:.severity}'
+```
+
+**Find Evil — HTTP API:**
 ```bash
 curl -X POST http://localhost:8080/find-evil \
   -H 'Content-Type: application/json' \
