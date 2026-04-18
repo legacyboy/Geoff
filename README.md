@@ -325,6 +325,51 @@ Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary 
 
 ---
 
+## Novel Contribution
+
+GEOFF is a new autonomous DFIR platform built on top of the SANS SIFT Workstation. This section documents what is novel versus what it builds on.
+
+### Built On (pre-existing)
+
+| Component | Source |
+|-----------|--------|
+| Forensic tools (mmls, fls, fsstat, icat, strings, vol.py, rip.pl, log2timeline, tshark, etc.) | SANS SIFT Workstation |
+| PhotoRec, Foremost, Scalpel | Pre-existing open source |
+| Volatility3 | Pre-existing open source |
+| Eric Zimmerman Tools (EvtxECmd, MFTECmd, etc.) | Pre-existing open source |
+| RegRipper | Pre-existing open source |
+| Plaso | Pre-existing open source |
+| REMnux malware analysis tools (die, exiftool, oledump, pdfid, etc.) | Pre-existing open source |
+| Flask, requests, Python stdlib | Pre-existing open source |
+
+### Novel Contribution (created during hackathon, April 15–June 15 2026)
+
+**1. Three-agent autonomous pipeline**
+A Manager / Forensicator / Critic architecture where no human is in the loop. The Manager plans and reviews the execution plan. The Forensicator interprets each tool result and assesses threat significance. The Critic validates every output for hallucinations and accuracy. All three agents communicate via structured JSON and are wired into a single deterministic pipeline — none of this exists in SIFT or any of the upstream tools.
+
+**2. Self-correction loop**
+When the Critic rejects a Forensicator interpretation, the Manager automatically generates a corrected analysis grounded only in what the raw tool output actually shows. The Critic re-validates. The step is only demoted to `completed_unverified` if the correction also fails. Chat responses go through an independent grounding check and are regenerated if ungrounded claims are detected. This is novel — SIFT tools have no self-validation capability.
+
+**3. Evidence chain (per-finding traceability)**
+Every completed step record carries an `evidence_chain` dict linking the finding to a specific artifact, evidence file, specialist tool, and Forensicator observation. The narrative report receives these anchors and is required to cite them explicitly. No SIFT tool or prior DFIR framework produces this structured traceability automatically.
+
+**4. Device-centric investigation architecture**
+Evidence is grouped by device (not by file type), with each device getting its own playbook execution, behavioral analysis, and correlated findings. Cross-device lateral movement detection and a unified super-timeline are built from the per-device outputs. This device-centric model is not present in SIFT.
+
+**5. 25-playbook MITRE ATT&CK-aligned execution engine**
+PB-SIFT-000 through PB-SIFT-024 cover the full kill chain (initial access → execution → persistence → privilege escalation → credential access → lateral movement → exfiltration → impact). PB-SIFT-000 is a mandatory triage meta-playbook that generates the execution plan dynamically based on evidence type, OS detection, and indicator hits. The Manager LLM reviews and approves the plan before execution begins.
+
+**6. Behavioral analysis engine (replaces YARA)**
+Ten deterministic behavioral checks (process path/parent validation, spawn chain analysis, beaconing detection, timestomp detection, typosquatting, temp-directory executables, off-hours clustering, etc.) replace static YARA signature matching. Each flag includes a severity rating, MITRE ATT&CK technique tag, and supporting evidence dict.
+
+**7. LLM-generated investigative narrative with artifact citations**
+The `NarrativeReportGenerator` produces an 8-section human-readable investigation report driven by the Manager LLM, including an attack chain synthesis that maps findings to MITRE techniques, assesses attribution, and requires every factual claim to cite a specific evidence anchor from the pipeline. No SIFT tool produces narrative output of this kind.
+
+**8. Git-backed reproducibility**
+Every step execution, Critic validation, and state transition is committed to a per-case git repository. The case directory structure, findings.jsonl stream, validations/ directory, and audit_trail.jsonl collectively form a full forensic chain of custody that can be independently verified or re-run.
+
+---
+
 ## Competition Compliance
 
 GEOFF is designed to meet three core requirements for autonomous forensic investigation:
