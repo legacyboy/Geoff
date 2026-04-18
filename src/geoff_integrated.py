@@ -3334,6 +3334,242 @@ HTML_TEMPLATE = r"""
             padding: 40px;
             color: #8b949e;
         }
+
+        /* Reports Tab */
+        #reports-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .reports-sidebar {
+            width: 280px;
+            flex-shrink: 0;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .reports-sidebar-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .reports-sidebar-header h3 {
+            color: #8b949e;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+        }
+
+        .import-btn {
+            padding: 5px 12px;
+            background: #21262d;
+            color: #58a6ff;
+            border: 1px solid #30363d;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+
+        .import-btn:hover {
+            background: #30363d;
+            border-color: #58a6ff;
+        }
+
+        .reports-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .report-entry {
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            border: 1px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .report-entry:hover { background: #21262d; border-color: #30363d; }
+        .report-entry.active { background: #21262d; border-color: #58a6ff; }
+
+        .report-entry-name {
+            font-weight: 600;
+            font-size: 0.88rem;
+            color: #c9d1d9;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .report-entry-meta {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            flex-wrap: wrap;
+            font-size: 0.75rem;
+        }
+
+        .report-ts {
+            color: #6e7681;
+            font-size: 0.72rem;
+            margin-top: 3px;
+        }
+
+        .evil-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .evil-badge.evil  { background: #da3633; color: white; }
+        .evil-badge.clean { background: #238636; color: white; }
+
+        .reports-viewer {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 28px;
+        }
+
+        .reports-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #8b949e;
+            font-size: 0.9rem;
+            text-align: center;
+            gap: 10px;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px 14px;
+        }
+
+        .stat-card .stat-label {
+            color: #8b949e;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+
+        .stat-card .stat-value {
+            color: #c9d1d9;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .report-section {
+            margin-bottom: 22px;
+        }
+
+        .report-section h3 {
+            color: #79c0ff;
+            font-size: 0.88rem;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .chain-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 14px 18px;
+        }
+
+        .chain-box p {
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            color: #c9d1d9;
+        }
+
+        .mitre-tag {
+            display: inline-block;
+            background: #21262d;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.78rem;
+            margin: 2px;
+            color: #a371f7;
+        }
+
+        .flag-box {
+            background: #1c2128;
+            border: 1px solid #da3633;
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+
+        .flag-box p {
+            color: #d29922;
+            font-size: 0.85rem;
+            margin-bottom: 3px;
+        }
+
+        .inv-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 8px;
+        }
+
+        .inv-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+
+        .inv-card .inv-type {
+            color: #8b949e;
+            font-size: 0.7rem;
+            text-transform: capitalize;
+        }
+
+        .inv-card .inv-count {
+            color: #58a6ff;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .raw-json-toggle {
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 5px 12px;
+            cursor: pointer;
+            font-size: 0.82rem;
+        }
+
+        .raw-json-toggle:hover { color: #c9d1d9; border-color: #8b949e; }
     </style>
 </head>
 <body>
@@ -3345,6 +3581,27 @@ HTML_TEMPLATE = r"""
     <div class="tabs">
         <div class="tab active" onclick="showTab('findevil')">🔍 Find Evil</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
+        <div class="tab" onclick="showTab('reports')">📋 Reports</div>
+    </div>
+
+    <div id="reports" class="content">
+        <div id="reports-content">
+            <div class="reports-sidebar">
+                <div class="reports-sidebar-header">
+                    <h3>Past Cases</h3>
+                    <button class="import-btn" onclick="importReportJSON()">⬆ Import JSON</button>
+                </div>
+                <div class="reports-list" id="reports-list">
+                    <div style="padding:16px;color:#8b949e;font-size:0.82rem;">Select the Reports tab to load cases.</div>
+                </div>
+            </div>
+            <div class="reports-viewer" id="reports-viewer">
+                <div class="reports-placeholder">
+                    <div style="font-size:2rem;margin-bottom:8px;">📋</div>
+                    <div>Select a completed case from the sidebar<br>or import a JSON report file.</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="evidence" class="content">
@@ -3436,6 +3693,252 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             event.target.classList.add('active');
             document.getElementById(tab).classList.add('active');
             if (tab === 'evidence') loadEvidence();
+            if (tab === 'reports') loadReports();
+        }
+
+        // ---- Reports Tab ----
+
+        function _escHtml(s) {
+            return (s || '').toString()
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        async function loadReports() {
+            const list = document.getElementById('reports-list');
+            list.innerHTML = '<div style="padding:12px;color:#8b949e;font-size:0.85rem;">Loading...</div>';
+            try {
+                const res = await authFetch('/reports');
+                const data = await res.json();
+                const reports = data.reports || [];
+                list.innerHTML = '';
+                if (reports.length === 0) {
+                    list.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:0.82rem;line-height:1.6;">No completed reports yet.<br>Run Find Evil on an evidence directory to generate one.</div>';
+                    return;
+                }
+                reports.forEach(r => {
+                    const entry = document.createElement('div');
+                    entry.className = 'report-entry';
+                    entry.dataset.dir = r.dir;
+                    // Format timestamp: 20240115_120130 → 15/01/2024 12:01
+                    let ts = '';
+                    if (r.timestamp) {
+                        const m = r.timestamp.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})/);
+                        if (m) ts = m[3]+'/'+m[2]+'/'+m[1]+' '+m[4]+':'+m[5];
+                    }
+                    entry.innerHTML =
+                        '<div class="report-entry-name">' + _escHtml(r.case_name) + '</div>' +
+                        '<div class="report-entry-meta">' +
+                            '<span class="evil-badge ' + (r.evil_found ? 'evil' : 'clean') + '">' + (r.evil_found ? 'EVIL' : 'CLEAN') + '</span>' +
+                            '<span class="fe-severity ' + _escHtml(r.severity) + '" style="font-size:0.7rem;padding:1px 6px;">' + _escHtml(r.severity) + '</span>' +
+                        '</div>' +
+                        (ts ? '<div class="report-ts">' + ts + '</div>' : '');
+                    entry.addEventListener('click', () => {
+                        document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
+                        entry.classList.add('active');
+                        viewReport(r.dir, r.case_name);
+                    });
+                    list.appendChild(entry);
+                });
+            } catch(e) {
+                list.innerHTML = '<div style="padding:12px;color:#f85149;font-size:0.82rem;">Error: ' + _escHtml(e.message) + '</div>';
+            }
+        }
+
+        async function viewReport(caseDir, title) {
+            const viewer = document.getElementById('reports-viewer');
+            viewer.innerHTML = '<div class="reports-placeholder"><span>Loading report\u2026</span></div>';
+            try {
+                const res = await authFetch('/reports/' + encodeURIComponent(caseDir) + '/json');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const report = await res.json();
+                viewer.innerHTML = _renderReportHtml(report, title || caseDir);
+            } catch(e) {
+                viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Error: ' + _escHtml(e.message) + '</span></div>';
+            }
+        }
+
+        function importReportJSON() {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = '.json,application/json';
+            inp.onchange = async (ev) => {
+                const file = ev.target.files[0];
+                if (!file) return;
+                const viewer = document.getElementById('reports-viewer');
+                viewer.innerHTML = '<div class="reports-placeholder"><span>Reading file\u2026</span></div>';
+                try {
+                    const text = await file.text();
+                    const report = JSON.parse(text);
+                    document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
+                    viewer.innerHTML = _renderReportHtml(report, file.name.replace(/\.json$/i, ''));
+                } catch(e) {
+                    viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Invalid JSON: ' + _escHtml(e.message) + '</span></div>';
+                }
+            };
+            inp.click();
+        }
+
+        function _renderReportHtml(report, title) {
+            const sev = report.severity || 'INFO';
+            const evil = report.evil_found;
+            const sevDist = report.severity_distribution || {};
+            const chain = report.attack_chain || {};
+            const mitreObs = chain.mitre_techniques_observed || [];
+            const pbs = report.playbooks_run || [];
+            const devMap = report.device_map || {};
+            const flags = report.behavioral_flags_summary || {};
+            const hits = report.indicator_hits || [];
+            const inv = report.evidence_inventory || {};
+            const failures = report.failures || [];
+            const totalFlags = Object.values(flags).reduce((a, b) => a + b, 0);
+
+            let h = '<div style="max-width:900px;">';
+
+            // Header
+            h += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">';
+            h += '<h2 style="color:#58a6ff;font-size:1.2rem;margin:0;">' + _escHtml(title) + '</h2>';
+            h += '<span class="evil-badge ' + (evil ? 'evil' : 'clean') + '" style="font-size:0.85rem;padding:4px 12px;">' + (evil ? '\uD83D\uDD34 EVIL FOUND' : '\uD83D\uDFE2 CLEAN') + '</span>';
+            h += '<span class="fe-severity ' + _escHtml(sev) + '">' + _escHtml(sev) + '</span>';
+            h += '</div>';
+
+            // Key stats
+            const elapsed = ((report.elapsed_seconds || 0)).toFixed(1);
+            const stepsFailed = pbs.reduce((a, pb) => a + (pb.steps_failed || 0), 0);
+            h += '<div class="stat-grid">';
+            [
+                ['Classification', report.classification || '\u2014'],
+                ['OS', report.os_type || '\u2014'],
+                ['Elapsed', elapsed + 's'],
+                ['Playbooks Run', pbs.length],
+                ['Critic Approval', (report.critic_approval_pct || 0) + '%'],
+                ['Steps Failed', stepsFailed],
+            ].forEach(([label, val]) => {
+                h += '<div class="stat-card"><div class="stat-label">' + label + '</div><div class="stat-value">' + _escHtml(String(val)) + '</div></div>';
+            });
+            h += '</div>';
+
+            // Severity distribution
+            const hasSev = Object.values(sevDist).some(v => v > 0);
+            if (hasSev) {
+                h += '<div class="report-section"><h3>Indicator Distribution</h3><div style="display:flex;gap:8px;flex-wrap:wrap;">';
+                for (const [k, v] of Object.entries(sevDist)) {
+                    if (v > 0) h += '<span class="fe-severity ' + _escHtml(k) + '">' + _escHtml(k) + ': ' + v + '</span>';
+                }
+                h += '</div></div>';
+            }
+
+            // Attack chain
+            if (chain.dwell_days !== undefined || (chain.lateral_movement_path || []).length || mitreObs.length) {
+                h += '<div class="report-section"><h3 style="color:#d29922;">\u26D3 Attack Chain</h3><div class="chain-box">';
+                if (chain.first_seen_ts) h += '<p><strong>First Seen:</strong> ' + _escHtml(chain.first_seen_ts) + '</p>';
+                if (chain.last_seen_ts)  h += '<p><strong>Last Seen:</strong> '  + _escHtml(chain.last_seen_ts)  + '</p>';
+                if (chain.dwell_days !== undefined) h += '<p><strong>Dwell Time:</strong> ' + chain.dwell_days + ' days</p>';
+                if ((chain.lateral_movement_path || []).length)
+                    h += '<p><strong>Lateral Movement:</strong> ' + chain.lateral_movement_path.map(_escHtml).join(' \u2192 ') + '</p>';
+                if ((chain.kill_chain_phases || []).length)
+                    h += '<p><strong>Kill Chain:</strong> ' + chain.kill_chain_phases.map(_escHtml).join(', ') + '</p>';
+                if (mitreObs.length) {
+                    h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#8b949e;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
+                    h += mitreObs.map(t => '<span class="mitre-tag">' + _escHtml(t) + '</span>').join('');
+                    h += '</div></div>';
+                }
+                h += '</div></div>';
+            }
+
+            // Playbooks
+            if (pbs.length > 0) {
+                h += '<div class="report-section"><h3>Playbooks</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Playbook</th><th>Completed</th><th>Skipped</th><th>Failed</th></tr>';
+                pbs.forEach(pb => {
+                    h += '<tr><td>' + _escHtml(pb.playbook_id) + '</td>'
+                       + '<td class="' + (pb.steps_completed > 0 ? 'completed' : '') + '">' + (pb.steps_completed||0) + '</td>'
+                       + '<td class="' + (pb.steps_skipped  > 0 ? 'skipped'   : '') + '">' + (pb.steps_skipped ||0) + '</td>'
+                       + '<td class="' + (pb.steps_failed   > 0 ? 'failed'    : '') + '">' + (pb.steps_failed  ||0) + '</td></tr>';
+                });
+                h += '</table></div>';
+            }
+
+            // Devices
+            if (Object.keys(devMap).length > 0) {
+                h += '<div class="report-section"><h3>Devices Discovered</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Device</th><th>Type</th><th>Owner</th><th>OS</th><th>Files</th></tr>';
+                for (const [devId, dev] of Object.entries(devMap)) {
+                    h += '<tr><td>' + _escHtml(devId) + '</td>'
+                       + '<td>' + _escHtml(dev.device_type||'\u2014') + '</td>'
+                       + '<td>' + _escHtml(dev.owner||'\u2014') + '</td>'
+                       + '<td>' + _escHtml(dev.os_type||'\u2014') + '</td>'
+                       + '<td>' + (dev.evidence_files ? dev.evidence_files.length : 0) + '</td></tr>';
+                }
+                h += '</table></div>';
+            }
+
+            // Behavioral flags
+            if (totalFlags > 0) {
+                h += '<div class="report-section"><h3 style="color:#f85149;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
+                for (const [devId, count] of Object.entries(flags)) {
+                    if (count > 0) h += '<p>' + _escHtml(devId) + ': ' + count + ' flag' + (count !== 1 ? 's' : '') + '</p>';
+                }
+                h += '</div></div>';
+            }
+
+            // Indicator hits
+            if (hits.length > 0) {
+                h += '<div class="report-section"><h3>Indicator Hits (' + hits.length + ')</h3>';
+                h += '<div style="max-height:280px;overflow-y:auto;border:1px solid #21262d;border-radius:6px;">';
+                h += '<table class="fe-pb-table" style="margin-top:0;"><tr><th>Category</th><th>Pattern</th><th>Severity</th><th>File</th></tr>';
+                const shown = hits.slice(0, 100);
+                shown.forEach(hit => {
+                    const sc = hit.severity || 'INFO';
+                    const fileParts = (hit.file || '').replace(/\\/g,'/').split('/');
+                    const shortFile = fileParts.slice(-2).join('/');
+                    h += '<tr>'
+                       + '<td>' + _escHtml(hit.category||'') + '</td>'
+                       + '<td><code style="font-size:0.8rem;">' + _escHtml(hit.pattern||'') + '</code></td>'
+                       + '<td><span class="fe-severity ' + sc + '" style="font-size:0.7rem;padding:1px 5px;">' + sc + '</span></td>'
+                       + '<td style="font-size:0.78rem;color:#8b949e;" title="' + _escHtml(hit.file||'') + '">' + _escHtml(shortFile) + '</td>'
+                       + '</tr>';
+                });
+                if (hits.length > 100) h += '<tr><td colspan="4" style="color:#8b949e;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
+                h += '</table></div></div>';
+            }
+
+            // Evidence inventory
+            const hasInv = Object.values(inv).some(v => Array.isArray(v) && v.length > 0);
+            if (hasInv) {
+                h += '<div class="report-section"><h3>Evidence Inventory</h3><div class="inv-grid">';
+                for (const [type, items] of Object.entries(inv)) {
+                    if (Array.isArray(items) && items.length > 0) {
+                        h += '<div class="inv-card">'
+                           + '<div class="inv-type">' + _escHtml(type.replace(/_/g,' ')) + '</div>'
+                           + '<div class="inv-count">' + items.length + '</div>'
+                           + '</div>';
+                    }
+                }
+                h += '</div></div>';
+            }
+
+            // Failures
+            if (failures.length > 0) {
+                h += '<div class="report-section"><h3 style="color:#f85149;">Failed Steps (' + failures.length + ')</h3>';
+                failures.slice(0, 15).forEach(f => {
+                    h += '<div style="background:#1c1c1c;border:1px solid #30363d;border-radius:4px;padding:6px 10px;margin-bottom:4px;font-size:0.82rem;">'
+                       + '<span style="color:#f85149;">' + _escHtml((f.playbook||'') + ' / ' + (f.step||'')) + '</span>'
+                       + (f.error ? '<span style="color:#8b949e;"> \u2014 ' + _escHtml(f.error) + '</span>' : '')
+                       + '</div>';
+                });
+                h += '</div>';
+            }
+
+            // Raw JSON toggle
+            h += '<div class="report-section">';
+            h += '<button class="raw-json-toggle" onclick="var p=this.nextElementSibling;p.style.display=p.style.display===\'none\'?\'block\':\'none\';this.textContent=p.style.display===\'none\'?\'{ } Show Raw JSON\':\'{ } Hide Raw JSON\';">{ } Show Raw JSON</button>';
+            h += '<pre style="display:none;margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px;overflow:auto;font-size:0.75rem;color:#8b949e;max-height:400px;">'
+               + _escHtml(JSON.stringify(report, null, 2)) + '</pre>';
+            h += '</div>';
+
+            h += '</div>';
+            return h;
         }
 
         // Append a message bubble to the unified output area and scroll to bottom.
@@ -4234,6 +4737,59 @@ def get_case_report(case_name):
     try:
         content = report_path.read_text(encoding='utf-8')
         return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/reports', methods=['GET'])
+@_require_auth
+def list_reports():
+    """List completed Find Evil cases that have a saved JSON report."""
+    cases_root = Path(CASES_WORK_DIR)
+    reports = []
+    if cases_root.exists():
+        for d in sorted(cases_root.iterdir(), reverse=True):
+            if not d.is_dir():
+                continue
+            report_file = d / "reports" / "find_evil_report.json"
+            if not report_file.exists():
+                continue
+            try:
+                with open(report_file) as f:
+                    data = json.load(f)
+                # Directory name pattern: {case_name}_findevil_{timestamp}
+                dir_name = d.name
+                parts = dir_name.rsplit('_findevil_', 1)
+                case_display = parts[0] if len(parts) == 2 else dir_name
+                timestamp_str = parts[1] if len(parts) == 2 else ''
+                reports.append({
+                    'dir': dir_name,
+                    'case_name': case_display,
+                    'timestamp': timestamp_str,
+                    'evil_found': data.get('evil_found', False),
+                    'severity': data.get('severity', 'INFO'),
+                    'classification': data.get('classification', ''),
+                    'elapsed_seconds': data.get('elapsed_seconds', 0),
+                    'evidence_dir': data.get('evidence_dir', ''),
+                })
+            except (OSError, json.JSONDecodeError, KeyError):
+                continue
+    return jsonify({'reports': reports})
+
+
+@app.route('/reports/<case_dir>/json', methods=['GET'])
+@_require_auth
+def get_report_json(case_dir):
+    """Serve the find_evil_report.json for a specific case directory."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+    report_file = Path(CASES_WORK_DIR) / safe_dir / "reports" / "find_evil_report.json"
+    if not report_file.exists():
+        return jsonify({'error': 'Report not found'}), 404
+    try:
+        content = report_file.read_text(encoding='utf-8')
+        return content, 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         return jsonify({'error': str(e)}), 500
 
