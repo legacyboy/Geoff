@@ -2966,213 +2966,292 @@ HTML_TEMPLATE = r"""
 <head>
     <title>Geoff DFIR</title>
     <meta charset="UTF-8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <!-- GEOFF_API_KEY_META -->
     <style>
+        :root {
+            --g-bg:          #0B1220;
+            --g-bg-2:        #0F172A;
+            --g-surface:     #1E293B;
+            --g-surface-2:   #172033;
+            --g-border:      #334155;
+            --g-border-soft: #1F2A3F;
+            --g-text:        #F1F5F9;
+            --g-text-dim:    #94A3B8;
+            --g-text-mute:   #64748B;
+            --g-blue:        #3B82F6;
+            --g-blue-soft:   #60A5FA;
+            --g-green:       #10B981;
+            --g-amber:       #F59E0B;
+            --g-red:         #EF4444;
+            --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+            --radius: 6px;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0d1117;
-            color: #c9d1d9;
+        body {
+            font-family: var(--font-sans);
+            background: var(--g-bg);
+            color: var(--g-text);
             height: 100vh;
             display: flex;
             flex-direction: column;
+            font-size: 13px;
+            line-height: 1.4;
+            -webkit-font-smoothing: antialiased;
         }
-        
+
         header {
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            padding: 15px 25px;
+            background: var(--g-bg-2);
+            border-bottom: 1px solid var(--g-border-soft);
+            padding: 0 16px;
+            height: 48px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 20px;
+            flex-shrink: 0;
         }
-        
-        h1 { color: #58a6ff; font-size: 1.4rem; }
-        h1 span { color: #8b949e; font-size: 0.7em; font-weight: normal; }
-        
-        .status { color: #3fb950; font-size: 0.85rem; }
-        
+
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .brand .logo {
+            color: var(--g-blue-soft);
+            font-size: 15px;
+        }
+
+        .brand .tag {
+            color: var(--g-text-mute);
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
         .tabs {
             display: flex;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            padding: 0 25px;
+            gap: 2px;
+            flex: 1;
         }
-        
+
         .tab {
-            padding: 12px 24px;
+            padding: 6px 12px;
             cursor: pointer;
-            color: #8b949e;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
+            color: var(--g-text-mute);
+            border-radius: var(--radius);
+            font-size: 12px;
+            letter-spacing: 0.3px;
+            transition: all 0.15s;
+            border: none;
+            background: none;
         }
-        
-        .tab:hover { color: #c9d1d9; }
-        .tab.active { 
-            color: #58a6ff; 
-            border-bottom-color: #58a6ff;
-            background: #0d1117;
+
+        .tab:hover { color: var(--g-text-dim); background: var(--g-surface-2); }
+        .tab.active {
+            color: var(--g-blue-soft);
+            background: rgba(59, 130, 246, 0.1);
         }
-        
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--g-text-mute);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.3px;
+        }
+
+        .status .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--g-green);
+            flex-shrink: 0;
+        }
+
         .content {
             flex: 1;
             overflow: hidden;
             display: none;
         }
-        
+
         .content.active { display: flex; flex-direction: column; }
-        
+
         /* Investigation output — chat messages + live log stream */
         #fe-output {
             flex: 1;
             overflow-y: auto;
-            padding: 16px 25px;
+            padding: 16px 20px;
             display: flex;
             flex-direction: column;
             gap: 10px;
             min-height: 0;
         }
-        
+
         .message {
             max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 8px;
+            padding: 10px 14px;
+            border-radius: var(--radius);
             line-height: 1.6;
-            font-size: 0.95rem;
+            font-size: 13px;
         }
-        
+
         .message.user {
             align-self: flex-end;
-            background: #1f6feb;
+            background: var(--g-blue);
             color: white;
         }
-        
+
         .message.geoff {
             align-self: flex-start;
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
+            background: var(--g-surface);
+            border: 1px solid var(--g-border-soft);
+            color: var(--g-text);
             white-space: pre-wrap;
         }
-        
+
         .message.system {
             align-self: center;
             background: transparent;
-            color: #8b949e;
+            color: var(--g-text-mute);
             font-style: italic;
-            font-size: 0.85rem;
+            font-size: 12px;
         }
-        
+
         .message.tool-result {
             align-self: flex-start;
-            background: #1c4428;
-            border: 1px solid #238636;
-            color: #c9d1d9;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 0.85rem;
+            background: rgba(16, 185, 129, 0.06);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--g-text);
+            font-family: var(--font-mono);
+            font-size: 12px;
         }
-        
+
         .message .label {
-            font-size: 0.75rem;
+            font-size: 10px;
             font-weight: 600;
             margin-bottom: 4px;
-            opacity: 0.8;
+            opacity: 0.7;
             text-transform: uppercase;
+            letter-spacing: 0.8px;
         }
-        
+
         .chat-input-area {
-            padding: 15px 25px;
-            background: #161b22;
-            border-top: 1px solid #30363d;
+            padding: 12px 20px;
+            background: var(--g-bg-2);
+            border-top: 1px solid var(--g-border-soft);
             display: flex;
-            gap: 10px;
+            gap: 8px;
         }
-        
+
         #chat-input {
             flex: 1;
-            padding: 12px 16px;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            color: #c9d1d9;
-            font-size: 0.95rem;
+            padding: 9px 12px;
+            background: var(--g-surface-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            color: var(--g-text);
+            font-size: 13px;
+            font-family: var(--font-sans);
         }
-        
+
+        #chat-input::placeholder { color: var(--g-text-mute); }
+
         #chat-input:focus {
             outline: none;
-            border-color: #58a6ff;
+            border-color: var(--g-blue);
         }
-        
+
         .send-btn {
-            padding: 12px 24px;
-            background: #238636;
+            padding: 9px 20px;
+            background: var(--g-green);
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--radius);
             cursor: pointer;
             font-weight: 600;
+            font-size: 13px;
+            font-family: var(--font-sans);
+            transition: opacity 0.15s;
         }
-        
-        .send-btn:hover { background: #2ea043; }
-        
+
+        .send-btn:hover { opacity: 0.85; }
+
         /* Evidence Styles */
         #evidence-content {
             flex: 1;
             overflow-y: auto;
-            padding: 20px 25px;
+            padding: 18px 20px;
         }
-        
+
         .case-list {
             display: flex;
             flex-direction: column;
-            gap: 15px;
+            gap: 12px;
         }
-        
+
         .case-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
+            background: var(--g-bg-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
             overflow: hidden;
         }
-        
+
         .case-header {
-            padding: 12px 16px;
-            background: #21262d;
-            border-bottom: 1px solid #30363d;
+            padding: 10px 14px;
+            background: var(--g-surface-2);
+            border-bottom: 1px solid var(--g-border-soft);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        
+
         .case-name {
+            font-family: var(--font-mono);
             font-weight: 600;
-            color: #58a6ff;
-            font-size: 1.1rem;
+            color: var(--g-blue-soft);
+            font-size: 12px;
         }
-        
+
         .case-count {
-            color: #8b949e;
-            font-size: 0.85rem;
+            color: var(--g-text-mute);
+            font-size: 11px;
+            font-family: var(--font-mono);
         }
-        
+
         .case-files {
-            padding: 12px 16px;
+            padding: 10px 14px;
         }
-        
+
         .file-item {
-            padding: 6px 0;
-            border-bottom: 1px solid #21262d;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 0.85rem;
-            color: #c9d1d9;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--g-border-soft);
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--g-text-dim);
         }
-        
+
         .file-item:last-child { border-bottom: none; }
-        
-        .file-item.dir { color: #58a6ff; }
-        .file-item.file { color: #a371f7; }
-        
-        /* Find Evil Tab Styles */
+
+        .file-item.dir { color: var(--g-blue-soft); }
+        .file-item.file { color: #A78BFA; }
+
+        /* Find Evil Tab */
         #findevil-content {
             flex: 1;
             overflow: hidden;
@@ -3180,189 +3259,207 @@ HTML_TEMPLATE = r"""
             flex-direction: column;
         }
 
-        /* Compact top bar: evidence dir input + run button */
         .fe-top-bar {
             display: flex;
             align-items: center;
             gap: 10px;
-            padding: 10px 25px;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
+            padding: 9px 20px;
+            background: var(--g-bg-2);
+            border-bottom: 1px solid var(--g-border-soft);
             flex-shrink: 0;
         }
 
         .fe-top-bar label {
-            color: #8b949e;
-            font-size: 0.85rem;
+            color: var(--g-text-mute);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
             white-space: nowrap;
             flex-shrink: 0;
         }
 
         .fe-top-bar input[type="text"] {
             flex: 1;
-            padding: 8px 12px;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            color: #c9d1d9;
-            font-size: 0.9rem;
-            font-family: 'SF Mono', Monaco, monospace;
+            padding: 7px 10px;
+            background: var(--g-surface-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            color: var(--g-text);
+            font-size: 12px;
+            font-family: var(--font-mono);
         }
+
+        .fe-top-bar input[type="text"]::placeholder { color: var(--g-text-mute); }
 
         .fe-top-bar input:focus {
             outline: none;
-            border-color: #58a6ff;
+            border-color: var(--g-blue);
         }
 
         .fe-run-btn {
-            padding: 9px 20px;
-            background: #da3633;
+            padding: 7px 16px;
+            background: var(--g-red);
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: var(--radius);
             cursor: pointer;
-            font-weight: 700;
-            font-size: 0.95rem;
-            transition: background 0.2s;
+            font-weight: 600;
+            font-size: 12px;
+            font-family: var(--font-sans);
+            transition: opacity 0.15s;
             white-space: nowrap;
             flex-shrink: 0;
         }
 
-        .fe-run-btn:hover { background: #f85149; }
-        .fe-run-btn:disabled { background: #484f58; cursor: not-allowed; }
+        .fe-run-btn:hover { opacity: 0.85; }
+        .fe-run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
         #fe-progress-area {
             flex-shrink: 0;
-            padding: 10px 25px 0;
+            padding: 10px 20px 0;
         }
 
         .fe-progress {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 12px 16px;
+            background: var(--g-bg-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 10px 14px;
         }
 
         .fe-progress-bar {
             width: 100%;
-            height: 22px;
-            background: #21262d;
-            border-radius: 6px;
+            height: 18px;
+            background: var(--g-surface);
+            border-radius: 4px;
             overflow: hidden;
-            margin: 10px 0;
+            margin: 8px 0;
         }
 
         .fe-progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #238636, #3fb950);
-            border-radius: 6px;
+            background: linear-gradient(90deg, #059669, var(--g-green));
+            border-radius: 4px;
             transition: width 0.5s ease;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.75rem;
+            font-size: 10px;
             font-weight: 700;
+            font-family: var(--font-mono);
             color: white;
-            min-width: 40px;
+            min-width: 36px;
         }
 
         .fe-status-text {
-            color: #8b949e;
-            font-size: 0.85rem;
+            color: var(--g-text-mute);
+            font-size: 11.5px;
+            font-family: var(--font-mono);
         }
 
         .fe-status-text strong {
-            color: #c9d1d9;
+            color: var(--g-text-dim);
+            font-weight: 500;
         }
 
         .fe-results {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 16px;
+            background: var(--g-bg-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 14px;
         }
 
         .fe-severity {
             display: inline-block;
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-weight: 700;
-            font-size: 0.85rem;
-            margin-bottom: 10px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: 600;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
         }
 
-        .fe-severity.CRITICAL { background: #da3633; color: white; }
-        .fe-severity.HIGH     { background: #d29922; color: #0d1117; }
-        .fe-severity.MEDIUM   { background: #1f6feb; color: white; }
-        .fe-severity.LOW      { background: #238636; color: white; }
-        .fe-severity.INFO     { background: #30363d; color: #8b949e; }
+        .fe-severity.CRITICAL { background: rgba(239,68,68,0.15);  color: #EF4444; }
+        .fe-severity.HIGH     { background: rgba(245,158,11,0.15); color: #F59E0B; }
+        .fe-severity.MEDIUM   { background: rgba(96,165,250,0.15); color: #60A5FA; }
+        .fe-severity.LOW      { background: rgba(16,185,129,0.12); color: #10B981; }
+        .fe-severity.INFO     { background: rgba(100,116,139,0.15);color: #64748B; }
 
         .fe-pb-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 10px;
-            font-size: 0.85rem;
+            margin-top: 8px;
+            font-size: 12px;
         }
 
         .fe-pb-table th {
             text-align: left;
-            padding: 8px 10px;
-            border-bottom: 1px solid #30363d;
-            color: #8b949e;
+            padding: 7px 10px;
+            border-bottom: 1px solid var(--g-border);
+            color: var(--g-text-mute);
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            font-size: 10px;
         }
 
         .fe-pb-table td {
-            padding: 6px 10px;
-            border-bottom: 1px solid #21262d;
+            padding: 5px 10px;
+            border-bottom: 1px solid var(--g-border-soft);
+            font-family: var(--font-mono);
+            font-size: 11.5px;
         }
 
-        .fe-pb-table .completed { color: #3fb950; }
-        .fe-pb-table .failed    { color: #f85149; }
-        .fe-pb-table .skipped   { color: #8b949e; }
+        .fe-pb-table .completed { color: var(--g-green); }
+        .fe-pb-table .failed    { color: var(--g-red); }
+        .fe-pb-table .skipped   { color: var(--g-text-mute); }
 
-        /* Tools Panel (kept for reference) */
+        /* Tools Panel */
         #tools-content {
             flex: 1;
             overflow-y: auto;
-            padding: 20px 25px;
+            padding: 18px 20px;
         }
-        
+
         .tool-category {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }
-        
-        .tool-category h3 {
-            color: #58a6ff;
+            background: var(--g-bg-2);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 14px;
             margin-bottom: 12px;
-            font-size: 1rem;
         }
-        
+
+        .tool-category h3 {
+            color: var(--g-blue-soft);
+            margin-bottom: 10px;
+            font-size: 12px;
+            font-family: var(--font-mono);
+            letter-spacing: 0.3px;
+        }
+
         .tool-status {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 8px;
-            font-size: 0.9rem;
+            margin-bottom: 6px;
+            font-size: 12px;
         }
-        
-        .tool-status.available { color: #3fb950; }
-        .tool-status.unavailable { color: #f85149; }
-        
+
+        .tool-status.available   { color: var(--g-green); }
+        .tool-status.unavailable { color: var(--g-red); }
+
         .tool-functions {
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 0.8rem;
-            color: #8b949e;
-            margin-left: 20px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--g-text-mute);
+            margin-left: 18px;
         }
-        
+
         .loading {
             text-align: center;
             padding: 40px;
-            color: #8b949e;
+            color: var(--g-text-mute);
+            font-size: 12px;
         }
 
         /* Reports Tab */
@@ -3375,69 +3472,70 @@ HTML_TEMPLATE = r"""
         .reports-sidebar {
             width: 280px;
             flex-shrink: 0;
-            background: #161b22;
-            border-right: 1px solid #30363d;
+            background: var(--g-bg-2);
+            border-right: 1px solid var(--g-border-soft);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
 
         .reports-sidebar-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #30363d;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--g-border-soft);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .reports-sidebar-header h3 {
-            color: #8b949e;
-            font-size: 0.8rem;
+            color: var(--g-text-mute);
+            font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
-            font-weight: 600;
+            letter-spacing: 1.2px;
+            font-weight: 500;
         }
 
         .import-btn {
-            padding: 5px 12px;
-            background: #21262d;
-            color: #58a6ff;
-            border: 1px solid #30363d;
-            border-radius: 5px;
+            padding: 4px 10px;
+            background: none;
+            color: var(--g-blue-soft);
+            border: 1px solid var(--g-border);
+            border-radius: 4px;
             cursor: pointer;
-            font-size: 0.78rem;
-            font-weight: 600;
+            font-size: 11px;
+            font-family: var(--font-sans);
             white-space: nowrap;
-            transition: all 0.15s;
+            transition: all 0.12s;
         }
 
         .import-btn:hover {
-            background: #30363d;
-            border-color: #58a6ff;
+            border-color: var(--g-blue);
+            background: rgba(59, 130, 246, 0.08);
         }
 
         .reports-list {
             flex: 1;
             overflow-y: auto;
-            padding: 8px;
+            padding: 6px;
         }
 
         .report-entry {
-            padding: 10px 12px;
-            border-radius: 6px;
+            padding: 9px 10px;
+            border-radius: 4px;
             cursor: pointer;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             border: 1px solid transparent;
-            transition: all 0.15s;
+            border-left: 2px solid transparent;
+            transition: all 0.12s;
         }
 
-        .report-entry:hover { background: #21262d; border-color: #30363d; }
-        .report-entry.active { background: #21262d; border-color: #58a6ff; }
+        .report-entry:hover { background: var(--g-surface); border-color: var(--g-border-soft); }
+        .report-entry.active { background: rgba(59,130,246,0.08); border-color: var(--g-border-soft); border-left-color: var(--g-blue); }
 
         .report-entry-name {
-            font-weight: 600;
-            font-size: 0.88rem;
-            color: #c9d1d9;
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--g-text);
             margin-bottom: 5px;
             white-space: nowrap;
             overflow: hidden;
@@ -3449,30 +3547,32 @@ HTML_TEMPLATE = r"""
             gap: 5px;
             align-items: center;
             flex-wrap: wrap;
-            font-size: 0.75rem;
         }
 
         .report-ts {
-            color: #6e7681;
-            font-size: 0.72rem;
+            color: var(--g-text-mute);
+            font-family: var(--font-mono);
+            font-size: 10px;
             margin-top: 3px;
         }
 
         .evil-badge {
             display: inline-block;
-            padding: 2px 7px;
-            border-radius: 4px;
-            font-size: 0.7rem;
-            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
         }
 
-        .evil-badge.evil  { background: #da3633; color: white; }
-        .evil-badge.clean { background: #238636; color: white; }
+        .evil-badge.evil  { background: rgba(239,68,68,0.15);  color: #EF4444; }
+        .evil-badge.clean { background: rgba(16,185,129,0.12); color: #10B981; }
 
         .reports-viewer {
             flex: 1;
             overflow-y: auto;
-            padding: 20px 28px;
+            padding: 18px 24px;
         }
 
         .reports-placeholder {
@@ -3481,138 +3581,163 @@ HTML_TEMPLATE = r"""
             align-items: center;
             justify-content: center;
             height: 100%;
-            color: #8b949e;
-            font-size: 0.9rem;
+            color: var(--g-text-mute);
+            font-size: 12px;
             text-align: center;
             gap: 10px;
+            line-height: 1.6;
         }
 
         .stat-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-            margin-bottom: 20px;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 8px;
+            margin-bottom: 18px;
         }
 
         .stat-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 10px 14px;
+            background: var(--g-surface);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 10px 12px;
         }
 
         .stat-card .stat-label {
-            color: #8b949e;
-            font-size: 0.7rem;
+            color: var(--g-text-mute);
+            font-size: 9.5px;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.8px;
             margin-bottom: 4px;
         }
 
         .stat-card .stat-value {
-            color: #c9d1d9;
-            font-size: 1rem;
-            font-weight: 700;
+            color: var(--g-text);
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 500;
+            line-height: 1.1;
         }
 
         .report-section {
-            margin-bottom: 22px;
+            margin-bottom: 20px;
         }
 
         .report-section h3 {
-            color: #79c0ff;
-            font-size: 0.88rem;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--g-text-mute);
             margin-bottom: 8px;
-            padding-bottom: 4px;
-            border-bottom: 1px solid #21262d;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--g-border-soft);
         }
 
         .chain-box {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 14px 18px;
+            background: var(--g-surface);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 12px 16px;
         }
 
         .chain-box p {
-            font-size: 0.85rem;
-            margin-bottom: 5px;
-            color: #c9d1d9;
+            font-size: 12px;
+            margin-bottom: 4px;
+            color: var(--g-text);
+            font-family: var(--font-mono);
         }
 
         .mitre-tag {
             display: inline-block;
-            background: #21262d;
+            background: rgba(100,116,139,0.15);
             padding: 1px 6px;
             border-radius: 3px;
-            font-family: 'SF Mono', Monaco, monospace;
-            font-size: 0.78rem;
+            font-family: var(--font-mono);
+            font-size: 10px;
             margin: 2px;
-            color: #a371f7;
+            color: #A78BFA;
+            letter-spacing: 0.3px;
         }
 
         .flag-box {
-            background: #1c2128;
-            border: 1px solid #da3633;
-            border-radius: 8px;
-            padding: 12px 16px;
+            background: var(--g-surface-2);
+            border: 1px solid rgba(239,68,68,0.3);
+            border-left: 3px solid var(--g-red);
+            border-radius: var(--radius);
+            padding: 10px 14px;
         }
 
         .flag-box p {
-            color: #d29922;
-            font-size: 0.85rem;
+            color: var(--g-amber);
+            font-family: var(--font-mono);
+            font-size: 11.5px;
             margin-bottom: 3px;
         }
 
         .inv-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            gap: 8px;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 6px;
         }
 
         .inv-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 8px 12px;
+            background: var(--g-surface);
+            border: 1px solid var(--g-border-soft);
+            border-radius: var(--radius);
+            padding: 8px 10px;
         }
 
         .inv-card .inv-type {
-            color: #8b949e;
-            font-size: 0.7rem;
+            color: var(--g-text-mute);
+            font-size: 9.5px;
             text-transform: capitalize;
+            letter-spacing: 0.3px;
+            margin-bottom: 2px;
         }
 
         .inv-card .inv-count {
-            color: #58a6ff;
-            font-weight: 700;
-            font-size: 1.1rem;
+            color: var(--g-blue-soft);
+            font-family: var(--font-mono);
+            font-weight: 500;
+            font-size: 18px;
+            line-height: 1.1;
         }
 
         .raw-json-toggle {
-            background: #21262d;
-            color: #8b949e;
-            border: 1px solid #30363d;
+            background: none;
+            color: var(--g-text-mute);
+            border: 1px solid var(--g-border);
             border-radius: 4px;
-            padding: 5px 12px;
+            padding: 4px 10px;
             cursor: pointer;
-            font-size: 0.82rem;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            transition: all 0.12s;
         }
 
-        .raw-json-toggle:hover { color: #c9d1d9; border-color: #8b949e; }
+        .raw-json-toggle:hover { color: var(--g-text); border-color: var(--g-text-mute); }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--g-border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--g-text-mute); }
     </style>
 </head>
 <body>
     <header>
-        <h1>Geoff <span>DFIR Investigation Platform</span></h1>
-        <div class="status">● Online</div>
+        <div class="brand">
+            <span class="logo">GEOFF</span>
+            <span class="tag">DFIR Platform</span>
+        </div>
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('findevil')">Find Evil</div>
+            <div class="tab" onclick="showTab('evidence')">Evidence</div>
+            <div class="tab" onclick="showTab('reports')">Reports</div>
+        </div>
+        <div class="header-right">
+            <div class="status"><span class="dot"></span>Online</div>
+        </div>
     </header>
-    
-    <div class="tabs">
-        <div class="tab active" onclick="showTab('findevil')">🔍 Find Evil</div>
-        <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
-        <div class="tab" onclick="showTab('reports')">📋 Reports</div>
-    </div>
 
     <div id="reports" class="content">
         <div id="reports-content">
@@ -3622,7 +3747,7 @@ HTML_TEMPLATE = r"""
                     <button class="import-btn" onclick="importReportJSON()">⬆ Import JSON</button>
                 </div>
                 <div class="reports-list" id="reports-list">
-                    <div style="padding:16px;color:#8b949e;font-size:0.82rem;">Select the Reports tab to load cases.</div>
+                    <div style="padding:16px;color:#64748B;font-size:0.82rem;">Select the Reports tab to load cases.</div>
                 </div>
             </div>
             <div class="reports-viewer" id="reports-viewer">
@@ -3673,13 +3798,13 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 <!-- Live log stream — appended to when a job is running -->
                 <div id="fe-log" style="
                     display: none;
-                    background: #0d1117;
-                    border: 1px solid #30363d;
+                    background: #0B1220;
+                    border: 1px solid #1F2A3F;
                     border-radius: 6px;
                     padding: 12px;
-                    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-                    font-size: 12px;
-                    color: #8b949e;
+                    font-family: 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
+                    font-size: 11.5px;
+                    color: #64748B;
                     line-height: 1.6;
                 "></div>
 
@@ -3736,14 +3861,14 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
         async function loadReports() {
             const list = document.getElementById('reports-list');
-            list.innerHTML = '<div style="padding:12px;color:#8b949e;font-size:0.85rem;">Loading...</div>';
+            list.innerHTML = '<div style="padding:12px;color:#64748B;font-size:0.85rem;">Loading...</div>';
             try {
                 const res = await authFetch('/reports');
                 const data = await res.json();
                 const reports = data.reports || [];
                 list.innerHTML = '';
                 if (reports.length === 0) {
-                    list.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:0.82rem;line-height:1.6;">No completed reports yet.<br>Run Find Evil on an evidence directory to generate one.</div>';
+                    list.innerHTML = '<div style="padding:16px;color:#64748B;font-size:0.82rem;line-height:1.6;">No completed reports yet.<br>Run Find Evil on an evidence directory to generate one.</div>';
                     return;
                 }
                 reports.forEach(r => {
@@ -3776,7 +3901,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     list.appendChild(entry);
                 });
             } catch(e) {
-                list.innerHTML = '<div style="padding:12px;color:#f85149;font-size:0.82rem;">Error: ' + _escHtml(e.message) + '</div>';
+                list.innerHTML = '<div style="padding:12px;color:#EF4444;font-size:0.82rem;">Error: ' + _escHtml(e.message) + '</div>';
             }
         }
 
@@ -3791,7 +3916,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 const graphBtn = '<button class="graph-open-btn" onclick="window.open(\'' + graphLink + '\', \'' + '_blank' + '\')" style="margin-bottom:12px;padding:6px 14px;background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:4px;color:#60a5fa;cursor:pointer;font-size:12px;">🕸 View as Graph</button>';
                 viewer.innerHTML = graphBtn + _renderReportHtml(report, title || caseDir);
             } catch(e) {
-                viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Error: ' + _escHtml(e.message) + '</span></div>';
+                viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#EF4444;">Error: ' + _escHtml(e.message) + '</span></div>';
             }
         }
 
@@ -3810,7 +3935,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
                     viewer.innerHTML = _renderReportHtml(report, file.name.replace(/\.json$/i, ''));
                 } catch(e) {
-                    viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Invalid JSON: ' + _escHtml(e.message) + '</span></div>';
+                    viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#EF4444;">Invalid JSON: ' + _escHtml(e.message) + '</span></div>';
                 }
             };
             inp.click();
@@ -3834,7 +3959,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
             // Header
             h += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">';
-            h += '<h2 style="color:#58a6ff;font-size:1.2rem;margin:0;">' + _escHtml(title) + '</h2>';
+            h += '<h2 style="color:#60A5FA;font-size:1.2rem;margin:0;">' + _escHtml(title) + '</h2>';
             h += '<span class="evil-badge ' + (evil ? 'evil' : 'clean') + '" style="font-size:0.85rem;padding:4px 12px;">' + (evil ? '\uD83D\uDD34 EVIL FOUND' : '\uD83D\uDFE2 CLEAN') + '</span>';
             h += '<span class="fe-severity ' + _escHtml(sev) + '">' + _escHtml(sev) + '</span>';
             h += '</div>';
@@ -3867,7 +3992,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
             // Attack chain
             if (chain.dwell_days !== undefined || (chain.lateral_movement_path || []).length || mitreObs.length) {
-                h += '<div class="report-section"><h3 style="color:#d29922;">\u26D3 Attack Chain</h3><div class="chain-box">';
+                h += '<div class="report-section"><h3 style="color:#F59E0B;">\u26D3 Attack Chain</h3><div class="chain-box">';
                 if (chain.first_seen_ts) h += '<p><strong>First Seen:</strong> ' + _escHtml(chain.first_seen_ts) + '</p>';
                 if (chain.last_seen_ts)  h += '<p><strong>Last Seen:</strong> '  + _escHtml(chain.last_seen_ts)  + '</p>';
                 if (chain.dwell_days !== undefined) h += '<p><strong>Dwell Time:</strong> ' + chain.dwell_days + ' days</p>';
@@ -3876,7 +4001,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 if ((chain.kill_chain_phases || []).length)
                     h += '<p><strong>Kill Chain:</strong> ' + chain.kill_chain_phases.map(_escHtml).join(', ') + '</p>';
                 if (mitreObs.length) {
-                    h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#8b949e;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
+                    h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#64748B;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
                     h += mitreObs.map(t => '<span class="mitre-tag">' + _escHtml(t) + '</span>').join('');
                     h += '</div></div>';
                 }
@@ -3912,7 +4037,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
             // Behavioral flags
             if (totalFlags > 0) {
-                h += '<div class="report-section"><h3 style="color:#f85149;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
+                h += '<div class="report-section"><h3 style="color:#EF4444;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
                 for (const [devId, count] of Object.entries(flags)) {
                     if (count > 0) h += '<p>' + _escHtml(devId) + ': ' + count + ' flag' + (count !== 1 ? 's' : '') + '</p>';
                 }
@@ -3922,7 +4047,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             // Indicator hits
             if (hits.length > 0) {
                 h += '<div class="report-section"><h3>Indicator Hits (' + hits.length + ')</h3>';
-                h += '<div style="max-height:280px;overflow-y:auto;border:1px solid #21262d;border-radius:6px;">';
+                h += '<div style="max-height:280px;overflow-y:auto;border:1px solid #1F2A3F;border-radius:6px;">';
                 h += '<table class="fe-pb-table" style="margin-top:0;"><tr><th>Category</th><th>Pattern</th><th>Severity</th><th>File</th></tr>';
                 const shown = hits.slice(0, 100);
                 shown.forEach(hit => {
@@ -3933,10 +4058,10 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                        + '<td>' + _escHtml(hit.category||'') + '</td>'
                        + '<td><code style="font-size:0.8rem;">' + _escHtml(hit.pattern||'') + '</code></td>'
                        + '<td><span class="fe-severity ' + sc + '" style="font-size:0.7rem;padding:1px 5px;">' + sc + '</span></td>'
-                       + '<td style="font-size:0.78rem;color:#8b949e;" title="' + _escHtml(hit.file||'') + '">' + _escHtml(shortFile) + '</td>'
+                       + '<td style="font-size:0.78rem;color:#64748B;" title="' + _escHtml(hit.file||'') + '">' + _escHtml(shortFile) + '</td>'
                        + '</tr>';
                 });
-                if (hits.length > 100) h += '<tr><td colspan="4" style="color:#8b949e;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
+                if (hits.length > 100) h += '<tr><td colspan="4" style="color:#64748B;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
                 h += '</table></div></div>';
             }
 
@@ -3957,11 +4082,11 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
             // Failures
             if (failures.length > 0) {
-                h += '<div class="report-section"><h3 style="color:#f85149;">Failed Steps (' + failures.length + ')</h3>';
+                h += '<div class="report-section"><h3 style="color:#EF4444;">Failed Steps (' + failures.length + ')</h3>';
                 failures.slice(0, 15).forEach(f => {
-                    h += '<div style="background:#1c1c1c;border:1px solid #30363d;border-radius:4px;padding:6px 10px;margin-bottom:4px;font-size:0.82rem;">'
-                       + '<span style="color:#f85149;">' + _escHtml((f.playbook||'') + ' / ' + (f.step||'')) + '</span>'
-                       + (f.error ? '<span style="color:#8b949e;"> \u2014 ' + _escHtml(f.error) + '</span>' : '')
+                    h += '<div style="background:#0F172A;border:1px solid #334155;border-radius:4px;padding:6px 10px;margin-bottom:4px;font-size:0.82rem;">'
+                       + '<span style="color:#EF4444;">' + _escHtml((f.playbook||'') + ' / ' + (f.step||'')) + '</span>'
+                       + (f.error ? '<span style="color:#64748B;"> \u2014 ' + _escHtml(f.error) + '</span>' : '')
                        + '</div>';
                 });
                 h += '</div>';
@@ -3970,7 +4095,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             // Raw JSON toggle
             h += '<div class="report-section">';
             h += '<button class="raw-json-toggle" onclick="var p=this.nextElementSibling;p.style.display=p.style.display===\'none\'?\'block\':\'none\';this.textContent=p.style.display===\'none\'?\'{ } Show Raw JSON\':\'{ } Hide Raw JSON\';">{ } Show Raw JSON</button>';
-            h += '<pre style="display:none;margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px;overflow:auto;font-size:0.75rem;color:#8b949e;max-height:400px;">'
+            h += '<pre style="display:none;margin-top:8px;background:#0B1220;border:1px solid #334155;border-radius:6px;padding:14px;overflow:auto;font-size:0.75rem;color:#64748B;max-height:400px;">'
                + _escHtml(JSON.stringify(report, null, 2)) + '</pre>';
             h += '</div>';
 
@@ -4302,7 +4427,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             const sevDist = report.severity_distribution || {};
 
             let html = '<div class="fe-results">';
-            html += '<h3 style="color:#58a6ff; margin-bottom:10px;">Find Evil Report</h3>';
+            html += '<h3 style="color:#60A5FA; margin-bottom:10px;">Find Evil Report</h3>';
             html += '<div class="fe-severity ' + sev + '">' + sev + '</div>';
             html += '<p style="margin-bottom:8px;"><strong>Evil Found:</strong> ' + (evil ? '🔴 YES' : '🟢 NO') + '</p>';
             html += '<p style="margin-bottom:8px;"><strong>OS:</strong> ' + (report.os_type || 'unknown') + ' &nbsp;|&nbsp; <strong>Elapsed:</strong> ' + (report.elapsed_seconds || 0).toFixed(1) + 's</p>';
@@ -4332,7 +4457,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
             // Device Map
             if (report.device_map && Object.keys(report.device_map).length > 0) {
-                html += '<h4 style="color:#58a6ff;margin-top:16px;">Devices Discovered</h4>';
+                html += '<h4 style="color:#60A5FA;margin-top:16px;">Devices Discovered</h4>';
                 html += '<table class="fe-pb-table"><tr><th>Device</th><th>Type</th><th>Owner</th><th>OS</th><th>Files</th></tr>';
                 for (const [devId, dev] of Object.entries(report.device_map)) {
                     html += '<tr>';
@@ -4350,17 +4475,17 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             if (report.behavioral_flags_summary) {
                 const total = Object.values(report.behavioral_flags_summary).reduce((a,b) => a+b, 0);
                 if (total > 0) {
-                    html += '<h4 style="color:#f85149;margin-top:16px;">⚠ Behavioral Flags: ' + total + '</h4>';
+                    html += '<h4 style="color:#EF4444;margin-top:16px;">⚠ Behavioral Flags: ' + total + '</h4>';
                     for (const [devId, count] of Object.entries(report.behavioral_flags_summary)) {
                         if (count > 0) {
-                            html += '<p style="color:#d29922;">' + devId + ': ' + count + ' flags</p>';
+                            html += '<p style="color:#F59E0B;">' + devId + ': ' + count + ' flags</p>';
                         }
                     }
                 }
             }
 
             if (report.case_work_dir) {
-                html += '<p style="margin-top:12px;color:#8b949e;font-size:0.8rem;">Case: ' + report.case_work_dir + '</p>';
+                html += '<p style="margin-top:12px;color:#64748B;font-size:0.8rem;">Case: ' + report.case_work_dir + '</p>';
             }
 
             html += '</div>';
@@ -4370,7 +4495,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             if (report.narrative_report_path) {
                 const caseName = (report.title || '').replace('Find Evil Report \u2014 ', '');
                 html += '<button id="fe-report-btn" onclick="loadNarrativeReport(\'' + _escAttr(caseName) + '\')" '
-                      + 'style="background:#1f6feb;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:0.9rem;">'
+                      + 'style="background:#3B82F6;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:0.9rem;">'
                       + '\u2139\ufe0f View Full Investigation Report</button>';
                 html += '<div id="fe-report-body" style="display:none;margin-top:16px;"></div>';
             }
@@ -4405,22 +4530,22 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 if (/^---+$/.test(ln.trim())) {
                     if (inList)  { html += '</ul>\n'; inList = false; }
                     if (inTable) { html += '</table>\n'; inTable = false; }
-                    html += '<hr style="border-color:#30363d;margin:12px 0;">\n';
+                    html += '<hr style="border-color:#334155;margin:12px 0;">\n';
                     continue;
                 }
                 // Headers
                 const h3 = ln.match(/^### (.+)/);
                 const h2 = ln.match(/^## (.+)/);
                 const h1 = ln.match(/^# (.+)/);
-                if (h1) { html += '<h2 style="color:#58a6ff;margin:16px 0 8px;">' + _mdInline(h1[1]) + '</h2>\n'; continue; }
-                if (h2) { html += '<h3 style="color:#79c0ff;margin:14px 0 6px;">' + _mdInline(h2[1]) + '</h3>\n'; continue; }
-                if (h3) { html += '<h4 style="color:#adbac7;margin:12px 0 4px;">' + _mdInline(h3[1]) + '</h4>\n'; continue; }
+                if (h1) { html += '<h2 style="color:#60A5FA;margin:16px 0 8px;">' + _mdInline(h1[1]) + '</h2>\n'; continue; }
+                if (h2) { html += '<h3 style="color:#93C5FD;margin:14px 0 6px;">' + _mdInline(h2[1]) + '</h3>\n'; continue; }
+                if (h3) { html += '<h4 style="color:#94A3B8;margin:12px 0 4px;">' + _mdInline(h3[1]) + '</h4>\n'; continue; }
                 // Table row
                 if (ln.startsWith('|')) {
                     if (!inTable) { html += '<table style="border-collapse:collapse;width:100%;margin:6px 0;font-size:0.82rem;">'; inTable = true; }
                     if (/^[|][-| ]+[|]$/.test(ln.trim())) continue; // separator row
                     const cells = ln.split('|').slice(1,-1);
-                    html += '<tr>' + cells.map(c => '<td style="border:1px solid #30363d;padding:4px 8px;">' + _mdInline(c.trim()) + '</td>').join('') + '</tr>\n';
+                    html += '<tr>' + cells.map(c => '<td style="border:1px solid #334155;padding:4px 8px;">' + _mdInline(c.trim()) + '</td>').join('') + '</tr>\n';
                     continue;
                 }
                 if (inTable) { html += '</table>\n'; inTable = false; }
@@ -4466,12 +4591,12 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             try {
                 const resp = await authFetch('/cases/' + encodeURIComponent(caseName) + '/report');
                 if (!resp.ok) {
-                    body.innerHTML = '<p style="color:#f85149;">Failed to load report (' + resp.status + ')</p>';
+                    body.innerHTML = '<p style="color:#EF4444;">Failed to load report (' + resp.status + ')</p>';
                     body.style.display = 'block';
                     return;
                 }
                 const md = await resp.text();
-                body.innerHTML = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:16px;font-size:0.88rem;line-height:1.6;color:#c9d1d9;">'
+                body.innerHTML = '<div style="background:#0B1220;border:1px solid #334155;border-radius:6px;padding:16px;font-size:0.88rem;line-height:1.6;color:#F1F5F9;">'
                                + _md2html(md) + '</div>';
                 body.style.display = 'block';
                 btn.textContent = '\u25b2 Hide Report';
@@ -4480,7 +4605,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     btn.textContent = body.style.display === 'none' ? '\u2139\ufe0f View Full Investigation Report' : '\u25b2 Hide Report';
                 };
             } catch(e) {
-                body.innerHTML = '<p style="color:#f85149;">Error: ' + e.message + '</p>';
+                body.innerHTML = '<p style="color:#EF4444;">Error: ' + e.message + '</p>';
                 body.style.display = 'block';
             } finally {
                 btn.disabled = false;
@@ -4493,7 +4618,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             const p = document.createElement('div');
             p.className = 'fe-results';
             const txt = document.createElement('p');
-            txt.style.cssText = 'color:#f85149;font-weight:600;';
+            txt.style.cssText = 'color:#EF4444;font-weight:600;';
             txt.textContent = 'Error: ' + msg;
             p.appendChild(txt);
             area.innerHTML = '';
