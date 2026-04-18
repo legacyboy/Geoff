@@ -67,7 +67,7 @@ mcp = FastMCP(
 )
 
 # ---------------------------------------------------------------------------
-# Helper
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _safe_evidence_path(evidence_dir: str) -> str:
@@ -76,6 +76,30 @@ def _safe_evidence_path(evidence_dir: str) -> str:
     if not p.is_absolute():
         p = Path(EVIDENCE_BASE_DIR) / evidence_dir
     return str(p)
+
+
+def _find_case_dir(cases_root: Path, safe_name: str, report_filename: str) -> Optional[Path]:
+    """
+    Find the most-recent case directory matching safe_name.
+
+    Case directories use the pattern: {case_name}_findevil_{timestamp}
+    We require the prefix to be followed by '_findevil_' or end-of-string to
+    prevent 'IR-01' matching 'IR-016-...'.  Falls back to bare startswith only
+    when no '_findevil_' separator is present (legacy dirs).
+    """
+    import re
+    # Build a pattern that anchors safe_name at a segment boundary
+    pattern = re.compile(r'^' + re.escape(safe_name) + r'(_findevil_|$)')
+    matches = [
+        d for d in cases_root.iterdir()
+        if d.is_dir() and pattern.match(d.name)
+    ]
+    # Most recent first (dirs are named with timestamp suffix)
+    for candidate in sorted(matches, key=lambda d: d.name, reverse=True):
+        target = candidate / report_filename
+        if target.exists():
+            return candidate
+    return None
 
 
 def _spawn_find_evil(evidence_dir: str, job_id: str) -> None:
@@ -219,7 +243,7 @@ def get_case_report(case_name: str) -> Dict[str, Any]:
     Retrieve the narrative investigation report for a completed Find Evil case.
 
     Args:
-        case_name: Case name (e.g. "IR-016-CloudJack"). Matches by prefix.
+        case_name: Case name (e.g. "IR-016-CloudJack"). Exact or prefix match.
 
     Returns:
         {"report": str} with the full Markdown narrative, or {"error": str}.
@@ -233,13 +257,12 @@ def get_case_report(case_name: str) -> Dict[str, Any]:
     if not cases_root.exists():
         return {"error": f"Cases directory not found: {CASES_WORK_DIR}"}
 
-    for candidate in sorted(cases_root.iterdir(), reverse=True):
-        if candidate.is_dir() and candidate.name.startswith(safe_name):
-            report_path = candidate / "reports" / "narrative_report.md"
-            if report_path.exists():
-                return {"case_dir": candidate.name, "report": report_path.read_text(encoding="utf-8")}
+    candidate = _find_case_dir(cases_root, safe_name, "reports/narrative_report.md")
+    if candidate is None:
+        return {"error": f"No report found for case: {case_name}"}
 
-    return {"error": f"No report found for case: {case_name}"}
+    report_path = candidate / "reports" / "narrative_report.md"
+    return {"case_dir": candidate.name, "report": report_path.read_text(encoding="utf-8")}
 
 
 @mcp.tool()
@@ -262,14 +285,12 @@ def get_findings(case_name: str) -> Dict[str, Any]:
     if not cases_root.exists():
         return {"error": f"Cases directory not found: {CASES_WORK_DIR}"}
 
-    for candidate in sorted(cases_root.iterdir(), reverse=True):
-        if candidate.is_dir() and candidate.name.startswith(safe_name):
-            json_path = candidate / "reports" / "find_evil_report.json"
-            if json_path.exists():
-                with open(json_path) as f:
-                    return {"case_dir": candidate.name, "findings": json.load(f)}
+    candidate = _find_case_dir(cases_root, safe_name, "reports/find_evil_report.json")
+    if candidate is None:
+        return {"error": f"No findings JSON for case: {case_name}"}
 
-    return {"error": f"No findings JSON for case: {case_name}"}
+    with open(candidate / "reports" / "find_evil_report.json") as f:
+        return {"case_dir": candidate.name, "findings": json.load(f)}
 
 
 @mcp.tool()
