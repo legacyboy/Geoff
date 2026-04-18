@@ -2139,7 +2139,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Init git
     try:
-        safe_run(['git', 'init'], cwd=case_work_dir, timeout=30, check=True)
+        r = safe_run(['git', 'init'], cwd=case_work_dir, timeout=30)
+        if r.get("code", -1) != 0:
+            _fe_log(job_id, f"[WARN] git init failed (code {r.get('code')}): {r.get('stderr', '')}")
         safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, timeout=10)
         safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, timeout=10)
         safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
@@ -2341,6 +2343,53 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
 
+    # Classification based on indicator hits — must be computed before manager review
+    hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
+    classification = "Unknown"
+    severity = "MEDIUM"
+
+    # C2 detection always runs PB-SIFT-019
+    if "c2" in hit_categories:
+        if "PB-SIFT-019" not in execution_plan:
+            execution_plan.append("PB-SIFT-019")
+
+    if "ransomware" in hit_categories:
+        classification = "Ransomware"
+        severity = "CRITICAL"
+    elif "ot_attack" in hit_categories:
+        classification = "OT/ICS Attack"
+        severity = "CRITICAL"
+    elif "rootkit" in hit_categories:
+        classification = "Rootkit"
+        severity = "CRITICAL"
+    elif "c2" in hit_categories:
+        classification = "Command & Control"
+        severity = "CRITICAL"
+    elif "credential_theft" in hit_categories:
+        classification = "Credential Theft"
+        severity = "HIGH"
+    elif "lateral_movement" in hit_categories:
+        classification = "Lateral Movement"
+        severity = "HIGH"
+    elif "web_shell" in hit_categories or "initial_access" in hit_categories:
+        classification = "External Breach"
+        severity = "HIGH"
+    elif "cryptominer" in hit_categories:
+        classification = "Cryptominer"
+        severity = "HIGH"
+    elif "exfiltration" in hit_categories:
+        classification = "Exfiltration"
+        severity = "HIGH"
+    elif "persistence" in hit_categories:
+        classification = "Persistence/Implant"
+        severity = "HIGH"
+    elif "anti_forensics" in hit_categories:
+        classification = "Destructive/Anti-Forensics"
+        severity = "HIGH"
+    elif malware_analysis_warranted:
+        classification = "Malware"
+        severity = "HIGH"
+
     # Deduplicate while preserving order
     seen = set()
     execution_plan = [pb for pb in execution_plan if not (pb in seen or seen.add(pb))]
@@ -2389,53 +2438,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         if any(kw in result_str for kw in ["log cleared", "event log cleared", "timestomp", "anti-forensic"]):
             confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
             break
-
-    # Classification based on indicator hits (indicator_hits is a list of dicts)
-    hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
-    classification = "Unknown"
-    severity = "MEDIUM"
-    
-    # C2 detection always runs PB-SIFT-019
-    if "c2" in hit_categories:
-        if "PB-SIFT-019" not in execution_plan:
-            execution_plan.append("PB-SIFT-019")
-
-    if "ransomware" in hit_categories:
-        classification = "Ransomware"
-        severity = "CRITICAL"
-    elif "ot_attack" in hit_categories:
-        classification = "OT/ICS Attack"
-        severity = "CRITICAL"
-    elif "rootkit" in hit_categories:
-        classification = "Rootkit"
-        severity = "CRITICAL"
-    elif "c2" in hit_categories:
-        classification = "Command & Control"
-        severity = "CRITICAL"
-    elif "credential_theft" in hit_categories:
-        classification = "Credential Theft"
-        severity = "HIGH"
-    elif "lateral_movement" in hit_categories:
-        classification = "Lateral Movement"
-        severity = "HIGH"
-    elif "web_shell" in hit_categories or "initial_access" in hit_categories:
-        classification = "External Breach"
-        severity = "HIGH"
-    elif "cryptominer" in hit_categories:
-        classification = "Cryptominer"
-        severity = "HIGH"
-    elif "exfiltration" in hit_categories:
-        classification = "Exfiltration"
-        severity = "HIGH"
-    elif "persistence" in hit_categories:
-        classification = "Persistence/Implant"
-        severity = "HIGH"
-    elif "anti_forensics" in hit_categories:
-        classification = "Destructive/Anti-Forensics"
-        severity = "HIGH"
-    elif malware_analysis_warranted:
-        classification = "Malware"
-        severity = "HIGH"
 
     # Emit the Phase 12 execution plan
     execution_plan_output = {
@@ -2744,6 +2746,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         "tool": f"{module}.{function}",
                                         "playbook": playbook_id,
                                         "significance": "UNKNOWN",
+                                        "analyst_note": None,
+                                        "threat_indicators": [],
+                                        "follow_up_needed": False,
+                                        "follow_up_reason": None,
                                     }
 
                             # Build Critic analysis string from Forensicator output so the
@@ -2842,12 +2848,15 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 except OSError as write_exc:
                                     _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
                             except Exception as ce:
-                                # Critic unavailable or errored — mark step for human review
-                                # rather than silently accepting unvalidated findings.
+                                # Critic unavailable or errored — demote to unverified so
+                                # unvalidated findings are never silently accepted.
                                 _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
                                 step_record["critic_error"] = str(ce)
                                 step_record["needs_review"] = True
-                                _fe_log(job_id, f"  ⚠ {module}.{function} marked needs_review (critic unavailable)")
+                                if step_record.get("status") == "completed":
+                                    step_record["status"] = "completed_unverified"
+                                    steps_unverified += 1
+                                _fe_log(job_id, f"  ⚠ {module}.{function} marked completed_unverified (critic unavailable)")
                         except Exception as e:
                             _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
                             step_record["status"] = "failed"
