@@ -263,6 +263,7 @@ class DeviceDiscovery:
                 "devices": udata["devices"],
                 "primary_device": udata["devices"][0]
                     if udata["devices"] else None,
+                "role": "user",
                 "confidence": "HIGH" if len(udata["devices"]) > 1 else "MEDIUM",
             }
 
