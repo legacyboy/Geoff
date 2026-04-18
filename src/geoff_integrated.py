@@ -4838,6 +4838,15 @@ def viewer_html():
     return send_from_directory(str(viewer_dir), 'index.html')
 
 
+@app.route('/static/geoff-viewer/<path:filename>', methods=['GET'])
+def viewer_static(filename):
+    """Serve static files for the Evidence Graph viewer (CSS, JSX, sample data)."""
+    viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 400
+    return send_from_directory(str(viewer_dir), filename)
+
+
 @app.route('/tools', methods=['GET'])
 @_require_auth
 def list_tools():
