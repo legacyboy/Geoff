@@ -16,6 +16,8 @@ import json
 import subprocess
 import re
 import os
+import shlex
+import shutil
 import tempfile
 import plistlib
 import sqlite3
@@ -54,7 +56,7 @@ def _parse_kv_lines(text: str) -> List[Dict[str, str]]:
     entries: List[Dict[str, str]] = []
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith('#') or line.startswith('-') * 3:
+        if not line or line.startswith('#') or line.startswith('---'):
             continue
         m = _KV_SEP.search(line)
         if m:
@@ -2585,9 +2587,9 @@ class ZIMMERMAN_Specialist:
 
         dll_path = self._find_tool_dll(tool_name)
         if not dll_path:
-            return {'tool': tool_name, 'status': 'error', 'error': f'{dll_path.name} not found', 'timestamp': datetime.now().isoformat()}
+            return {'tool': tool_name, 'status': 'error', 'error': f'{tool_name}.dll not found', 'timestamp': datetime.now().isoformat()}
 
-        cmd = ['dotnet', str(dll_path), '-f', input_path, '-o', output] + extra_args.split()
+        cmd = ['dotnet', str(dll_path), '-f', input_path, '-o', output] + shlex.split(extra_args)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
         event_count = 0
