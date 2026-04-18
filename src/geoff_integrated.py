@@ -38,7 +38,7 @@ import requests
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, send_from_directory
 from flask_cors import CORS
 
 from jsonschema import validate as jsonschema_validate, ValidationError
@@ -3738,6 +3738,11 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                         entry.classList.add('active');
                         viewReport(r.dir, r.case_name);
                     });
+                    // Double-click opens the graph viewer
+                    entry.addEventListener('dblclick', () => {
+                        const viewerUrl = '/reports/viewer?case=' + encodeURIComponent(r.dir);
+                        window.open(viewerUrl, '_blank');
+                    });
                     list.appendChild(entry);
                 });
             } catch(e) {
@@ -3752,7 +3757,9 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 const res = await authFetch('/reports/' + encodeURIComponent(caseDir) + '/json');
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const report = await res.json();
-                viewer.innerHTML = _renderReportHtml(report, title || caseDir);
+                const graphLink = '/reports/viewer?case=' + encodeURIComponent(caseDir);
+                const graphBtn = '<button class="graph-open-btn" onclick="window.open(\'' + graphLink + '\', \'' + '_blank' + '\')" style="margin-bottom:12px;padding:6px 14px;background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:4px;color:#60a5fa;cursor:pointer;font-size:12px;">🕸 View as Graph</button>';
+                viewer.innerHTML = graphBtn + _renderReportHtml(report, title || caseDir);
             } catch(e) {
                 viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Error: ' + _escHtml(e.message) + '</span></div>';
             }
@@ -4792,6 +4799,13 @@ def get_report_json(case_dir):
         return content, 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/reports/viewer', methods=['GET'])
+def viewer_html():
+    """Serve the Evidence Graph viewer UI (with optional case= param)."""
+    viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'
+    return send_from_directory(str(viewer_dir), 'index.html')
 
 
 @app.route('/tools', methods=['GET'])
