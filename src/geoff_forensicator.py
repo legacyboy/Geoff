@@ -181,10 +181,6 @@ Respond ONLY in JSON format:
         args = cmd_info.get("args", [])
         reason = cmd_info.get("reason", "")
 
-        if tool not in self.ALLOWED_TOOLS:
-            result["error"] = f"Tool '{tool}' not in allowlist"
-            return result
-
         result = {
             "tool": tool,
             "args": args,
@@ -195,6 +191,10 @@ Respond ONLY in JSON format:
             "error": None,
             "execution_time_ms": 0
         }
+
+        if tool not in self.ALLOWED_TOOLS:
+            result["error"] = f"Tool '{tool}' not in allowlist"
+            return result
 
         try:
             start_time = datetime.now()
