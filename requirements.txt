@@ -13,4 +13,9 @@ gitpython>=3.1,<4.0
 # python-evtx>=0.7.4  -- Windows Event Log parsing
 # volatility3>=2.0     -- Memory forensics
 # plaso>=20240101      -- Timeline analysis
-# yara-python>=4.5     -- Malware detectionpython-dotenv
+# yara-python>=4.5     -- Malware detection
+python-dotenv
+
+# MCP (Model Context Protocol) — Geoff MCP server + client
+# Pinned exact version for reproducibility. Run once via install.sh; pip caches locally.
+mcp==1.27.0
