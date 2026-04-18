@@ -510,17 +510,30 @@ Geoff exposes all forensic capabilities as an [MCP (Model Context Protocol)](htt
 ### Starting the MCP Server
 
 ```bash
-# HTTP transport (default — remote clients, Claude Desktop)
+# HTTP transport — binds 127.0.0.1 by default (local only)
 python src/geoff_mcp_server.py
 
-# Custom host/port
-python src/geoff_mcp_server.py --host 127.0.0.1 --port 9999
+# Custom port
+python src/geoff_mcp_server.py --port 9999
 
 # stdio transport (local clients, direct pipe)
 python src/geoff_mcp_server.py --stdio
 ```
 
-MCP endpoint: `http://<host>:9999/mcp`
+MCP endpoint: `http://127.0.0.1:9999/mcp`
+
+### Remote Access (SSH Tunnel)
+
+The server binds `127.0.0.1` only — no token required because the network is the auth layer.
+Remote analysts connect via SSH tunnel:
+
+```bash
+# On the analyst's machine
+ssh -L 9999:localhost:9999 user@sift-workstation
+
+# Then point your MCP client at:
+http://localhost:9999/mcp
+```
 
 ### MCP Tools
 
