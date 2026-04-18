@@ -202,7 +202,9 @@ Every indicator hit is tagged with relevant ATT&CK technique IDs:
 | Exfiltration | T1048, T1567, T1020 |
 | Anti-Forensics | T1070, T1485, T1027 |
 | Web Shell | T1505.003, T1190 |
+| LOLBin | T1218, T1059, T1053 |
 | C2 | T1071, T1095, T1573 |
+| Cryptominer | T1496 |
 | Rootkit | T1014, T1543.003 |
 | OT/ICS Attack | T0855, T0816, T0879 |
 
@@ -266,6 +268,7 @@ Conversational interface. Talk to Geoff directly or say things like `"start proc
 
 ---
 
+## Tool Coverage
 
 | Category | Specialist | Tools | Functions |
 |----------|-----------|-------|----------|
@@ -493,7 +496,7 @@ python src/geoff_integrated.py
 |--------|-----|
 | **CLI** | `geoff-find-evil /path/to/evidence` — no server required |
 | **Web UI** | http://localhost:8080 |
-| **Console** | `python3 scripts/geoff_console.py` |
+| **Console** | `python3 bin/geoff_console.py` |
 | **Evidence tab** | Click any folder → auto-populates Find Evil input |
 | **One-click** | Click 🔍 Investigate on any evidence folder to run immediately |
 | **Chat** | `"start processing IR-016-CloudJack"` routes to Find Evil automatically |
@@ -504,7 +507,7 @@ python src/geoff_integrated.py
 
 ### Web UI
 
-Two tabs:
+Three tabs:
 
 **Find Evil** (default) — the main investigation console. Contains:
 - Evidence directory input + **Run Find Evil** button at the top
@@ -521,8 +524,8 @@ Chat and Find Evil share the same streaming output. Whether you click the button
 A terminal REPL with identical functionality — no browser needed:
 
 ```bash
-python3 scripts/geoff_console.py
-python3 scripts/geoff_console.py --server http://10.0.0.5:8080 --key myapikey
+python3 bin/geoff_console.py
+python3 bin/geoff_console.py --server http://10.0.0.5:8080 --key myapikey
 ```
 
 Auto-loads `GEOFF_PORT` and `GEOFF_API_KEY` from `.env`.

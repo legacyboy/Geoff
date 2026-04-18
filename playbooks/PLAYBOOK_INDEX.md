@@ -31,6 +31,10 @@ Playbooks are numbered following the MITRE ATT&CK kill chain order.
 | **PB-SIFT-018** | Malware Analysis SOP | Systematic malware analysis covering entry vector, static/dynamic analysis, and reporting. Only runs if suspicious binary surfaced. | ✅ Active |
 | **PB-SIFT-019** | Command & Control | C2 infrastructure, beaconing, DNS tunneling, and persistent C2 channels. Runs when C2 indicators found in triage. | ✅ Active |
 | **PB-SIFT-020** | Timeline Analysis | Temporal event reconstruction using Plaso and SleuthKit mactime. Always runs when disk images present. | ✅ Active |
+| **PB-SIFT-021** | Mobile Analysis | iOS backup and Android data analysis: SMS, call logs, apps, browser history, GPS, sideloaded APKs. | ✅ Active |
+| **PB-SIFT-022** | Browser Forensics | Chrome/Firefox SQLite: history, downloads, cookies, saved credential origins. Always runs. | ✅ Active |
+| **PB-SIFT-023** | Email Forensics | PST/OST (readpst), mbox, EML: headers, attachments, forwarding rules, BEC patterns. | ✅ Active |
+| **PB-SIFT-024** | macOS Forensics | Launch agents/daemons, Unified Log, FSEvents, plist parsing. Runs when macOS detected. | ✅ Active |
 
 ---
 When starting a new case, Geoff must:
@@ -42,5 +46,9 @@ When starting a new case, Geoff must:
 6. PB-SIFT-017 and PB-SIFT-018 are only included if a suspicious binary is surfaced during triage.
 7. PB-SIFT-019 is included when C2 indicators are found during triage.
 8. PB-SIFT-020 is always included when disk images are present in the evidence inventory.
+9. PB-SIFT-021 is included when mobile backup files are detected.
+10. PB-SIFT-022 is always included (browser databases analysed if found).
+11. PB-SIFT-023 is included when PST, OST, mbox, or EML files are present.
+12. PB-SIFT-024 is included when macOS is detected as the OS.
 
 **Location:** `playbooks/` (relative to project root)
