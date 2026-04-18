@@ -2813,6 +2813,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         attack_chain = {}
 
     report = {
+        "case_id": case_name,
         "title": f"Find Evil Report — {case_name}",
         "generated_at": datetime.now().isoformat(),
         "evidence_dir": str(evidence_dir),
@@ -2837,9 +2838,38 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "findings_detail": findings_writer.all_records(),
         "findings_jsonl": str(findings_writer._path),
         "user_activity_summary": correlated_users if correlated_users is not None else {},
+        "correlated_users": correlated_users if correlated_users is not None else {},
         "device_map": device_map if device_map is not None else {},
         "user_map": user_map if user_map is not None else {},
         "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if all_behavioral_flags is not None else {},
+        "behavioral_flags": {
+            dev_id: [
+                {k: v for k, v in flag.items() if k != "flag_id"}
+                for flag in flags[:200]  # cap per device to keep JSON manageable
+            ]
+            for dev_id, flags in (all_behavioral_flags or {}).items()
+        },
+        "timeline": sorted(
+            [
+                {
+                    "timestamp": e.get("timestamp", ""),
+                    "device_id": e.get("device_id", ""),
+                    "owner": e.get("owner", ""),
+                    "event_type": e.get("event_type", ""),
+                    "summary": e.get("summary", ""),
+                    "severity": (
+                        "CRITICAL" if "critical" in (e.get("suspicion_reason") or "").lower()
+                        else "HIGH" if e.get("suspicious")
+                        else "INFO"
+                    ),
+                    "suspicious": e.get("suspicious", False),
+                    "suspicion_reason": e.get("suspicion_reason"),
+                }
+                for e in (super_timeline_events if super_timeline_events is not None else [])
+                if e.get("timestamp")
+            ],
+            key=lambda e: (not e["suspicious"], e["timestamp"])
+        )[:500],
         "elapsed_seconds": round(elapsed, 1),
         "case_work_dir": str(case_work_dir),
         "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
