@@ -742,6 +742,89 @@ def call_llm(user_message, context="", agent_type="manager"):
         return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
 
+def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
+    """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping."""
+    try:
+        model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
+        response = requests.post(
+            f"{ollama_base_url()}/generate",
+            headers=ollama_headers(),
+            json={"model": model, "prompt": prompt, "stream": False,
+                  "options": {"temperature": 0.1}},
+            timeout=timeout,
+        )
+        if response.status_code == 200:
+            return response.json().get("response", "")
+    except Exception as e:
+        print(f"[MANAGER] LLM error: {e}")
+    return ""
+
+
+def _manager_review_execution_plan(
+    proposed_plan: list, skipped: list, inventory: dict,
+    triage_findings: list, indicator_hits: list, os_type: str,
+    classification: str, severity: str, job_id: str,
+) -> list:
+    """
+    Manager LLM reviews the proposed execution plan and may reorder or amend it.
+    Falls back to the proposed plan if the LLM is unavailable or returns garbage.
+    """
+    valid_ids = set(PLAYBOOK_STEPS.keys())
+    mandatory = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
+
+    ev_summary = {k: len(v) if isinstance(v, list) else v for k, v in inventory.items()}
+    hit_categories = sorted({h.get("category", "") for h in indicator_hits if isinstance(h, dict)})[:10]
+
+    prompt = f"""You are the Manager agent for a DFIR investigation. Review and optimise the execution plan.
+
+CASE CONTEXT:
+- OS: {os_type}
+- Initial classification: {classification}
+- Severity: {severity}
+- Evidence counts: {json.dumps(ev_summary)}
+- Indicator categories from triage: {hit_categories}
+
+PROPOSED EXECUTION PLAN (in order):
+{json.dumps(proposed_plan)}
+
+AVAILABLE PLAYBOOK IDs:
+{json.dumps(sorted(valid_ids))}
+
+SKIPPED (with reasons):
+{json.dumps([s['id'] for s in skipped])}
+
+Your task: return an optimised execution plan. You may reorder playbooks to address the most critical threat vectors first, remove clearly irrelevant ones, or re-include skipped ones if warranted.
+Rules: {', '.join(mandatory)} are mandatory and must be present.
+
+Respond ONLY in valid JSON (no extra text):
+{{
+    "approved_execution_plan": ["PB-SIFT-001", "PB-SIFT-002"],
+    "reasoning": "one sentence explaining the key prioritisation decision"
+}}"""
+
+    _fe_log(job_id, "▶ Manager: reviewing execution plan…")
+    raw = _call_manager_llm(prompt)
+    try:
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            parsed = json.loads(m.group())
+            candidate = parsed.get("approved_execution_plan", [])
+            reasoning = parsed.get("reasoning", "")
+            validated = [pb for pb in candidate if pb in valid_ids]
+            # Guarantee mandatory playbooks are present in order
+            for pb in mandatory:
+                if pb in valid_ids and pb not in validated:
+                    validated.insert(mandatory.index(pb), pb)
+            if validated:
+                _fe_log(job_id, f"  ✓ Manager approved {len(validated)}-playbook plan: {reasoning}")
+                return validated
+    except Exception as e:
+        _fe_log(job_id, f"  ⚠ Manager plan parse error ({e}) — using proposed plan")
+
+    _fe_log(job_id, f"  ⚠ Manager LLM unavailable — using proposed plan ({len(proposed_plan)} playbooks)")
+    return proposed_plan
+
+
 def _extract_path_from_message(msg: str) -> str:
     """Extract a filesystem path from a chat message."""
     match = re.search(r'(/[a-zA-Z0-9._/-]+)', msg)
@@ -2014,6 +2097,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     steps_completed = 0
     steps_failed = 0
     steps_skipped = 0
+    steps_unverified = 0
     CONTINUE_ON_FAILURE = os.environ.get("GEOFF_CONTINUE_ON_FAILURE", "true").lower() == "true"
     _abort = False  # Set to True on failure when CONTINUE_ON_FAILURE=False
 
@@ -2146,6 +2230,19 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # Deduplicate while preserving order
     seen = set()
     execution_plan = [pb for pb in execution_plan if not (pb in seen or seen.add(pb))]
+
+    # --- Manager reviews and may amend the execution plan ---
+    execution_plan = _manager_review_execution_plan(
+        proposed_plan=execution_plan,
+        skipped=skipped_playbooks,
+        inventory=inventory,
+        triage_findings=triage_findings,
+        indicator_hits=indicator_hits,
+        os_type=os_type,
+        classification=classification,
+        severity=severity,
+        job_id=job_id,
+    )
 
     # Skip playbooks that can't run (missing required evidence)
     for pb_id in list(execution_plan):
@@ -2492,6 +2589,37 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 any_step_ran = True
                                 _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
 
+                            # Forensicator interprets each completed step so the Critic
+                            # has a real analysis to validate rather than a placeholder.
+                            forensicator_notes = {}
+                            if step_record.get("status") == "completed":
+                                try:
+                                    forensicator_notes = geoff_forensicator.interpret_step_result(
+                                        playbook_id=playbook_id,
+                                        module=module,
+                                        function=function,
+                                        params=params,
+                                        result=result,
+                                        device_context={"device_id": dev_id, "os_type": os_type},
+                                    )
+                                    step_record["forensicator"] = forensicator_notes
+                                    sig = forensicator_notes.get("significance", "UNKNOWN")
+                                    note = forensicator_notes.get("analyst_note") or ""
+                                    if sig in ("CRITICAL", "HIGH"):
+                                        _fe_log(job_id, f"  🔍 Forensicator [{sig}]: {note}")
+                                    if forensicator_notes.get("follow_up_needed"):
+                                        _fe_log(job_id, f"  ↳ Follow-up: {forensicator_notes.get('follow_up_reason', '')}")
+                                except Exception as fe:
+                                    _fe_log(job_id, f"  ⚠ Forensicator unavailable for {module}.{function}: {fe}")
+
+                            # Build Critic analysis string from Forensicator output so the
+                            # Critic is checking a real interpretation, not a placeholder.
+                            _critic_analysis = f"Find Evil auto-run: {playbook_id} → {module}.{function}"
+                            if forensicator_notes.get("analyst_note"):
+                                _critic_analysis += f"\nForensicator: {forensicator_notes['analyst_note']}"
+                            if forensicator_notes.get("threat_indicators"):
+                                _critic_analysis += f"\nThreat indicators: {', '.join(forensicator_notes['threat_indicators'])}"
+
                             # Critic validation — mandatory: failures are surfaced as
                             # needs_review flags rather than silently ignored.
                             try:
@@ -2499,13 +2627,26 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     tool_name=f"{module}.{function}",
                                     tool_params=params,
                                     raw_output=json.dumps(result, default=str)[:8000],
-                                    geoff_analysis=f"Find Evil auto-run: {playbook_id} → {module}.{function}",
+                                    geoff_analysis=_critic_analysis,
                                 )
                                 step_record["critic"] = critic_val
                                 critic_results.append(critic_val)
                                 # Check for invalid IOCs flagged by critic
                                 if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
                                     step_record["invalid_iocs"] = critic_val["invalid_iocs"]
+
+                                # Enforce Critic verdict — demote to UNVERIFIED when sanity fails
+                                if isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
+                                    if step_record.get("status") == "completed":
+                                        step_record["status"] = "completed_unverified"
+                                        step_record["needs_review"] = True
+                                        steps_unverified += 1
+                                    issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
+                                    step_record["unverified_reason"] = issues[:5]
+                                    short = "; ".join(str(i) for i in issues[:2]) if issues else "sanity check failed"
+                                    _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
+                                elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is True:
+                                    _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
                                 # Validate IOC formats from step result
                                 try:
                                     result_iocs = {}
@@ -2614,6 +2755,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 "playbook_id": playbook_id,
                 "steps_attempted": len(pb_findings),
                 "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+                "steps_unverified": sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
                 "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
                 "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
             })
@@ -2831,6 +2973,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "playbooks_total": total_pb,
         "specialist_steps_executed": steps_completed + steps_failed + steps_skipped,
         "steps_completed": steps_completed,
+        "steps_unverified": steps_unverified,
         "steps_failed": steps_failed,
         "steps_skipped": steps_skipped,
         "critic_approval_pct": round(critic_pct, 1),

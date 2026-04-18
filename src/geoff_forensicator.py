@@ -175,6 +175,64 @@ Respond ONLY in JSON format:
 
         return commands
 
+    def interpret_step_result(
+        self,
+        playbook_id: str,
+        module: str,
+        function: str,
+        params: Dict,
+        result: Dict,
+        device_context: Dict = None,
+    ) -> Dict[str, Any]:
+        """
+        Interpret a completed playbook step result.
+        Called by find_evil() after each successful tool execution so the
+        Forensicator LLM can assess threat significance and flag follow-ups.
+        Non-blocking: returns a minimal dict if the LLM is unavailable.
+        """
+        ctx = device_context or {}
+        result_summary = json.dumps(result, default=str)[:2000]
+
+        prompt = f"""You are a forensic analyst reviewing a tool result. Be concise and precise.
+
+INVESTIGATION CONTEXT:
+- Playbook: {playbook_id}
+- Device: {ctx.get('device_id', 'unknown')} (OS: {ctx.get('os_type', 'unknown')})
+- Step: {module}.{function}
+- Params: {json.dumps(params, default=str)[:400]}
+
+TOOL RESULT (excerpt):
+{result_summary}
+
+Assess this result. Respond ONLY in valid JSON (no extra text):
+{{
+    "significance": "CRITICAL|HIGH|MEDIUM|LOW|NONE",
+    "threat_indicators": ["specific indicators, e.g. psexesvc.exe in prefetch, or empty list"],
+    "follow_up_needed": false,
+    "follow_up_reason": null,
+    "analyst_note": "one concise sentence interpreting the finding"
+}}"""
+
+        try:
+            response = call_forensicator_llm(prompt, self.ollama_url)
+            m = re.search(r'\{.*\}', response, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group())
+                parsed["timestamp"] = datetime.now().isoformat()
+                return parsed
+        except Exception as e:
+            print(f"[FORENSICATOR] Interpretation error for {module}.{function}: {e}")
+
+        return {
+            "significance": "UNKNOWN",
+            "threat_indicators": [],
+            "follow_up_needed": False,
+            "follow_up_reason": None,
+            "analyst_note": None,
+            "error": "forensicator_unavailable",
+            "timestamp": datetime.now().isoformat(),
+        }
+
     def _execute_command(self, cmd_info: Dict) -> Dict:
         """Execute a single tool command with error handling"""
         tool = cmd_info.get("tool", "")
