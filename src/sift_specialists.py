@@ -490,20 +490,14 @@ class SLEUTHKIT_Specialist:
             raw['status'] = 'success'
         if raw['status'] == 'success':
             try:
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                # Determine final args for icat call (segments will be appended by _run_with_segments)
-                cmd_args = list(args)
-                segments = self._find_image_segments(image)
-                for seg in segments:
-                    cmd_args.append(seg)
-                Path(output_path).write_bytes(
-                    subprocess.run(['icat'] + cmd_args, capture_output=True, timeout=300).stdout
-                )
-                size = Path(output_path).stat().st_size
+                out = Path(output_path).resolve()
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(raw['stdout'].encode('latin-1') if isinstance(raw['stdout'], str) else raw['stdout'])
+                size = out.stat().st_size
                 return {
                     'tool': 'icat',
                     'status': 'success',
-                    'output_file': output_path,
+                    'output_file': str(out),
                     'bytes_extracted': size,
                     'inode': inode,
                     'timestamp': datetime.now().isoformat()
@@ -531,7 +525,7 @@ class SLEUTHKIT_Specialist:
 
     def list_files_mactime(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """fls -m — List files in mactime body format with MACB timestamps."""
-        args = ['-m', '']  # mactime body format, empty hostname
+        args = ['-m', '/']  # mactime body format, root hostname prefix
         if offset is not None:
             args.extend(['-o', str(offset)])
         args.append(image)  # replaced by _run_with_segments
@@ -987,9 +981,17 @@ class STRINGS_Specialist:
                         iocs['urls'].append(url)
                         seen.add(url)
 
-                # IPs (filter RFC1918 and broadcast)
+                # IPs (filter loopback, RFC1918, link-local, and broadcast)
                 for ip in ip_re.findall(s):
-                    if not ip.startswith(('0.', '255.255.255', '127.')) and ip not in seen:
+                    octets = ip.split('.')
+                    second = int(octets[1]) if len(octets) > 1 and octets[1].isdigit() else 0
+                    is_private = (
+                        ip.startswith(('0.', '127.', '169.254.', '255.'))
+                        or ip.startswith('10.')
+                        or ip.startswith('192.168.')
+                        or (ip.startswith('172.') and 16 <= second <= 31)
+                    )
+                    if not is_private and ip not in seen:
                         iocs['ips'].append(ip)
                         seen.add(ip)
 
