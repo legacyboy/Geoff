@@ -6,9 +6,10 @@ Exposes all forensic capabilities as MCP tools over streamable-HTTP transport.
 Default port: 9999.  Clients connect to http://<host>:9999/mcp
 
 Usage:
-    python src/geoff_mcp_server.py                  # HTTP on 0.0.0.0:9999
+    python src/geoff_mcp_server.py                  # HTTP on 127.0.0.1:9999 (local only)
     python src/geoff_mcp_server.py --port 9999      # explicit port
     python src/geoff_mcp_server.py --stdio          # stdio transport (local clients)
+    python src/geoff_mcp_server.py --host 0.0.0.0  # expose remotely (use SSH tunnel instead)
 """
 
 import argparse
@@ -550,7 +551,7 @@ def run_specialist(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Geoff MCP Server")
     parser.add_argument("--stdio", action="store_true", help="Use stdio transport instead of HTTP")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host (HTTP mode, default 0.0.0.0)")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (HTTP mode, default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=9999, help="Bind port (HTTP mode, default 9999)")
     return parser.parse_args()
 
