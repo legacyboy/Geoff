@@ -74,8 +74,11 @@ def _validate_evidence_path(path: str) -> str:
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
     # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
     real = os.path.realpath(path)
-    allowed_bases = [EVIDENCE_BASE_DIR, CASES_WORK_DIR]
-    if not any(real.startswith(base + os.sep) or real == base for base in allowed_bases if base):
+    allowed_bases = [b for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR] if b]
+    # Only enforce the base-dir check when at least one allowed base is configured
+    if allowed_bases and not any(
+        real.startswith(base + os.sep) or real == base for base in allowed_bases
+    ):
         raise ValueError(f"Evidence path resolves outside allowed directories: {path!r} → {real}")
     return path
 
@@ -184,7 +187,7 @@ class FindingsWriter:
             return self._index.get(step_key) == "completed"
 
     def all_records(self) -> list:
-        """Return all records, reading from JSONL if in-memory cap was hit."""
+        """Return all records. Falls back to disk when in-memory cap is exceeded."""
         with self._lock:
             if len(self._records) < self._max:
                 return list(self._records)
@@ -1005,7 +1008,10 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-018": "Malware Analysis",
     "PB-SIFT-019": "Command & Control",
     "PB-SIFT-020": "Timeline Analysis",
-    "PB-SIFT-021": "Mobile Forensics",
+    "PB-SIFT-021": "Mobile Analysis",
+    "PB-SIFT-022": "Browser Forensics",
+    "PB-SIFT-023": "Email Forensics",
+    "PB-SIFT-024": "macOS Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1013,23 +1019,47 @@ PLAYBOOK_NAMES = {
 TRIAGE_PATTERNS = {
     "ransomware": [".locked", ".encrypted", ".crypt", "readme_decrypt", "how_to_decrypt",
                    "recover_files", ".locky", ".cerber", ".sage", ".globe",
-                   "your_files_are", "ransom_note", "decrypt_instructions"],
+                   "your_files_are", "ransom_note", "decrypt_instructions",
+                   "vssadmin delete", "wbadmin delete", "bcdedit /set",
+                   "wipe_mbr", "destroy_vss", "epmntdrv", "hermetic"],
     "credential_theft": ["mimikatz", "lsass", "ntds.dit", "procdump", "hashdump",
-                         "creddump", "cachedump", "secretsdump"],
+                         "creddump", "cachedump", "secretsdump", "dcsync",
+                         "kerberoast", "asrep_roast", "golden ticket", "rubeus",
+                         "invoke-kerberoast"],
     "lateral_movement": ["psexec", "wmic", "winrm", "sharpexec", "remcom",
-                         "paexec", "cmbexec", "dcom", "atexec"],
+                         "paexec", "cmbexec", "dcom", "atexec",
+                         "nsenter", "container_escape", "docker.sock",
+                         "chroot /host", "privileged_container", "pivot_root"],
     "persistence": ["autorun", "run_once", "scheduled_task", "startup",
-                    "wmi_subscription", "com_hijack", "shell:"],
+                    "wmi_subscription", "com_hijack", "shell:",
+                    "uefi", "bootkit", "flashrom", "spi_flash",
+                    "survive_reinstall", "uefi_dxe", "dxe_driver"],
     "exfiltration": ["megasync", "dropbox", "onedrive", "googledrive",
-                    "rsync", "scp", "sftp", "ftp_upload", "exfil"],
+                    "rsync", "scp", "sftp", "ftp_upload", "exfil",
+                    "inbox_rule", "forward_to", "forwardingrule", "mailforward",
+                    "s3 sync", "attacker-exfil"],
     "anti_forensics": ["eventlog_clear", "wevtutil cl", "log clear",
-                      "timestomp", "timemodify", "ccleaner", "bleachbit"],
+                      "timestomp", "timemodify", "ccleaner", "bleachbit",
+                      "shred", "history -c", "drop table", "drop database",
+                      "dd if=/dev/urandom", "wipe_free_space"],
     "web_shell": ["c99", "r57", "wso", "b374k", "alfa", "cmd=", "exec=",
-                  "shell=", "eval(", "base64_decode", "webshell"],
+                  "shell=", "eval(", "base64_decode", "webshell",
+                  "xp_cmdshell", "sqlmap", "union select", "proxylogon"],
     "lolbin": ["certutil", "bitsadmin", "mshta", "rundll32", "regsvr32",
                "wmic", "msbuild", "installutil", "msiexec"],
     "c2": ["cobalt strike", "beacon", "covenant", "sliver", "poshc2", "empire",
-            "cobaltstrike", "teamserver", "metasploit"],
+            "cobaltstrike", "teamserver", "metasploit", "reverse_shell",
+            ".onion", "stratum+tcp://"],
+    "cryptominer": ["xmrig", "minexmr", "xmrpool", "moneroocean", "supportxmr",
+                    "stratum+tcp", "cryptonight", "randomx", "monero", "coinhive",
+                    "minergate", "nicehash", "pool.minexmr"],
+    "rootkit": ["rootkit", "sys_call_table", "syscall_hook", "hooking",
+                "hide_pid", "hide_port", "process_hide", "module_hide",
+                "lkm", "kthreadd_helper", "insmod", "kernel_module",
+                "LD_PRELOAD", "__intercepted_"],
+    "ot_attack": ["modbus", "scada", "plc_attack", "safety_bypass", "sis_bypass",
+                  "setpoint_override", "industroyer", "ot_sabotage",
+                  "scada_exploit", "industrial_control", "dnp3", "iec-61850"],
 }
 
 SEVERITY_MAP = {
@@ -1042,6 +1072,25 @@ SEVERITY_MAP = {
     "web_shell": "HIGH",
     "lolbin": "MEDIUM",
     "c2": "CRITICAL",
+    "cryptominer": "HIGH",
+    "rootkit": "CRITICAL",
+    "ot_attack": "CRITICAL",
+}
+
+# MITRE ATT&CK technique IDs per indicator category (Enterprise ATT&CK v14).
+MITRE_TAGS = {
+    "ransomware":        ["T1486", "T1490", "T1489"],
+    "credential_theft":  ["T1003", "T1558", "T1552"],
+    "lateral_movement":  ["T1021", "T1570", "T1563"],
+    "persistence":       ["T1053", "T1547", "T1543", "T1542"],
+    "exfiltration":      ["T1048", "T1567", "T1020"],
+    "anti_forensics":    ["T1070", "T1485", "T1027"],
+    "web_shell":         ["T1505.003", "T1190"],
+    "lolbin":            ["T1218", "T1059", "T1053"],
+    "c2":                ["T1071", "T1095", "T1573"],
+    "cryptominer":       ["T1496"],
+    "rootkit":           ["T1014", "T1543.003"],
+    "ot_attack":         ["T0855", "T0816", "T0879"],
 }
 
 # Map each playbook to its specialist steps.
@@ -1081,9 +1130,12 @@ PLAYBOOK_STEPS = {
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
             ("registry", "extract_services", {"system_path": "{hive}"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("jumplist", "parse_lnk_files", {"directory": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -1135,6 +1187,10 @@ PLAYBOOK_STEPS = {
         ],
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
+            ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
         ],
     },
     "PB-SIFT-008": {  # Malware Hunting
@@ -1229,16 +1285,41 @@ PLAYBOOK_STEPS = {
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
         ],
     },
-    "PB-SIFT-017": {  # REMnux Malware Analysis
-        "disk_images": [
-            ("remnux", "die_scan", {"target_file": "{image}"}),
-            ("remnux", "clamav_scan", {"target_file": "{image}"}),
-        ],
-        "memory_dumps": [
-            ("remnux", "floss_strings", {"target_file": "{mem}"}),
-        ],
+    "PB-SIFT-017": {  # REMnux Malware Analysis — full 15-tool coverage
+        # General-purpose tools run on all binary evidence types
         "other_files": [
-            ("remnux", "exiftool_scan", {"target_file": "{file}"}),
+            ("remnux", "die_scan",       {"target_file": "{file}"}),
+            ("remnux", "exiftool_scan",  {"target_file": "{file}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{file}"}),
+            ("remnux", "ssdeep_hash",    {"target_file": "{file}"}),
+            ("remnux", "hashdeep_audit", {"target_file": "{file}"}),
+            ("remnux", "floss_strings",  {"target_file": "{file}"}),
+            ("remnux", "radare2_analyze",{"target_file": "{file}"}),
+            ("remnux", "peframe_scan",   {"target_file": "{file}"}),
+            ("remnux", "upx_unpack",     {"target_file": "{file}"}),
+            # Document/script analysis — specialists return clean errors for wrong types
+            ("remnux", "pdfid_scan",     {"target_file": "{file}"}),
+            ("remnux", "pdf_parser",     {"target_file": "{file}"}),
+            ("remnux", "oledump_scan",   {"target_file": "{file}"}),
+            ("remnux", "js_beautify",    {"target_file": "{file}"}),
+        ],
+        # Memory dumps — string extraction and AV scan
+        "memory_dumps": [
+            ("remnux", "floss_strings",  {"target_file": "{mem}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{mem}"}),
+            ("remnux", "ssdeep_hash",    {"target_file": "{mem}"}),
+        ],
+        # Disk images — AV scan and metadata
+        "disk_images": [
+            ("remnux", "die_scan",       {"target_file": "{image}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{image}"}),
+            ("remnux", "exiftool_scan",  {"target_file": "{image}"}),
+            ("remnux", "hashdeep_audit", {"target_file": "{image}"}),
+        ],
+        # Network captures — C2 infrastructure simulation check
+        "pcaps": [
+            ("remnux", "inetsim_check",  {"target_file": "{pcap}"}),
+            ("remnux", "fakedns_check",  {"target_file": "{pcap}"}),
         ],
     },
     "PB-SIFT-018": {  # Malware Analysis SOP
@@ -1295,10 +1376,42 @@ PLAYBOOK_STEPS = {
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
     },
-    "PB-SIFT-021": {  # Mobile Forensics — iOS backups and Android data
+    "PB-SIFT-021": {  # Mobile Analysis
         "mobile_backups": [
-            ("mobile", "analyze_ios_backup", {"backup_dir": "{mobile}"}),
+            ("mobile", "analyze_ios_backup", {"backup_path": "{mobile}"}),
             ("mobile", "analyze_android", {"data_dir": "{mobile}"}),
+        ],
+    },
+    "PB-SIFT-022": {  # Browser Forensics
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "other_files": [
+            ("browser", "extract_history", {"db_path": "{file}"}),
+            ("browser", "extract_cookies", {"db_path": "{file}"}),
+            ("browser", "extract_downloads", {"db_path": "{file}"}),
+            ("browser", "extract_saved_passwords", {"db_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-023": {  # Email Forensics
+        "other_files": [
+            ("email", "analyze_pst", {"pst_path": "{file}"}),
+            ("email", "analyze_mbox", {"mbox_path": "{file}"}),
+            ("email", "analyze_eml", {"eml_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-024": {  # macOS Forensics
+        "disk_images": [
+            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+        ],
+        "syslogs": [
+            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
+        ],
+        "other_files": [
+            ("macos", "parse_plist", {"plist_path": "{file}"}),
+            ("macos", "parse_unified_log", {"log_path": "{file}"}),
+            ("macos", "analyze_launch_agents", {"directory": "{file}"}),
         ],
     },
 }
@@ -1445,7 +1558,8 @@ def _scan_triage_indicators(inventory: dict) -> list:
                 if _is_indicator_match(fpath, pattern):
                     hits.append({"category": category, "pattern": pattern, "file": fpath,
                                  "severity": SEVERITY_MAP.get(category, "MEDIUM"),
-                                 "confidence": "POSSIBLE", "source": "filename_scan"})
+                                 "confidence": "POSSIBLE", "source": "filename_scan",
+                                 "mitre_techniques": MITRE_TAGS.get(category, [])})
                     break  # one hit per pattern is enough
     
     # Phase 2: Run strings against disk images and memory dumps
@@ -1477,13 +1591,19 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
                             "source": "strings_scan",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break  # one hit per category per file
         except (subprocess.TimeoutExpired, OSError, IOError):
             continue
-    
-    # Phase 2b: Run strings against other_files (binaries without a disk image extension)
+
+    # Phase 2b: strings scan on other_files that are binary (Phase 3 handles text files)
+    _phase3_exts = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
+                    ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
+                    ".ps1", ".vbs", ".js", ".html", ".php", ""}
     for fpath in inventory.get("other_files", []):
+        if Path(str(fpath)).suffix.lower() in _phase3_exts:
+            continue  # Phase 3 will do a direct content scan instead
         try:
             file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0
             if file_size > MAX_TRIAGE_STRINGS_SIZE:
@@ -1506,7 +1626,8 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "file": str(fpath),
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
-                            "source": "strings_scan",
+                            "source": "strings_scan_other",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break
         except (subprocess.TimeoutExpired, OSError, IOError):
@@ -1516,7 +1637,8 @@ def _scan_triage_indicators(inventory: dict) -> list:
     # Include files with no extension (e.g. 'syslog', 'messages', 'secure')
     text_extensions = {".evtx", ".log", ".txt", ".xml", ".json", ".csv",
                        ".sys", ".reg", ".ini", ".cfg", ".conf", ".bat",
-                       ".ps1", ".vbs", ".js", ".html", ".php", ""}
+                       ".ps1", ".vbs", ".js", ".html", ".php",
+                       ""}  # empty ext covers: syslog, messages, auth, etc.
     max_read_bytes = 512 * 1024  # 512KB per file
 
     for fpath in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + \
@@ -1544,12 +1666,84 @@ def _scan_triage_indicators(inventory: dict) -> list:
                             "severity": SEVERITY_MAP.get(category, "MEDIUM"),
                             "confidence": "POSSIBLE",
                             "source": "content_scan",
+                            "mitre_techniques": MITRE_TAGS.get(category, []),
                         })
                         break  # one hit per category per file
         except (OSError, IOError, PermissionError):
             continue  # can't read, skip silently
-    
-    return hits
+
+    # Deduplicate: keep first hit per (category, file) pair across all phases
+    seen = set()
+    deduped = []
+    for h in hits:
+        key = (h["category"], h["file"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(h)
+    return deduped
+
+
+def _reconstruct_attack_chain(findings: list, indicator_hits: list, device_map: dict) -> dict:
+    """Compute dwell time and reconstruct lateral movement path from findings.
+
+    Returns a dict with:
+      - first_seen_ts: ISO timestamp of earliest artefact
+      - last_seen_ts: ISO timestamp of most recent artefact
+      - dwell_days: float (None if timestamps unavailable)
+      - lateral_movement_path: list of device IDs in order of first activity
+      - mitre_techniques_observed: deduplicated list of all ATT&CK IDs seen
+      - kill_chain_phases: set of categories observed (triage + findings)
+    """
+    timestamps: list = []
+    device_first_seen: dict = {}  # device_id -> earliest ISO ts
+
+    for f in findings:
+        for ts_key in ("started_at", "completed_at"):
+            ts = f.get(ts_key)
+            if ts:
+                timestamps.append(ts)
+        dev = f.get("device_id")
+        ts = f.get("started_at") or f.get("completed_at")
+        if dev and ts:
+            if dev not in device_first_seen or ts < device_first_seen[dev]:
+                device_first_seen[dev] = ts
+
+    first_ts = min(timestamps) if timestamps else None
+    last_ts = max(timestamps) if timestamps else None
+
+    dwell_days = None
+    if first_ts and last_ts:
+        try:
+            from datetime import datetime as _dt
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            # Strip sub-second and TZ offset for simple comparison
+            t0 = _dt.fromisoformat(first_ts[:19])
+            t1 = _dt.fromisoformat(last_ts[:19])
+            dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
+        except Exception:
+            pass
+
+    # Lateral movement path: devices sorted by first activity
+    lateral_path = sorted(device_first_seen.keys(),
+                          key=lambda d: device_first_seen[d])
+
+    # Collect all ATT&CK techniques from indicator hits
+    mitre_seen: list = []
+    kill_chain_phases: set = set()
+    for hit in indicator_hits:
+        kill_chain_phases.add(hit.get("category", ""))
+        for t in hit.get("mitre_techniques", []):
+            if t not in mitre_seen:
+                mitre_seen.append(t)
+
+    return {
+        "first_seen_ts": first_ts,
+        "last_seen_ts": last_ts,
+        "dwell_days": dwell_days,
+        "lateral_movement_path": lateral_path,
+        "mitre_techniques_observed": mitre_seen,
+        "kill_chain_phases": sorted(kill_chain_phases - {""}),
+    }
 
 
 def _tool_available(module: str, function: str) -> bool:
@@ -1630,6 +1824,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     device_disc = DeviceDiscovery(orchestrator)
     device_map, user_map = device_disc.discover(evidence_path, inventory)
     _fe_log(job_id, f"Discovered {len(device_map)} devices, {len(user_map)} users")
+
+    # If no devices were resolved (log-only or standalone file evidence), synthesise
+    # a single "unknown" device so the per-device playbook loop always runs.
+    if not device_map:
+        all_evidence = (
+            inventory["disk_images"] + inventory["memory_dumps"] + inventory["pcaps"]
+            + inventory["evtx_logs"] + inventory["syslogs"] + inventory["registry_hives"]
+            + inventory["mobile_backups"] + inventory["other_files"]
+        )
+        device_map = {
+            "host-unknown": {
+                "device_id": "host-unknown",
+                "device_type": "unknown",
+                "owner": "unknown",
+                "os_type": "unknown",
+                "evidence_files": all_evidence,
+            }
+        }
+        _fe_log(job_id, "  No devices resolved — created synthetic host-unknown device")
 
     for dev_id, dev in device_map.items():
         _fe_log(job_id, f"  Device: {dev_id} ({dev.get('device_type', 'unknown')}) "
@@ -1875,23 +2088,44 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if os_type == "linux":
         execution_plan.append("PB-SIFT-014")
     if os_type == "macos":
-        pass  # No macOS-specific playbook; generic disk playbooks handle it
+        execution_plan.append("PB-SIFT-024")
+
+    # Mobile analysis — auto-trigger when mobile backups are present
+    if inventory["mobile_backups"]:
+        execution_plan.append("PB-SIFT-021")
 
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
 
-    # Add malware playbooks if suspicious binaries found
+    # Browser forensics — always run (relevant for insider threat, credential theft, etc.)
+    execution_plan.append("PB-SIFT-022")
+
+    # Email forensics — run when email-like files are present
+    email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
+    if any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"]):
+        execution_plan.append("PB-SIFT-023")
+
+    # Add malware playbooks when:
+    #   a) triage output flagged a suspicious binary keyword, OR
+    #   b) indicator_hits found anything evil (triage content/strings scan hit), OR
+    #   c) other_files are present (dropped binaries, scripts, docs to analyse)
     suspicious_binary_found = False
     for f in triage_findings:
         result_str = json.dumps(f.get("result", f.get("error", "")), default=str).lower()
         if any(kw in result_str for kw in ["malware", "suspicious", "malicious", "trojan", "backdoor", "ransomware"]):
             suspicious_binary_found = True
             break
-    if suspicious_binary_found:
+    malware_analysis_warranted = (
+        suspicious_binary_found
+        or len(indicator_hits) > 0
+        or len(inventory["other_files"]) > 0
+    )
+    if malware_analysis_warranted:
         execution_plan.extend(["PB-SIFT-017", "PB-SIFT-018"])
     else:
-        skipped_playbooks.append({"id": "PB-SIFT-017", "reason": "No suspicious binary surfaced during triage"})
-        skipped_playbooks.append({"id": "PB-SIFT-018", "reason": "No suspicious binary surfaced during triage"})
+        reason = "No suspicious binary, indicator hits, or standalone files found"
+        skipped_playbooks.append({"id": "PB-SIFT-017", "reason": reason})
+        skipped_playbooks.append({"id": "PB-SIFT-018", "reason": reason})
 
     # Timeline analysis — always run if disk images present (psort after log2timeline)
     if len(inventory["disk_images"]) > 0:
@@ -1958,6 +2192,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if "ransomware" in hit_categories:
         classification = "Ransomware"
         severity = "CRITICAL"
+    elif "ot_attack" in hit_categories:
+        classification = "OT/ICS Attack"
+        severity = "CRITICAL"
+    elif "rootkit" in hit_categories:
+        classification = "Rootkit"
+        severity = "CRITICAL"
     elif "c2" in hit_categories:
         classification = "Command & Control"
         severity = "CRITICAL"
@@ -1970,12 +2210,21 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     elif "web_shell" in hit_categories or "initial_access" in hit_categories:
         classification = "External Breach"
         severity = "HIGH"
-    elif suspicious_binary_found:
-        classification = "Malware"
+    elif "cryptominer" in hit_categories:
+        classification = "Cryptominer"
         severity = "HIGH"
     elif "exfiltration" in hit_categories:
         classification = "Exfiltration"
-        severity = "MEDIUM"
+        severity = "HIGH"
+    elif "persistence" in hit_categories:
+        classification = "Persistence/Implant"
+        severity = "HIGH"
+    elif "anti_forensics" in hit_categories:
+        classification = "Destructive/Anti-Forensics"
+        severity = "HIGH"
+    elif malware_analysis_warranted:
+        classification = "Malware"
+        severity = "HIGH"
 
     # Emit the Phase 12 execution plan
     execution_plan_output = {
@@ -2134,7 +2383,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             for dep in step_def["requires"]:
                                 dep_completed = any(
                                     s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
-                                    for s in findings
+                                    for s in findings_writer.all_records()
                                 )
                                 if not dep_completed:
                                     _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
@@ -2302,92 +2551,92 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             # Break out of all loops
                             break
 
-        # Check if we broke out due to failure
-        if not CONTINUE_ON_FAILURE:
-            failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
-            if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings[-3:]):
-                break
-
-        # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
-        # retroactively downgrade ALL findings and mark them compromised.
-        # Uses word-boundary matching for single-word keywords to avoid false
-        # positives (e.g. "del" matching "model", "delete", "delivered").
-        if playbook_id == "PB-SIFT-012":
-            anti_forensics_keywords = [
-                "log clear", "event log clear", "timestomp",
-                "anti-forensic", "wevtutil", "sdelete",
-                "eraser", "bleachbit", "cipher /w", "fsutil",
-                "ccleaner", "secure delete",
-            ]
-            anti_forensics_hit = False
-            for step in pb_findings:
-                result = step.get("result", {})
-                if not isinstance(result, dict):
-                    continue
-                # Check structured anti_forensics_detected field first
-                if result.get("anti_forensics_detected"):
-                    anti_forensics_hit = True
+            # Check if we broke out due to failure
+            if not CONTINUE_ON_FAILURE:
+                failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
+                if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings_writer.all_records()[-3:]):
                     break
-                # String match with word boundaries for single words
-                result_str = json.dumps(result, default=str).lower()
-                for kw in anti_forensics_keywords:
-                    if " " in kw:
-                        # Multi-word: substring match is safe
-                        if kw in result_str:
-                            anti_forensics_hit = True
-                            break
-                    else:
-                        # Single-word: word boundary match to avoid false positives
-                        if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
-                            anti_forensics_hit = True
-                            break
+
+            # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
+            # retroactively downgrade ALL findings and mark them compromised.
+            # Uses word-boundary matching for single-word keywords to avoid false
+            # positives (e.g. "del" matching "model", "delete", "delivered").
+            if playbook_id == "PB-SIFT-012":
+                anti_forensics_keywords = [
+                    "log clear", "event log clear", "timestomp",
+                    "anti-forensic", "wevtutil", "sdelete",
+                    "eraser", "bleachbit", "cipher /w", "fsutil",
+                    "ccleaner", "secure delete",
+                ]
+                anti_forensics_hit = False
+                for step in pb_findings:
+                    result = step.get("result", {})
+                    if not isinstance(result, dict):
+                        continue
+                    # Check structured anti_forensics_detected field first
+                    if result.get("anti_forensics_detected"):
+                        anti_forensics_hit = True
+                        break
+                    # String match with word boundaries for single words
+                    result_str = json.dumps(result, default=str).lower()
+                    for kw in anti_forensics_keywords:
+                        if " " in kw:
+                            # Multi-word: substring match is safe
+                            if kw in result_str:
+                                anti_forensics_hit = True
+                                break
+                        else:
+                            # Single-word: word boundary match to avoid false positives
+                            if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
+                                anti_forensics_hit = True
+                                break
+                    if anti_forensics_hit:
+                        break
                 if anti_forensics_hit:
-                    break
-            if anti_forensics_hit:
-                confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
-                _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
-                # Downgrade all findings across ALL playbooks and mark compromised
-                for f in findings_writer.all_records():
-                    if isinstance(f.get("result"), dict):
-                        confidence = f["result"].get("confidence", "")
-                        if confidence == "CONFIRMED":
-                            f["result"]["confidence"] = "POSSIBLE"
-                        elif confidence == "POSSIBLE":
-                            f["result"]["confidence"] = "UNVERIFIED"
-                        # Mark all findings as potentially compromised
-                        if "compromised_by" not in f["result"]:
-                            f["result"]["compromised_by"] = []
-                        if "anti-forensics" not in f["result"]["compromised_by"]:
-                            f["result"]["compromised_by"].append("anti-forensics")
-                        f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
+                    confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                    _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                    # Downgrade all findings across ALL playbooks and mark compromised
+                    for f in findings_writer.all_records():
+                        if isinstance(f.get("result"), dict):
+                            confidence = f["result"].get("confidence", "")
+                            if confidence == "CONFIRMED":
+                                f["result"]["confidence"] = "POSSIBLE"
+                            elif confidence == "POSSIBLE":
+                                f["result"]["confidence"] = "UNVERIFIED"
+                            # Mark all findings as potentially compromised
+                            if "compromised_by" not in f["result"]:
+                                f["result"]["compromised_by"] = []
+                            if "anti-forensics" not in f["result"]["compromised_by"]:
+                                f["result"]["compromised_by"].append("anti-forensics")
+                            f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
 
-        playbooks_run.append({
-            "playbook_id": playbook_id,
-            "steps_attempted": len(pb_findings),
-            "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
-            "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
-            "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
-        })
+            playbooks_run.append({
+                "playbook_id": playbook_id,
+                "steps_attempted": len(pb_findings),
+                "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+                "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+                "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+            })
 
-        # Git commit after each playbook — part of transaction, not optional
-        try:
-            # Write playbook findings to output dir
-            pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-            # Compact large step results before writing
-            for step in pb_findings:
-                if isinstance(step.get("result"), dict):
-                    step["result"] = _compact_step_result(step["result"], case_work_dir)
-            _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
-            git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
-            if git_result["status"] == "failed":
-                _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
-                # In STRICT_MODE, treat git commit failure as step failure
+            # Git commit after each playbook — part of transaction, not optional
+            try:
+                # Write playbook findings to output dir
+                pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                # Compact large step results before writing
+                for step in pb_findings:
+                    if isinstance(step.get("result"), dict):
+                        step["result"] = _compact_step_result(step["result"], case_work_dir)
+                _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
+                git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+                if git_result["status"] == "failed":
+                    _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
+                    # In STRICT_MODE, treat git commit failure as step failure
+                    if STRICT_MODE:
+                        raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
+            except Exception as gce:
+                _fe_log(job_id, f"  git commit failed: {gce}")
                 if STRICT_MODE:
-                    raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
-        except Exception as gce:
-            _fe_log(job_id, f"  git commit failed: {gce}")
-            if STRICT_MODE:
-                raise
+                    raise
 
     # End of per-device playbook loop
     # Process unattributed evidence (PCAPs, logs not tied to a device)
@@ -2501,7 +2750,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     evil_found = False
 
     # From triage indicators — only POSSIBLE confidence from string/filename hits
-    # evil_found requires CONFIRMED findings or multiple distinct-category POSSIBLE hits
+    # evil_found requires CONFIRMED, or single CRITICAL/HIGH hit, or 2+ distinct POSSIBLE categories
     possible_categories = set()
     for hit in indicator_hits:
         sev = hit["severity"]
@@ -2509,12 +2758,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
         if confidence == "CONFIRMED":
             evil_found = True
+        elif sev in ("CRITICAL", "HIGH"):
+            evil_found = True  # single high-severity hit is enough
         elif confidence == "POSSIBLE":
             possible_categories.add(hit["category"])
-            # A single CRITICAL/HIGH indicator is sufficient evidence
-            if sev in ("CRITICAL", "HIGH"):
-                evil_found = True
-    # Also flag on 2+ distinct POSSIBLE categories of any severity
     if not evil_found and len(possible_categories) >= 2:
         evil_found = True
 
@@ -2554,6 +2801,17 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     elapsed = time.time() - start_time
 
+    # Dwell time and lateral movement chain
+    try:
+        attack_chain = _reconstruct_attack_chain(
+            findings=findings_writer.all_records(),
+            indicator_hits=indicator_hits,
+            device_map=device_map if 'device_map' in dir() else {},
+        )
+    except Exception as _ac_err:
+        _fe_log(job_id, f"Attack chain reconstruction failed: {_ac_err}")
+        attack_chain = {}
+
     report = {
         "title": f"Find Evil Report — {case_name}",
         "generated_at": datetime.now().isoformat(),
@@ -2586,7 +2844,10 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "case_work_dir": str(case_work_dir),
         "failures": [f for f in findings_writer.all_records() if f.get("status") == "failed"],
         "investigation_status": "complete" if steps_failed == 0 else "complete_with_failures",
-        "confidence_modifiers": confidence_modifiers if confidence_modifiers is not None else [],
+        "confidence_modifiers": confidence_modifiers if 'confidence_modifiers' in dir() else [],
+        "classification": classification if 'classification' in dir() else "Unknown",
+        "evidence_inventory": {k: v for k, v in inventory.items() if isinstance(v, list)},
+        "attack_chain": attack_chain,
         "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
     }
 
@@ -3073,6 +3334,242 @@ HTML_TEMPLATE = r"""
             padding: 40px;
             color: #8b949e;
         }
+
+        /* Reports Tab */
+        #reports-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .reports-sidebar {
+            width: 280px;
+            flex-shrink: 0;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .reports-sidebar-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .reports-sidebar-header h3 {
+            color: #8b949e;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+        }
+
+        .import-btn {
+            padding: 5px 12px;
+            background: #21262d;
+            color: #58a6ff;
+            border: 1px solid #30363d;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+
+        .import-btn:hover {
+            background: #30363d;
+            border-color: #58a6ff;
+        }
+
+        .reports-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .report-entry {
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            border: 1px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .report-entry:hover { background: #21262d; border-color: #30363d; }
+        .report-entry.active { background: #21262d; border-color: #58a6ff; }
+
+        .report-entry-name {
+            font-weight: 600;
+            font-size: 0.88rem;
+            color: #c9d1d9;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .report-entry-meta {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+            flex-wrap: wrap;
+            font-size: 0.75rem;
+        }
+
+        .report-ts {
+            color: #6e7681;
+            font-size: 0.72rem;
+            margin-top: 3px;
+        }
+
+        .evil-badge {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .evil-badge.evil  { background: #da3633; color: white; }
+        .evil-badge.clean { background: #238636; color: white; }
+
+        .reports-viewer {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 28px;
+        }
+
+        .reports-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #8b949e;
+            font-size: 0.9rem;
+            text-align: center;
+            gap: 10px;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px 14px;
+        }
+
+        .stat-card .stat-label {
+            color: #8b949e;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+
+        .stat-card .stat-value {
+            color: #c9d1d9;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .report-section {
+            margin-bottom: 22px;
+        }
+
+        .report-section h3 {
+            color: #79c0ff;
+            font-size: 0.88rem;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .chain-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 14px 18px;
+        }
+
+        .chain-box p {
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            color: #c9d1d9;
+        }
+
+        .mitre-tag {
+            display: inline-block;
+            background: #21262d;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.78rem;
+            margin: 2px;
+            color: #a371f7;
+        }
+
+        .flag-box {
+            background: #1c2128;
+            border: 1px solid #da3633;
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+
+        .flag-box p {
+            color: #d29922;
+            font-size: 0.85rem;
+            margin-bottom: 3px;
+        }
+
+        .inv-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 8px;
+        }
+
+        .inv-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+
+        .inv-card .inv-type {
+            color: #8b949e;
+            font-size: 0.7rem;
+            text-transform: capitalize;
+        }
+
+        .inv-card .inv-count {
+            color: #58a6ff;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .raw-json-toggle {
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 5px 12px;
+            cursor: pointer;
+            font-size: 0.82rem;
+        }
+
+        .raw-json-toggle:hover { color: #c9d1d9; border-color: #8b949e; }
     </style>
 </head>
 <body>
@@ -3084,6 +3581,27 @@ HTML_TEMPLATE = r"""
     <div class="tabs">
         <div class="tab active" onclick="showTab('findevil')">🔍 Find Evil</div>
         <div class="tab" onclick="showTab('evidence')">📁 Evidence</div>
+        <div class="tab" onclick="showTab('reports')">📋 Reports</div>
+    </div>
+
+    <div id="reports" class="content">
+        <div id="reports-content">
+            <div class="reports-sidebar">
+                <div class="reports-sidebar-header">
+                    <h3>Past Cases</h3>
+                    <button class="import-btn" onclick="importReportJSON()">⬆ Import JSON</button>
+                </div>
+                <div class="reports-list" id="reports-list">
+                    <div style="padding:16px;color:#8b949e;font-size:0.82rem;">Select the Reports tab to load cases.</div>
+                </div>
+            </div>
+            <div class="reports-viewer" id="reports-viewer">
+                <div class="reports-placeholder">
+                    <div style="font-size:2rem;margin-bottom:8px;">📋</div>
+                    <div>Select a completed case from the sidebar<br>or import a JSON report file.</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="evidence" class="content">
@@ -3098,7 +3616,7 @@ HTML_TEMPLATE = r"""
             <!-- Top bar: evidence directory + run button -->
             <div class="fe-top-bar">
                 <label for="fe-evidence-dir">Evidence Directory</label>
-                <input type="text" id="fe-evidence-dir" placeholder="/path/to/evidence (leave blank for default)">
+                <input type="text" id="fe-evidence-dir" placeholder="Paste a folder name or full path…">
                 <button class="fe-run-btn" id="fe-run-btn" onclick="runFindEvil()">🔍 Run Find Evil</button>
             </div>
 
@@ -3160,12 +3678,267 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             return fetch(url, opts);
         }
 
+        // Evidence base directory (injected by server)
+        const EVIDENCE_BASE_DIR = '<!-- GEOFF_EVIDENCE_BASE_DIR -->';
+
+        // Pre-fill the evidence directory input with the server's base path
+        document.addEventListener('DOMContentLoaded', () => {
+            const inp = document.getElementById('fe-evidence-dir');
+            if (inp && EVIDENCE_BASE_DIR) inp.value = EVIDENCE_BASE_DIR;
+        });
+
         function showTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
             event.target.classList.add('active');
             document.getElementById(tab).classList.add('active');
             if (tab === 'evidence') loadEvidence();
+            if (tab === 'reports') loadReports();
+        }
+
+        // ---- Reports Tab ----
+
+        function _escHtml(s) {
+            return (s || '').toString()
+                .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        async function loadReports() {
+            const list = document.getElementById('reports-list');
+            list.innerHTML = '<div style="padding:12px;color:#8b949e;font-size:0.85rem;">Loading...</div>';
+            try {
+                const res = await authFetch('/reports');
+                const data = await res.json();
+                const reports = data.reports || [];
+                list.innerHTML = '';
+                if (reports.length === 0) {
+                    list.innerHTML = '<div style="padding:16px;color:#8b949e;font-size:0.82rem;line-height:1.6;">No completed reports yet.<br>Run Find Evil on an evidence directory to generate one.</div>';
+                    return;
+                }
+                reports.forEach(r => {
+                    const entry = document.createElement('div');
+                    entry.className = 'report-entry';
+                    entry.dataset.dir = r.dir;
+                    // Format timestamp: 20240115_120130 → 15/01/2024 12:01
+                    let ts = '';
+                    if (r.timestamp) {
+                        const m = r.timestamp.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})/);
+                        if (m) ts = m[3]+'/'+m[2]+'/'+m[1]+' '+m[4]+':'+m[5];
+                    }
+                    entry.innerHTML =
+                        '<div class="report-entry-name">' + _escHtml(r.case_name) + '</div>' +
+                        '<div class="report-entry-meta">' +
+                            '<span class="evil-badge ' + (r.evil_found ? 'evil' : 'clean') + '">' + (r.evil_found ? 'EVIL' : 'CLEAN') + '</span>' +
+                            '<span class="fe-severity ' + _escHtml(r.severity) + '" style="font-size:0.7rem;padding:1px 6px;">' + _escHtml(r.severity) + '</span>' +
+                        '</div>' +
+                        (ts ? '<div class="report-ts">' + ts + '</div>' : '');
+                    entry.addEventListener('click', () => {
+                        document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
+                        entry.classList.add('active');
+                        viewReport(r.dir, r.case_name);
+                    });
+                    list.appendChild(entry);
+                });
+            } catch(e) {
+                list.innerHTML = '<div style="padding:12px;color:#f85149;font-size:0.82rem;">Error: ' + _escHtml(e.message) + '</div>';
+            }
+        }
+
+        async function viewReport(caseDir, title) {
+            const viewer = document.getElementById('reports-viewer');
+            viewer.innerHTML = '<div class="reports-placeholder"><span>Loading report\u2026</span></div>';
+            try {
+                const res = await authFetch('/reports/' + encodeURIComponent(caseDir) + '/json');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const report = await res.json();
+                viewer.innerHTML = _renderReportHtml(report, title || caseDir);
+            } catch(e) {
+                viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Error: ' + _escHtml(e.message) + '</span></div>';
+            }
+        }
+
+        function importReportJSON() {
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = '.json,application/json';
+            inp.onchange = async (ev) => {
+                const file = ev.target.files[0];
+                if (!file) return;
+                const viewer = document.getElementById('reports-viewer');
+                viewer.innerHTML = '<div class="reports-placeholder"><span>Reading file\u2026</span></div>';
+                try {
+                    const text = await file.text();
+                    const report = JSON.parse(text);
+                    document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
+                    viewer.innerHTML = _renderReportHtml(report, file.name.replace(/\.json$/i, ''));
+                } catch(e) {
+                    viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#f85149;">Invalid JSON: ' + _escHtml(e.message) + '</span></div>';
+                }
+            };
+            inp.click();
+        }
+
+        function _renderReportHtml(report, title) {
+            const sev = report.severity || 'INFO';
+            const evil = report.evil_found;
+            const sevDist = report.severity_distribution || {};
+            const chain = report.attack_chain || {};
+            const mitreObs = chain.mitre_techniques_observed || [];
+            const pbs = report.playbooks_run || [];
+            const devMap = report.device_map || {};
+            const flags = report.behavioral_flags_summary || {};
+            const hits = report.indicator_hits || [];
+            const inv = report.evidence_inventory || {};
+            const failures = report.failures || [];
+            const totalFlags = Object.values(flags).reduce((a, b) => a + b, 0);
+
+            let h = '<div style="max-width:900px;">';
+
+            // Header
+            h += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;">';
+            h += '<h2 style="color:#58a6ff;font-size:1.2rem;margin:0;">' + _escHtml(title) + '</h2>';
+            h += '<span class="evil-badge ' + (evil ? 'evil' : 'clean') + '" style="font-size:0.85rem;padding:4px 12px;">' + (evil ? '\uD83D\uDD34 EVIL FOUND' : '\uD83D\uDFE2 CLEAN') + '</span>';
+            h += '<span class="fe-severity ' + _escHtml(sev) + '">' + _escHtml(sev) + '</span>';
+            h += '</div>';
+
+            // Key stats
+            const elapsed = ((report.elapsed_seconds || 0)).toFixed(1);
+            const stepsFailed = pbs.reduce((a, pb) => a + (pb.steps_failed || 0), 0);
+            h += '<div class="stat-grid">';
+            [
+                ['Classification', report.classification || '\u2014'],
+                ['OS', report.os_type || '\u2014'],
+                ['Elapsed', elapsed + 's'],
+                ['Playbooks Run', pbs.length],
+                ['Critic Approval', (report.critic_approval_pct || 0) + '%'],
+                ['Steps Failed', stepsFailed],
+            ].forEach(([label, val]) => {
+                h += '<div class="stat-card"><div class="stat-label">' + label + '</div><div class="stat-value">' + _escHtml(String(val)) + '</div></div>';
+            });
+            h += '</div>';
+
+            // Severity distribution
+            const hasSev = Object.values(sevDist).some(v => v > 0);
+            if (hasSev) {
+                h += '<div class="report-section"><h3>Indicator Distribution</h3><div style="display:flex;gap:8px;flex-wrap:wrap;">';
+                for (const [k, v] of Object.entries(sevDist)) {
+                    if (v > 0) h += '<span class="fe-severity ' + _escHtml(k) + '">' + _escHtml(k) + ': ' + v + '</span>';
+                }
+                h += '</div></div>';
+            }
+
+            // Attack chain
+            if (chain.dwell_days !== undefined || (chain.lateral_movement_path || []).length || mitreObs.length) {
+                h += '<div class="report-section"><h3 style="color:#d29922;">\u26D3 Attack Chain</h3><div class="chain-box">';
+                if (chain.first_seen_ts) h += '<p><strong>First Seen:</strong> ' + _escHtml(chain.first_seen_ts) + '</p>';
+                if (chain.last_seen_ts)  h += '<p><strong>Last Seen:</strong> '  + _escHtml(chain.last_seen_ts)  + '</p>';
+                if (chain.dwell_days !== undefined) h += '<p><strong>Dwell Time:</strong> ' + chain.dwell_days + ' days</p>';
+                if ((chain.lateral_movement_path || []).length)
+                    h += '<p><strong>Lateral Movement:</strong> ' + chain.lateral_movement_path.map(_escHtml).join(' \u2192 ') + '</p>';
+                if ((chain.kill_chain_phases || []).length)
+                    h += '<p><strong>Kill Chain:</strong> ' + chain.kill_chain_phases.map(_escHtml).join(', ') + '</p>';
+                if (mitreObs.length) {
+                    h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#8b949e;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
+                    h += mitreObs.map(t => '<span class="mitre-tag">' + _escHtml(t) + '</span>').join('');
+                    h += '</div></div>';
+                }
+                h += '</div></div>';
+            }
+
+            // Playbooks
+            if (pbs.length > 0) {
+                h += '<div class="report-section"><h3>Playbooks</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Playbook</th><th>Completed</th><th>Skipped</th><th>Failed</th></tr>';
+                pbs.forEach(pb => {
+                    h += '<tr><td>' + _escHtml(pb.playbook_id) + '</td>'
+                       + '<td class="' + (pb.steps_completed > 0 ? 'completed' : '') + '">' + (pb.steps_completed||0) + '</td>'
+                       + '<td class="' + (pb.steps_skipped  > 0 ? 'skipped'   : '') + '">' + (pb.steps_skipped ||0) + '</td>'
+                       + '<td class="' + (pb.steps_failed   > 0 ? 'failed'    : '') + '">' + (pb.steps_failed  ||0) + '</td></tr>';
+                });
+                h += '</table></div>';
+            }
+
+            // Devices
+            if (Object.keys(devMap).length > 0) {
+                h += '<div class="report-section"><h3>Devices Discovered</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Device</th><th>Type</th><th>Owner</th><th>OS</th><th>Files</th></tr>';
+                for (const [devId, dev] of Object.entries(devMap)) {
+                    h += '<tr><td>' + _escHtml(devId) + '</td>'
+                       + '<td>' + _escHtml(dev.device_type||'\u2014') + '</td>'
+                       + '<td>' + _escHtml(dev.owner||'\u2014') + '</td>'
+                       + '<td>' + _escHtml(dev.os_type||'\u2014') + '</td>'
+                       + '<td>' + (dev.evidence_files ? dev.evidence_files.length : 0) + '</td></tr>';
+                }
+                h += '</table></div>';
+            }
+
+            // Behavioral flags
+            if (totalFlags > 0) {
+                h += '<div class="report-section"><h3 style="color:#f85149;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
+                for (const [devId, count] of Object.entries(flags)) {
+                    if (count > 0) h += '<p>' + _escHtml(devId) + ': ' + count + ' flag' + (count !== 1 ? 's' : '') + '</p>';
+                }
+                h += '</div></div>';
+            }
+
+            // Indicator hits
+            if (hits.length > 0) {
+                h += '<div class="report-section"><h3>Indicator Hits (' + hits.length + ')</h3>';
+                h += '<div style="max-height:280px;overflow-y:auto;border:1px solid #21262d;border-radius:6px;">';
+                h += '<table class="fe-pb-table" style="margin-top:0;"><tr><th>Category</th><th>Pattern</th><th>Severity</th><th>File</th></tr>';
+                const shown = hits.slice(0, 100);
+                shown.forEach(hit => {
+                    const sc = hit.severity || 'INFO';
+                    const fileParts = (hit.file || '').replace(/\\/g,'/').split('/');
+                    const shortFile = fileParts.slice(-2).join('/');
+                    h += '<tr>'
+                       + '<td>' + _escHtml(hit.category||'') + '</td>'
+                       + '<td><code style="font-size:0.8rem;">' + _escHtml(hit.pattern||'') + '</code></td>'
+                       + '<td><span class="fe-severity ' + sc + '" style="font-size:0.7rem;padding:1px 5px;">' + sc + '</span></td>'
+                       + '<td style="font-size:0.78rem;color:#8b949e;" title="' + _escHtml(hit.file||'') + '">' + _escHtml(shortFile) + '</td>'
+                       + '</tr>';
+                });
+                if (hits.length > 100) h += '<tr><td colspan="4" style="color:#8b949e;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
+                h += '</table></div></div>';
+            }
+
+            // Evidence inventory
+            const hasInv = Object.values(inv).some(v => Array.isArray(v) && v.length > 0);
+            if (hasInv) {
+                h += '<div class="report-section"><h3>Evidence Inventory</h3><div class="inv-grid">';
+                for (const [type, items] of Object.entries(inv)) {
+                    if (Array.isArray(items) && items.length > 0) {
+                        h += '<div class="inv-card">'
+                           + '<div class="inv-type">' + _escHtml(type.replace(/_/g,' ')) + '</div>'
+                           + '<div class="inv-count">' + items.length + '</div>'
+                           + '</div>';
+                    }
+                }
+                h += '</div></div>';
+            }
+
+            // Failures
+            if (failures.length > 0) {
+                h += '<div class="report-section"><h3 style="color:#f85149;">Failed Steps (' + failures.length + ')</h3>';
+                failures.slice(0, 15).forEach(f => {
+                    h += '<div style="background:#1c1c1c;border:1px solid #30363d;border-radius:4px;padding:6px 10px;margin-bottom:4px;font-size:0.82rem;">'
+                       + '<span style="color:#f85149;">' + _escHtml((f.playbook||'') + ' / ' + (f.step||'')) + '</span>'
+                       + (f.error ? '<span style="color:#8b949e;"> \u2014 ' + _escHtml(f.error) + '</span>' : '')
+                       + '</div>';
+                });
+                h += '</div>';
+            }
+
+            // Raw JSON toggle
+            h += '<div class="report-section">';
+            h += '<button class="raw-json-toggle" onclick="var p=this.nextElementSibling;p.style.display=p.style.display===\'none\'?\'block\':\'none\';this.textContent=p.style.display===\'none\'?\'{ } Show Raw JSON\':\'{ } Hide Raw JSON\';">{ } Show Raw JSON</button>';
+            h += '<pre style="display:none;margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:14px;overflow:auto;font-size:0.75rem;color:#8b949e;max-height:400px;">'
+               + _escHtml(JSON.stringify(report, null, 2)) + '</pre>';
+            h += '</div>';
+
+            h += '</div>';
+            return h;
         }
 
         // Append a message bubble to the unified output area and scroll to bottom.
@@ -3309,6 +4082,21 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
                     const header = document.createElement('div');
                     header.className = 'case-header';
+                    header.title = 'Click to load this case into Find Evil';
+                    header.style.cursor = 'pointer';
+
+                    const fullPath = EVIDENCE_BASE_DIR
+                        ? EVIDENCE_BASE_DIR.replace(/\/+$/, '') + '/' + caseName
+                        : caseName;
+
+                    header.addEventListener('click', () => {
+                        document.getElementById('fe-evidence-dir').value = fullPath;
+                        // Switch to Find Evil tab
+                        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.tab[onclick*="findevil"]').classList.add('active');
+                        document.getElementById('findevil').classList.add('active');
+                    });
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'case-name';
@@ -3318,8 +4106,23 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     countSpan.className = 'case-count';
                     countSpan.textContent = files.length + ' items';
 
+                    const investigateBtn = document.createElement('button');
+                    investigateBtn.textContent = '🔍 Investigate';
+                    investigateBtn.style.cssText = 'margin-left:8px;padding:2px 8px;font-size:11px;cursor:pointer;background:#238636;color:#fff;border:none;border-radius:4px;';
+                    investigateBtn.title = 'Load into Find Evil and run';
+                    investigateBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        document.getElementById('fe-evidence-dir').value = fullPath;
+                        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+                        document.querySelector('.tab[onclick*="findevil"]').classList.add('active');
+                        document.getElementById('findevil').classList.add('active');
+                        runFindEvil();
+                    });
+
                     header.appendChild(nameSpan);
                     header.appendChild(countSpan);
+                    header.appendChild(investigateBtn);
 
                     const filesDiv = document.createElement('div');
                     filesDiv.className = 'case-files';
@@ -3679,7 +4482,12 @@ def index():
         f'<meta name="geoff-api-key" content="{GEOFF_API_KEY}">'
         if GEOFF_API_KEY else ''
     )
-    return render_template_string(HTML_TEMPLATE.replace('<!-- GEOFF_API_KEY_META -->', key_meta))
+    evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
+    return render_template_string(
+        HTML_TEMPLATE
+        .replace('<!-- GEOFF_API_KEY_META -->', key_meta)
+        .replace('<!-- GEOFF_EVIDENCE_BASE_DIR -->', evidence_base_js)
+    )
 
 
 @app.route('/chat', methods=['POST'])
@@ -3933,6 +4741,59 @@ def get_case_report(case_name):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/reports', methods=['GET'])
+@_require_auth
+def list_reports():
+    """List completed Find Evil cases that have a saved JSON report."""
+    cases_root = Path(CASES_WORK_DIR)
+    reports = []
+    if cases_root.exists():
+        for d in sorted(cases_root.iterdir(), reverse=True):
+            if not d.is_dir():
+                continue
+            report_file = d / "reports" / "find_evil_report.json"
+            if not report_file.exists():
+                continue
+            try:
+                with open(report_file) as f:
+                    data = json.load(f)
+                # Directory name pattern: {case_name}_findevil_{timestamp}
+                dir_name = d.name
+                parts = dir_name.rsplit('_findevil_', 1)
+                case_display = parts[0] if len(parts) == 2 else dir_name
+                timestamp_str = parts[1] if len(parts) == 2 else ''
+                reports.append({
+                    'dir': dir_name,
+                    'case_name': case_display,
+                    'timestamp': timestamp_str,
+                    'evil_found': data.get('evil_found', False),
+                    'severity': data.get('severity', 'INFO'),
+                    'classification': data.get('classification', ''),
+                    'elapsed_seconds': data.get('elapsed_seconds', 0),
+                    'evidence_dir': data.get('evidence_dir', ''),
+                })
+            except (OSError, json.JSONDecodeError, KeyError):
+                continue
+    return jsonify({'reports': reports})
+
+
+@app.route('/reports/<case_dir>/json', methods=['GET'])
+@_require_auth
+def get_report_json(case_dir):
+    """Serve the find_evil_report.json for a specific case directory."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+    report_file = Path(CASES_WORK_DIR) / safe_dir / "reports" / "find_evil_report.json"
+    if not report_file.exists():
+        return jsonify({'error': 'Report not found'}), 404
+    try:
+        content = report_file.read_text(encoding='utf-8')
+        return content, 200, {'Content-Type': 'application/json; charset=utf-8'}
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/tools', methods=['GET'])
 @_require_auth
 def list_tools():
@@ -4062,6 +4923,15 @@ def find_evil_route():
     try:
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
+
+        # If not an absolute path or doesn't exist as-is, try joining with EVIDENCE_BASE_DIR
+        # so the user can paste just a folder name from the evidence tab (e.g. "IR-016-CloudJack")
+        if evidence_dir and not Path(evidence_dir).is_absolute():
+            evidence_dir = os.path.join(EVIDENCE_BASE_DIR, evidence_dir)
+        elif evidence_dir and not Path(evidence_dir).exists() and EVIDENCE_BASE_DIR:
+            candidate = os.path.join(EVIDENCE_BASE_DIR, os.path.basename(evidence_dir))
+            if Path(candidate).exists():
+                evidence_dir = candidate
 
         # Reject paths containing shell metacharacters
         try:

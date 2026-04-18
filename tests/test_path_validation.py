@@ -24,6 +24,14 @@ def _get_validate():
     return geoff_integrated._validate_evidence_path
 
 
+@pytest.fixture(autouse=True)
+def _no_base_dir_restriction(monkeypatch):
+    """Disable the base-directory restriction so tests focus on metachar rejection."""
+    import geoff_integrated
+    monkeypatch.setattr(geoff_integrated, 'EVIDENCE_BASE_DIR', '')
+    monkeypatch.setattr(geoff_integrated, 'CASES_WORK_DIR', '')
+
+
 # ---------------------------------------------------------------------------
 # Valid paths — must be returned unchanged
 # ---------------------------------------------------------------------------
