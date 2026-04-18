@@ -503,6 +503,83 @@ Every investigation is fully reproducible:
 
 ---
 
+## MCP Server
+
+Geoff exposes all forensic capabilities as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server, allowing any MCP-compatible AI client (Claude Desktop, custom agents) to invoke the full investigation pipeline remotely.
+
+### Starting the MCP Server
+
+```bash
+# HTTP transport (default — remote clients, Claude Desktop)
+python src/geoff_mcp_server.py
+
+# Custom host/port
+python src/geoff_mcp_server.py --host 127.0.0.1 --port 9999
+
+# stdio transport (local clients, direct pipe)
+python src/geoff_mcp_server.py --stdio
+```
+
+MCP endpoint: `http://<host>:9999/mcp`
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `start_find_evil` | Launch a full triage investigation; returns `job_id` immediately |
+| `get_job_status` | Poll progress of a running investigation |
+| `list_cases` | List all evidence cases with file trees |
+| `list_evidence` | List evidence files (optionally scoped to a case) |
+| `get_case_report` | Fetch the Markdown narrative report for a completed case |
+| `get_findings` | Fetch the structured JSON findings for a completed case |
+| `list_playbooks` | List all 19+ SIFT playbooks with IDs and names |
+| `chat` | Send a reasoning question to Geoff's LLM layer |
+| `disk_analyze` | Call a SleuthKit specialist function directly |
+| `memory_analyze` | Call a Volatility memory analysis function directly |
+| `registry_analyze` | Call a RegRipper registry analysis function directly |
+| `network_analyze` | Call a Zeek/tshark network analysis function directly |
+| `log_analyze` | Call a log analysis function directly (EVTX, syslog, auth.log) |
+| `malware_analyze` | Call a REMnux/YARA malware analysis function directly |
+| `timeline_analyze` | Call a Plaso super-timeline function directly |
+| `browser_analyze` | Call a browser forensics function directly |
+| `run_specialist` | Generic dispatcher — call any module/function pair |
+
+### Example: Full Investigation via MCP
+
+```python
+# 1. Start investigation
+result = mcp_client.call_tool("start_find_evil", {"evidence_dir": "/cases/IR-016"})
+job_id = result["job_id"]
+
+# 2. Poll until complete
+while True:
+    status = mcp_client.call_tool("get_job_status", {"job_id": job_id})
+    if status["status"] in ("complete", "error"):
+        break
+    time.sleep(10)
+
+# 3. Retrieve narrative report
+report = mcp_client.call_tool("get_case_report", {"case_name": "IR-016"})
+print(report["report"])
+```
+
+### Claude Desktop Integration
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "geoff-dfir": {
+      "command": "python",
+      "args": ["/path/to/Geoff/src/geoff_mcp_server.py", "--stdio"]
+    }
+  }
+}
+```
+
+---
+
 ## Quick Start
 
 ### Installation
