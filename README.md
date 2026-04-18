@@ -32,13 +32,16 @@ GEOFF is a **multi-agent conversational DFIR platform** with three specialized A
 
 **Workflow:**
 ```
-User → Manager → Forensicator → Tools → Critic → Git → Report
+User → Manager → Forensicator → Tools → Critic ──────────────── Git → Report
+                                              ↓                       ↑
+                                    Self-Correction Loop  ────────────┘
+                                    (Manager revises if Critic rejects)
                                               ↓
                                     Behavioral Analyzer
                                               ↓
                                     Super Timeline + Correlation
                                               ↓
-                                    Narrative Report (LLM-written)
+                                    Narrative Report (LLM-written, artifact-cited)
 ```
 
 ---
@@ -95,7 +98,7 @@ Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 
 **Super Timeline:** Unified timeline across all devices and evidence types — Plaso events, EVTX logs, SleuthKit file timestamps, network connections — all normalized to a common schema, sorted, and tagged with device_id and behavioral flags.
 
-**Narrative Reports:** LLM-generated human-readable investigation reports with executive summary, per-user narratives, timeline of significant events, and recommendations.
+**Narrative Reports:** LLM-generated human-readable investigation reports with executive summary, per-user narratives, timeline of significant events, and recommendations. All claims in the Attack Chain Synthesis are required to cite a specific evidence anchor (tool + artifact + finding) from the find_evil pipeline. The narrative is prohibited from speculating beyond verified evidence.
 
 ---
 
@@ -165,14 +168,15 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 
 1. **Inventory** — catalog every artifact (disk images, memory dumps, pcaps, logs, registry hives, mobile backups)
 2. **Device Discovery** — group evidence by device, extract hostnames, identify owners, build device_map and user_map
-3. **Triage** — PB-SIFT-000 rapid indicator scan, generates execution plan
+3. **Triage** — PB-SIFT-000 rapid indicator scan; Manager LLM reviews and approves execution plan
 4. **Playbook Execution** (per-device) — run each selected playbook against each device's evidence
-5. **Super Timeline** — unified timeline across all devices and evidence types
-6. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
-7. **Host Correlation** — cross-device user activity, lateral movement detection
-8. **Critic Validation** — every step validated for hallucinations and accuracy
-9. **Narrative Report** — LLM-written human-readable report
-10. **Git Commit** — every step committed for full reproducibility
+5. **Forensicator Interpretation** — for each completed step, Forensicator LLM assesses significance and builds `evidence_chain` with specific artifact, tool, and finding
+6. **Critic Validation + Self-Correction** — every step validated; on failure, Manager generates a corrected analysis and Critic re-validates; only demotes to `completed_unverified` if correction also fails
+7. **Super Timeline** — unified timeline across all devices and evidence types
+8. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
+9. **Host Correlation** — cross-device user activity, lateral movement detection
+10. **Narrative Report** — LLM-written investigative narrative with explicit artifact citations from evidence anchors
+11. **Git Commit** — every step committed for full reproducibility
 
 ### What Triggers Each Playbook
 
@@ -321,15 +325,62 @@ Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary 
 
 ---
 
+## Competition Compliance
+
+GEOFF is designed to meet three core requirements for autonomous forensic investigation:
+
+### Self-Correction
+
+The agent detects and resolves errors or inconsistencies in its own output **without human intervention**:
+
+**In `find_evil()`:** When the Critic rejects a step (`passes_sanity=False`), the Manager LLM is called to generate a corrected analysis grounded only in what the tool output actually shows. The Critic re-validates the corrected analysis. If it passes, the step is accepted and marked `self_corrected: true`. Only if the correction also fails is the step demoted to `completed_unverified`. The original and corrected analyses are both stored in the step record.
+
+**In chat:** After each LLM response, a lightweight grounding check verifies the response does not assert claims absent from the available case context. If unsupported claims are detected, the response is regenerated once with an explicit correction prompt before being returned to the user.
+
+### Accuracy Validation
+
+All findings are traceable to specific artifacts, files, offsets, and log entries:
+
+- **Evidence chain:** Every completed `find_evil` step record includes an `evidence_chain` dict:
+  ```json
+  {
+    "artifact": "fls_list_files",
+    "evidence_file": "/evidence/disk.E01",
+    "tool": "sleuthkit.fls_list_files",
+    "playbook": "PB-SIFT-002",
+    "significance": "HIGH",
+    "analyst_note": "Output shows cmd.exe spawned from winword.exe at inode 54321",
+    "threat_indicators": ["cmd.exe spawned from Office process"]
+  }
+  ```
+- **Narrative citations:** The attack chain synthesis receives the top 30 CRITICAL/HIGH evidence anchors and is required to cite each factual claim as `(source: <tool> on <file>)`.
+- **Chat accuracy:** The GEOFF_PROMPT requires that every assertion names the source artifact, tool used, and specific observed value. Inferences use qualified language ("appears to", "consistent with").
+
+### Analytical Reasoning
+
+Output is structured as an investigative narrative, not a raw execution log:
+
+- **GEOFF_PROMPT** enforces a Hypothesis → Evidence → Assessment structure for all chat responses. Claims without evidence citations are prohibited.
+- **Narrative reports** require investigative prose with explicit evidence citations in each section — Attack Narrative, Key Evidence, MITRE mapping, and Recommended Actions all anchor to named artifacts from the evidence chain.
+- **Attack chain synthesis** is prohibited from speculating beyond the verified evidence anchors; it must write "Insufficient evidence to assess" for sections not supported by the data.
+
+---
+
 ## The Critic Pipeline
 
 Every tool execution is validated:
 
 ```
-Forensicator Output → Critic Validation → Git Commit
-       ↓                    ↓                  ↓
-  Raw output        Hallucination       validations/
-  interpreted       detection           <step_key>.json
+Forensicator Output → Critic Validation ─── pass ──→ Git Commit
+       ↓                    ↓
+  Raw output              fail
+  interpreted               ↓
+                    Manager Self-Correction
+                    (revised analysis)
+                            ↓
+                    Critic Re-Validation ─── pass ──→ completed_corrected
+                            ↓ fail
+                    completed_unverified (needs_review: true)
 ```
 
 **Critic checks for:**
@@ -340,7 +391,7 @@ Forensicator Output → Critic Validation → Git Commit
 
 **IOC Format Validation:** The critic validates extracted IOCs against expected formats — IP addresses, MD5/SHA1/SHA256 hashes, URLs, and email addresses.
 
-**Mandatory validation:** If the Critic is unavailable or errors, the step is flagged `needs_review: true` rather than silently accepted. The final report includes a `steps_needs_review` count. Steps are never silently passed without validation.
+**Mandatory validation:** If the Critic is unavailable or errors, the step is flagged `needs_review: true` rather than silently accepted. The final report includes a `steps_needs_review` count and `steps_unverified` count. Steps are never silently passed without validation.
 
 ---
 
