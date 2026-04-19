@@ -298,7 +298,10 @@ def get_findings(case_name: str) -> Dict[str, Any]:
     if candidate is None:
         return {"error": f"No findings JSON for case: {case_name}"}
 
-    with open(candidate / "reports" / "find_evil_report.json") as f:
+    json_path = candidate / "reports" / "find_evil_report.json"
+    if json_path.stat().st_size > 100 * 1024 * 1024:
+        return {"error": "Report too large to serve via MCP"}
+    with open(json_path) as f:
         return {"case_dir": candidate.name, "findings": json.load(f)}
 
 

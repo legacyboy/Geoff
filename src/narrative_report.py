@@ -17,11 +17,13 @@ from typing import Dict, List, Any, Callable, Optional
 def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
     """Sanitize a value before embedding it in an LLM prompt.
 
-    Strips newlines (prevent prompt structure breaks) and truncates to avoid
-    context bloat.  Returns a plain string safe for f-string interpolation.
+    Strips newlines and carriage returns (prevent prompt structure breaks),
+    escapes backslashes and double-quotes (prevent injection via IOC values
+    such as URLs containing quote chars), and truncates to avoid context bloat.
     """
     s = str(value) if value is not None else ""
     s = s.replace("\n", " ").replace("\r", " ")
+    s = s.replace("\\", "\\\\").replace('"', '\\"')
     return s[:max_len]
 
 
