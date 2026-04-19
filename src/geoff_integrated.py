@@ -5333,6 +5333,27 @@ def list_tools():
     return jsonify({'tools': get_available_tools_status()})
 
 
+@app.route('/health/detailed', methods=['GET'])
+@_require_auth
+def health_detailed():
+    """Run the full self-check and return JSON results."""
+    try:
+        from geoff_selfcheck import run_all_checks
+        results = run_all_checks(
+            ollama_url=ollama_base_url(),
+            api_key=OLLAMA_API_KEY,
+            agent_models=AGENT_MODELS,
+            evidence_base=EVIDENCE_BASE_DIR,
+            cases_work=CASES_WORK_DIR,
+        )
+        has_fail = any(r["status"] == "fail" for r in results)
+        has_warn = any(r["status"] == "warn" for r in results)
+        overall = "fail" if has_fail else "warn" if has_warn else "pass"
+        return jsonify({"overall": overall, "checks": results})
+    except Exception as e:
+        return jsonify({"overall": "error", "error": str(e)}), 500
+
+
 _ALLOWED_TOOL_FUNCTIONS: dict = {
     'sleuthkit':  {'analyze_partition_table', 'list_inodes', 'list_deleted', 'extract_file',
                    'list_files', 'list_files_mactime', 'get_file_info', 'analyze_filesystem'},
@@ -5664,4 +5685,18 @@ if __name__ == '__main__':
         print(f'Auth: local (ollama signin)')
     print(f'Models: manager={AGENT_MODELS["manager"]} forensicator={AGENT_MODELS["forensicator"]} critic={AGENT_MODELS["critic"]}')
     print(f'REMnux orchestrator: loaded')
+
+    # Self-check: verify tools, Ollama, and directories before serving
+    try:
+        from geoff_selfcheck import startup_check
+        startup_check(
+            ollama_url=ollama_base_url(),
+            api_key=OLLAMA_API_KEY,
+            agent_models=AGENT_MODELS,
+            evidence_base=EVIDENCE_BASE_DIR,
+            cases_work=CASES_WORK_DIR,
+        )
+    except Exception as _sc_err:
+        print(f'[Geoff] Self-check unavailable: {_sc_err}', file=sys.stderr)
+
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
