@@ -2283,6 +2283,660 @@ class MOBILE_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+    # -- iOS extended extraction ------------------------------------------------
+
+    def extract_ios_contacts(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract contacts from iOS backup (AddressBook.sqlitedb)."""
+        backup_path = Path(backup_dir)
+        db_path = self._get_ios_file_path(
+            backup_path, 'HomeDomain', 'Library/AddressBook/AddressBook.sqlitedb'
+        )
+        if db_path is None:
+            return {
+                'tool': 'ios_contacts', 'status': 'not_found',
+                'message': 'AddressBook.sqlitedb not found in backup',
+                'backup_dir': backup_dir,
+            }
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            contacts: List[Dict[str, Any]] = []
+            try:
+                rows = conn.execute("""
+                    SELECT p.ROWID, p.First, p.Last, p.Organization,
+                           p.CreationDate, p.ModificationDate,
+                           mv.value, mv.label, mv.property
+                    FROM ABPerson p
+                    LEFT JOIN ABMultiValue mv ON p.ROWID = mv.record_id
+                    ORDER BY p.ROWID, mv.property
+                    LIMIT 2000
+                """).fetchall()
+                seen: Dict[int, Dict[str, Any]] = {}
+                for r in rows:
+                    rid = r['ROWID']
+                    if rid not in seen:
+                        seen[rid] = {
+                            'first': r['First'] or '',
+                            'last': r['Last'] or '',
+                            'organization': r['Organization'] or '',
+                            'created': self._mac_ts_to_iso(r['CreationDate']),
+                            'modified': self._mac_ts_to_iso(r['ModificationDate']),
+                            'phones': [],
+                            'emails': [],
+                        }
+                    if r['value']:
+                        prop = r['property']
+                        if prop == 3:    # phone
+                            seen[rid]['phones'].append(r['value'])
+                        elif prop == 4:  # email
+                            seen[rid]['emails'].append(r['value'])
+                contacts = list(seen.values())
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'ios_contacts', 'status': 'error', 'error': str(inner),
+                        'backup_dir': backup_dir}
+            conn.close()
+            return {
+                'tool': 'ios_contacts', 'status': 'success',
+                'backup_dir': backup_dir,
+                'contact_count': len(contacts),
+                'contacts': contacts,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ios_contacts', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+
+    def extract_ios_location(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract location history from iOS backup (routined Local.sqlite + Maps GeoHistory)."""
+        backup_path = Path(backup_dir)
+        locations: List[Dict[str, Any]] = []
+
+        # Primary: routined significant visit locations
+        routined_db = self._get_ios_file_path(
+            backup_path, 'HomeDomain',
+            'Library/Caches/com.apple.routined/Local.sqlite'
+        )
+        if routined_db:
+            try:
+                conn = sqlite3.connect(f"file:{routined_db}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute("""
+                        SELECT ZLATITUDE, ZLONGITUDE, ZENTER, ZLEAVE,
+                               ZCONFIDENCE, ZCUSTOMLABEL
+                        FROM ZRTVISIT
+                        ORDER BY ZENTER DESC LIMIT 500
+                    """).fetchall()
+                    for r in rows:
+                        locations.append({
+                            'latitude': r['ZLATITUDE'] or 0.0,
+                            'longitude': r['ZLONGITUDE'] or 0.0,
+                            'enter': self._mac_ts_to_iso(r['ZENTER']),
+                            'leave': self._mac_ts_to_iso(r['ZLEAVE']),
+                            'confidence': r['ZCONFIDENCE'] or 0,
+                            'label': r['ZCUSTOMLABEL'] or '',
+                            'source': 'routined',
+                        })
+                except Exception:
+                    pass
+                conn.close()
+            except Exception:
+                pass
+
+        # Secondary: Maps GeoHistory plist
+        mapsdata = self._get_ios_file_path(
+            backup_path, 'AppDomain-com.apple.Maps',
+            'Library/Maps/GeoHistory.mapsdata'
+        )
+        if mapsdata:
+            try:
+                with open(mapsdata, 'rb') as f:
+                    geo = plistlib.load(f)
+                for entry in geo.get('visits', geo.get('locations', []))[:200]:
+                    locations.append({
+                        'latitude': entry.get('latitude', entry.get('lat', 0.0)),
+                        'longitude': entry.get('longitude', entry.get('lon', 0.0)),
+                        'enter': str(entry.get('arrivalDate', '')),
+                        'leave': str(entry.get('departureDate', '')),
+                        'source': 'maps_geohistory',
+                    })
+            except Exception:
+                pass
+
+        return {
+            'tool': 'ios_location_history', 'status': 'success',
+            'backup_dir': backup_dir,
+            'location_count': len(locations),
+            'locations': locations,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_ios_mail(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract messages from iOS Mail.app (Envelope Index database)."""
+        backup_path = Path(backup_dir)
+        db_path = self._get_ios_file_path(
+            backup_path, 'AppDomain-com.apple.mobilemail',
+            'Library/Mail/Envelope Index'
+        )
+        if db_path is None:
+            return {
+                'tool': 'ios_mail', 'status': 'not_found',
+                'message': 'Mail Envelope Index not found in backup',
+                'backup_dir': backup_dir,
+            }
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            messages: List[Dict[str, Any]] = []
+            try:
+                # Build mailbox id→url map
+                mailboxes: Dict[int, str] = {}
+                try:
+                    for mb in conn.execute("SELECT ROWID, url FROM mailboxes LIMIT 100"):
+                        mailboxes[mb['ROWID']] = mb['url'] or ''
+                except Exception:
+                    pass
+
+                rows = conn.execute("""
+                    SELECT m.ROWID, m.subject, m.sender, m.date_received,
+                           m.date_sent, m.read, m.flagged, m.mailbox, m.remote_id
+                    FROM messages m
+                    ORDER BY m.date_received DESC LIMIT 500
+                """).fetchall()
+                for r in rows:
+                    messages.append({
+                        'rowid': r['ROWID'],
+                        'subject': r['subject'] or '',
+                        'sender': r['sender'] or '',
+                        'date_received': self._mac_ts_to_iso(r['date_received']),
+                        'date_sent': self._mac_ts_to_iso(r['date_sent']),
+                        'read': bool(r['read']),
+                        'flagged': bool(r['flagged']),
+                        'mailbox': mailboxes.get(r['mailbox'], str(r['mailbox'])),
+                        'remote_id': r['remote_id'] or '',
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'ios_mail', 'status': 'error', 'error': str(inner),
+                        'backup_dir': backup_dir}
+            conn.close()
+            return {
+                'tool': 'ios_mail', 'status': 'success',
+                'backup_dir': backup_dir,
+                'message_count': len(messages),
+                'messages': messages,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ios_mail', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+
+    # -- Android extended extraction ----------------------------------------
+
+    def extract_android_email(self, data_dir: str) -> Dict[str, Any]:
+        """Extract emails from Android mail app databases (Gmail, Samsung Mail, AOSP Mail)."""
+        data_path = Path(data_dir)
+        messages: List[Dict[str, Any]] = []
+        source_db: str = ''
+
+        # Gmail: mailstore.<account>.db
+        gmail_dbs = list(data_path.rglob('mailstore.*.db'))
+        if gmail_dbs:
+            db_path = gmail_dbs[0]
+            source_db = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {r[0] for r in cursor.fetchall()}
+                msg_table = 'messages' if 'messages' in tables else (
+                    'conversation_messages' if 'conversation_messages' in tables else None
+                )
+                if msg_table:
+                    rows = cursor.execute(
+                        f"SELECT * FROM {msg_table} ORDER BY dateSentMs DESC LIMIT 500"  # noqa: S608
+                    ).fetchall()
+                    keys = [d[0] for d in cursor.description]
+                    for r in rows:
+                        rd = dict(zip(keys, r))
+                        ts = rd.get('dateSentMs', rd.get('date', 0))
+                        messages.append({
+                            'from': rd.get('fromAddress', rd.get('from', '')),
+                            'to': rd.get('toAddresses', rd.get('to', '')),
+                            'subject': rd.get('subject', ''),
+                            'snippet': rd.get('snippet', ''),
+                            'timestamp': datetime.utcfromtimestamp(int(ts) / 1000).isoformat() if ts else '',
+                            'read': bool(rd.get('read', 0)),
+                            'source': 'gmail',
+                        })
+                conn.close()
+            except Exception:
+                pass
+
+        # Samsung / AOSP Email provider
+        if not messages:
+            for db_name in ('EmailProviderBody.db', 'EmailProvider.db', 'email.db'):
+                db_path_alt = self._find_db(data_path, db_name)
+                if db_path_alt is None:
+                    continue
+                source_db = str(db_path_alt)
+                try:
+                    conn = sqlite3.connect(f"file:{db_path_alt}?mode=ro", uri=True, timeout=5)
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(
+                        "SELECT fromList, toList, subject, timeStamp, flagRead "
+                        "FROM Message ORDER BY timeStamp DESC LIMIT 500"
+                    ).fetchall()
+                    for r in rows:
+                        ts = r['timeStamp']
+                        messages.append({
+                            'from': r['fromList'] or '',
+                            'to': r['toList'] or '',
+                            'subject': r['subject'] or '',
+                            'timestamp': datetime.utcfromtimestamp(int(ts) / 1000).isoformat() if ts else '',
+                            'read': bool(r['flagRead']),
+                            'source': db_name,
+                        })
+                    conn.close()
+                    break
+                except Exception:
+                    pass
+
+        return {
+            'tool': 'android_email', 'status': 'success',
+            'data_dir': data_dir,
+            'source_db': source_db,
+            'message_count': len(messages),
+            'messages': messages,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    # -- Cross-platform extraction ------------------------------------------
+
+    def extract_mobile_photo_exif(self, source_dir: str, platform: str = 'ios') -> Dict[str, Any]:
+        """Extract EXIF metadata and GPS coordinates from mobile device photos."""
+        source_path = Path(source_dir)
+        photos: List[Dict[str, Any]] = []
+
+        # Prefer exiftool for comprehensive metadata
+        exiftool_bin = shutil.which('exiftool')
+        if exiftool_bin:
+            try:
+                r = subprocess.run(
+                    [exiftool_bin, '-json', '-GPS*', '-DateTimeOriginal',
+                     '-Make', '-Model', '-FileName', '-r', str(source_path)],
+                    capture_output=True, text=True, timeout=120
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    for rec in json.loads(r.stdout)[:500]:
+                        gps_lat = rec.get('GPSLatitude')
+                        gps_lon = rec.get('GPSLongitude')
+                        photos.append({
+                            'file': rec.get('FileName', ''),
+                            'date_taken': rec.get('DateTimeOriginal', ''),
+                            'make': rec.get('Make', ''),
+                            'model': rec.get('Model', ''),
+                            'gps_latitude': gps_lat,
+                            'gps_longitude': gps_lon,
+                            'has_gps': gps_lat is not None and gps_lon is not None,
+                        })
+                    return {
+                        'tool': 'mobile_photo_exif', 'status': 'success',
+                        'source_dir': source_dir, 'platform': platform,
+                        'photo_count': len(photos),
+                        'gps_count': sum(1 for p in photos if p.get('has_gps')),
+                        'photos': photos,
+                        'timestamp': datetime.now().isoformat(),
+                    }
+            except Exception:
+                pass
+
+        # Fallback: Pillow for JPEG EXIF
+        try:
+            from PIL import Image, ExifTags  # type: ignore
+            jpeg_files = list(source_path.rglob('*.jpg')) + list(source_path.rglob('*.jpeg'))
+            for img_path in jpeg_files[:500]:
+                try:
+                    img = Image.open(img_path)
+                    raw_exif = img._getexif() or {}  # type: ignore[attr-defined]
+                    named = {ExifTags.TAGS.get(k, k): v for k, v in raw_exif.items()}
+                    gps_info = named.get('GPSInfo', {})
+                    lat = lon = None
+                    if gps_info:
+                        lat_dms = gps_info.get(2)
+                        lat_ref = gps_info.get(1, 'N')
+                        lon_dms = gps_info.get(4)
+                        lon_ref = gps_info.get(3, 'E')
+                        if lat_dms:
+                            def _dms(dms: Any) -> float:
+                                return float(dms[0]) + float(dms[1]) / 60 + float(dms[2]) / 3600
+                            lat = _dms(lat_dms) * (-1 if lat_ref == 'S' else 1)
+                            lon = _dms(lon_dms) * (-1 if lon_ref == 'W' else 1) if lon_dms else None
+                    photos.append({
+                        'file': img_path.name,
+                        'date_taken': str(named.get('DateTimeOriginal', '')),
+                        'make': str(named.get('Make', '')),
+                        'model': str(named.get('Model', '')),
+                        'gps_latitude': lat,
+                        'gps_longitude': lon,
+                        'has_gps': lat is not None,
+                    })
+                except Exception:
+                    continue
+        except ImportError:
+            return {
+                'tool': 'mobile_photo_exif', 'status': 'not_available',
+                'message': 'exiftool not installed and Pillow unavailable',
+                'source_dir': source_dir,
+            }
+
+        return {
+            'tool': 'mobile_photo_exif', 'status': 'success',
+            'source_dir': source_dir, 'platform': platform,
+            'photo_count': len(photos),
+            'gps_count': sum(1 for p in photos if p.get('has_gps')),
+            'photos': photos,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def recover_deleted_sqlite_messages(self, db_path: str) -> Dict[str, Any]:
+        """Recover messages from SQLite WAL/journal by checkpointing into a temp copy."""
+        p = Path(db_path)
+        if not p.exists():
+            return {'tool': 'sqlite_wal_recovery', 'status': 'not_found',
+                    'message': f'Database not found: {db_path}'}
+
+        wal_path = Path(str(p) + '-wal')
+        shm_path = Path(str(p) + '-shm')
+        journal_path = Path(str(p) + '-journal')
+        has_wal = wal_path.exists()
+        has_journal = journal_path.exists()
+
+        if not has_wal and not has_journal:
+            return {
+                'tool': 'sqlite_wal_recovery', 'status': 'no_wal',
+                'message': 'No WAL or journal file alongside database',
+                'db_path': db_path,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tmp_db = tmp_path / p.name
+            shutil.copy2(str(p), str(tmp_db))
+            if has_wal:
+                shutil.copy2(str(wal_path), str(tmp_path / (p.name + '-wal')))
+            if shm_path.exists():
+                shutil.copy2(str(shm_path), str(tmp_path / (p.name + '-shm')))
+            if has_journal:
+                shutil.copy2(str(journal_path), str(tmp_path / (p.name + '-journal')))
+
+            try:
+                conn = sqlite3.connect(str(tmp_db))
+                conn.row_factory = sqlite3.Row
+                try:
+                    conn.execute('PRAGMA wal_checkpoint(FULL)')
+                except Exception:
+                    pass
+
+                tables = [r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()]
+                data: Dict[str, Any] = {}
+                for table in tables:
+                    try:
+                        rows = conn.execute(
+                            f"SELECT * FROM {table} LIMIT 200"  # noqa: S608
+                        ).fetchall()
+                        if rows:
+                            keys = list(rows[0].keys())
+                            data[table] = [dict(zip(keys, tuple(r))) for r in rows]
+                    except Exception:
+                        continue
+                conn.close()
+                return {
+                    'tool': 'sqlite_wal_recovery', 'status': 'success',
+                    'db_path': db_path,
+                    'had_wal': has_wal,
+                    'had_journal': has_journal,
+                    'tables_recovered': list(data.keys()),
+                    'data': data,
+                    'timestamp': datetime.now().isoformat(),
+                }
+            except Exception as e:
+                return {'tool': 'sqlite_wal_recovery', 'status': 'error',
+                        'error': str(e), 'db_path': db_path}
+
+    def extract_whatsapp(self, source_dir: str, platform: str = 'android') -> Dict[str, Any]:
+        """Extract WhatsApp messages from iOS ChatStorage.sqlite or Android msgstore.db."""
+        source_path = Path(source_dir)
+        messages: List[Dict[str, Any]] = []
+        db_used: str = ''
+
+        if platform == 'ios':
+            db_path = (
+                self._get_ios_file_path(
+                    source_path,
+                    'AppDomainGroup-group.net.whatsapp.WhatsApp.shared',
+                    'ChatStorage.sqlite',
+                ) or
+                self._get_ios_file_path(
+                    source_path,
+                    'AppDomain-net.whatsapp.WhatsApp',
+                    'Documents/ChatStorage.sqlite',
+                )
+            )
+            if db_path is None:
+                matches = list(source_path.rglob('ChatStorage.sqlite'))
+                db_path = matches[0] if matches else None
+            if db_path is None:
+                return {
+                    'tool': 'whatsapp_ios', 'status': 'not_found',
+                    'message': 'ChatStorage.sqlite not found in iOS backup',
+                    'source_dir': source_dir,
+                }
+            db_used = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute("""
+                        SELECT m.Z_PK, m.ZTEXT, m.ZMESSAGEDATE,
+                               m.ZISFROMME, m.ZMESSAGETYPE,
+                               s.ZCONTACTJID, s.ZPARTNERNAME
+                        FROM ZWAMESSAGE m
+                        LEFT JOIN ZWACHATSESSION s ON m.ZCHATSESSION = s.Z_PK
+                        ORDER BY m.ZMESSAGEDATE DESC LIMIT 500
+                    """).fetchall()
+                    for r in rows:
+                        messages.append({
+                            'text': r['ZTEXT'] or '',
+                            'timestamp': self._mac_ts_to_iso(r['ZMESSAGEDATE']),
+                            'from_me': bool(r['ZISFROMME']),
+                            'message_type': r['ZMESSAGETYPE'],
+                            'contact_jid': r['ZCONTACTJID'] or '',
+                            'contact_name': r['ZPARTNERNAME'] or '',
+                        })
+                except Exception as inner:
+                    conn.close()
+                    return {'tool': 'whatsapp_ios', 'status': 'error',
+                            'error': str(inner), 'source_dir': source_dir}
+                conn.close()
+            except Exception as e:
+                return {'tool': 'whatsapp_ios', 'status': 'error',
+                        'error': str(e), 'source_dir': source_dir}
+
+        else:  # android
+            db_path = self._find_db(source_path, 'msgstore.db')
+            if db_path is None:
+                # Check for encrypted variants
+                for enc in ('msgstore.db.crypt14', 'msgstore.db.crypt12', 'msgstore.db.crypt15'):
+                    enc_path = self._find_db(source_path, enc)
+                    if enc_path:
+                        return {
+                            'tool': 'whatsapp_android', 'status': 'encrypted',
+                            'message': f'WhatsApp database is encrypted ({enc}) — decryption key required',
+                            'db_path': str(enc_path),
+                            'source_dir': source_dir,
+                        }
+                return {
+                    'tool': 'whatsapp_android', 'status': 'not_found',
+                    'message': 'msgstore.db not found',
+                    'source_dir': source_dir,
+                }
+            db_used = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {r[0] for r in cursor.fetchall()}
+
+                if 'message' in tables:
+                    rows = cursor.execute("""
+                        SELECT m.key_remote_jid, m.key_from_me, m.data, m.timestamp,
+                               m.status, m.media_url, m.media_name, m.latitude, m.longitude
+                        FROM message m
+                        ORDER BY m.timestamp DESC LIMIT 500
+                    """).fetchall()
+                    for r in rows:
+                        ts = r['timestamp']
+                        messages.append({
+                            'text': r['data'] or '',
+                            'timestamp': datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else '',
+                            'from_me': bool(r['key_from_me']),
+                            'contact_jid': r['key_remote_jid'] or '',
+                            'media_url': r['media_url'] or '',
+                            'media_name': r['media_name'] or '',
+                            'latitude': r['latitude'],
+                            'longitude': r['longitude'],
+                        })
+                elif 'messages' in tables:
+                    rows = cursor.execute(
+                        "SELECT key_remote_jid, key_from_me, data, timestamp, status "
+                        "FROM messages ORDER BY timestamp DESC LIMIT 500"
+                    ).fetchall()
+                    for r in rows:
+                        ts = r['timestamp']
+                        messages.append({
+                            'text': r['data'] or '',
+                            'timestamp': datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else '',
+                            'from_me': bool(r['key_from_me']),
+                            'contact_jid': r['key_remote_jid'] or '',
+                        })
+                conn.close()
+            except Exception as e:
+                return {'tool': 'whatsapp_android', 'status': 'error',
+                        'error': str(e), 'source_dir': source_dir}
+
+        return {
+            'tool': f'whatsapp_{platform}', 'status': 'success',
+            'source_dir': source_dir,
+            'db_path': db_used,
+            'message_count': len(messages),
+            'messages': messages,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_telegram(self, source_dir: str, platform: str = 'android') -> Dict[str, Any]:
+        """Extract Telegram messages from Android cache4.db or iOS postbox.sqlite."""
+        source_path = Path(source_dir)
+        messages: List[Dict[str, Any]] = []
+        db_used: str = ''
+
+        if platform == 'android':
+            db_path = (
+                self._find_db(source_path, 'cache4.db') or
+                self._find_db(source_path, 'cache.db')
+            )
+            if db_path is None:
+                return {
+                    'tool': 'telegram_android', 'status': 'not_found',
+                    'message': 'Telegram cache4.db not found',
+                    'source_dir': source_dir,
+                }
+            db_used = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {r[0] for r in cursor.fetchall()}
+                msg_table = next((t for t in ('messages_v2', 'messages') if t in tables), None)
+                if msg_table:
+                    rows = cursor.execute(
+                        f"SELECT * FROM {msg_table} ORDER BY date DESC LIMIT 500"  # noqa: S608
+                    ).fetchall()
+                    keys = [d[0] for d in cursor.description]
+                    for r in rows:
+                        rd = dict(zip(keys, r))
+                        ts = rd.get('date', rd.get('timestamp', 0))
+                        messages.append({
+                            'text': rd.get('message', rd.get('data', '')),
+                            'timestamp': datetime.utcfromtimestamp(int(ts)).isoformat() if ts else '',
+                            'from_id': rd.get('from_id', rd.get('uid', '')),
+                            'peer_id': rd.get('peer_id', rd.get('to_id', '')),
+                            'out': bool(rd.get('out', 0)),
+                        })
+                conn.close()
+            except Exception as e:
+                return {'tool': 'telegram_android', 'status': 'error',
+                        'error': str(e), 'source_dir': source_dir}
+
+        else:  # iOS
+            db_path = None
+            for db_name in ('postbox.sqlite', 'db_sqlite', 'postbox'):
+                matches = list(source_path.rglob(db_name))
+                if matches:
+                    db_path = matches[0]
+                    break
+            if db_path is None:
+                return {
+                    'tool': 'telegram_ios', 'status': 'not_found',
+                    'message': 'Telegram postbox.sqlite not found — may require decryption',
+                    'source_dir': source_dir,
+                }
+            db_used = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = {r[0] for r in cursor.fetchall()}
+                msg_table = next(
+                    (t for t in ('messages', 'tm_message', 'message') if t in tables), None
+                )
+                if msg_table:
+                    rows = cursor.execute(
+                        f"SELECT * FROM {msg_table} ORDER BY rowid DESC LIMIT 500"  # noqa: S608
+                    ).fetchall()
+                    keys = [d[0] for d in cursor.description]
+                    for r in rows:
+                        messages.append({k: v for k, v in zip(keys, r) if v is not None})
+                else:
+                    conn.close()
+                    return {
+                        'tool': 'telegram_ios', 'status': 'encrypted',
+                        'message': 'Telegram iOS database appears encrypted or schema unknown',
+                        'tables_found': list(tables),
+                        'db_path': db_used,
+                        'source_dir': source_dir,
+                    }
+                conn.close()
+            except Exception as e:
+                return {'tool': 'telegram_ios', 'status': 'error',
+                        'error': str(e), 'source_dir': source_dir}
+
+        return {
+            'tool': f'telegram_{platform}', 'status': 'success',
+            'source_dir': source_dir,
+            'db_path': db_used,
+            'message_count': len(messages),
+            'messages': messages,
+            'timestamp': datetime.now().isoformat(),
+        }
+
     # -- iLEAPP / ALEAPP wrappers --------------------------------------------
 
     def run_ileapp(self, backup_dir: str, output_dir: str = '') -> Dict[str, Any]:
