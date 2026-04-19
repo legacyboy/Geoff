@@ -36,6 +36,20 @@ Extract email artefacts from PST/OST archives, mbox files, and individual EML me
 - Identify obfuscated links in HTML body (href ≠ display text)
 - Extract attachment filenames and hashes where available
 
+### iOS Mail.app Analysis (`extract_ios_mail`)
+
+- Parse `Mail Envelope Index` SQLite database from iOS backup (`AppDomain-com.apple.mobilemail`)
+- Extract subject, sender, date received/sent, read/flagged status, and mailbox folder
+- Cross-reference senders and recipients against findings from SMS, WhatsApp, and call history
+- Flag messages in the incident window that are unread, flagged, or in the Trash mailbox
+
+### Android Mail Analysis (`extract_android_email`)
+
+- Search for `mailstore.*.db` (Gmail) within Android data directory; extract sender, recipients, subject, snippet, and timestamp
+- Fall back to `EmailProviderBody.db` / `EmailProvider.db` for Samsung Mail or AOSP Email
+- Flag emails with suspicious snippets (credential references, wire transfers, bulk attachments) during the incident window
+- Cross-reference email addresses against contacts and messaging app handles
+
 ## Indicators of Interest
 
 - Phishing lures with malicious attachments or links
