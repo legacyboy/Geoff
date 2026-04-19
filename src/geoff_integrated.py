@@ -786,14 +786,20 @@ def _manager_review_execution_plan(
     mandatory = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
 
     ev_summary = {k: len(v) if isinstance(v, list) else v for k, v in inventory.items()}
-    hit_categories = sorted({h.get("category", "") for h in indicator_hits if isinstance(h, dict)})[:10]
+    raw_categories = sorted({h.get("category", "") for h in indicator_hits if isinstance(h, dict)})[:10]
+
+    # Sanitize values interpolated into the LLM prompt
+    safe_os = str(os_type).replace("\n", " ").replace("\r", " ")[:100]
+    safe_classification = str(classification).replace("\n", " ").replace("\r", " ")[:100]
+    safe_severity = str(severity).replace("\n", " ").replace("\r", " ")[:50]
+    hit_categories = [str(c).replace("\n", " ").replace("\r", " ")[:100] for c in raw_categories]
 
     prompt = f"""You are the Manager agent for a DFIR investigation. Review and optimise the execution plan.
 
 CASE CONTEXT:
-- OS: {os_type}
-- Initial classification: {classification}
-- Severity: {severity}
+- OS: {safe_os}
+- Initial classification: {safe_classification}
+- Severity: {safe_severity}
 - Evidence counts: {json.dumps(ev_summary)}
 - Indicator categories from triage: {hit_categories}
 
@@ -4972,8 +4978,9 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 def index():
     # Inject the API key (if set) into a meta tag so the UI can authenticate
     # its own fetch() calls without exposing the key in JS source.
+    from markupsafe import escape as _html_escape
     key_meta = (
-        f'<meta name="geoff-api-key" content="{GEOFF_API_KEY}">'
+        f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
         if GEOFF_API_KEY else ''
     )
     evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
@@ -5217,19 +5224,22 @@ def get_case_report(case_name):
     if not safe_name:
         return jsonify({'error': 'Invalid case name'}), 400
 
-    # Search CASES_WORK_DIR for a directory that starts with safe_name
+    # Search CASES_WORK_DIR for an exact or _findevil_-separated match.
+    # Use a uniform 404 for both "case not found" and "report not found" to
+    # prevent enumeration of case names via response differences.
     cases_root = Path(CASES_WORK_DIR)
     report_path = None
     if cases_root.exists():
+        pattern = re.compile(r'^' + re.escape(safe_name) + r'(_findevil_|$)')
         for candidate in sorted(cases_root.iterdir(), reverse=True):
-            if candidate.is_dir() and candidate.name.startswith(safe_name):
+            if candidate.is_dir() and pattern.match(candidate.name):
                 candidate_report = candidate / "reports" / "narrative_report.md"
                 if candidate_report.exists():
                     report_path = candidate_report
                     break
 
     if not report_path:
-        return jsonify({'error': 'Report not found for this case'}), 404
+        return jsonify({'error': 'Report not found'}), 404
 
     try:
         content = report_path.read_text(encoding='utf-8')
@@ -5281,7 +5291,15 @@ def get_report_json(case_dir):
     safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
-    report_file = Path(CASES_WORK_DIR) / safe_dir / "reports" / "find_evil_report.json"
+    case_path = Path(CASES_WORK_DIR) / safe_dir
+    if not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+    # Verify resolved path stays within CASES_WORK_DIR (no traversal)
+    try:
+        case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
+    except ValueError:
+        return jsonify({'error': 'Invalid case directory'}), 400
+    report_file = case_path / "reports" / "find_evil_report.json"
     if not report_file.exists():
         return jsonify({'error': 'Report not found'}), 404
     try:
