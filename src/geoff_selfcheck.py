@@ -322,6 +322,52 @@ def check_ollama(ollama_url: str, api_key: str, agent_models: Dict[str, str]) ->
                 f"Smoke test failed: {e}")
 
 
+def check_mobile_tools() -> None:
+    """iOS and Android forensics tools — libimobiledevice, adb, iLEAPP, ALEAPP."""
+    # iOS — libimobiledevice suite
+    ios_tools = [b for b in ("idevicebackup2", "ideviceinfo", "ifuse") if _which(b)]
+    if ios_tools:
+        _record("Mobile forensics (iOS)", ", ".join(ios_tools), PASS)
+    else:
+        _record("Mobile forensics (iOS)", "libimobiledevice tools", WARN,
+                "idevicebackup2/ifuse not found — live iOS extraction unavailable. "
+                "Install: sudo apt install libimobiledevice-utils ifuse")
+
+    # Android — adb
+    if _which("adb"):
+        _record("Mobile forensics (Android)", "adb", PASS)
+    else:
+        _record("Mobile forensics (Android)", "adb", WARN,
+                "Android Debug Bridge not found — live Android extraction unavailable. "
+                "Install: sudo apt install adb")
+
+    # iLEAPP — iOS artifact parser
+    ileapp_found = any(
+        _which(b) or Path(p).exists()
+        for b, p in (("ileapp", "/opt/ileapp/ileapp.py"),
+                     ("ileapp.py", "/usr/share/ileapp/ileapp.py"))
+    )
+    if ileapp_found:
+        _record("Mobile forensics (iOS)", "iLEAPP", PASS)
+    else:
+        _record("Mobile forensics (iOS)", "iLEAPP", WARN,
+                "iLEAPP not found — iOS artifact parsing will use built-in extractor. "
+                "Install: https://github.com/abrignoni/iLEAPP")
+
+    # ALEAPP — Android artifact parser
+    aleapp_found = any(
+        _which(b) or Path(p).exists()
+        for b, p in (("aleapp", "/opt/aleapp/aleapp.py"),
+                     ("aleapp.py", "/usr/share/aleapp/aleapp.py"))
+    )
+    if aleapp_found:
+        _record("Mobile forensics (Android)", "ALEAPP", PASS)
+    else:
+        _record("Mobile forensics (Android)", "ALEAPP", WARN,
+                "ALEAPP not found — Android artifact parsing will use built-in extractor. "
+                "Install: https://github.com/abrignoni/ALEAPP")
+
+
 def check_directories(evidence_base: str, cases_work: str) -> None:
     """Verify key directories are writable."""
     dirs = {
@@ -364,6 +410,7 @@ def run_all_checks(
     check_timeline_tools()
     check_network_tools()
     check_carving_tools()
+    check_mobile_tools()
     check_ollama(ollama_url, api_key, agent_models)
     check_directories(evidence_base, cases_work)
 

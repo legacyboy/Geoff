@@ -1582,8 +1582,22 @@ PLAYBOOK_STEPS = {
     },
     "PB-SIFT-021": {  # Mobile Analysis
         "mobile_backups": [
-            ("mobile", "analyze_ios_backup", {"backup_path": "{mobile}"}),
-            ("mobile", "analyze_android", {"data_dir": "{mobile}"}),
+            # iOS — comprehensive extraction
+            ("mobile", "analyze_ios_backup",        {"backup_path": "{mobile}"}),
+            ("mobile", "extract_ios_sms",           {"backup_dir": "{mobile}"}),
+            ("mobile", "extract_ios_call_history",  {"backup_dir": "{mobile}"}),
+            ("mobile", "extract_ios_safari_history",{"backup_dir": "{mobile}"}),
+            ("mobile", "detect_jailbreak_indicators",{"backup_dir": "{mobile}", "data_dir": ""}),
+            ("mobile", "run_ileapp",                {"backup_dir": "{mobile}"}),
+            # Android — comprehensive extraction
+            ("mobile", "analyze_android",           {"data_dir": "{mobile}"}),
+            ("mobile", "extract_android_sms",       {"data_dir": "{mobile}"}),
+            ("mobile", "extract_android_call_logs", {"data_dir": "{mobile}"}),
+            ("mobile", "extract_android_contacts",  {"data_dir": "{mobile}"}),
+            ("mobile", "extract_android_browser_history", {"data_dir": "{mobile}"}),
+            ("mobile", "extract_android_location",  {"data_dir": "{mobile}"}),
+            ("mobile", "detect_jailbreak_indicators",{"backup_dir": "", "data_dir": "{mobile}"}),
+            ("mobile", "run_aleapp",                {"data_dir": "{mobile}"}),
         ],
     },
     "PB-SIFT-022": {  # Browser Forensics
@@ -5372,7 +5386,11 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
     'plaso':      {'create_timeline', 'sort_timeline', 'analyze_storage'},
     'network':    {'extract_flows', 'analyze_pcap', 'extract_http'},
     'logs':       {'parse_syslog', 'parse_evtx'},
-    'mobile':     {'analyze_android', 'analyze_ios_backup'},
+    'mobile':     {'analyze_android', 'analyze_ios_backup',
+                   'extract_ios_sms', 'extract_ios_call_history', 'extract_ios_safari_history',
+                   'detect_jailbreak_indicators', 'run_ileapp',
+                   'extract_android_sms', 'extract_android_call_logs', 'extract_android_contacts',
+                   'extract_android_browser_history', 'extract_android_location', 'run_aleapp'},
     'browser':    {'extract_downloads', 'extract_cookies', 'extract_history'},
     'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml'},
     'jumplist':   {'parse_jump_lists', 'parse_lnk_files', 'parse_recent_apps'},
