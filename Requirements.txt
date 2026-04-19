@@ -1,0 +1,11 @@
+Project Requirements
+
+What to Create: Entrants must submit a working software application ("Project") that extends Protocol SIFT's autonomous incident response capability using an agentic framework as the primary execution engine. Claude Code and OpenClaw are the preferred frameworks, though comparable agentic architectures are permitted. Projects may operate on any supported case data type, including disk images, memory captures, log files, network captures, and remote endpoints via MCP.
+Each Project must demonstrate all of the following:
+Self-correction — the agent detects and resolves errors or inconsistencies in its own output without human intervention.
+Accuracy validation — all findings are traceable to specific artifacts, files, offsets, or log entries.
+Analytical reasoning — output is presented as a structured investigative narrative, not a raw execution log.
+Functionality: The Project must be capable of being successfully installed and running consistently on the platform for which it is intended and must function as depicted in the video and/or expressed in the text description.
+Platforms: Projects must be built on Linux terminal / SIFT Workstation environment. Projects must run on or integrate with the SANS SIFT Workstation using Claude Code or OpenClaw as the agentic framework. 
+New & Existing: Projects must be substantially new work created during the hackathon period (April 15 -- June 15, 2026). Teams may use pre-existing open-source libraries, frameworks, and the existing SIFT codebase as a foundation. The novel contribution must be clearly documented.
+Third Party Integrations: If a Project integrates any third-party SDK, APIs and/or data, Entrant must be authorized to use them in accordance with any terms and conditions or licensing requirements of the tool.
