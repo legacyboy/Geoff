@@ -1735,6 +1735,652 @@ class MOBILE_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
+    # -- iOS extended extraction ---------------------------------------------
+
+    # Seconds between Unix epoch (1970-01-01) and Mac absolute time (2001-01-01)
+    _MAC_EPOCH_OFFSET = 978307200
+
+    @staticmethod
+    def _get_ios_file_path(backup_path: Path, domain: str, relative_path: str) -> Optional[Path]:
+        """Return the on-disk path for a file stored in an iOS backup via Manifest.db lookup."""
+        manifest = backup_path / 'Manifest.db'
+        if not manifest.exists():
+            return None
+        try:
+            conn = sqlite3.connect(str(manifest))
+            row = conn.execute(
+                "SELECT fileID FROM Files WHERE domain=? AND relativePath=?",
+                (domain, relative_path),
+            ).fetchone()
+            conn.close()
+            if row:
+                file_id = row[0]
+                candidate = backup_path / file_id[:2] / file_id
+                return candidate if candidate.exists() else None
+        except Exception:
+            pass
+        return None
+
+    def _mac_ts_to_iso(self, ts: Any) -> str:
+        """Convert a Mac absolute timestamp (or nanosecond variant) to ISO-8601 string."""
+        if not ts or ts <= 0:
+            return ''
+        try:
+            t = float(ts)
+            if t > 1e15:          # nanoseconds (iOS 11+)
+                t = t / 1e9
+            unix_ts = t + self._MAC_EPOCH_OFFSET
+            return datetime.utcfromtimestamp(unix_ts).isoformat()
+        except Exception:
+            return ''
+
+    def extract_ios_sms(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract SMS/iMessage conversations from iOS backup (sms.db)."""
+        backup_path = Path(backup_dir)
+        db_path = self._get_ios_file_path(backup_path, 'HomeDomain', 'Library/SMS/sms.db')
+        if db_path is None:
+            return {
+                'tool': 'ios_sms', 'status': 'not_found',
+                'message': 'sms.db not found in backup', 'backup_dir': backup_dir,
+            }
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            messages = []
+            try:
+                rows = conn.execute("""
+                    SELECT m.ROWID, m.text, m.date, m.is_from_me,
+                           m.service, h.id AS handle
+                    FROM message m
+                    LEFT JOIN handle h ON m.handle_id = h.ROWID
+                    ORDER BY m.date DESC LIMIT 500
+                """).fetchall()
+                for r in rows:
+                    messages.append({
+                        'rowid': r['ROWID'],
+                        'text': r['text'] or '',
+                        'timestamp': self._mac_ts_to_iso(r['date']),
+                        'is_from_me': bool(r['is_from_me']),
+                        'service': r['service'] or '',
+                        'handle': r['handle'] or '',
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'ios_sms', 'status': 'error', 'error': str(inner),
+                        'backup_dir': backup_dir}
+            conn.close()
+            return {
+                'tool': 'ios_sms', 'status': 'success',
+                'backup_dir': backup_dir,
+                'message_count': len(messages),
+                'messages': messages,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ios_sms', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+
+    def extract_ios_call_history(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract call history from iOS backup (CallHistory.storedata)."""
+        backup_path = Path(backup_dir)
+        db_path = self._get_ios_file_path(
+            backup_path, 'HomeDomain', 'Library/CallHistoryDB/CallHistory.storedata'
+        )
+        if db_path is None:
+            return {
+                'tool': 'ios_calls', 'status': 'not_found',
+                'message': 'CallHistory.storedata not found', 'backup_dir': backup_dir,
+            }
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            calls = []
+            try:
+                rows = conn.execute("""
+                    SELECT ZADDRESS, ZDURATION, ZDATE, ZCALLTYPE, ZORIGINATED,
+                           ZREAD, ZNAME, ZCOUNTRYCODE, ZSERVICE_PROVIDER
+                    FROM ZCALLRECORD
+                    ORDER BY ZDATE DESC LIMIT 500
+                """).fetchall()
+                for r in rows:
+                    calls.append({
+                        'number': r['ZADDRESS'] or '',
+                        'name': r['ZNAME'] or '',
+                        'duration_sec': r['ZDURATION'] or 0,
+                        'timestamp': self._mac_ts_to_iso(r['ZDATE']),
+                        'call_type': r['ZCALLTYPE'],
+                        'outgoing': bool(r['ZORIGINATED']),
+                        'service': r['ZSERVICE_PROVIDER'] or '',
+                        'country_code': r['ZCOUNTRYCODE'] or '',
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'ios_calls', 'status': 'error', 'error': str(inner),
+                        'backup_dir': backup_dir}
+            conn.close()
+            return {
+                'tool': 'ios_calls', 'status': 'success',
+                'backup_dir': backup_dir,
+                'call_count': len(calls),
+                'calls': calls,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ios_calls', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+
+    def extract_ios_safari_history(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract Safari browsing history from iOS backup."""
+        backup_path = Path(backup_dir)
+        db_path = self._get_ios_file_path(
+            backup_path, 'HomeDomain', 'Library/Safari/History.db'
+        )
+        if db_path is None:
+            return {
+                'tool': 'ios_safari', 'status': 'not_found',
+                'message': 'Safari History.db not found', 'backup_dir': backup_dir,
+            }
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            history = []
+            try:
+                rows = conn.execute("""
+                    SELECT hi.url, hi.title, hi.visit_count,
+                           MAX(hv.visit_time) AS last_visit
+                    FROM history_items hi
+                    LEFT JOIN history_visits hv ON hi.id = hv.history_item
+                    GROUP BY hi.id
+                    ORDER BY last_visit DESC LIMIT 500
+                """).fetchall()
+                for r in rows:
+                    history.append({
+                        'url': r['url'] or '',
+                        'title': r['title'] or '',
+                        'visit_count': r['visit_count'] or 0,
+                        'last_visit': self._mac_ts_to_iso(r['last_visit']),
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'ios_safari', 'status': 'error', 'error': str(inner),
+                        'backup_dir': backup_dir}
+            conn.close()
+            return {
+                'tool': 'ios_safari', 'status': 'success',
+                'backup_dir': backup_dir,
+                'entry_count': len(history),
+                'history': history,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ios_safari', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+
+    def detect_jailbreak_indicators(self, backup_dir: str = '', data_dir: str = '') -> Dict[str, Any]:
+        """Detect jailbreak/root indicators in an iOS backup or Android data directory."""
+        indicators: List[Dict[str, Any]] = []
+
+        if backup_dir:
+            backup_path = Path(backup_dir)
+            jb_apps = [
+                ('com.saurik.Cydia', 'Cydia package manager'),
+                ('xyz.willy.Zebra', 'Zebra package manager'),
+                ('org.coolstar.SileoStore', 'Sileo package manager'),
+                ('com.opa334.TrollStore', 'TrollStore sideloader'),
+                ('com.opa334.Dopamine', 'Dopamine jailbreak'),
+                ('com.p0sixspwn.p0sixspwn', 'p0sixspwn jailbreak'),
+            ]
+            manifest = backup_path / 'Manifest.db'
+            if manifest.exists():
+                try:
+                    conn = sqlite3.connect(str(manifest))
+                    for bundle_id, desc in jb_apps:
+                        if conn.execute(
+                            "SELECT 1 FROM Files WHERE domain LIKE ?",
+                            (f'AppDomain-{bundle_id}%',),
+                        ).fetchone():
+                            indicators.append({
+                                'type': 'jailbreak_app', 'platform': 'ios',
+                                'indicator': bundle_id, 'description': desc,
+                                'confidence': 'high',
+                            })
+                    if conn.execute(
+                        "SELECT 1 FROM Files WHERE domain='HomeDomain' AND relativePath LIKE '%Cydia%'"
+                    ).fetchone():
+                        indicators.append({
+                            'type': 'cydia_pref', 'platform': 'ios',
+                            'indicator': 'Cydia preferences present',
+                            'confidence': 'high',
+                        })
+                    conn.close()
+                except Exception:
+                    pass
+            info_plist = backup_path / 'Info.plist'
+            if info_plist.exists():
+                try:
+                    with open(info_plist, 'rb') as f:
+                        info = plistlib.load(f)
+                    if info.get('PasscodeSet') is False:
+                        indicators.append({
+                            'type': 'no_passcode', 'platform': 'ios',
+                            'indicator': 'Device has no passcode set',
+                            'confidence': 'medium',
+                        })
+                except Exception:
+                    pass
+
+        if data_dir:
+            data_path = Path(data_dir)
+            root_patterns = [
+                ('**/su', 'su binary', 'high'),
+                ('**/.magisk', 'Magisk hidden directory', 'high'),
+                ('**/magisk', 'Magisk binary', 'high'),
+                ('**/busybox', 'BusyBox binary', 'medium'),
+                ('**/.superuser*', 'Superuser config', 'medium'),
+            ]
+            for pattern, desc, confidence in root_patterns:
+                matches = list(data_path.glob(pattern))
+                if matches:
+                    indicators.append({
+                        'type': 'root_binary', 'platform': 'android',
+                        'indicator': desc,
+                        'paths': [str(m.relative_to(data_path)) for m in matches[:5]],
+                        'confidence': confidence,
+                    })
+            root_pkgs = {
+                'com.topjohnwu.magisk': 'Magisk root manager',
+                'eu.chainfire.supersu': 'SuperSU root manager',
+                'com.noshufou.android.su': 'Superuser app',
+                'com.koushikdutta.superuser': 'Superuser (Koush)',
+            }
+            for pkg in self._parse_android_packages(data_path):
+                name = pkg.get('name', '')
+                if name in root_pkgs:
+                    indicators.append({
+                        'type': 'root_package', 'platform': 'android',
+                        'indicator': name, 'description': root_pkgs[name],
+                        'confidence': 'high',
+                    })
+
+        return {
+            'tool': 'jailbreak_root_detector', 'status': 'success',
+            'backup_dir': backup_dir, 'data_dir': data_dir,
+            'indicator_count': len(indicators),
+            'indicators': indicators,
+            'compromise_likely': any(i['confidence'] == 'high' for i in indicators),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    # -- Android extended extraction -----------------------------------------
+
+    @staticmethod
+    def _find_db(data_path: Path, db_name: str) -> Optional[Path]:
+        """Find the first SQLite database matching db_name within a directory tree."""
+        matches = list(data_path.rglob(db_name))
+        return matches[0] if matches else None
+
+    def extract_android_sms(self, data_dir: str) -> Dict[str, Any]:
+        """Extract SMS/MMS messages from Android mmssms.db."""
+        data_path = Path(data_dir)
+        db_path = self._find_db(data_path, 'mmssms.db')
+        if db_path is None:
+            return {'tool': 'android_sms', 'status': 'not_found',
+                    'message': 'mmssms.db not found', 'data_dir': data_dir}
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            messages = []
+            try:
+                rows = conn.execute(
+                    "SELECT address, body, date, type, read, subject "
+                    "FROM sms ORDER BY date DESC LIMIT 500"
+                ).fetchall()
+                for r in rows:
+                    ts = r['date']
+                    ts_str = datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else ''
+                    messages.append({
+                        'address': r['address'] or '',
+                        'body': r['body'] or '',
+                        'timestamp': ts_str,
+                        'type': r['type'],   # 1=received, 2=sent, 3=draft
+                        'read': bool(r['read']),
+                        'subject': r['subject'] or '',
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'android_sms', 'status': 'error', 'error': str(inner),
+                        'data_dir': data_dir}
+            conn.close()
+            return {
+                'tool': 'android_sms', 'status': 'success',
+                'data_dir': data_dir,
+                'message_count': len(messages),
+                'messages': messages,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'android_sms', 'status': 'error', 'error': str(e),
+                    'data_dir': data_dir}
+
+    def extract_android_call_logs(self, data_dir: str) -> Dict[str, Any]:
+        """Extract call logs from Android (calllog.db or contacts2.db)."""
+        data_path = Path(data_dir)
+        db_path = self._find_db(data_path, 'calllog.db') or self._find_db(data_path, 'contacts2.db')
+        if db_path is None:
+            return {'tool': 'android_calls', 'status': 'not_found',
+                    'message': 'calllog.db not found', 'data_dir': data_dir}
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            calls = []
+            try:
+                rows = conn.execute(
+                    "SELECT number, date, duration, type, name, geocoded_location "
+                    "FROM calls ORDER BY date DESC LIMIT 500"
+                ).fetchall()
+                for r in rows:
+                    ts = r['date']
+                    ts_str = datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else ''
+                    calls.append({
+                        'number': r['number'] or '',
+                        'name': r['name'] or '',
+                        'timestamp': ts_str,
+                        'duration_sec': r['duration'] or 0,
+                        'type': r['type'],   # 1=incoming, 2=outgoing, 3=missed
+                        'location': r['geocoded_location'] or '',
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'android_calls', 'status': 'error', 'error': str(inner),
+                        'data_dir': data_dir}
+            conn.close()
+            return {
+                'tool': 'android_calls', 'status': 'success',
+                'data_dir': data_dir,
+                'call_count': len(calls),
+                'calls': calls,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'android_calls', 'status': 'error', 'error': str(e),
+                    'data_dir': data_dir}
+
+    def extract_android_contacts(self, data_dir: str) -> Dict[str, Any]:
+        """Extract contacts from Android contacts2.db."""
+        data_path = Path(data_dir)
+        db_path = self._find_db(data_path, 'contacts2.db')
+        if db_path is None:
+            return {'tool': 'android_contacts', 'status': 'not_found',
+                    'message': 'contacts2.db not found', 'data_dir': data_dir}
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            contacts = []
+            try:
+                rows = conn.execute("""
+                    SELECT c.display_name, d.data1, d.mimetype,
+                           c.last_time_contacted, c.times_contacted
+                    FROM contacts c
+                    LEFT JOIN data d ON c._id = d.contact_id
+                    WHERE d.mimetype IN (
+                        'vnd.android.cursor.item/phone_v2',
+                        'vnd.android.cursor.item/email_v2'
+                    )
+                    ORDER BY c.last_time_contacted DESC LIMIT 500
+                """).fetchall()
+                for r in rows:
+                    ts = r['last_time_contacted']
+                    ts_str = datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else ''
+                    contacts.append({
+                        'name': r['display_name'] or '',
+                        'value': r['data1'] or '',
+                        'type': 'phone' if 'phone' in (r['mimetype'] or '') else 'email',
+                        'last_contacted': ts_str,
+                        'contact_count': r['times_contacted'] or 0,
+                    })
+            except Exception as inner:
+                conn.close()
+                return {'tool': 'android_contacts', 'status': 'error', 'error': str(inner),
+                        'data_dir': data_dir}
+            conn.close()
+            return {
+                'tool': 'android_contacts', 'status': 'success',
+                'data_dir': data_dir,
+                'contact_count': len(contacts),
+                'contacts': contacts,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'android_contacts', 'status': 'error', 'error': str(e),
+                    'data_dir': data_dir}
+
+    def extract_android_browser_history(self, data_dir: str) -> Dict[str, Any]:
+        """Extract browser history from Android (Chrome, Firefox, built-in browser)."""
+        data_path = Path(data_dir)
+        all_history: List[Dict[str, Any]] = []
+        # Chrome epoch: microseconds since 1601-01-01; offset to Unix epoch = 11644473600s
+        _CHROME_EPOCH_OFFSET = 11644473600
+
+        for db_name in ('History', 'browser.db', 'webview.db'):
+            db_path = self._find_db(data_path, db_name)
+            if db_path is None:
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute(
+                        "SELECT url, title, visit_count, last_visit_time FROM urls "
+                        "ORDER BY last_visit_time DESC LIMIT 200"
+                    ).fetchall()
+                    for r in rows:
+                        ts = r['last_visit_time']
+                        ts_str = ''
+                        if ts and ts > 0:
+                            unix_sec = ts / 1e6 - _CHROME_EPOCH_OFFSET
+                            try:
+                                ts_str = datetime.utcfromtimestamp(unix_sec).isoformat()
+                            except Exception:
+                                ts_str = ''
+                        all_history.append({
+                            'url': r['url'] or '', 'title': r['title'] or '',
+                            'visit_count': r['visit_count'] or 0,
+                            'last_visit': ts_str, 'source_db': db_name,
+                        })
+                except Exception:
+                    # Try legacy Android browser schema
+                    try:
+                        rows = conn.execute(
+                            "SELECT url, title, visits, date FROM bookmarks "
+                            "WHERE bookmark=0 ORDER BY date DESC LIMIT 200"
+                        ).fetchall()
+                        for r in rows:
+                            ts = r['date']
+                            ts_str = datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else ''
+                            all_history.append({
+                                'url': r['url'] or '', 'title': r['title'] or '',
+                                'visit_count': r['visits'] or 0,
+                                'last_visit': ts_str, 'source_db': db_name,
+                            })
+                    except Exception:
+                        pass
+                conn.close()
+            except Exception:
+                continue
+
+        return {
+            'tool': 'android_browser_history', 'status': 'success',
+            'data_dir': data_dir,
+            'entry_count': len(all_history),
+            'history': all_history[:500],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_android_location(self, data_dir: str) -> Dict[str, Any]:
+        """Extract location history from Android (Google Takeout JSON or location databases)."""
+        data_path = Path(data_dir)
+        locations: List[Dict[str, Any]] = []
+
+        # Google Takeout Location History JSON
+        for json_file in list(data_path.rglob('Location History.json'))[:3]:
+            try:
+                with open(json_file, 'r', errors='ignore') as f:
+                    data = json.load(f)
+                for loc in data.get('locations', [])[:500]:
+                    ts_ms = loc.get('timestampMs', 0)
+                    ts_str = datetime.utcfromtimestamp(int(ts_ms) / 1000).isoformat() if ts_ms else ''
+                    locations.append({
+                        'latitude': loc.get('latitudeE7', 0) / 1e7,
+                        'longitude': loc.get('longitudeE7', 0) / 1e7,
+                        'timestamp': ts_str,
+                        'accuracy': loc.get('accuracy', 0),
+                        'source': 'google_takeout',
+                    })
+            except Exception:
+                continue
+
+        # Location cache databases
+        for db_name in ('cache.wifi', 'gps.db', 'location.db', 'cache.cell'):
+            db_path = self._find_db(data_path, db_name)
+            if db_path is None:
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [r[0] for r in cursor.fetchall()]
+                for table in tables[:5]:
+                    try:
+                        rows = cursor.execute(
+                            f"SELECT * FROM {table} LIMIT 100"  # noqa: S608
+                        ).fetchall()
+                        if not rows:
+                            continue
+                        keys = rows[0].keys()
+                        lat_key = next((k for k in keys if 'lat' in k.lower()), None)
+                        lon_key = next((k for k in keys if 'lon' in k.lower()), None)
+                        if lat_key and lon_key:
+                            for r in rows:
+                                rd = dict(r)
+                                locations.append({
+                                    'latitude': rd.get(lat_key, 0),
+                                    'longitude': rd.get(lon_key, 0),
+                                    'timestamp': '',
+                                    'source': db_name,
+                                })
+                    except Exception:
+                        pass
+                conn.close()
+            except Exception:
+                continue
+
+        return {
+            'tool': 'android_location_history', 'status': 'success',
+            'data_dir': data_dir,
+            'location_count': len(locations),
+            'locations': locations[:500],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    # -- iLEAPP / ALEAPP wrappers --------------------------------------------
+
+    def run_ileapp(self, backup_dir: str, output_dir: str = '') -> Dict[str, Any]:
+        """Run iLEAPP iOS forensics parser if installed on the system."""
+        ileapp_bin: Optional[str] = shutil.which('ileapp') or shutil.which('ileapp.py')
+        if ileapp_bin is None:
+            for candidate in ('/opt/ileapp/ileapp.py', '/usr/local/bin/ileapp',
+                              '/usr/share/ileapp/ileapp.py'):
+                if Path(candidate).exists():
+                    ileapp_bin = candidate
+                    break
+        if ileapp_bin is None:
+            return {
+                'tool': 'ileapp', 'status': 'not_available',
+                'message': 'iLEAPP not found — install from https://github.com/abrignoni/iLEAPP',
+                'backup_dir': backup_dir,
+            }
+        if not output_dir:
+            output_dir = tempfile.mkdtemp(prefix='geoff_ileapp_')
+        cmd = [ileapp_bin, '-t', 'itunes', '-i', backup_dir, '-o', output_dir]
+        if ileapp_bin.endswith('.py'):
+            cmd = ['python3'] + cmd
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            rc = r.returncode
+            stdout_tail = r.stdout[-2000:]
+            stderr_tail = r.stderr[-500:]
+        except Exception as e:
+            return {'tool': 'ileapp', 'status': 'error', 'error': str(e),
+                    'backup_dir': backup_dir}
+        report_summary: Dict[str, Any] = {}
+        report_json = Path(output_dir) / 'ILEAPP_report.json'
+        if report_json.exists():
+            try:
+                with open(report_json) as f:
+                    report_summary = json.load(f)
+            except Exception:
+                pass
+        return {
+            'tool': 'ileapp',
+            'status': 'success' if rc == 0 else 'error',
+            'backup_dir': backup_dir,
+            'output_dir': output_dir,
+            'return_code': rc,
+            'stdout_tail': stdout_tail,
+            'stderr_tail': stderr_tail,
+            'report_summary': report_summary,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def run_aleapp(self, data_dir: str, output_dir: str = '') -> Dict[str, Any]:
+        """Run ALEAPP Android forensics parser if installed on the system."""
+        aleapp_bin: Optional[str] = shutil.which('aleapp') or shutil.which('aleapp.py')
+        if aleapp_bin is None:
+            for candidate in ('/opt/aleapp/aleapp.py', '/usr/local/bin/aleapp',
+                              '/usr/share/aleapp/aleapp.py'):
+                if Path(candidate).exists():
+                    aleapp_bin = candidate
+                    break
+        if aleapp_bin is None:
+            return {
+                'tool': 'aleapp', 'status': 'not_available',
+                'message': 'ALEAPP not found — install from https://github.com/abrignoni/ALEAPP',
+                'data_dir': data_dir,
+            }
+        if not output_dir:
+            output_dir = tempfile.mkdtemp(prefix='geoff_aleapp_')
+        cmd = [aleapp_bin, '-t', 'fs', '-i', data_dir, '-o', output_dir]
+        if aleapp_bin.endswith('.py'):
+            cmd = ['python3'] + cmd
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            rc = r.returncode
+            stdout_tail = r.stdout[-2000:]
+            stderr_tail = r.stderr[-500:]
+        except Exception as e:
+            return {'tool': 'aleapp', 'status': 'error', 'error': str(e),
+                    'data_dir': data_dir}
+        report_summary: Dict[str, Any] = {}
+        report_json = Path(output_dir) / 'ALEAPP_report.json'
+        if report_json.exists():
+            try:
+                with open(report_json) as f:
+                    report_summary = json.load(f)
+            except Exception:
+                pass
+        return {
+            'tool': 'aleapp',
+            'status': 'success' if rc == 0 else 'error',
+            'data_dir': data_dir,
+            'output_dir': output_dir,
+            'return_code': rc,
+            'stdout_tail': stdout_tail,
+            'stderr_tail': stderr_tail,
+            'report_summary': report_summary,
+            'timestamp': datetime.now().isoformat(),
+        }
+
 
 # ---------------------------------------------------------------------------
 # BROWSER_Specialist  (Chrome/Firefox/Edge/Safari history & cookies)
