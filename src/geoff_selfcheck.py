@@ -243,10 +243,13 @@ def check_carving_tools() -> None:
 
 def check_strings_functional() -> None:
     """Smoke-test strings with a real temp file containing known content."""
-    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
-        tmp = f.name
-        f.write(b"\x00\x00\x00GEOFF_SELFCHECK_MARKER\x00\x00")
+    # Use mode=0o600 so the file is only readable by the current user while
+    # the strings probe runs, eliminating the world-readable window.
+    fd, tmp = tempfile.mkstemp(suffix=".bin")
     try:
+        os.chmod(tmp, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(b"\x00\x00\x00GEOFF_SELFCHECK_MARKER\x00\x00")
         rc, out = _run(["strings", "-n", "8", tmp], timeout=5)
         if rc == 0 and "GEOFF_SELFCHECK_MARKER" in out:
             _record("Functional smoke tests", "strings (extracts known string)", PASS)

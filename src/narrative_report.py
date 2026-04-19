@@ -729,11 +729,16 @@ class NarrativeReportGenerator:
             anchors = step_evidence_anchors or []
             anchor_text = ""
             for a in anchors[:20]:
-                note = a.get("analyst_note") or ""
-                indicators = ", ".join(a.get("threat_indicators") or [])
+                note = _safe_prompt_str(a.get("analyst_note") or "")
+                tool = _safe_prompt_str(a.get("tool") or "", max_len=100)
+                evidence_file = _safe_prompt_str(a.get("evidence_file") or "?", max_len=200)
+                significance = _safe_prompt_str(a.get("significance") or "?", max_len=20)
+                raw_indicators = a.get("threat_indicators") or []
+                indicators = ", ".join(
+                    _safe_prompt_str(i, max_len=100) for i in raw_indicators[:10]
+                )
                 anchor_text += (
-                    f"  [{a.get('significance','?')}] {a.get('tool','')} "
-                    f"on {a.get('evidence_file','?')}: {note}"
+                    f"  [{significance}] {tool} on {evidence_file}: {note}"
                     + (f" | indicators: {indicators}" if indicators else "")
                     + "\n"
                 )
