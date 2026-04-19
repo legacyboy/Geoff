@@ -75,14 +75,17 @@ class GeoffCritic:
         Sanity check: does the analysis claim something contradicted by or
         absent from the raw output? That's it.
         """
+        safe_tool_name = str(tool_name).replace("\n", " ").replace("\r", " ")[:100]
+        safe_raw = str(raw_output)[:3000]
+        safe_analysis = str(geoff_analysis).replace("\n", "\n  ")[:5000]
         sanity_prompt = f"""You are a sanity checker. Compare the raw tool output to the analysis.
 
-TOOL: {tool_name}
+TOOL: {safe_tool_name}
 RAW OUTPUT (excerpt):
-{raw_output[:3000]}
+{safe_raw}
 
 ANALYSIS:
-{geoff_analysis}
+{safe_analysis}
 
 Answer these questions:
 1. Does the analysis claim something NOT present in the raw output? (hallucination)

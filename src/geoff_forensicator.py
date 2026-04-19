@@ -117,11 +117,13 @@ class ForensicatorAgent:
 
     def _parse_instruction(self, instruction: str, evidence_path: str) -> List[Dict]:
         """Parse natural language instruction into tool commands"""
+        safe_instruction = instruction.replace("\n", " ").replace("\r", " ").replace('"', '\\"')[:500]
+        safe_path = (evidence_path or "N/A").replace("\n", " ").replace("\r", " ")[:500]
         prompt = f"""
 You are a forensic tool expert. Parse this instruction into specific commands.
 
-Instruction: "{instruction}"
-Evidence path: {evidence_path or "N/A"}
+Instruction: "{safe_instruction}"
+Evidence path: {safe_path}
 
 Available tools:
 - mmls: Show partition table

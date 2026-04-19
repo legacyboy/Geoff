@@ -14,6 +14,17 @@ from pathlib import Path
 from typing import Dict, List, Any, Callable, Optional
 
 
+def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
+    """Sanitize a value before embedding it in an LLM prompt.
+
+    Strips newlines (prevent prompt structure breaks) and truncates to avoid
+    context bloat.  Returns a plain string safe for f-string interpolation.
+    """
+    s = str(value) if value is not None else ""
+    s = s.replace("\n", " ").replace("\r", " ")
+    return s[:max_len]
+
+
 class NarrativeReportGenerator:
     """
     Generates human-readable investigation reports from structured findings.
@@ -165,7 +176,7 @@ class NarrativeReportGenerator:
                 key=lambda f: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2,
                                "LOW": 3}.get(f.get("severity", "LOW"), 4))
             for flag in top_flags[:5]:
-                prompt += f"- [{flag.get('severity')}] {flag.get('summary')}\n"
+                prompt += f"- [{_safe_prompt_str(flag.get('severity'), 20)}] {_safe_prompt_str(flag.get('summary'))}\n"
 
             prompt += (
                 f"\nWrite a factual executive summary. Do not speculate "
@@ -286,8 +297,8 @@ class NarrativeReportGenerator:
                 prompt += "\nBehavioral flags:\n"
                 for flag in user_flags[:5]:
                     prompt += (
-                        f"- [{flag.get('severity')}] "
-                        f"{flag.get('summary')}\n")
+                        f"- [{_safe_prompt_str(flag.get('severity'), 20)}] "
+                        f"{_safe_prompt_str(flag.get('summary'))}\n")
 
             prompt += (
                 f"\nWrite a factual narrative. State only what the evidence "
@@ -484,7 +495,7 @@ class NarrativeReportGenerator:
             for flags in behavioral_flags.values():
                 for flag in flags:
                     if flag.get("severity") in ("CRITICAL", "HIGH"):
-                        prompt += f"- {flag.get('summary')}\n"
+                        prompt += f"- {_safe_prompt_str(flag.get('summary'))}\n"
 
             prompt += (
                 f"\nBe specific and actionable. Example: "
