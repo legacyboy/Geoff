@@ -5246,7 +5246,8 @@ def get_case_report(case_name):
         content = report_path.read_text(encoding='utf-8')
         return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
     except OSError as e:
-        return jsonify({'error': str(e)}), 500
+        _log_error("Failed to read narrative report", e)
+        return jsonify({'error': 'Unable to read report'}), 500
 
 
 @app.route('/reports', methods=['GET'])
@@ -5263,6 +5264,8 @@ def list_reports():
             if not report_file.exists():
                 continue
             try:
+                if report_file.stat().st_size > 50 * 1024 * 1024:  # 50 MB guard
+                    continue
                 with open(report_file) as f:
                     data = json.load(f)
                 # Directory name pattern: {case_name}_findevil_{timestamp}
@@ -5307,7 +5310,8 @@ def get_report_json(case_dir):
         content = report_file.read_text(encoding='utf-8')
         return content, 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
-        return jsonify({'error': str(e)}), 500
+        _log_error("Failed to read report JSON", e)
+        return jsonify({'error': 'Unable to read report'}), 500
 
 
 @app.route('/reports/viewer', methods=['GET'])
@@ -5353,7 +5357,8 @@ def health_detailed():
         overall = "fail" if has_fail else "warn" if has_warn else "pass"
         return jsonify({"overall": overall, "checks": results})
     except Exception as e:
-        return jsonify({"overall": "error", "error": str(e)}), 500
+        _log_error("health_detailed self-check failed", e)
+        return jsonify({"overall": "error", "error": "Self-check failed"}), 500
 
 
 _ALLOWED_TOOL_FUNCTIONS: dict = {
