@@ -5311,6 +5311,7 @@ def get_report_json(case_dir):
 
 
 @app.route('/reports/viewer', methods=['GET'])
+@_require_auth
 def viewer_html():
     """Serve the Evidence Graph viewer UI (with optional case= param)."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'
@@ -5318,6 +5319,7 @@ def viewer_html():
 
 
 @app.route('/static/geoff-viewer/<path:filename>', methods=['GET'])
+@_require_auth
 def viewer_static(filename):
     """Serve static files for the Evidence Graph viewer (CSS, JSX, sample data)."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'

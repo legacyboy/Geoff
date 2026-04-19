@@ -5,6 +5,8 @@ flask-cors>=4.0,<5.0
 requests>=2.31,<3.0
 jsonschema>=4.21,<5.0
 gitpython>=3.1,<4.0
+markupsafe>=2.1,<3.0
+python-dotenv>=1.0,<2.0
 
 # Ollama client (uses HTTP API directly via requests)
 # No separate ollama pip package needed
@@ -14,7 +16,6 @@ gitpython>=3.1,<4.0
 # volatility3>=2.0     -- Memory forensics
 # plaso>=20240101      -- Timeline analysis
 # yara-python>=4.5     -- Malware detection
-python-dotenv
 
 # MCP (Model Context Protocol) — Geoff MCP server + client
 # Pinned exact version for reproducibility. Run once via install.sh; pip caches locally.

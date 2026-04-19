@@ -227,7 +227,16 @@ def list_evidence(case_name: Optional[str] = None) -> Dict[str, Any]:
         {"evidence": {path: metadata}}
     """
     if case_name:
-        base = Path(EVIDENCE_BASE_DIR) / case_name
+        import re
+        safe_case = re.sub(r"[^a-zA-Z0-9_\-]", "", case_name)
+        if not safe_case:
+            return {"evidence": {}, "error": "Invalid case_name"}
+        base = Path(EVIDENCE_BASE_DIR) / safe_case
+        # Verify resolved path stays within evidence base (no traversal)
+        try:
+            base.resolve().relative_to(Path(EVIDENCE_BASE_DIR).resolve())
+        except ValueError:
+            return {"evidence": {}, "error": "Invalid case_name"}
     else:
         base = Path(EVIDENCE_BASE_DIR)
 
