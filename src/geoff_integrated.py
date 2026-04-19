@@ -6,6 +6,7 @@ Geoff DFIR - Integrated with SIFT Tool Specialists
 import os
 import json
 import re
+import shlex
 import sys
 import subprocess
 
@@ -1776,7 +1777,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
                 continue  # Too large for triage strings scan
             # Pipe through head -c to terminate early instead of timeout
             result = safe_run(
-                ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
+                ["bash", "-c", f"strings -n 8 {shlex.quote(str(fpath))} | head -c 500000"],
                 timeout=60
             )
             if result["code"] != 0:
@@ -1812,7 +1813,7 @@ def _scan_triage_indicators(inventory: dict) -> list:
             if file_size > MAX_TRIAGE_STRINGS_SIZE:
                 continue
             result = safe_run(
-                ["bash", "-c", f"strings -n 8 {str(fpath)} | head -c 500000"],
+                ["bash", "-c", f"strings -n 8 {shlex.quote(str(fpath))} | head -c 500000"],
                 timeout=60,
             )
             if result["code"] != 0:
@@ -5332,16 +5333,48 @@ def list_tools():
     return jsonify({'tools': get_available_tools_status()})
 
 
+_ALLOWED_TOOL_FUNCTIONS: dict = {
+    'sleuthkit':  {'analyze_partition_table', 'list_inodes', 'list_deleted', 'extract_file',
+                   'list_files', 'list_files_mactime', 'get_file_info', 'analyze_filesystem'},
+    'volatility': {'dump_process', 'process_list', 'scan_registry', 'find_malware', 'network_scan'},
+    'strings':    {'extract_strings'},
+    'registry':   {'extract_services', 'scan_all_hives', 'parse_hive', 'extract_shellbags',
+                   'extract_user_assist', 'extract_mounted_devices', 'extract_usb_devices',
+                   'extract_autoruns'},
+    'plaso':      {'create_timeline', 'sort_timeline', 'analyze_storage'},
+    'network':    {'extract_flows', 'analyze_pcap', 'extract_http'},
+    'logs':       {'parse_syslog', 'parse_evtx'},
+    'mobile':     {'analyze_android', 'analyze_ios_backup'},
+    'browser':    {'extract_downloads', 'extract_cookies', 'extract_history'},
+    'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml'},
+    'jumplist':   {'parse_jump_lists', 'parse_lnk_files', 'parse_recent_apps'},
+    'macos':      {'analyze_launch_agents', 'parse_unified_log', 'analyze_fseventsd', 'parse_plist'},
+    'photorec':   {'recover_files'},
+    'vss':        {'list_vss', 'extract_vss_files', 'analyze_vss_timeline', 'mount_vss'},
+    'zimmerman':  {'parse_evtx_zimmerman', 'parse_mft', 'srum_parse', 'amcache_parse',
+                   'shellbags_parse'},
+    'remnux':     {'yara_scan', 'strings_extract', 'pe_info', 'detect_packers', 'extract_iocs',
+                   'capa_analyze', 'floss_extract'},
+}
+
+
 @app.route('/run-tool', methods=['POST'])
 @_require_auth
 def run_tool():
     """Execute a forensic tool directly"""
     module = function = ''
     try:
-        data = request.json
-        module = data.get('module')
-        function = data.get('function')
+        data = request.json or {}
+        module = str(data.get('module', '')).strip()
+        function = str(data.get('function', '')).strip()
         params = data.get('params', {})
+
+        if module not in _ALLOWED_TOOL_FUNCTIONS:
+            return jsonify({'status': 'error', 'error': f"Unknown module: {module}"}), 400
+        if function not in _ALLOWED_TOOL_FUNCTIONS[module]:
+            return jsonify({'status': 'error', 'error': f"Function not allowed: {module}.{function}"}), 400
+        if not isinstance(params, dict):
+            return jsonify({'status': 'error', 'error': 'params must be an object'}), 400
 
         action_logger.log('TOOL_API_CALL', {
             'module': module,
@@ -5409,27 +5442,37 @@ def critic_summary(investigation_id):
 def get_investigation_status(case_name):
     """Get status of background investigation via find_evil pipeline"""
     try:
-        # Check active find_evil jobs for this case
-        for job_id, job in _find_evil_jobs.items():
-            if case_name in job_id or job.get('case_name') == case_name:
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', case_name)
+        if not safe_name:
+            return jsonify({'status': 'error', 'error': 'Invalid case name'}), 400
+
+        # Check active find_evil jobs — hold lock for safe iteration
+        with _state_lock:
+            jobs_snapshot = list(_find_evil_jobs.items())
+        for job_id, job in jobs_snapshot:
+            if safe_name in job_id or job.get('case_name') == safe_name:
                 return jsonify({
                     'status': job.get('status', 'pending'),
-                    'case': case_name,
+                    'case': safe_name,
                     'job_id': job_id,
                     'progress_pct': job.get('progress_pct', 0),
                     'current_playbook': job.get('current_playbook'),
                     'current_step': job.get('current_step'),
                 })
-        # Check for completed investigation in case directory
-        case_dir = Path(CASES_WORK_DIR)
+        # Check for completed investigation in case directory using anchored pattern
+        cases_root = Path(CASES_WORK_DIR)
         report_file = None
-        for d in sorted(case_dir.glob(f"{case_name}*")):
-            candidate = d / "reports" / "find_evil_report.json"
-            if candidate.exists():
-                report_file = candidate
+        case_pattern = re.compile(r'^' + re.escape(safe_name) + r'(_findevil_|$)')
+        if cases_root.exists():
+            for d in sorted(cases_root.iterdir(), reverse=True):
+                if d.is_dir() and case_pattern.match(d.name):
+                    candidate = d / "reports" / "find_evil_report.json"
+                    if candidate.exists():
+                        report_file = candidate
+                        break
         if report_file:
-            return jsonify({'status': 'completed', 'case': case_name, 'report': str(report_file)})
-        return jsonify({'status': 'not_found', 'case': case_name}), 404
+            return jsonify({'status': 'completed', 'case': safe_name, 'report': str(report_file)})
+        return jsonify({'status': 'not_found', 'case': safe_name}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
