@@ -4417,6 +4417,57 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</table></div>';
             }
 
+            // Users/Accounts
+            const userMap = report.user_map || {};
+            const userEntries = Object.entries(userMap).filter(([k, v]) => k !== 'users' && typeof v === 'object');
+            if (userEntries.length > 0) {
+                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udc64 Accounts Discovered</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Username</th><th>SID</th><th>Last Login</th><th>Profile Path</th></tr>';
+                for (const [uname, udata] of userEntries) {
+                    if (typeof udata !== 'object') continue;
+                    h += '<tr><td><strong>' + _escHtml(uname) + '</strong></td>'
+                       + '<td><code style="font-size:0.75rem;">' + _escHtml(udata.sid || udata.SID || '\u2014') + '</code></td>'
+                       + '<td>' + _escHtml(udata.last_login || udata.lastLogon || '\u2014') + '</td>'
+                       + '<td style="font-size:0.78rem;color:#64748B;">' + _escHtml(udata.profile_path || udata.homeDir || '\u2014') + '</td></tr>';
+                }
+                h += '</table></div>';
+            }
+
+            // Correlated Users / Relationships
+            const corrUsers = report.correlated_users || {};
+            const corrEntries = Object.entries(corrUsers).filter(([k, v]) => typeof v === 'object');
+            if (corrEntries.length > 0) {
+                h += '<div class="report-section"><h3 style="color:#10B981;">\ud83d\udd17 User Relationships</h3>';
+                for (const [uname, cdata] of corrEntries) {
+                    h += '<div style="background:rgba(16,185,129,0.1);border:1px solid #10B981;border-radius:6px;padding:12px;margin-bottom:10px;">';
+                    h += '<h4 style="margin:0 0 8px 0;color:#10B981;">\ud83d\udc64 ' + _escHtml(uname) + '</h4>';
+                    if (cdata.devices && cdata.devices.length > 0) {
+                        h += '<p style="margin:4px 0;font-size:0.82rem;"><strong>Devices:</strong> ' + cdata.devices.map(_escHtml).join(', ') + '</p>';
+                    }
+                    if (cdata.activity_profile) {
+                        const prof = cdata.activity_profile;
+                        if (prof.total_events) {
+                            h += '<p style="margin:4px 0;font-size:0.82rem;"><strong>Total Events:</strong> ' + prof.total_events + '</p>';
+                        }
+                        if (prof.typical_hours && prof.typical_hours.length > 0) {
+                            h += '<p style="margin:4px 0;font-size:0.82rem;"><strong>Active Hours:</strong> ' + prof.typical_hours.join(', ') + '</p>';
+                        }
+                    }
+                    if (cdata.lateral_movement_indicators && cdata.lateral_movement_indicators.length > 0) {
+                        h += '<div style="margin-top:8px;padding:8px;background:rgba(239,68,68,0.1);border-radius:4px;">';
+                        h += '<strong style="color:#EF4444;font-size:0.82rem;">\u26a0 Lateral Movement Detected:</strong>';
+                        cdata.lateral_movement_indicators.forEach(lm => {
+                            h += '<div style="font-size:0.78rem;margin-top:4px;color:#cbd5e1;">';
+                            h += _escHtml(lm.from_device) + ' \u2192 ' + _escHtml(lm.to_device) + ' via ' + _escHtml(lm.method);
+                            h += '</div>';
+                        });
+                        h += '</div>';
+                    }
+                    h += '</div>';
+                }
+                h += '</div>';
+            }
+
             // Behavioral flags
             if (totalFlags > 0) {
                 h += '<div class="report-section"><h3 style="color:#EF4444;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
