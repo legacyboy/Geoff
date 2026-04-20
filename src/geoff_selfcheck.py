@@ -373,6 +373,20 @@ def check_mobile_tools() -> None:
                 "ALEAPP not found — Android artifact parsing will use built-in extractor. "
                 "Install: https://github.com/abrignoni/ALEAPP")
 
+    # exiftool — photo EXIF and GPS extraction
+    if _which("exiftool"):
+        _record("Mobile forensics (photos)", "exiftool", PASS)
+    else:
+        try:
+            import PIL  # noqa: F401
+            _record("Mobile forensics (photos)", "Pillow (EXIF fallback)", PASS,
+                    "exiftool not found — JPEG EXIF extraction will use Pillow. "
+                    "Install exiftool for full metadata: sudo apt install libimage-exiftool-perl")
+        except ImportError:
+            _record("Mobile forensics (photos)", "exiftool", WARN,
+                    "exiftool and Pillow both missing — photo EXIF/GPS extraction unavailable. "
+                    "Install: sudo apt install libimage-exiftool-perl")
+
 
 def check_directories(evidence_base: str, cases_work: str) -> None:
     """Verify key directories are writable."""
