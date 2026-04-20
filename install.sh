@@ -84,7 +84,14 @@ if [[ "$SKIP_DEPS" == false ]]; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
             sleuthkit ssdeep hashdeep exiftool plaso-tools \
-            regripper 2>/dev/null || true
+            regripper libimage-exiftool-perl 2>/dev/null || true
+        # Ensure forensic tools are available
+        info "Verifying forensic tool installation..."
+        for tool in exiftool tshark ssdeep hashdeep; do
+            if ! command -v $tool &>/dev/null; then
+                warn "$tool not found in PATH — some analyses may fail"
+            fi
+        done
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
         sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
         # Tshark (needs non-interactive setup)
@@ -443,6 +450,36 @@ else
     info "Skipping Ollama model pulls (--skip-ollama)"
 fi
 
+# ── Start Services ────────────────────────────────────────────────────────────
+info "Starting Geoff services..."
+
+# Ensure log directory exists
+mkdir -p "${INSTALL_DIR}/logs"
+
+# Start web server (Flask on 8080)
+nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && set -a && source .env && set +a && python3 src/geoff_integrated.py" > "${INSTALL_DIR}/logs/geoff.log" 2>&1 &
+GEOFF_PID=$!
+info "Geoff web server starting on port 8080 (PID: ${GEOFF_PID})"
+
+# Start MCP server (on 9999)
+nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && python3 src/geoff_mcp_server.py --host 127.0.0.1 --port 9999" > "${INSTALL_DIR}/logs/mcp.log" 2>&1 &
+MCP_PID=$!
+info "Geoff MCP server starting on port 9999 (PID: ${MCP_PID})"
+
+# Wait a moment and check if processes are running
+sleep 2
+if kill -0 ${GEOFF_PID} 2>/dev/null; then
+    ok "Geoff web server running"
+else
+    warn "Geoff web server may have failed to start (check logs/geoff.log)"
+fi
+
+if kill -0 ${MCP_PID} 2>/dev/null; then
+    ok "Geoff MCP server running"
+else
+    warn "Geoff MCP server may have failed to start (check logs/mcp.log)"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
@@ -452,13 +489,16 @@ echo -e "${GREEN}║${NC} Profile:    ${YELLOW}${PROFILE}${NC}"
 echo -e "${GREEN}║${NC} Directory:  ${INSTALL_DIR}${NC}"
 echo -e "${GREEN}║${NC} Config:     ${INSTALL_DIR}/.env${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║${NC} To start:                                       ${NC}"
+echo -e "${GREEN}║${NC} Services:                                       ${NC}"
+echo -e "${GREEN}║${NC}   Web UI:   http://127.0.0.1:8080              ${NC}"
+echo -e "${GREEN}║${NC}   MCP:      http://127.0.0.1:9999/mcp          ${NC}"
+echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║${NC} To restart manually:                             ${NC}"
 echo -e "${GREEN}║${NC}   cd ${INSTALL_DIR}                               ${NC}"
 echo -e "${GREEN}║${NC}   source venv/bin/activate                      ${NC}"
-echo -e "${GREEN}║${NC}   set -a && source .env && set +a              ${NC}"
-echo -e "${GREEN}║${NC}   python3 src/geoff_integrated.py                ${NC}"
+echo -e "${GREEN}║${NC}   python3 src/geoff_integrated.py &             ${NC}"
+echo -e "${GREEN}║${NC}   python3 src/geoff_mcp_server.py &             ${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║${NC} To switch profiles:                             ${NC}"
 echo -e "${GREEN}║${NC}   Edit .env: GEOFF_PROFILE=cloud|local          ${NC}"
-echo -e "${GREEN}║${NC}   Or: GEOFF_PROFILE=local python3 src/geoff_integrated.py${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"

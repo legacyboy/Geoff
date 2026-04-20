@@ -3109,6 +3109,17 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     if not evil_found and len(possible_categories) >= 2:
         evil_found = True
 
+    # From behavioral flags (timeline_anomalies, suspicious persistence, etc.)
+    if all_behavioral_flags:
+        for dev_id, flags in all_behavioral_flags.items():
+            for flag in flags:
+                sev = flag.get("severity", "MEDIUM")
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+                # Timeline anomalies with off-hours activity = potential data exfil
+                if flag.get("flag_type") == "timeline_anomaly":
+                    severity_counts["MEDIUM"] += 1  # Boost severity
+                    evil_found = True
+
     # From specialist results
     for f in findings_writer.all_records():
         result = f.get("result", {})
@@ -3136,6 +3147,18 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         overall_severity = "LOW"
     else:
         overall_severity = "INFO"
+
+    # Update classification for data exfiltration patterns from behavioral flags
+    if all_behavioral_flags:
+        for dev_id, flags in all_behavioral_flags.items():
+            for flag in flags:
+                if flag.get("flag_type") == "timeline_anomaly":
+                    classification = "Data Exfil"
+                    overall_severity = "HIGH"
+                    evil_found = True
+                    break
+            if classification == "Data Exfil":
+                break
 
     # Critic summary
     critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
@@ -3737,6 +3760,12 @@ HTML_TEMPLATE = r"""
         .fe-severity.MEDIUM   { background: rgba(96,165,250,0.15); color: #60A5FA; }
         .fe-severity.LOW      { background: rgba(16,185,129,0.12); color: #10B981; }
         .fe-severity.INFO     { background: rgba(100,116,139,0.15);color: #64748B; }
+        /* ORANGE classification for Data Exfil */
+        .classification-Data-Exfil, .fe-severity.Data-Exfil { 
+            background: rgba(251, 146, 60, 0.2); 
+            color: #FB923C; 
+            border: 1px solid #FB923C;
+        }
 
         .fe-pb-table {
             width: 100%;
@@ -5646,6 +5675,37 @@ def find_evil_status(job_id):
         resp["error"] = job["error"]
 
     return jsonify(resp)
+
+
+@app.route('/find-evil/status/<job_id>', methods=['DELETE'])
+@_require_auth
+def find_evil_cancel(job_id):
+    """
+    DELETE /find-evil/status/<job_id>
+    Cancel a running Find Evil job.
+    """
+    with _state_lock:
+        job = _find_evil_jobs.get(job_id)
+        
+        if job is None:
+            return jsonify({"status": "not_found", "error": f"No job with ID {job_id}"}), 404
+        
+        if job["status"] not in ("running", "initializing"):
+            return jsonify({
+                "status": "error",
+                "error": f"Cannot cancel job in state: {job['status']}"
+            }), 400
+        
+        # Mark as cancelled
+        job["status"] = "cancelled"
+        job["error"] = "Cancelled by user"
+        _fe_log(job_id, f"Job {job_id} cancelled by DELETE request")
+
+    return jsonify({
+        "job_id": job_id,
+        "status": "cancelled",
+        "message": "Job cancelled successfully"
+    })
 
 
 @app.route('/find-evil', methods=['GET'])
