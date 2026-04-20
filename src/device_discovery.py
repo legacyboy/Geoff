@@ -253,6 +253,28 @@ class DeviceDiscovery:
                     all_users[norm]["devices"].append(dev_id)
                 all_users[norm]["aliases"].add(profile)
 
+            # Also add SAM users from registry
+            for sam_user in dev.get("metadata", {}).get("sam_users", []):
+                username = sam_user.get("username")
+                if not username:
+                    continue
+                norm = self._normalize_username(username)
+                if norm not in all_users:
+                    all_users[norm] = {
+                        "username": norm,
+                        "display_name": username,
+                        "aliases": set(),
+                        "devices": [],
+                    }
+                if dev_id not in all_users[norm]["devices"]:
+                    all_users[norm]["devices"].append(dev_id)
+                all_users[norm]["aliases"].add(username)
+                # Add SAM-specific details
+                all_users[norm]["sid"] = sam_user.get("sid")
+                all_users[norm]["last_login"] = sam_user.get("last_login")
+                all_users[norm]["account_type"] = sam_user.get("account_type", "user")
+                all_users[norm]["enabled"] = sam_user.get("enabled", True)
+
         # Convert sets to lists for JSON
         user_map = {}
         for uname, udata in all_users.items():
@@ -294,6 +316,8 @@ class DeviceDiscovery:
             fname = Path(fpath).name.lower()
             if fname == "system":
                 self._enrich_from_system_hive(dev, fpath)
+            elif fname == "sam":
+                self._enrich_from_sam_hive(dev, fpath)
             elif fname in ("ntuser.dat", "usrclass.dat"):
                 dev["os_type"] = "windows"
                 dev["device_type"] = "windows_pc"
@@ -354,23 +378,37 @@ class DeviceDiscovery:
 
     def _extract_windows_users(self, dev: dict, file_listing: str):
         """
-        Parse fls output to find user profile directories under Users/.
-        Skip: Default, Public, All Users, desktop.ini
+        Parse fls output to find user profile directories.
+        Supports both WinXP (Documents and Settings/) and Win7+ (Users/).
+        Skip: Default, Public, All Users, desktop.ini, etc.
         """
         skip_profiles = {"default", "public", "all users", "default user",
-                         "desktop.ini", ".", ".."}
+                         "desktop.ini", ".", "..", "local settings", "application data",
+                         "temp", "templates", "start menu", "favorites", "history",
+                         "cookies", "recent", "sendto", "my documents", "nethood",
+                         "printhood", "user account pictures", "default pictures"}
         profiles = []
-        in_users = False
+
         for line in file_listing.split("\n"):
             line_lower = line.lower().strip()
-            # fls output format: "d/d 12345: Users/username"
+
+            # Check for Users/ directory (Win7+)
             if "/users/" in line_lower or "\\users\\" in line_lower:
-                # Extract the username portion
                 parts = line.split("/")
                 for i, part in enumerate(parts):
                     if part.lower().strip().rstrip(":") == "users" and i + 1 < len(parts):
                         uname = parts[i + 1].strip().rstrip("/")
                         if uname.lower() not in skip_profiles and uname:
+                            profiles.append(uname)
+
+            # Check for Documents and Settings/ directory (WinXP)
+            elif "/documents and settings/" in line_lower:
+                parts = line.split("/")
+                for i, part in enumerate(parts):
+                    if "documents and settings" in part.lower() and i + 1 < len(parts):
+                        uname = parts[i + 1].strip().rstrip("/")
+                        # Skip system folders within Doc Settings
+                        if uname.lower() not in skip_profiles and uname and len(uname) > 1:
                             profiles.append(uname)
 
         profiles = list(set(profiles))
@@ -382,7 +420,7 @@ class DeviceDiscovery:
             # Multiple profiles — pick the non-admin one if possible
             non_admin = [p for p in profiles
                          if p.lower() not in ("administrator", "admin",
-                                              "defaultuser0")]
+                                              "defaultuser0", "all users")]
             if len(non_admin) == 1:
                 dev["owner"] = non_admin[0]
                 dev["owner_confidence"] = "MEDIUM"
@@ -445,7 +483,40 @@ class DeviceDiscovery:
             self._log("plist_error",
                       f"Failed to parse Info.plist: {e}")
 
-    def _classify_files(self, files, inventory) -> list:
+    def _enrich_from_sam_hive(self, dev: dict, hive_path: str):
+        """
+        Parse SAM registry hive to extract actual user accounts.
+        
+        Uses the registry specialist to dump user SIDs, usernames, and
+        last login timestamps from the SAM database.
+        """
+        try:
+            result = self.orchestrator.run_playbook_step(
+                "device-discovery",
+                {"module": "registry", "function": "parse_hive",
+                 "params": {"hive_path": hive_path}}
+            )
+            if result.get("status") == "success":
+                # Extract user accounts from parsed SAM
+                parsed = result.get("parsed", {})
+                users = parsed.get("users", [])
+                
+                if users:
+                    user_list = []
+                    for user in users:
+                        user_list.append({
+                            "username": user.get("username"),
+                            "sid": user.get("sid"),
+                            "last_login": user.get("last_logon"),
+                            "account_type": user.get("type", "user"),
+                            "enabled": user.get("enabled", True)
+                        })
+                    dev["metadata"]["sam_users"] = user_list
+                    self._log("sam_users_found", 
+                              f"Found {len(user_list)} accounts in SAM: " + 
+                              ", ".join([u.get("username", "unknown") for u in user_list]))
+        except Exception as e:
+            self._log("sam_parse_error", f"Failed to parse SAM: {e}")
         """Return list of evidence type strings for given files."""
         types = set()
         for fpath in files:

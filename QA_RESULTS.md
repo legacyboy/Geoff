@@ -2704,3 +2704,24 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 0
 - **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-2746f6273c4c","message":"Find Evil job started. Poll /find-evil/status/fe-2746f6273c4c for progress.","status":"running"}
 
+
+---
+## QA Run: 2026-04-19 23:45:01 CDT — Scenario: individual_specialist
+### Specialist: sleuthkit.analyze_filesystem
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"analyze_filesystem\", \"params\": {\"image\": \"/home/sansforensics/evidence-storage/evidence/hacking-case/SCHARDT.001\", \"offset\": 0}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Cannot determine file system type\n","stdout":"","timestamp":"2026-04-20T04:45:02.153208","tool":"fsstat"}
+
+
+---
+## QA Run: 2026-04-20 00:00:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp; cat /etc/passwd'","status":"error"}
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp | id'","status":"error"}
+

@@ -512,8 +512,88 @@ class REGISTRY_Specialist:
         }
 
 
-# ---------------------------------------------------------------------------
-# PLASO_Specialist
+    def extract_sam_users(self, sam_path: str) -> Dict[str, Any]:
+        """Extract user accounts from SAM hive with SIDs, last logon, and account types."""
+        meta, raw = self._run_regripper(sam_path, 'sam')
+        users = []
+        current_user = {}
+        for line in raw.split('\n'):
+            line = line.strip()
+            if line.startswith('Username:') or line.startswith('User Name:'):
+                if current_user.get('username'):
+                    users.append(current_user)
+                current_user = {'username': line.split(':', 1)[1].strip()}
+            elif 'SID:' in line and ':' in line:
+                current_user['sid'] = line.split(':', 1)[1].strip()
+            elif 'Last Logon:' in line and ':' in line:
+                current_user['last_logon'] = line.split(':', 1)[1].strip()
+            elif 'Account Type:' in line and ':' in line:
+                current_user['type'] = line.split(':', 1)[1].strip()
+            elif 'Enabled' in line and ':' in line:
+                current_user['enabled'] = 'yes' in line.lower() or 'true' in line.lower()
+        if current_user.get('username'):
+            users.append(current_user)
+        return {
+            'tool': 'sam_users',
+            'sam_path': sam_path,
+            'status': 'success' if users else 'error',
+            'users': users,
+            'user_count': len(users),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_domain_accounts(self, system_path: str, software_path: str = None) -> Dict[str, Any]:
+        """Extract domain-joined accounts and cached credentials info from SYSTEM/SECURITY."""
+        meta_sys, raw_sys = self._run_regripper(system_path, 'compname')
+        computer_name = None
+        domain_name = None
+        for line in raw_sys.split('\n'):
+            if 'ComputerName:' in line:
+                computer_name = line.split(':', 1)[1].strip()
+            if 'Domain:' in line or 'Workgroup:' in line:
+                domain_name = line.split(':', 1)[1].strip()
+        return {
+            'tool': 'domain_accounts',
+            'system_path': system_path,
+            'status': 'success',
+            'computer_name': computer_name,
+            'domain': domain_name,
+            'is_domain_joined': domain_name is not None and domain_name.lower() not in ['workgroup', ''],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_sticky_notes(self, user_data_path: str) -> Dict[str, Any]:
+        """Extract Sticky Notes content from Windows Plum.sqlite database."""
+        plum_path = Path(user_data_path) / 'AppData' / 'Local' / 'Packages' / 'Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe' / 'LocalState' / 'Plum.sqlite'
+        if not plum_path.exists():
+            return {'tool': 'sticky_notes', 'status': 'error', 'error': 'Plum.sqlite not found', 'timestamp': datetime.now().isoformat()}
+        sql = "SELECT Text FROM Note ORDER BY UpdatedAt DESC"
+        rows = self._query_sqlite(str(plum_path), sql)
+        notes = [r.get('Text', '') for r in rows if r.get('Text')]
+        return {
+            'tool': 'sticky_notes',
+            'db_path': str(plum_path),
+            'status': 'success',
+            'notes': notes[:50],
+            'note_count': len(notes),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_windows_credentials(self, vault_path: str) -> Dict[str, Any]:
+        """Extract Windows Credential Manager vault entries (metadata only)."""
+        meta, raw = self._run_regripper(vault_path, 'credvault') if Path(self.regripper_path).exists() else ({'status': 'error'}, '')
+        credentials = []
+        for line in raw.split('\n'):
+            if 'Target:' in line or 'User:' in line or 'Server:' in line:
+                credentials.append(line.strip())
+        return {
+            'tool': 'windows_credentials',
+            'vault_path': vault_path,
+            'status': 'success' if credentials else 'error',
+            'credentials_found': len(credentials),
+            'sample': credentials[:10],
+            'timestamp': datetime.now().isoformat(),
+        }
 # ---------------------------------------------------------------------------
 
 class PLASO_Specialist:
@@ -1424,6 +1504,126 @@ except Exception as e:
                 'error': str(e),
                 'timestamp': datetime.now().isoformat(),
             }
+
+
+    def extract_linux_users(self, passwd_path: str, shadow_path: str = None) -> Dict[str, Any]:
+        """Extract user accounts from /etc/passwd and /etc/shadow files."""
+        users = []
+        try:
+            with open(passwd_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split(':')
+                    if len(parts) >= 7:
+                        users.append({
+                            'username': parts[0],
+                            'uid': parts[2],
+                            'gid': parts[3],
+                            'home_dir': parts[5],
+                            'shell': parts[6],
+                            'gecos': parts[4] if len(parts) > 4 else '',
+                        })
+        except Exception as e:
+            return {'tool': 'linux_users', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+        
+        # Parse shadow for password status (if available)
+        shadow_info = {}
+        if shadow_path and Path(shadow_path).exists():
+            try:
+                with open(shadow_path, 'r') as f:
+                    for line in f:
+                        parts = line.strip().split(':')
+                        if len(parts) >= 2:
+                            shadow_info[parts[0]] = {
+                                'hash_present': parts[1] not in ['', '*', 'x', '!'],
+                                'locked': parts[1].startswith('!') if parts[1] else False,
+                            }
+            except Exception:
+                pass
+        
+        for u in users:
+            u['password_status'] = shadow_info.get(u['username'], {}).get('hash_present', False)
+            u['account_locked'] = shadow_info.get(u['username'], {}).get('locked', False)
+        
+        return {
+            'tool': 'linux_users',
+            'passwd_path': passwd_path,
+            'status': 'success',
+            'users': users,
+            'user_count': len(users),
+            'system_users': [u for u in users if int(u['uid']) < 1000],
+            'regular_users': [u for u in users if int(u['uid']) >= 1000],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_wtmp_logins(self, wtmp_path: str) -> Dict[str, Any]:
+        """Extract login history from wtmp binary log (last -f style)."""
+        try:
+            result = subprocess.run(['last', '-f', wtmp_path], capture_output=True, text=True)
+            logins = []
+            users = set()
+            hosts = set()
+            for line in result.stdout.split('\n'):
+                if 'wtmp begins' in line or not line.strip():
+                    continue
+                parts = line.split()
+                if len(parts) >= 4:
+                    username = parts[0]
+                    users.add(username)
+                    if len(parts) > 2 and parts[2] not in ['tty', ':0']:
+                        hosts.add(parts[2])
+                    logins.append({
+                        'username': username,
+                        'tty': parts[1] if len(parts) > 1 else '',
+                        'host': parts[2] if len(parts) > 2 and not parts[2].startswith('tty') else 'local',
+                        'login_time': ' '.join(parts[3:7]) if len(parts) > 6 else '',
+                    })
+            return {
+                'tool': 'wtmp_logins',
+                'wtmp_path': wtmp_path,
+                'status': 'success' if logins else 'no_data',
+                'login_count': len(logins),
+                'unique_users': sorted(users),
+                'remote_hosts': sorted(hosts)[:20],
+                'recent_logins': logins[:50],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'wtmp_logins', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_ssh_authorized_keys(self, auth_keys_path: str) -> Dict[str, Any]:
+        """Extract SSH authorized keys with key types and fingerprints."""
+        keys = []
+        try:
+            with open(auth_keys_path, 'r') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        key_type = parts[0]
+                        key_b64 = parts[1]
+                        comment = ' '.join(parts[2:]) if len(parts) > 2 else ''
+                        keys.append({
+                            'line': line_num,
+                            'type': key_type,
+                            'fingerprint': f"{key_b64[:16]}...{key_b64[-16:]}" if len(key_b64) > 32 else key_b64,
+                            'comment': comment,
+                        })
+            return {
+                'tool': 'ssh_authorized_keys',
+                'path': auth_keys_path,
+                'status': 'success',
+                'keys': keys,
+                'key_count': len(keys),
+                'key_types': list(set(k['type'] for k in keys)),
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'ssh_authorized_keys', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------
@@ -2389,6 +2589,132 @@ class MOBILE_Specialist:
             return {'tool': 'ios_contacts', 'status': 'error', 'error': str(e),
                     'backup_dir': backup_dir}
 
+    def extract_ios_accounts(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract Apple ID and configured accounts from iOS backup."""
+        backup_path = Path(backup_dir)
+        accounts = []
+        
+        # Primary: Accounts plist
+        accounts_plist = self._get_ios_file_path(
+            backup_path, 'HomeDomain',
+            'Library/Accounts/Accounts3.sqlite'
+        )
+        if accounts_plist:
+            try:
+                conn = sqlite3.connect(f"file:{accounts_plist}?mode=ro", uri=True, timeout=5)
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute("""
+                        SELECT a.identifier, a.account_description, c.value
+                        FROM accounts a
+                        LEFT JOIN account_credential c ON a.account_id = c.account_id
+                        LIMIT 100
+                    """).fetchall()
+                    for r in rows:
+                        accounts.append({
+                            'account_id': r['identifier'] or '',
+                            'description': r['account_description'] or '',
+                            'credential_hint': (r['value'][:30] + '...') if r['value'] and len(r['value']) > 30 else (r['value'] or ''),
+                            'type': 'apple_id' if 'apple' in str(r['account_description']).lower() else 'other',
+                        })
+                except Exception:
+                    pass
+                conn.close()
+            except Exception:
+                pass
+        
+        # Secondary: Keychain (for saved passwords)
+        keychain_db = self._get_ios_file_path(
+            backup_path, 'HomeDomain',
+            'Library/Keychains/keychain-2.db'
+        )
+        keychain_entries = []
+        if keychain_db:
+            try:
+                conn = sqlite3.connect(f"file:{keychain_db}?mode=ro", uri=True, timeout=5)
+                try:
+                    rows = conn.execute("SELECT svce, acct FROM genp LIMIT 50").fetchall()
+                    for r in rows:
+                        if r[0] or r[1]:
+                            keychain_entries.append({
+                                'service': r[0] or '',
+                                'account': r[1] or '',
+                            })
+                except Exception:
+                    pass
+                conn.close()
+            except Exception:
+                pass
+        
+        return {
+            'tool': 'ios_accounts',
+            'status': 'success' if accounts else 'no_data',
+            'backup_dir': backup_dir,
+            'accounts': accounts,
+            'keychain_entries': keychain_entries[:30],
+            'account_count': len(accounts),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_android_accounts(self, data_dir: str) -> Dict[str, Any]:
+        """Extract Google and app accounts from Android accounts.db."""
+        data_path = Path(data_dir)
+        db_path = self._find_db(data_path, 'accounts.db')
+        if db_path is None:
+            return {'tool': 'android_accounts', 'status': 'not_found',
+                    'message': 'accounts.db not found', 'data_dir': data_dir}
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            accounts = []
+            try:
+                # Modern Android schema
+                rows = conn.execute("""
+                    SELECT a.name, a.type, a.last_password_entry_time_millis_epoch,
+                           b.name as package_name
+                    FROM accounts a
+                    LEFT JOIN account_authenticators b ON a._id = b._id
+                    LIMIT 100
+                """).fetchall()
+                for r in rows:
+                    ts = r['last_password_entry_time_millis_epoch']
+                    ts_str = datetime.utcfromtimestamp(ts / 1000).isoformat() if ts else ''
+                    accounts.append({
+                        'name': r['name'] or '',
+                        'type': r['type'] or '',
+                        'package': r['package_name'] or '',
+                        'last_password_entry': ts_str,
+                        'is_google': 'google' in str(r['type']).lower(),
+                    })
+            except Exception:
+                # Fallback to older schema
+                try:
+                    rows = conn.execute("SELECT name, type FROM accounts LIMIT 100").fetchall()
+                    for r in rows:
+                        accounts.append({
+                            'name': r['name'] or '',
+                            'type': r['type'] or '',
+                            'package': '',
+                            'last_password_entry': '',
+                            'is_google': 'google' in str(r['type']).lower(),
+                        })
+                except Exception as inner:
+                    conn.close()
+                    return {'tool': 'android_accounts', 'status': 'error', 'error': str(inner),
+                            'data_dir': data_dir}
+            conn.close()
+            return {
+                'tool': 'android_accounts', 'status': 'success',
+                'data_dir': data_dir,
+                'account_count': len(accounts),
+                'accounts': accounts,
+                'google_accounts': [a for a in accounts if a.get('is_google')],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'android_accounts', 'status': 'error', 'error': str(e),
+                    'data_dir': data_dir}
+
     def extract_ios_location(self, backup_dir: str) -> Dict[str, Any]:
         """Extract location history from iOS backup (routined Local.sqlite + Maps GeoHistory)."""
         backup_path = Path(backup_dir)
@@ -3260,6 +3586,81 @@ class MOBILE_Specialist:
                 'error': str(e),
                 'backup_dir': backup_dir,
             }
+
+    def extract_ios_device_info(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract device info from iOS Info.plist and Manifest.plist."""
+        backup_path = Path(backup_dir)
+        info = {
+            'device_name': '',
+            'product_version': '',
+            'product_type': '',
+            'serial_number': '',
+            'unique_identifier': '',
+            'backup_date': '',
+            'phone_number': '',
+            'target_type': '',
+        }
+        
+        # Read Info.plist
+        info_plist = backup_path / 'Info.plist'
+        if info_plist.exists():
+            try:
+                with open(info_plist, 'rb') as f:
+                    data = plistlib.load(f)
+                info['device_name'] = data.get('Device Name', '')
+                info['product_version'] = data.get('Product Version', '')
+                info['product_type'] = data.get('Product Type', '')
+                info['serial_number'] = data.get('Serial Number', '')
+                info['unique_identifier'] = data.get('Unique Identifier', '')
+                info['backup_date'] = str(data.get('Last Backup Date', ''))
+                info['phone_number'] = data.get('Phone Number', '')
+                info['target_type'] = data.get('Target Type', '')
+            except Exception:
+                pass
+        
+        return {
+            'tool': 'ios_device_info',
+            'status': 'success',
+            'backup_dir': backup_dir,
+            'device_info': info,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_android_device_info(self, data_dir: str) -> Dict[str, Any]:
+        """Extract device info from Android system databases."""
+        data_path = Path(data_dir)
+        info = {
+            'device_name': '',
+            'android_version': '',
+            'model': '',
+            'manufacturer': '',
+            'serial_number': '',
+            'phone_number': '',
+            'imei': '',
+        }
+        
+        # Try settings.db for device name
+        settings_db = self._find_db(data_path, 'settings.db')
+        if settings_db:
+            try:
+                conn = sqlite3.connect(f"file:{settings_db}?mode=ro", uri=True, timeout=5)
+                rows = conn.execute("SELECT name, value FROM global WHERE name IN ('device_name', 'bluetooth_name')").fetchall()
+                for r in rows:
+                    if r[0] == 'device_name':
+                        info['device_name'] = r[1] or ''
+                    if r[0] == 'bluetooth_name' and not info['device_name']:
+                        info['device_name'] = r[1] or ''
+                conn.close()
+            except Exception:
+                pass
+        
+        return {
+            'tool': 'android_device_info',
+            'status': 'success',
+            'data_dir': data_dir,
+            'device_info': info,
+            'timestamp': datetime.now().isoformat(),
+        }
 
     def extract_ios_usage_stats(self, backup_dir: str) -> Dict[str, Any]:
         """Extract iOS usage statistics from backup.
@@ -4314,6 +4715,72 @@ class ZIMMERMAN_Specialist:
         }
 
 
+    def extract_macos_users(self, dscl_path: str = '/var/db/dslocal/nodes/Default/users') -> Dict[str, Any]:
+        """Extract macOS user accounts from dscl database or plist files."""
+        users = []
+        try:
+            base = Path(dscl_path)
+            if base.exists():
+                for plist_file in base.glob('*.plist'):
+                    try:
+                        with open(plist_file, 'rb') as f:
+                            data = plistlib.load(f)
+                        users.append({
+                            'username': data.get('name', [{}])[0] if isinstance(data.get('name'), list) else data.get('name', plist_file.stem),
+                            'uid': data.get('uid', [{}])[0] if isinstance(data.get('uid'), list) else data.get('uid', ''),
+                            'gid': data.get('gid', [{}])[0] if isinstance(data.get('gid'), list) else data.get('gid', ''),
+                            'home': data.get('home', [{}])[0] if isinstance(data.get('home'), list) else data.get('home', ''),
+                            'shell': data.get('shell', [{}])[0] if isinstance(data.get('shell'), list) else data.get('shell', ''),
+                            'realname': data.get('realname', [{}])[0] if isinstance(data.get('realname'), list) else data.get('realname', ''),
+                        })
+                    except Exception:
+                        continue
+            return {
+                'tool': 'macos_users',
+                'source': dscl_path,
+                'status': 'success' if users else 'no_data',
+                'users': users,
+                'user_count': len(users),
+                'admin_users': [u for u in users if u.get('gid') == '80' or 'admin' in str(u.get('groups', [])).lower()],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'macos_users', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_keychain_passwords(self, keychain_path: str) -> Dict[str, Any]:
+        """Extract password metadata (not decrypted) from macOS Keychain."""
+        try:
+            result = subprocess.run(['security', 'dump-keychain', keychain_path], 
+                                    capture_output=True, text=True, timeout=60)
+            entries = []
+            current = {}
+            for line in result.stdout.split('\n'):
+                if 'keychain:' in line.lower():
+                    if current:
+                        entries.append(current)
+                    current = {}
+                if 'account' in line.lower() and '<' in line:
+                    parts = line.split('<')
+                    if len(parts) > 1:
+                        current['account'] = parts[1].split('>')[0] if '>' in parts[1] else parts[1]
+                if 'svce' in line.lower() and '<' in line:
+                    parts = line.split('<')
+                    if len(parts) > 1:
+                        current['service'] = parts[1].split('>')[0] if '>' in parts[1] else parts[1]
+            if current:
+                entries.append(current)
+            return {
+                'tool': 'keychain_dump',
+                'keychain_path': keychain_path,
+                'status': 'success' if entries else 'no_data',
+                'entry_count': len(entries),
+                'accounts': [e for e in entries if 'account' in e][:50],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'keychain_dump', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
 # ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes new specialists)
 # ---------------------------------------------------------------------------
@@ -4413,7 +4880,7 @@ class ExtendedOrchestrator:
             'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {
                 'category': 'Windows Registry',
-                'functions': ['parse_hive', 'extract_shellbags', 'extract_autoruns', 'extract_services'],
+                'functions': ['parse_hive', 'extract_shellbags', 'extract_autoruns', 'extract_services', 'extract_sam_users', 'extract_domain_accounts', 'extract_windows_credentials'],
                 'tool_availability': avail(['rip.pl']),
             },
             'plaso': {
@@ -4426,7 +4893,7 @@ class ExtendedOrchestrator:
                 'functions': ['analyze_pcap', 'extract_flows', 'extract_http'],
                 'tool_availability': avail(['tshark', 'tcpflow']),
             },
-            'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_syslog'], 'tool_availability': {'python-evtx': evtx_available}},
+            'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_syslog', 'extract_linux_users', 'extract_wtmp_logins', 'extract_ssh_authorized_keys'], 'tool_availability': {'python-evtx': evtx_available}},
             'mobile': {
                 'category': 'Mobile Forensics',
                 'functions': [
