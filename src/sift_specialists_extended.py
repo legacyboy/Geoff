@@ -1646,10 +1646,52 @@ class MOBILE_Specialist:
             for cat_files in artifact_categories.values():
                 files_found.extend(cat_files[:50])
 
+            # Detect encryption early — check Info.plist IsEncrypted + manifest keys
+            is_encrypted = False
+            encrypted_msg = ''
+            if isinstance(info_data, dict) and info_data.get('is_encrypted') is True:
+                is_encrypted = True
+                encrypted_msg = 'Backup keybag present in Info.plist — data is encrypted'
+            elif manifest.exists():
+                # Also check manifest flags: flags & 0x80000000 means encrypted in iOS
+                try:
+                    conn = sqlite3.connect(str(manifest))
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT flags FROM Files LIMIT 10")
+                    encrypted_count = 0
+                    for row in cursor.fetchall():
+                        if row['flags'] and (row['flags'] & 0x80000000):
+                            encrypted_count += 1
+                    if encrypted_count > 0:
+                        is_encrypted = True
+                        encrypted_msg = f'{encrypted_count} file(s) in manifest have encrypted flags (0x80000000)'
+                    conn.close()
+                except Exception:
+                    pass
+
+            # If encrypted, return early with clear status
+            if is_encrypted:
+                return {
+                    'tool': 'ios_backup_analyzer',
+                    'backup_dir': backup_dir,
+                    'status': 'encrypted',
+                    'is_encrypted': True,
+                    'encrypted_message': encrypted_msg,
+                    'info_plist': info_data,
+                    'manifest_exists': manifest.exists(),
+                    'message': 'Encrypted backup detected — extraction skipped. Provide decryption key or backup_password.',
+                    'artifact_categories': {
+                        k: v[:50] for k, v in artifact_categories.items()
+                    },
+                    'files_found': files_found[:100],
+                    'timestamp': datetime.now().isoformat(),
+                }
+
             return {
                 'tool': 'ios_backup_analyzer',
                 'backup_dir': backup_dir,
                 'status': 'success',
+                'is_encrypted': False,
                 'manifest_exists': manifest.exists(),
                 'info_plist_exists': info_plist.exists(),
                 'info_plist': info_data,
@@ -3035,10 +3077,374 @@ class MOBILE_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+    # -----------------------------------------------------------------------
+    # New extraction methods (MEDIUM PRIORITY) - added 2026-04-19
+    # -----------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# BROWSER_Specialist  (Chrome/Firefox/Edge/Safari history & cookies)
-# ---------------------------------------------------------------------------
+    def extract_ios_keychain(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract Keychain data from iOS backup.
+        
+        Parses KeychainDomain data to extract password items, internet passwords,
+        and other secure credential entries.
+        """
+        backup_path = Path(backup_dir)
+        keychain_file = backup_path / 'KeychainDomain.plist'
+        
+        if not keychain_file.exists():
+            return {
+                'tool': 'ios_keychain',
+                'status': 'not_found',
+                'message': 'KeychainDomain.plist not found',
+                'backup_dir': backup_dir,
+            }
+        
+        try:
+            with open(keychain_file, 'rb') as f:
+                data = plistlib.load(f)
+            
+            items = []
+            for record in data.get('RKKeychainRecord', []):
+                items.append({
+                    'record_type': record.get('RecordType', ''),
+                    'service': record.get('Service', ''),
+                    'account': record.get('Account', ''),
+                    'password': record.get('Password', ''),
+                    'creation_date': str(record.get('CreationDate', '')),
+                    'modify_date': str(record.get('ModifyDate', '')),
+                })
+            
+            return {
+                'tool': 'ios_keychain',
+                'status': 'success',
+                'backup_dir': backup_dir,
+                'item_count': len(items),
+                'items': items[:500],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'ios_keychain',
+                'status': 'error',
+                'error': str(e),
+                'backup_dir': backup_dir,
+            }
+
+    def extract_ios_health(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract Health data from iOS backup (HealthKit databases).
+        
+        Parses HealthKit databases to extract health records, workouts,
+        and other health-related data from HealthExport.db or Health.db.
+        """
+        backup_path = Path(backup_dir)
+        
+        # Look for HealthKit databases
+        health_dbs = list(backup_path.rglob('HealthExport.db')) + list(backup_path.rglob('Health.db'))
+        if not health_dbs:
+            return {
+                'tool': 'ios_health',
+                'status': 'not_found',
+                'message': 'HealthKit databases (HealthExport.db or Health.db) not found',
+                'backup_dir': backup_dir,
+            }
+        
+        health_db = health_dbs[0]
+        try:
+            conn = sqlite3.connect(f"file:{health_db}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get table list
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cursor.fetchall()]
+            
+            records = []
+            if 'HK Record' in tables:
+                # HK Record table contains health records
+                cursor.execute(
+                    "SELECT type, value, unit, startDate, endDate, creationDate, device FROM 'HK Record' LIMIT 500"
+                )
+                for row in cursor.fetchall():
+                    records.append({
+                        'type': row[0],
+                        'value': row[1],
+                        'unit': row[2],
+                        'start_date': row[3],
+                        'end_date': row[4],
+                        'creation_date': row[5],
+                        'device': row[6],
+                    })
+            
+            conn.close()
+            
+            return {
+                'tool': 'ios_health',
+                'status': 'success',
+                'backup_dir': backup_dir,
+                'db_path': str(health_db.relative_to(backup_path)),
+                'table_count': len(tables),
+                'table_names': tables[:20],
+                'record_count': len(records),
+                'records': records,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'ios_health',
+                'status': 'error',
+                'error': str(e),
+                'backup_dir': backup_dir,
+            }
+
+    def extract_ios_notifications(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract notification history from iOS backup (settings.db notification_log table).
+        
+        Parses the notification_log table from settings.db to extract
+        notification records including app IDs, timestamps, and alert strings.
+        """
+        backup_path = Path(backup_dir)
+        settings_db = self._find_db(backup_path, 'settings.db')
+        
+        if settings_db is None:
+            return {
+                'tool': 'ios_notifications',
+                'status': 'not_found',
+                'message': 'settings.db not found',
+                'backup_dir': backup_dir,
+            }
+        
+        try:
+            conn = sqlite3.connect(f"file:{settings_db}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Check if notification_log table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")
+            if not cursor.fetchone():
+                conn.close()
+                return {
+                    'tool': 'ios_notifications',
+                    'status': 'not_found',
+                    'message': 'notification_log table not found in settings.db',
+                    'backup_dir': backup_dir,
+                }
+            
+            # Extract notification records
+            cursor.execute(
+                "SELECT app_id, date, alert_string, bundle_id, category, flags FROM notification_log ORDER BY date DESC LIMIT 500"
+            )
+            notifications = []
+            for row in cursor.fetchall():
+                notifications.append({
+                    'app_id': row[0],
+                    'date': row[1],
+                    'alert_string': row[2],
+                    'bundle_id': row[3],
+                    'category': row[4],
+                    'flags': row[5],
+                })
+            
+            conn.close()
+            
+            return {
+                'tool': 'ios_notifications',
+                'status': 'success',
+                'backup_dir': backup_dir,
+                'notification_count': len(notifications),
+                'notifications': notifications,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'ios_notifications',
+                'status': 'error',
+                'error': str(e),
+                'backup_dir': backup_dir,
+            }
+
+    def extract_ios_usage_stats(self, backup_dir: str) -> Dict[str, Any]:
+        """Extract iOS usage statistics from backup.
+        
+        Parses usage data from various iOS databases to extract app usage,
+        screen time, and device interaction statistics.
+        """
+        backup_path = Path(backup_dir)
+        
+        # Look for usage statistics databases
+        usage_dbs = []
+        for pattern in ['usage.db', 'Usage.db', 'usagestats/*.db']:
+            matches = list(backup_path.rglob(pattern))
+            usage_dbs.extend(matches)
+        
+        if not usage_dbs:
+            return {
+                'tool': 'ios_usage_stats',
+                'status': 'not_found',
+                'message': 'Usage statistics databases not found',
+                'backup_dir': backup_dir,
+            }
+        
+        usage_db = usage_dbs[0]
+        try:
+            conn = sqlite3.connect(f"file:{usage_db}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Get table list
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cursor.fetchall()]
+            
+            # Try common usage tables
+            app_usage = []
+            if 'usage' in tables:
+                cursor.execute("SELECT app_id, timestamp, duration FROM usage LIMIT 500")
+                for row in cursor.fetchall():
+                    app_usage.append({
+                        'app_id': row[0],
+                        'timestamp': row[1],
+                        'duration': row[2],
+                    })
+            
+            conn.close()
+            
+            return {
+                'tool': 'ios_usage_stats',
+                'status': 'success',
+                'backup_dir': backup_dir,
+                'db_path': str(usage_db.relative_to(backup_path)),
+                'table_count': len(tables),
+                'table_names': tables[:20],
+                'app_usage_count': len(app_usage),
+                'app_usage': app_usage,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'ios_usage_stats',
+                'status': 'error',
+                'error': str(e),
+                'backup_dir': backup_dir,
+            }
+
+    def extract_android_notifications(self, data_dir: str) -> Dict[str, Any]:
+        """Extract notification history from Android data (settings.db notification_log table).
+        
+        Parses the notification_log table from settings.db to extract
+        notification records including app IDs, timestamps, and alert strings.
+        """
+        data_path = Path(data_dir)
+        settings_db = self._find_db(data_path, 'settings.db')
+        
+        if settings_db is None:
+            return {
+                'tool': 'android_notifications',
+                'status': 'not_found',
+                'message': 'settings.db not found',
+                'data_dir': data_dir,
+            }
+        
+        try:
+            conn = sqlite3.connect(f"file:{settings_db}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Check if notification_log table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")
+            if not cursor.fetchone():
+                conn.close()
+                return {
+                    'tool': 'android_notifications',
+                    'status': 'not_found',
+                    'message': 'notification_log table not found in settings.db',
+                    'data_dir': data_dir,
+                }
+            
+            # Extract notification records
+            cursor.execute(
+                "SELECT app_id, date, alert_string, bundle_id, category, flags FROM notification_log ORDER BY date DESC LIMIT 500"
+            )
+            notifications = []
+            for row in cursor.fetchall():
+                notifications.append({
+                    'app_id': row[0],
+                    'date': row[1],
+                    'alert_string': row[2],
+                    'bundle_id': row[3],
+                    'category': row[4],
+                    'flags': row[5],
+                })
+            
+            conn.close()
+            
+            return {
+                'tool': 'android_notifications',
+                'status': 'success',
+                'data_dir': data_dir,
+                'notification_count': len(notifications),
+                'notifications': notifications,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'android_notifications',
+                'status': 'error',
+                'error': str(e),
+                'data_dir': data_dir,
+            }
+
+    def extract_android_usage_stats(self, data_dir: str) -> Dict[str, Any]:
+        """Extract Android usage statistics from /data/system/usagestats/ XML files.
+        
+        Parses usagestats XML files to extract app usage data including
+        total time in foreground, last time used, and component names.
+        """
+        data_path = Path(data_dir)
+        usagestats_dir = data_path / 'system' / 'usagestats'
+        
+        if not usagestats_dir.exists():
+            return {
+                'tool': 'android_usage_stats',
+                'status': 'not_found',
+                'message': 'usagestats directory not found',
+                'data_dir': data_dir,
+            }
+        
+        try:
+            app_usage = []
+            
+            # Parse XML files in usagestats directory
+            for xml_file in usagestats_dir.rglob('*.xml'):
+                try:
+                    tree = ET.parse(str(xml_file))
+                    root = tree.getroot()
+                    
+                    for pkg in root.iter('package'):
+                        pkg_name = pkg.get('package', '')
+                        for comp in pkg.iter('component'):
+                            app_usage.append({
+                                'package': pkg_name,
+                                'component': comp.get('name', ''),
+                                'total_foreground_time': comp.get('fgTime', ''),
+                                'last_time_used': comp.get('lt', ''),
+                            })
+                except Exception:
+                    continue
+            
+            return {
+                'tool': 'android_usage_stats',
+                'status': 'success',
+                'data_dir': data_dir,
+                'usagestats_dir': str(usagestats_dir.relative_to(data_path)),
+                'app_usage_count': len(app_usage),
+                'app_usage': app_usage[:500],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'android_usage_stats',
+                'status': 'error',
+                'error': str(e),
+                'data_dir': data_dir,
+            }
 
 class BROWSER_Specialist:
     """Extract browser forensic artefacts from SQLite databases on disk."""
@@ -4023,9 +4429,33 @@ class ExtendedOrchestrator:
             'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_syslog'], 'tool_availability': {'python-evtx': evtx_available}},
             'mobile': {
                 'category': 'Mobile Forensics',
-                'functions': ['analyze_ios_backup', 'analyze_android'],
+                'functions': [
+                    'analyze_ios_backup',
+                    'analyze_android',
+                    'extract_ios_sms',
+                    'extract_ios_call_history',
+                    'extract_ios_safari_history',
+                    'extract_ios_contacts',
+                    'extract_ios_location',
+                    'extract_ios_mail',
+                    'extract_ios_keychain',
+                    'extract_ios_health',
+                    'extract_android_sms',
+                    'extract_android_call_logs',
+                    'extract_android_contacts',
+                    'extract_android_browser_history',
+                    'extract_android_location',
+                    'extract_android_email',
+                    'extract_android_notifications',
+                    'extract_android_usage_stats',
+                    'detect_jailbreak_indicators',
+                    'run_ileapp',
+                    'run_aleapp',
+                    'extract_whatsapp',
+                    'extract_telegram',
+                ],
                 'tool_availability': {},
-                'notes': 'Pure-Python',
+                'notes': 'Pure-Python - supports iOS backups and Android data directories',
             },
             'photorec': {
                 'category': 'File Carving',

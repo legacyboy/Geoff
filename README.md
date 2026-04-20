@@ -274,6 +274,8 @@ Conversational interface. Talk to Geoff directly or say things like `"start proc
 
 ## Tool Coverage
 
+### Forensic Tools by Category
+
 | Category | Specialist | Tools | Functions |
 |----------|-----------|-------|----------|
 | **Disk** | sleuthkit | SleuthKit (mmls, fls, fsstat, icat, istat, ils, blkls, blkcat, blkcalc, blkstat, ifind, ffind, tsk_recover) | Partition detection, filesystem analysis, file extraction, deleted file recovery, block-level analysis |
@@ -286,7 +288,7 @@ Conversational interface. Talk to Geoff directly or say things like `"start proc
 | **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
 | **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
 | **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
-| **Mobile** | mobile | Pure-Python (plistlib, sqlite3) | iOS backup analysis, Android data extraction |
+| **Mobile** | mobile | Pure-Python (plistlib, sqlite3), iLEAPP, ALEAPP | iOS backup analysis (23 functions), Android data extraction (20+ functions), jailbreak/root detection, WhatsApp/Telegram extraction, photo EXIF/GPS |
 | **Browser** | browser | SQLite3 (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
 | **Email** | email | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
 | **Jump Lists / LNK** | jumplist | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
@@ -322,6 +324,29 @@ Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary 
 **Note:** Volatility3 was removed from the SIFT 2026.03.24 release due to installer crashes from community plugin git cloning ([teamdfir/sift#628](https://github.com/teamdfir/sift/issues/628)). Geoff's installer works around this by installing Volatility3 directly via pip.
 
 **YARA has been intentionally removed.** Static signature matching provides limited forensic value compared to behavioral analysis.
+
+### Recently Added Tools (Mobile Forensics Expansion)
+
+The following mobile forensic capabilities were added in the latest update:
+
+| Tool/Method | Platform | Description |
+|-------------|----------|-------------|
+| `extract_ios_keychain` | iOS | Extract passwords, certificates from KeychainDomain.plist |
+| `extract_ios_health` | iOS | Parse HealthKit databases (HealthExport.db, Health.db) |
+| `extract_ios_notifications` | iOS | Extract notification history from SpringBoard |
+| `extract_ios_usage_stats` | iOS | Parse app usage statistics |
+| `extract_android_notifications` | Android | Parse notification_log from settings.db |
+| `extract_android_usage_stats` | Android | Parse /data/system/usagestats/ XML files |
+| `detect_jailbreak_indicators` | iOS | Detect Cydia, Zebra, Sileo, TrollStore, Dopamine |
+| `detect_root_indicators` | Android | Detect Magisk, SuperSU, busybox, su binary |
+| `run_ileapp` | iOS | iLEAPP integration wrapper |
+| `run_aleapp` | Android | ALEAPP integration wrapper |
+| `extract_whatsapp` | Both | WhatsApp message extraction (iOS & Android) |
+| `extract_telegram` | Both | Telegram message extraction (iOS & Android) |
+| `recover_deleted_sqlite_messages` | Both | WAL/journal recovery for deleted messages |
+| `extract_mobile_photo_exif` | Both | EXIF/GPS extraction from DCIM |
+
+**Total Mobile Functions:** 23 iOS + 20+ Android = 43+ mobile forensic methods
 
 ---
 
@@ -759,6 +784,55 @@ curl -X POST http://localhost:8080/find-evil \
 
 curl http://localhost:8080/find-evil/status/fe-abc123 \
   -H 'X-API-Key: yourkey'
+```
+
+### REST API Endpoints
+
+All endpoints accept/return JSON. Optional `X-API-Key` or `Authorization: Bearer` header if `GEOFF_API_KEY` is set.
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/` | Web UI (HTML) | Optional |
+| GET | `/health` | Service health check | No |
+| GET | `/health/detailed` | Detailed system status | Optional |
+| POST | `/chat` | LLM chat with tool detection | Yes* |
+| POST | `/find-evil` | Start investigation | Yes* |
+| GET | `/find-evil?job_id=` | Get job status | Yes* |
+| GET | `/find-evil/status/<job_id>` | Get job status | Yes* |
+| GET | `/cases` | List all cases | Yes* |
+| GET | `/cases/<case_name>/report` | Get case report (MD or JSON) | Yes* |
+| GET | `/reports` | List all reports | Yes* |
+| GET | `/reports/<case_dir>/json` | Get structured findings | Yes* |
+| GET | `/reports/viewer` | HTML report viewer | Optional |
+| GET | `/tools` | List available forensic tools | Optional |
+| POST | `/run-tool` | Execute a specific tool | Yes* |
+| POST | `/critic/validate` | Validate tool output | Yes* |
+| GET | `/critic/summary/<inv_id>` | Get validation summary | Yes* |
+| GET | `/investigation/status/<case>` | Investigation state | Yes* |
+
+*Required if `GEOFF_API_KEY` is configured.
+
+### Example: Full Investigation via REST
+
+```bash
+# 1. Start investigation
+JOB=$(curl -s -X POST http://localhost:8080/find-evil \
+  -H 'Content-Type: application/json' \
+  -d '{"evidence_dir": "/cases/IR-016"}')
+JOB_ID=$(echo $JOB | jq -r '.job_id')
+echo "Started: $JOB_ID"
+
+# 2. Poll until complete
+while true; do
+  STATUS=$(curl -s "http://localhost:8080/find-evil/status/$JOB_ID")
+  echo "$(date): $(echo $STATUS | jq -r '.status') - $(echo $STATUS | jq -r '.progress_pct')%"
+  [[ $(echo $STATUS | jq -r '.status') == "complete" ]] && break
+  [[ $(echo $STATUS | jq -r '.status') == "error" ]] && break
+  sleep 10
+done
+
+# 3. Get narrative report
+curl -s "http://localhost:8080/cases/IR-016/report"
 ```
 
 **Chat:**

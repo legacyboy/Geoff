@@ -596,6 +596,7 @@ if __name__ == "__main__":
         print("[Geoff MCP] Starting in stdio transport mode", file=sys.stderr)
         mcp.run(transport="stdio")
     else:
+        import uvicorn
         print(f"[Geoff MCP] Starting streamable-HTTP server on {args.host}:{args.port}", file=sys.stderr)
         print(f"[Geoff MCP] MCP endpoint: http://{args.host}:{args.port}/mcp", file=sys.stderr)
-        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+        uvicorn.run(mcp.streamable_http_app(), host=args.host, port=args.port, log_level="info")
