@@ -2841,6 +2841,15 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         
                                         # Execute healing based on Critic's recommendation
                                         healed = False
+                                        
+                                        # Validate new_params before execution
+                                        for key in ["hive_path", "ntuser_path", "system_path", "evidence_path", "image_path"]:
+                                            if key in new_params and new_params[key]:
+                                                try:
+                                                    _validate_evidence_path(new_params[key])
+                                                except ValueError as e:
+                                                    _fe_log(job_id, f"  ⚠ Param validation failed for {key}: {e}")
+                                        
                                         if action == "retry_with_offset" and new_params.get("offset") is not None:
                                             healed_result = _run_step_via_orchestrator(module, function, new_params)
                                             if healed_result.get("status") == "success":
@@ -2862,6 +2871,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                                     healed = True
                                                     result = healed_result
                                                     break
+                                        
+                                        elif action == "copy_then_retry":
+                                            import tempfile, shutil
+                                            original = new_params.get("hive_path") or new_params.get("ntuser_path")
+                                            if original and Path(original).exists():
+                                                with tempfile.NamedTemporaryFile(suffix=".hive", delete=False) as tmp:
+                                                    shutil.copy2(original, tmp.name)
+                                                for key in ["hive_path", "ntuser_path", "system_path"]:
+                                                    if key in new_params:
+                                                        new_params[key] = tmp.name
+                                                healed_result = _run_step_via_orchestrator(module, function, new_params)
+                                                if healed_result.get("status") == "success":
+                                                    healed = True
+                                                    result = healed_result
+                                                # cleanup tmp file
+                                                try:
+                                                    os.unlink(tmp.name)
+                                                except OSError:
+                                                    pass
                                                     
                                         elif action == "skip":
                                             _fe_log(job_id, f"  ⎘ Critic recommends skip (non-critical)")
