@@ -35,9 +35,6 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 _log_lock = threading.Lock()
 _state_lock = threading.Lock()
 
-# Active evidence directory for chat (set from web UI)
-_active_evidence_dir: str = EVIDENCE_BASE_DIR
-
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -413,6 +410,9 @@ EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
 CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
                              "/home/sansforensics/evidence-storage/cases",
                              "geoff-cases")
+
+# Active evidence directory for chat (set from web UI)
+_active_evidence_dir: str = EVIDENCE_BASE_DIR
 
 # ---------------------------------------------------------------------------
 # Git Action Logger for Audit Trail
