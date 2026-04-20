@@ -289,6 +289,262 @@ Respond in JSON:
             print(f"[CRITIC] Git error: {e}")
             return False
 
+    def commit_validation(self, investigation_id: str, validation_result: Dict,
+                         base_path: str = os.environ.get("GEOFF_GIT_DIR", "/tmp/geoff-validations")):
+        """Commit validation result to git for reproducibility"""
+
+        validation_dir = Path(base_path) / "validations"
+        validation_dir.mkdir(exist_ok=True)
+
+        validation_file = validation_dir / f"{investigation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        with open(validation_file, 'w') as f:
+            json.dump(validation_result, f, indent=2)
+
+        # Git commit
+        try:
+            subprocess.run(['git', 'config', 'user.email'], cwd=base_path,
+                         capture_output=True, check=True)
+        except Exception:
+            subprocess.run(['git', 'config', 'user.email', 'critic@geoff.local'],
+                         cwd=base_path, capture_output=True)
+            subprocess.run(['git', 'config', 'user.name', 'Geoff Critic'],
+                         cwd=base_path, capture_output=True)
+
+        try:
+            subprocess.run(['git', 'add', str(validation_file)],
+                         cwd=base_path, check=True, capture_output=True)
+
+            passes = validation_result.get('passes_sanity', False)
+            label = "PASS" if passes else "FAIL"
+            commit_msg = f"[CRITIC-{label}] {investigation_id}: sanity check"
+
+            subprocess.run(['git', 'commit', '-m', commit_msg],
+                         cwd=base_path, capture_output=True)
+
+            print(f"[CRITIC] Committed validation: {validation_file.name}")
+            return True
+        except Exception as e:
+            print(f"[CRITIC] Git error: {e}")
+            return False
+
+    # --- Self-Healing (Execution Error Analysis) ---
+
+    def analyze_execution_error(self, tool_name: str, tool_params: Dict,
+                                 error_result: Dict, context: Dict = None) -> Dict[str, Any]:
+        """
+        Critic-based self-healing: analyze tool execution errors and recommend fixes.
+        
+        This is the central healing authority. When a tool fails, the Critic:
+        1. Classifies the error type
+        2. Determines if it's healable
+        3. Returns a healing strategy for the orchestrator to execute
+        
+        Returns:
+            Dict with keys:
+            - healable: bool - whether this error can be healed
+            - error_type: str - classification (partition_offset, invalid_profile, etc.)
+            - healing_strategy: str - description of the fix
+            - action: str - what the orchestrator should do
+            - new_params: Dict - modified parameters for retry
+            - confidence: float - how confident the Critic is (0.0-1.0)
+            - explanation: str - why this fix should work
+        """
+        stderr = error_result.get("stderr", "").lower()
+        stdout = error_result.get("stdout", "")
+        error_msg = error_result.get("error", "")
+        ctx = context or {}
+        
+        # Quick rejection: non-healable errors
+        non_healable = [
+            "not found", "no such file", "permission denied",
+            "unauthorized", "authentication failed", "ssl error",
+            "network unreachable", "connection refused"
+        ]
+        if any(pat in stderr for pat in non_healable):
+            return {
+                "healable": False,
+                "error_type": "non_healable",
+                "reason": "Error pattern indicates non-recoverable failure",
+                "confidence": 0.9
+            }
+        
+        # Healable error patterns
+        healable_patterns = [
+            "cannot determine file system type",
+            "dinode_lookup", "update sequence", "metadata structure",
+            "mft size", "mft entry", "bad magic", "invalid superblock",
+            "invalid profile", "unrecognized windows version",
+            "database is locked", "sqlite_busy",
+            "hive locked", "file is locked"
+        ]
+        
+        if not any(pat in stderr for pat in healable_patterns):
+            # Not obviously healable, but ask LLM for analysis
+            pass  # Fall through to LLM analysis
+        
+        # Build healing analysis prompt
+        safe_tool = str(tool_name).replace("\n", " ")[:100]
+        safe_params = json.dumps(tool_params, default=str)[:800]
+        safe_stderr = stderr[:500]
+        safe_stdout = stdout[:300]
+        safe_context = json.dumps(ctx, default=str)[:500]
+        
+        healing_prompt = f"""You are the Geoff Critic, an expert DFIR system analyzer. A forensic tool failed with an error.
+
+TOOL: {safe_tool}
+PARAMETERS: {safe_params}
+
+ERROR OUTPUT:
+stderr: {safe_stderr}
+stdout: {safe_stdout}
+error: {error_msg}
+
+CONTEXT:
+{safe_context}
+
+Analyze this error and determine if it can be healed. Consider:
+1. Is this a known recoverable error (partition offset, profile mismatch, locked file, etc.)?
+2. What is the root cause?
+3. What is the best healing strategy?
+
+Healing actions available:
+- retry_with_offset: Retry with auto-detected partition offset
+- retry_without_offset: Retry treating entire image as filesystem
+- retry_with_profile: Retry with different Volatility/TSK profile
+- retry_with_backoff: Retry SQLite operations with delays (0.5s, 1s, 2s)
+- copy_then_retry: Copy locked file to temp location first
+- skip: Skip this step, mark as failed but non-critical
+- fail: Cannot heal, mark as failed
+
+Respond ONLY in valid JSON:
+{{
+    "healable": true/false,
+    "error_type": "partition_offset|invalid_profile|locked_file|sqlite_busy|metadata_corrupt|other|none",
+    "root_cause": "brief technical explanation",
+    "healing_strategy": "description of proposed fix",
+    "action": "retry_with_offset|retry_without_offset|retry_with_profile|retry_with_backoff|copy_then_retry|skip|fail",
+    "new_params": {{"key": "value"}},
+    "confidence": 0.0-1.0,
+    "explanation": "why this fix should work"
+}}"""
+
+        critic_response = self._call_critic_llm(healing_prompt)
+        
+        try:
+            json_match = re.search(r'\{{.*}}', critic_response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(critic_response)
+                
+            # Ensure required fields
+            if "healable" not in result:
+                result["healable"] = False
+            if "action" not in result:
+                result["action"] = "fail"
+            if "new_params" not in result:
+                result["new_params"] = {}
+            if "confidence" not in result:
+                result["confidence"] = 0.5
+                
+            # Add metadata
+            result["tool_name"] = tool_name
+            result["timestamp"] = datetime.now().isoformat()
+            result["original_error"] = stderr[:200]
+            
+            return result
+            
+        except Exception as e:
+            # LLM failed to return valid JSON - conservative fallback
+            return {
+                "healable": False,
+                "error_type": "parse_error",
+                "reason": f"Could not parse Critic healing response: {e}",
+                "action": "fail",
+                "confidence": 0.0,
+                "llm_response": critic_response[:500]
+            }
+
+    def analyze_chat_request(self, user_message: str, chat_history: List[Dict],
+                              current_context: Dict = None) -> Dict[str, Any]:
+        """
+        Chat-based healing: analyze user questions about tool failures.
+        
+        When user asks in chat about errors, the Critic:
+        1. Detects if user is asking about a failed tool/execution
+        2. Provides healing advice or executes healing
+        3. Returns natural language response + structured healing plan
+        """
+        ctx = current_context or {}
+        
+        # Check if this is a healing-related query
+        healing_keywords = [
+            "failed", "error", "not working", "cannot", "unable",
+            "fix", "repair", "retry", "heal", "recover",
+            "sleuthkit", "volatility", "fls", "mmls", "partition"
+        ]
+        
+        is_healing_query = any(kw in user_message.lower() for kw in healing_keywords)
+        
+        if not is_healing_query:
+            return {"is_healing_request": False}
+        
+        # Build chat healing prompt
+        history_str = "\n".join([
+            f"{'User' if h.get('role') == 'user' else 'Assistant'}: {h.get('content', '')[:200]}"
+            for h in chat_history[-5:]  # Last 5 messages
+        ])
+        
+        chat_prompt = f"""You are Geoff Critic in chat mode. A user is asking about a forensic tool or execution issue.
+
+USER MESSAGE: {user_message}
+
+CHAT HISTORY:
+{history_str}
+
+CURRENT CONTEXT:
+{json.dumps(ctx, default=str)[:500]}
+
+Analyze the user's request:
+1. Are they asking about a specific tool failure?
+2. What tool and parameters were involved (if known from context)?
+3. What healing advice or action should be taken?
+
+If they want to retry/fix a failed operation, provide healing guidance.
+
+Respond in JSON:
+{{
+    "is_healing_request": true,
+    "detected_tool": "tool.name or null",
+    "detected_issue": "description of the problem",
+    "healing_advice": "natural language response for user",
+    "can_auto_heal": true/false,
+    "healing_action": "action if auto-heal possible, else null",
+    "healing_params": {{}} 
+}}"""
+
+        response = self._call_critic_llm(chat_prompt)
+        
+        try:
+            json_match = re.search(r'\{{.*}}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(response)
+            result["timestamp"] = datetime.now().isoformat()
+            return result
+        except Exception:
+            return {
+                "is_healing_request": True,
+                "detected_tool": None,
+                "detected_issue": "Could not parse request",
+                "healing_advice": "I see you're asking about an error. Could you specify which tool or evidence file had the issue?",
+                "can_auto_heal": False,
+                "healing_action": None,
+                "healing_params": {}
+            }
+
     def get_validation_summary(self, investigation_id: str,
                               base_path: str = os.environ.get("GEOFF_GIT_DIR", "/tmp/geoff-validations")) -> Dict:
         """Get summary of all validations for an investigation"""

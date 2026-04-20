@@ -312,32 +312,49 @@ class SLEUTHKIT_Specialist:
             # Check for common truncated/partial image errors
             if any(kw in stderr_lower for kw in ['bitmap', 'block', 'unallocated', 'cannot determine',
                                                    'truncat', 'partial', 'corrupt', 'bad magic',
-                                                   'invalid superblock', 'bad superblock']):
-                # If the error is about bitmap/read failure, try with explicit fs type
+                                                   'invalid superblock', 'bad superblock',
+                                                   'dinode_lookup', 'update sequence', 'metadata structure',
+                                                   'mft size', 'mft entry']):
+                # If the error is about metadata/bitmap/read failure, try with raw mode or skip partition
                 if any(p.get('fs_type') for p in partitions):
+                    # Try with offset but without -f fs type (let TSK auto-detect)
                     alt_args = list(base_args) if base_args else []
-                    # Pick the best partition
                     best = None
                     for p in partitions:
                         if p.get('fs_type') and p['fs_type'] != 'none':
                             best = p
                             break
-                    if best is None:
+                    if best is None and partitions:
                         best = partitions[0]
-                    if best and best.get('fs_type'):
-                        alt_args.extend(['-o', str(best['offset']), '-f', best['fs_type']])
+                    if best and best.get('offset') is not None:
+                        alt_args.extend(['-o', str(best['offset'])])
                     for seg in segments:
                         alt_args.append(seg)
                     alt_raw = self.run(tool, alt_args)
                     if alt_raw['status'] == 'success':
-                        # Merge: return success with partial warning
                         return {
                             'tool': tool,
                             'status': 'success_with_partial',
                             'returncode': 0,
                             'stdout': alt_raw['stdout'],
                             'stderr': raw.get('stderr', ''),
-                            'note': 'Recovered via partition auto-detection; original call returned partial results',
+                            'note': 'Recovered via partition auto-detection with auto fs-type; original metadata error',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                    # If still failing, try direct disk access without partition offset
+                    # (treat whole image as filesystem)
+                    alt_args2 = list(base_args) if base_args else []
+                    for seg in segments:
+                        alt_args2.append(seg)
+                    alt_raw2 = self.run(tool, alt_args2)
+                    if alt_raw2['status'] == 'success':
+                        return {
+                            'tool': tool,
+                            'status': 'success_with_partial',
+                            'returncode': 0,
+                            'stdout': alt_raw2['stdout'],
+                            'stderr': raw.get('stderr', ''),
+                            'note': 'Recovered via direct disk access (no partition offset); original metadata error',
                             'timestamp': datetime.now().isoformat()
                         }
 

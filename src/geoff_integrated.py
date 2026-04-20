@@ -661,7 +661,100 @@ def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict
 
     Steps whose module is 'remnux' (or starts with 'remnux_') go to the
     REMnux orchestrator; everything else goes to the extended SIFT orchestrator.
+    
+    Includes self-healing: catches known error patterns and auto-corrects.
     """
+    from src.sift_specialists import SLEUTHKIT_Specialist
+    
+    # Self-healing: SleuthKit metadata errors
+    if module == "sleuthkit" and function in ["list_files", "analyze_filesystem", "list_deleted"]:
+        image_path = params.get("image") or params.get("disk_image")
+        offset = params.get("offset")
+        
+        if image_path:
+            # Try execution with current params
+            step = {"module": module, "function": function, "params": params}
+            result = orchestrator.run_playbook_step("find-evil", step)
+            
+            # Check for metadata/MFT errors that need auto-correction
+            if result.get("status") == "error":
+                stderr = result.get("stderr", "").lower()
+                error_patterns = [
+                    "dinode_lookup", "update sequence", "metadata structure",
+                    "mft size", "mft entry", "cannot determine file system type",
+                    "error in metadata structure", "bad magic", "invalid superblock"
+                ]
+                
+                if any(pat in stderr for pat in error_patterns):
+                    _fe_log("system", f"[SELF-HEAL] Detected metadata error for {Path(image_path).name}: {stderr[:100]}")
+                    
+                    # Heal attempt 1: Auto-detect partition and retry with correct offset
+                    try:
+                        sk = SLEUTHKIT_Specialist(evidence_path=image_path)
+                        mmls_result = sk.analyze_partition_table(image_path)
+                        
+                        if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
+                            # Find best partition (NTFS/ext with data)
+                            best_part = None
+                            for part in mmls_result["partitions"]:
+                                desc = part.get("description", "").lower()
+                                if any(fs in desc for fs in ["ntfs", "ext", "fat", "hfs"]):
+                                    best_part = part
+                                    break
+                            
+                            if best_part and best_part.get("start_sector"):
+                                new_offset = best_part["start_sector"]
+                                if new_offset != offset:
+                                    _fe_log("system", f"[SELF-HEAL] Retrying {function} with auto-detected offset {new_offset}")
+                                    
+                                    healed_params = dict(params)
+                                    healed_params["offset"] = new_offset
+                                    step = {"module": module, "function": function, "params": healed_params}
+                                    healed_result = orchestrator.run_playbook_step("find-evil", step)
+                                    
+                                    if healed_result.get("status") == "success":
+                                        healed_result["_self_healed"] = True
+                                        healed_result["_original_error"] = stderr[:200]
+                                        healed_result["_healing_method"] = f"auto_partition_offset_{new_offset}"
+                                        return healed_result
+                                    
+                                    # Heal attempt 2: Try without offset (direct disk access)
+                                    _fe_log("system", f"[SELF-HEAL] Retrying {function} without partition offset")
+                                    no_offset_params = {k: v for k, v in params.items() if k != "offset"}
+                                    step = {"module": module, "function": function, "params": no_offset_params}
+                                    direct_result = orchestrator.run_playbook_step("find-evil", step)
+                                    
+                                    if direct_result.get("status") == "success":
+                                        direct_result["_self_healed"] = True
+                                        direct_result["_original_error"] = stderr[:200]
+                                        direct_result["_healing_method"] = "direct_disk_no_offset"
+                                        return direct_result
+                                    
+                                    # Heal attempt 3: Try with -f ntfs override
+                                    _fe_log("system", f"[SELF-HEAL] Retrying {function} with NTFS filesystem override")
+                                    fs_params = dict(params)
+                                    fs_params["offset"] = new_offset
+                                    # Note: This requires specialist to support fs_type param
+                                    step = {"module": module, "function": function, "params": fs_params}
+                                    # Inject fs_type via a wrapper if needed
+                                    fs_result = orchestrator.run_playbook_step("find-evil", step)
+                                    
+                                    if fs_result.get("status") == "success":
+                                        fs_result["_self_healed"] = True
+                                        fs_result["_original_error"] = stderr[:200]
+                                        fs_result["_healing_method"] = "ntfs_fs_override"
+                                        return fs_result
+                    
+                    except Exception as heal_err:
+                        _fe_log("system", f"[SELF-HEAL] Healing failed: {heal_err}")
+                    
+                    # All healing attempts failed - mark result with healing info
+                    result["_self_healing_attempted"] = True
+                    result["_self_healing_failed"] = True
+            
+            return result
+    
+    # Standard routing
     if module == "remnux" or module.startswith("remnux_"):
         step = {"function": function, "params": params}
         return remnux_orchestrator.run_playbook_step("find-evil", step)
@@ -2725,6 +2818,74 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 steps_failed += 1
                                 any_step_ran = True
                                 _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
+
+                                # CRITIC SELF-HEALING: Ask Critic to analyze and heal
+                                try:
+                                    _fe_log(job_id, f"  🔄 Critic analyzing failure for {module}.{function}...")
+                                    healing_analysis = geoff_critic.analyze_execution_error(
+                                        tool_name=f"{module}.{function}",
+                                        tool_params=params,
+                                        error_result=result,
+                                        context={
+                                            "device_id": dev_id,
+                                            "os_type": os_type,
+                                            "image_offsets": image_offsets,
+                                            "job_id": job_id,
+                                        }
+                                    )
+                                    
+                                    if healing_analysis.get("healable") and healing_analysis.get("action") != "fail":
+                                        action = healing_analysis.get("action")
+                                        new_params = healing_analysis.get("new_params", params)
+                                        _fe_log(job_id, f"  🩺 Critic suggests: {action} (confidence: {healing_analysis.get('confidence', 0)})")
+                                        
+                                        # Execute healing based on Critic's recommendation
+                                        healed = False
+                                        if action == "retry_with_offset" and new_params.get("offset") is not None:
+                                            healed_result = _run_step_via_orchestrator(module, function, new_params)
+                                            if healed_result.get("status") == "success":
+                                                healed = True
+                                                result = healed_result
+                                                
+                                        elif action == "retry_without_offset":
+                                            no_offset_params = {k: v for k, v in new_params.items() if k != "offset"}
+                                            healed_result = _run_step_via_orchestrator(module, function, no_offset_params)
+                                            if healed_result.get("status") == "success":
+                                                healed = True
+                                                result = healed_result
+                                                
+                                        elif action == "retry_with_backoff":
+                                            for delay in [0.5, 1.0, 2.0]:
+                                                time.sleep(delay)
+                                                healed_result = _run_step_via_orchestrator(module, function, new_params)
+                                                if healed_result.get("status") == "success":
+                                                    healed = True
+                                                    result = healed_result
+                                                    break
+                                                    
+                                        elif action == "skip":
+                                            _fe_log(job_id, f"  ⎘ Critic recommends skip (non-critical)")
+                                            step_record["status"] = "skipped"
+                                            step_record["_critic_healed"] = True
+                                            step_record["_healing_strategy"] = "skip_on_critic_advice"
+                                            steps_failed -= 1
+                                            steps_skipped += 1
+                                            
+                                        if healed:
+                                            step_record["status"] = "completed"
+                                            step_record["result"] = result
+                                            step_record["_critic_healed"] = True
+                                            step_record["_healing_strategy"] = healing_analysis.get("healing_strategy")
+                                            step_record["_critic_confidence"] = healing_analysis.get("confidence")
+                                            steps_failed -= 1
+                                            steps_completed += 1
+                                            _fe_log(job_id, f"  ✓ Critic healed {module}.{function}: {healing_analysis.get('healing_strategy')}")
+                                        elif action != "skip":
+                                            _fe_log(job_id, f"  ✗ Critic healing failed for {module}.{function}")
+                                    else:
+                                        _fe_log(job_id, f"  ✗ Critic: not healable ({healing_analysis.get('error_type', 'unknown')})")
+                                except Exception as heal_err:
+                                    _fe_log(job_id, f"  ⚠ Critic healing error: {heal_err}")
 
                             # Forensicator interprets each completed step so the Critic
                             # has a real analysis to validate rather than a placeholder.
@@ -5249,6 +5410,59 @@ def chat():
 - REMnux: DIE, exiftool, ClamAV, radare2, floss, pdfid, oledump, UPX"""
 
         context = f"{case_info}\n\n{tool_info}"
+
+        # CHAT-BASED HEALING: Check if user is asking about a tool error
+        healing_response = None
+        try:
+            chat_healing = geoff_critic.analyze_chat_request(
+                user_message=user_msg,
+                chat_history=[],  # Could pass recent history
+                current_context={"case": case_match, "files": files}
+            )
+            
+            if chat_healing.get("is_healing_request") and chat_healing.get("can_auto_heal"):
+                # User is asking about an error and Critic thinks we can heal
+                _action_logger.log('CHAT_HEALING', {
+                    'user_message': user_msg,
+                    'detected_tool': chat_healing.get('detected_tool'),
+                    'healing_action': chat_healing.get('healing_action'),
+                })
+                
+                healing_action = chat_healing.get('healing_action')
+                healing_params = chat_healing.get('healing_params', {})
+                
+                if healing_action and case_match:
+                    # Try to execute the healing
+                    healing_result = _run_step_via_orchestrator(
+                        healing_params.get('module', 'sleuthkit'),
+                        healing_params.get('function', 'list_files'),
+                        healing_params.get('params', {})
+                    )
+                    
+                    if healing_result.get('status') == 'success':
+                        healing_response = (
+                            f"✓ **Healing Successful**\n\n"
+                            f"{chat_healing.get('healing_advice', '')}\n\n"
+                            f"The tool that failed previously is now working. "
+                            f"Here's what I found:\n\n"
+                            f"```\n{healing_result.get('stdout', '')[:500]}\n```"
+                        )
+                    else:
+                        healing_response = (
+                            f"I attempted to heal the issue ({healing_action}), "
+                            f"but the tool is still failing. {chat_healing.get('healing_advice', '')}"
+                        )
+                else:
+                    # Provide healing advice without execution
+                    healing_response = chat_healing.get('healing_advice', '')
+        except Exception as chat_heal_err:
+            # Non-critical - just continue to normal LLM flow
+            pass
+        
+        # If healing produced a response, use it
+        if healing_response:
+            result = {'response': healing_response, 'healing_executed': True}
+            return jsonify(result)
 
         # Log the chat action
         action_logger.log('CHAT', {
