@@ -35,6 +35,9 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 _log_lock = threading.Lock()
 _state_lock = threading.Lock()
 
+# Active evidence directory for chat (set from web UI)
+_active_evidence_dir: str = EVIDENCE_BASE_DIR
+
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -4876,6 +4879,12 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
 
                     header.addEventListener('click', () => {
                         document.getElementById('fe-evidence-dir').value = fullPath;
+                        // Notify server of active directory for chat
+                        authFetch('/active-directory', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({directory: fullPath})
+                        });
                         // Switch to Find Evil tab
                         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                         document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
@@ -4898,6 +4907,12 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     investigateBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         document.getElementById('fe-evidence-dir').value = fullPath;
+                        // Notify server of active directory for chat
+                        authFetch('/active-directory', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({directory: fullPath})
+                        });
                         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
                         document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
                         document.querySelector('.tab[onclick*="findevil"]').classList.add('active');
@@ -5353,7 +5368,7 @@ def chat():
         tool_result = None
         evidence_file = None
 
-        # Check if user mentions a case
+        # Check if user mentions a case - use active evidence dir as default
         cases = get_all_cases()
         case_match = None
         files = []
@@ -5362,6 +5377,19 @@ def chat():
                 case_match = case_name
                 files = cases[case_name]
                 break
+        
+        # If no case mentioned, use active evidence directory from web UI
+        if not case_match and _active_evidence_dir and _active_evidence_dir != EVIDENCE_BASE_DIR:
+            try:
+                active_basename = os.path.basename(_active_evidence_dir)
+                if active_basename in cases:
+                    case_match = active_basename
+                    files = cases[active_basename]
+                elif os.path.exists(_active_evidence_dir):
+                    files = [f for f in os.listdir(_active_evidence_dir) if not f.startswith('.')]
+                    case_match = active_basename if active_basename else "active"
+            except Exception:
+                pass
 
         # If tool request detected, run it
         if tool_request and case_match:
@@ -6050,6 +6078,47 @@ def find_evil_info():
             '8. JSON Schema validation of investigation state',
             '9. Unified findings report with severity & MITRE ATT&CK mapping',
         ]
+    })
+
+
+@app.route('/active-directory', methods=['POST'])
+@_require_auth
+def set_active_directory():
+    """Set the active evidence directory for chat queries"""
+    global _active_evidence_dir
+    try:
+        data = request.json or {}
+        directory = data.get('directory', '').strip()
+        
+        if not directory:
+            return jsonify({'status': 'error', 'error': 'No directory provided'}), 400
+            
+        # Validate the path
+        try:
+            _validate_evidence_path(directory)
+        except ValueError as e:
+            return jsonify({'status': 'error', 'error': str(e)}), 400
+            
+        if not Path(directory).exists():
+            return jsonify({'status': 'error', 'error': f'Directory not found: {directory}'}), 404
+            
+        _active_evidence_dir = directory
+        return jsonify({
+            'status': 'success',
+            'directory': directory,
+            'message': f'Active evidence directory set to: {directory}'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+@app.route('/active-directory', methods=['GET'])
+@_require_auth
+def get_active_directory():
+    """Get the current active evidence directory"""
+    return jsonify({
+        'active_directory': _active_evidence_dir,
+        'default_directory': EVIDENCE_BASE_DIR
     })
 
 
