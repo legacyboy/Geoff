@@ -289,45 +289,6 @@ Respond in JSON:
             print(f"[CRITIC] Git error: {e}")
             return False
 
-    def commit_validation(self, investigation_id: str, validation_result: Dict,
-                         base_path: str = os.environ.get("GEOFF_GIT_DIR", "/tmp/geoff-validations")):
-        """Commit validation result to git for reproducibility"""
-
-        validation_dir = Path(base_path) / "validations"
-        validation_dir.mkdir(exist_ok=True)
-
-        validation_file = validation_dir / f"{investigation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-
-        with open(validation_file, 'w') as f:
-            json.dump(validation_result, f, indent=2)
-
-        # Git commit
-        try:
-            subprocess.run(['git', 'config', 'user.email'], cwd=base_path,
-                         capture_output=True, check=True)
-        except Exception:
-            subprocess.run(['git', 'config', 'user.email', 'critic@geoff.local'],
-                         cwd=base_path, capture_output=True)
-            subprocess.run(['git', 'config', 'user.name', 'Geoff Critic'],
-                         cwd=base_path, capture_output=True)
-
-        try:
-            subprocess.run(['git', 'add', str(validation_file)],
-                         cwd=base_path, check=True, capture_output=True)
-
-            passes = validation_result.get('passes_sanity', False)
-            label = "PASS" if passes else "FAIL"
-            commit_msg = f"[CRITIC-{label}] {investigation_id}: sanity check"
-
-            subprocess.run(['git', 'commit', '-m', commit_msg],
-                         cwd=base_path, capture_output=True)
-
-            print(f"[CRITIC] Committed validation: {validation_file.name}")
-            return True
-        except Exception as e:
-            print(f"[CRITIC] Git error: {e}")
-            return False
-
     # --- Self-Healing (Execution Error Analysis) ---
 
     def analyze_execution_error(self, tool_name: str, tool_params: Dict,
@@ -432,7 +393,7 @@ Respond ONLY in valid JSON:
         critic_response = self._call_critic_llm(healing_prompt)
         
         try:
-            json_match = re.search(r'\{{.*}}', critic_response, re.DOTALL)
+            json_match = re.search(r'\{.*\}', critic_response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
@@ -527,7 +488,7 @@ Respond in JSON:
         response = self._call_critic_llm(chat_prompt)
         
         try:
-            json_match = re.search(r'\{{.*}}', response, re.DOTALL)
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
