@@ -664,8 +664,6 @@ def _run_step_via_orchestrator(module: str, function: str, params: dict) -> dict
     
     Includes self-healing: catches known error patterns and auto-corrects.
     """
-    from src.sift_specialists import SLEUTHKIT_Specialist
-    
     # Self-healing: SleuthKit metadata errors
     if module == "sleuthkit" and function in ["list_files", "analyze_filesystem", "list_deleted"]:
         image_path = params.get("image") or params.get("disk_image")
@@ -1013,7 +1011,10 @@ or
 {{"grounded": false, "issues": ["list specific unsupported claims"]}}"""
 
     try:
-        check_raw = _call_manager_llm(check_prompt, timeout=30)
+        # Cloud models need longer timeout
+        is_cloud = ":cloud" in AGENT_MODELS.get("manager", "") or ollama_base_url().startswith("https://")
+        check_timeout = 90 if is_cloud else 30
+        check_raw = _call_manager_llm(check_prompt, timeout=check_timeout)
         m = re.search(r'\{.*\}', check_raw, re.DOTALL)
         if not m:
             return response
@@ -5721,8 +5722,9 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
     'vss':        {'list_vss', 'extract_vss_files', 'analyze_vss_timeline', 'mount_vss'},
     'zimmerman':  {'parse_evtx_zimmerman', 'parse_mft', 'srum_parse', 'amcache_parse',
                    'shellbags_parse'},
-    'remnux':     {'yara_scan', 'strings_extract', 'pe_info', 'detect_packers', 'extract_iocs',
-                   'capa_analyze', 'floss_extract'},
+    'remnux':     {'die_scan', 'exiftool_scan', 'peframe_scan', 'ssdeep_hash', 'hashdeep_audit',
+                   'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
+                   'radare2_analyze', 'floss_strings', 'clamav_scan'},
 }
 
 

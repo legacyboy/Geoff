@@ -273,7 +273,10 @@ def check_ollama(ollama_url: str, api_key: str, agent_models: Dict[str, str]) ->
 
     # Connectivity
     try:
-        resp = _req.get(tags_url, headers=headers, timeout=8)
+        # Cloud API needs longer timeout for cold-start
+        is_cloud_api = ollama_url.startswith("https://")
+        tags_timeout = 30 if is_cloud_api else 8
+        resp = _req.get(tags_url, headers=headers, timeout=tags_timeout)
         resp.raise_for_status()
         available_models = {m.get("name", m.get("model", "")) for m in resp.json().get("models", [])}
         _record("Ollama", "connectivity", PASS,
@@ -305,11 +308,14 @@ def check_ollama(ollama_url: str, api_key: str, agent_models: Dict[str, str]) ->
 
     try:
         t0 = time.time()
+        # Cloud models need longer timeout for cold-start
+        is_cloud = ":cloud" in manager_model or ollama_url.startswith("https://")
+        smoke_timeout = 120 if is_cloud else 30
         resp = _req.post(gen_url, headers=headers, json={
             "model": manager_model,
             "prompt": "Reply with only the word: PONG",
             "stream": False,
-        }, timeout=30)
+        }, timeout=smoke_timeout)
         elapsed = time.time() - t0
         if resp.status_code == 200 and resp.json().get("response"):
             _record("Ollama models", f"manager generate smoke test ({manager_model})", PASS,
