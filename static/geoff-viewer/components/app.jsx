@@ -165,9 +165,14 @@ function App() {
               <span className="li"><span className="sw" style={{ background: "var(--ent-server)" }} /> server</span>
               <span className="li"><span className="sw" style={{ background: "var(--ent-mobile)" }} /> mobile</span>
               <span className="li"><span className="sw" style={{ background: "var(--ent-network)" }} /> network</span>
+              <span className="li"><span className="sw" style={{ background: "var(--ent-service)", borderRadius: "50%" }} /> service</span>
               <span className="li" style={{ marginLeft: 6 }}>
                 <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="var(--sev-high)" strokeDasharray="4 3" /></svg>
                 lateral
+              </span>
+              <span className="li" style={{ marginLeft: 6 }}>
+                <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#EC4899" strokeDasharray="2 2" /></svg>
+                exfil
               </span>
             </div>
           </div>
