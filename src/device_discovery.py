@@ -393,8 +393,8 @@ class DeviceDiscovery:
             if "windows" in file_listing_lower or "system32" in file_listing_lower:
                 dev["os_type"] = "windows"
                 dev["device_type"] = "windows_pc"
-                # Extract user profiles from Users/ directory
-                self._extract_windows_users(dev, file_listing)
+                # Extract user profiles - need to look inside Documents and Settings or Users
+                self._extract_windows_users(dev, sk, image_path, file_listing)
             elif "etc" in file_listing_lower and "bin" in file_listing_lower:
                 dev["os_type"] = "linux"
                 dev["device_type"] = "linux_server"
@@ -406,11 +406,11 @@ class DeviceDiscovery:
             self._log("enrich_error",
                       f"Failed to enrich {dev['device_id']}: {e}")
 
-    def _extract_windows_users(self, dev: dict, file_listing: str):
+    def _extract_windows_users(self, dev: dict, sk: 'SLEUTHKIT_Specialist', image_path: str, file_listing: str):
         """
         Parse fls output to find user profile directories.
         Supports both WinXP (Documents and Settings/) and Win7+ (Users/).
-        Skip: Default, Public, All Users, desktop.ini, etc.
+        Uses targeted directory listing if recursive listing is too large.
         """
         skip_profiles = {"default", "public", "all users", "default user",
                          "desktop.ini", ".", "..", "local settings", "application data",
@@ -419,10 +419,10 @@ class DeviceDiscovery:
                          "printhood", "user account pictures", "default pictures"}
         profiles = []
 
+        # First try to find users from the given listing
+        # Check for Users/ directory (Win7+)
         for line in file_listing.split("\n"):
             line_lower = line.lower().strip()
-
-            # Check for Users/ directory (Win7+)
             if "/users/" in line_lower or "\\users\\" in line_lower:
                 parts = line.split("/")
                 for i, part in enumerate(parts):
@@ -437,9 +437,69 @@ class DeviceDiscovery:
                 for i, part in enumerate(parts):
                     if "documents and settings" in part.lower() and i + 1 < len(parts):
                         uname = parts[i + 1].strip().rstrip("/")
-                        # Skip system folders within Doc Settings
                         if uname.lower() not in skip_profiles and uname and len(uname) > 1:
                             profiles.append(uname)
+
+        # If no users found from top-level, try targeted directory listing
+        if not profiles:
+            # Find the Documents and Settings inode
+            doc_settings_inode = None
+            users_inode = None
+            for line in file_listing.split("\n"):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Parse fls format: type meta_inode: name
+                if "Documents and Settings" in stripped:
+                    parts = stripped.split(":")
+                    if len(parts) >= 2:
+                        meta_part = parts[0].strip()
+                        # Extract inode from "d/d 3519-144-6" format
+                        match = re.search(r'(\d+-\d+-\d+|\d+)$', meta_part)
+                        if match:
+                            doc_settings_inode = match.group(1)
+                elif "/Users" in stripped or stripped.endswith("Users"):
+                    parts = stripped.split(":")
+                    if len(parts) >= 2:
+                        meta_part = parts[0].strip()
+                        match = re.search(r'(\d+-\d+-\d+|\d+)$', meta_part)
+                        if match:
+                            users_inode = match.group(1)
+
+            # List the Documents and Settings directory to find users
+            if doc_settings_inode:
+                try:
+                    sub_result = sk.list_files(image_path, inode=doc_settings_inode, recursive=False)
+                    sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
+                    for line in sub_stdout.split("\n"):
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith("d/d"):
+                            continue
+                        # Parse child entry: type inode: name
+                        parts = stripped.split(":")
+                        if len(parts) >= 2:
+                            name = parts[-1].strip()
+                            if name.lower() not in skip_profiles and len(name) > 1:
+                                profiles.append(name)
+                except Exception as e:
+                    self._log("user_extract_error", f"Failed to list Documents and Settings: {e}")
+
+            # List the Users directory to find users
+            if users_inode:
+                try:
+                    sub_result = sk.list_files(image_path, inode=users_inode, recursive=False)
+                    sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
+                    for line in sub_stdout.split("\n"):
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith("d/d"):
+                            continue
+                        parts = stripped.split(":")
+                        if len(parts) >= 2:
+                            name = parts[-1].strip()
+                            if name.lower() not in skip_profiles and len(name) > 1:
+                                profiles.append(name)
+                except Exception as e:
+                    self._log("user_extract_error", f"Failed to list Users: {e}")
 
         profiles = list(set(profiles))
         dev["metadata"]["user_profiles_found"] = profiles
