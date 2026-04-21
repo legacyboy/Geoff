@@ -207,6 +207,25 @@ function buildGraph(report, size) {
     });
   });
 
+// Add evidence source nodes for each device's evidence files
+  const evidenceNodes = [];
+  const evidenceFiles = new Map(); // path -> { device_ids: [], type }
+  
+  // Collect all evidence files and which devices they belong to
+  Object.entries(report.device_map || {}).forEach(([devId, dev]) => {
+    (dev.evidence_files || []).forEach(fpath => {
+      const fname = fpath.split('/').pop();
+      if (!evidenceFiles.has(fpath)) {
+        evidenceFiles.set(fpath, { 
+          filename: fname, 
+          device_ids: [],
+          type: dev.evidence_types?.[0] || 'unknown'
+        });
+      }
+      evidenceFiles.get(fpath).device_ids.push(devId);
+    });
+  });
+
   const columns = [
     { key: "user", label: "Accounts", items: users },
     { key: "pc", label: "Workstations", items: devs.filter((d) => d.kind === "pc") },
@@ -214,6 +233,12 @@ function buildGraph(report, size) {
     { key: "mobile", label: "Mobile", items: devs.filter((d) => d.kind === "mobile") },
     { key: "network", label: "Network", items: devs.filter((d) => d.kind === "network") },
     { key: "service", label: "Services", items: Array.from(exfilServices.values()) },
+    { key: "evidence", label: "Evidence", items: Array.from(evidenceFiles.entries()).map(([path, info]) => ({
+      id: "e:" + path,
+      kind: "evidence",
+      path: path,
+      ...info
+    })) },
   ].filter((c) => c.items.length > 0).map((c) => ({ ...c, count: c.items.length }));
 
   const colCount = columns.length;
@@ -228,6 +253,7 @@ function buildGraph(report, size) {
     mobile: "#F59E0B",
     network: "#64748B",
     service: "#EC4899",
+    evidence: "#06B6D4",
   };
 
   const nodeById = {};
@@ -345,6 +371,20 @@ function buildGraph(report, size) {
             });
           }
         }
+      }
+    });
+  });
+
+  // Add evidence source edges: device -> evidence file
+  evidenceFiles.forEach((info, path) => {
+    info.device_ids.forEach(devId => {
+      if (nodeById["d:" + devId] && nodeById["e:" + path]) {
+        edges.push({
+          from: "d:" + devId,
+          to: "e:" + path,
+          kind: "evidence_source",
+          evidence_type: info.type
+        });
       }
     });
   });
