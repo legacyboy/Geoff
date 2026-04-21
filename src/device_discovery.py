@@ -386,7 +386,7 @@ class DeviceDiscovery:
             if fls_result.get("status") != "success":
                 return
 
-            file_listing = fls_result.get("stdout", "")
+            file_listing = fls_result.get("stdout", "") or fls_result.get("raw_output", "")
             file_listing_lower = file_listing.lower()
 
             # Detect OS from filesystem contents
