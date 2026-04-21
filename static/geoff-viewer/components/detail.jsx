@@ -11,6 +11,9 @@ function DetailPanel({ report, selected, onSelect }) {
   if (selected.startsWith("d:")) {
     return <DeviceDetail report={report} deviceId={selected.slice(2)} onSelect={onSelect} />;
   }
+  if (selected.startsWith("i:")) {
+    return <IocDetail report={report} iocId={selected.slice(2)} onSelect={onSelect} />;
+  }
   return null;
 }
 
@@ -396,6 +399,76 @@ function extType(path) {
   if (m) return m[1].toLowerCase();
   if (path.endsWith("/")) return "dir";
   return "file";
+}
+
+function getIocSubkind(report, val) {
+  const iocs = report.iocs || {};
+  if ((iocs.ip_addresses    || []).includes(val)) return "ip";
+  if ((iocs.urls            || []).includes(val)) return "url";
+  if ((iocs.email_addresses || []).includes(val)) return "email";
+  return "ioc";
+}
+
+function IocDetail({ report, iocId, onSelect }) {
+  const subkind = getIocSubkind(report, iocId);
+  const subkindLabel = { ip: "IP ADDRESS", url: "URL", email: "EMAIL", ioc: "INDICATOR" }[subkind] || "INDICATOR";
+  const accent = { ip: "#EF4444", url: "#F97316", email: "#EC4899" }[subkind] || "#EF4444";
+
+  const referencingDevices = [];
+  for (const [devId, flags] of Object.entries(report.behavioral_flags || {})) {
+    if (JSON.stringify(flags).includes(iocId)) {
+      referencingDevices.push({ devId, flags });
+    }
+  }
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: `rgba(239,68,68,0.1)`, color: accent, border: `1px solid ${accent}55`, fontFamily: "var(--font-mono)", fontSize: 20 }}>◆</div>
+        <div className="title-wrap">
+          <div className="kind">Indicator · {subkindLabel}</div>
+          <div className="title" style={{ wordBreak: "break-all", fontSize: 12 }}>{iocId}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Referenced by <span className="count">{referencingDevices.length}</span></div>
+        {referencingDevices.length === 0
+          ? <div className="empty" style={{ padding: "12px 0" }}>No device evidence links this indicator.</div>
+          : (
+            <div className="related-list">
+              {referencingDevices.map(({ devId }) => {
+                const dev = (report.device_map || {})[devId];
+                if (!dev) return null;
+                const kind = classifyDevice(dev);
+                return (
+                  <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                    <span className={`bullet ${kind}`} />
+                    <span className="name">{dev.hostname || devId}</span>
+                    <span className="via">{osLabel(dev)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </div>
+
+      {referencingDevices.map(({ devId, flags }) => {
+        const relevantFlags = flags.filter(f => JSON.stringify(f.evidence || {}).includes(iocId));
+        if (relevantFlags.length === 0) return null;
+        const dev = (report.device_map || {})[devId];
+        return (
+          <div className="section" key={devId}>
+            <div className="section-title">
+              Findings on {dev?.hostname || devId}
+              <span className="count">{relevantFlags.length}</span>
+            </div>
+            {relevantFlags.map((f, i) => <FindingCard key={i} f={f} />)}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 window.DetailPanel = DetailPanel;

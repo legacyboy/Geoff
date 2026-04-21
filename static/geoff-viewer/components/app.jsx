@@ -169,6 +169,14 @@ function App() {
                 <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="var(--sev-high)" strokeDasharray="4 3" /></svg>
                 lateral
               </span>
+              <span className="li" style={{ marginLeft: 4 }}>
+                <svg width="10" height="10" viewBox="-6 -6 12 12"><polygon points="0,-5 5,0 0,5 -5,0" fill="none" stroke="#EF4444" strokeWidth="1.2" /></svg>
+                indicator
+              </span>
+              <span className="li">
+                <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke="#EF4444" strokeDasharray="3 5" /></svg>
+                ioc link
+              </span>
             </div>
           </div>
           <RelationshipGraph
@@ -230,6 +238,16 @@ function extractEntityReport(report, sel) {
   if (sel.startsWith("d:")) {
     const k = sel.slice(2);
     return { device: (report.device_map || {})[k], flags: (report.behavioral_flags || {})[k] };
+  }
+  if (sel.startsWith("i:")) {
+    const iocVal = sel.slice(2);
+    const referencingDevices = {};
+    for (const [devId, flags] of Object.entries(report.behavioral_flags || {})) {
+      if (JSON.stringify(flags).includes(iocVal)) {
+        referencingDevices[devId] = { device: (report.device_map || {})[devId], flags };
+      }
+    }
+    return { ioc: iocVal, referencing_devices: referencingDevices };
   }
   return report;
 }

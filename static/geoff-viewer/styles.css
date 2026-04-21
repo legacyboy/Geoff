@@ -606,7 +606,7 @@ input, textarea { font: inherit; color: inherit; }
   font-size: 9.5px;
 }
 .node.dimmed { opacity: 0.25; }
-.node.highlighted rect, .node.highlighted circle { stroke-width: 2; filter: drop-shadow(0 0 8px currentColor); }
+.node.highlighted rect, .node.highlighted circle, .node.highlighted polygon { stroke-width: 2; filter: drop-shadow(0 0 8px currentColor); }
 .edge {
   stroke: var(--g-border);
   stroke-width: 1;
@@ -617,6 +617,8 @@ input, textarea { font: inherit; color: inherit; }
 .edge.highlighted { stroke: var(--g-blue); stroke-width: 1.6; opacity: 1; }
 .edge.lateral { stroke: var(--sev-high); stroke-dasharray: 4 3; }
 .edge.lateral.highlighted { stroke: var(--sev-crit); }
+.edge.ioc { stroke: #EF4444; stroke-dasharray: 3 5; opacity: 0.5; }
+.edge.ioc.highlighted { opacity: 1; stroke-width: 1.6; }
 
 .col-header {
   font-family: var(--font-mono);
