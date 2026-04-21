@@ -473,7 +473,7 @@ class DeviceDiscovery:
                     sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
                     for line in sub_stdout.split("\n"):
                         stripped = line.strip()
-                        if not stripped or stripped.startswith("d/d"):
+                        if not stripped:
                             continue
                         # Parse child entry: type inode: name
                         parts = stripped.split(":")
@@ -491,7 +491,7 @@ class DeviceDiscovery:
                     sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
                     for line in sub_stdout.split("\n"):
                         stripped = line.strip()
-                        if not stripped or stripped.startswith("d/d"):
+                        if not stripped:
                             continue
                         parts = stripped.split(":")
                         if len(parts) >= 2:
