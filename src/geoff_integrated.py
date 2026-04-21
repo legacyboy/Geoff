@@ -1773,7 +1773,7 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         "file_hashes": {},  # path -> sha256
     }
 
-    disk_ext = {'.e01', '.ee01', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
+    disk_ext = {'.e01', '.ee01', '.e02', '.e03', '.e04', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
     mem_ext  = {'.vmem', '.mem', '.dmp', '.core', '.lin'}
     pcap_ext = {'.pcap', '.pcapng', '.cap'}
     registry_names = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
