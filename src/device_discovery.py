@@ -455,14 +455,14 @@ class DeviceDiscovery:
                     if len(parts) >= 2:
                         meta_part = parts[0].strip()
                         # Extract inode from "d/d 3519-144-6" format
-                        match = re.search(r'(\d+-\d+-\d+|\d+)$', meta_part)
+                        match = re.search(r'\s([\d-]+)$', meta_part)
                         if match:
                             doc_settings_inode = match.group(1)
                 elif "/Users" in stripped or stripped.endswith("Users"):
                     parts = stripped.split(":")
                     if len(parts) >= 2:
                         meta_part = parts[0].strip()
-                        match = re.search(r'(\d+-\d+-\d+|\d+)$', meta_part)
+                        match = re.search(r'\s([\d-]+)$', meta_part)
                         if match:
                             users_inode = match.group(1)
 
