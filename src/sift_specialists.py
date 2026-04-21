@@ -9,7 +9,7 @@ import subprocess
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 
 class SLEUTHKIT_Specialist:
@@ -426,7 +426,7 @@ class SLEUTHKIT_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def list_files(self, image: str, offset: Optional[int] = None, inode: Optional[int] = None, recursive: bool = True) -> Dict[str, Any]:
+    def list_files(self, image: str, offset: Optional[int] = None, inode: Optional[Union[int, str]] = None, recursive: bool = True) -> Dict[str, Any]:
         """fls - List files and directories with parsed file entries"""
         args = []
         if recursive:
@@ -435,8 +435,9 @@ class SLEUTHKIT_Specialist:
         if offset is not None:
             args.extend(['-o', str(offset)])
         args.append(image)  # will be replaced by _run_with_segments
-        if inode:
-            args.extend(['-f', inode] if not isinstance(inode, str) else [inode])
+        if inode is not None:
+            # inode is passed as a positional argument (not -f flag)
+            args.append(str(inode))
         raw = self._run_with_segments('fls', image, base_args=args)
         if raw['status'] == 'success_with_partial':
             # Normalize the status for downstream parsing

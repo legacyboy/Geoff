@@ -3547,3 +3547,11 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 0
 - **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-0dbfadd0bedb","message":"Find Evil job started. Poll /find-evil/status/fe-0dbfadd0bedb for progress.","status":"running"}
 
+
+---
+## QA Run: 2026-04-21 15:15:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What artifacts indicate persistence on Windows?\"}'"`
+- **Exit code:** 28
+- **Result:** 
+
