@@ -1,5 +1,5 @@
-// Relationship graph — columnar layout (Users | Machines | Mobile | Network)
-// with edges for ownership and lateral-movement.
+// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Services)
+// with edges for ownership, lateral-movement, evidence sources, and exfiltration.
 
 const { useEffect, useMemo, useRef, useState } = React;
 
@@ -79,6 +79,8 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
             const dim = neighbors && !hl;
             let cls = "edge";
             if (e.kind === "lateral") cls += " lateral";
+            if (e.kind === "exfiltrated_to") cls += " exfil";
+            if (e.kind === "evidence_source") cls += " evidence-link";
             if (hl) cls += " highlighted";
             if (dim) cls += " dimmed";
             return <path key={i} className={cls} d={d} />;
@@ -109,6 +111,23 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
                   <circle
                     cx={0} cy={0} r={n.r}
                     fill="rgba(16,185,129,0.08)"
+                    stroke={n.accent}
+                    strokeWidth={isSel ? 2 : 1}
+                  />
+                ) : n.kind === "evidence" ? (
+                  <rect
+                    x={-n.w / 2} y={-n.h / 2}
+                    width={n.w} height={n.h} rx={4}
+                    fill="rgba(6,182,212,0.15)"
+                    stroke={n.accent}
+                    strokeWidth={isSel ? 2 : 1}
+                    strokeDasharray="4 2"
+                  />
+                ) : n.kind === "service" ? (
+                  <rect
+                    x={-n.w / 2} y={-n.h / 2}
+                    width={n.w} height={n.h} rx={20}
+                    fill="rgba(236,72,153,0.15)"
                     stroke={n.accent}
                     strokeWidth={isSel ? 2 : 1}
                   />
@@ -161,12 +180,40 @@ function buildGraph(report, size) {
   const users = Object.entries(report.user_map || {}).map(([k, u]) => ({ id: "u:" + k, kind: "user", raw: u, key: k }));
   const devs = Object.entries(report.device_map || {}).map(([k, d]) => ({ id: "d:" + k, kind: classifyDevice(d), raw: d, key: k }));
 
+  // Add exfiltration service nodes if detected
+  const exfilServices = new Map();
+  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
+    flags.forEach(flag => {
+      if (flag.flag_type === 'exfiltration' || flag.flag_type === 'c2_traffic') {
+        const evidence = flag.evidence || {};
+        const dstHost = evidence.dst_host || evidence.dst_ip || '';
+        if (dstHost) {
+          // Detect service type
+          let serviceType = 'external';
+          if (dstHost.includes('mega') || dstHost.includes('mega.')) serviceType = 'Mega.nz';
+          else if (dstHost.includes('gmail') || dstHost.includes('google')) serviceType = 'Google';
+          else if (dstHost.includes('onedrive') || dstHost.includes('microsoft')) serviceType = 'OneDrive';
+          else if (dstHost.includes('dropbox')) serviceType = 'Dropbox';
+          else if (dstHost.includes('aol')) serviceType = 'AOL';
+          else if (dstHost.includes('yahoo')) serviceType = 'Yahoo';
+          else if (dstHost.includes('protonmail')) serviceType = 'ProtonMail';
+          
+          if (!exfilServices.has(serviceType)) {
+            exfilServices.set(serviceType, { id: "s:" + serviceType, kind: "service", name: serviceType, hosts: [] });
+          }
+          exfilServices.get(serviceType).hosts.push({ host: dstHost, devId, flag });
+        }
+      }
+    });
+  });
+
   const columns = [
     { key: "user", label: "Accounts", items: users },
     { key: "pc", label: "Workstations", items: devs.filter((d) => d.kind === "pc") },
     { key: "server", label: "Servers", items: devs.filter((d) => d.kind === "server") },
     { key: "mobile", label: "Mobile", items: devs.filter((d) => d.kind === "mobile") },
     { key: "network", label: "Network", items: devs.filter((d) => d.kind === "network") },
+    { key: "service", label: "Services", items: Array.from(exfilServices.values()) },
   ].filter((c) => c.items.length > 0).map((c) => ({ ...c, count: c.items.length }));
 
   const colCount = columns.length;
@@ -180,12 +227,14 @@ function buildGraph(report, size) {
     server: "#A78BFA",
     mobile: "#F59E0B",
     network: "#64748B",
+    service: "#EC4899",
   };
 
   const nodeById = {};
   const nodes = [];
 
-  columns.forEach((col, ci) => {
+  // Add device/user nodes
+  columns.filter(c => c.key !== 'service').forEach((col, ci) => {
     col.x = padX + colGap * ci + colGap / 2;
     const topY = 70;
     const bottomY = size.h - 40;
@@ -221,6 +270,33 @@ function buildGraph(report, size) {
     });
   });
 
+  // Add service nodes
+  const serviceCol = columns.find(c => c.key === 'service');
+  if (serviceCol) {
+    const topY = 70;
+    const bottomY = size.h - 40;
+    const gapY = (bottomY - topY) / Math.max(serviceCol.items.length, 1);
+    serviceCol.items.forEach((item, ri) => {
+      const y = topY + gapY * ri + gapY / 2;
+      const node = {
+        id: item.id,
+        kind: "service",
+        key: item.name,
+        label: truncate(item.name, 18),
+        sublabel: item.hosts.length + " connection(s)",
+        x: serviceCol.x,
+        y,
+        r: 28,
+        w: 150, h: 44,
+        accent: accentMap.service,
+        badge: { count: item.hosts.length, sev: "HIGH" },
+        raw: { name: item.name, hosts: item.hosts }
+      };
+      nodes.push(node);
+      nodeById[node.id] = node;
+    });
+  }
+
   // Build edges
   const edges = [];
   // ownership: user <-> device
@@ -241,6 +317,37 @@ function buildGraph(report, size) {
       }
     }
   }
+  // Exfiltration edges: device -> service
+  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
+    flags.forEach(flag => {
+      if (flag.flag_type === 'exfiltration' || flag.flag_type === 'c2_traffic') {
+        const evidence = flag.evidence || {};
+        const dstHost = evidence.dst_host || evidence.dst_ip || '';
+        if (dstHost) {
+          let serviceType = 'external';
+          if (dstHost.includes('mega') || dstHost.includes('mega.')) serviceType = 'Mega.nz';
+          else if (dstHost.includes('gmail') || dstHost.includes('google')) serviceType = 'Google';
+          else if (dstHost.includes('onedrive') || dstHost.includes('microsoft')) serviceType = 'OneDrive';
+          else if (dstHost.includes('dropbox')) serviceType = 'Dropbox';
+          else if (dstHost.includes('aol')) serviceType = 'AOL';
+          else if (dstHost.includes('yahoo')) serviceType = 'Yahoo';
+          else if (dstHost.includes('protonmail')) serviceType = 'ProtonMail';
+          
+          const serviceNodeId = "s:" + serviceType;
+          if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
+            edges.push({ 
+              from: "d:" + devId, 
+              to: serviceNodeId, 
+              kind: "exfiltrated_to", 
+              host: dstHost,
+              bytes: evidence.bytes_sent,
+              flag: flag.summary
+            });
+          }
+        }
+      }
+    });
+  });
 
   return { nodes, edges, nodeById, columns };
 }
@@ -264,6 +371,7 @@ function osLabel(d) {
   if (t.includes("server")) return d.os_version || d.os_type;
   if (d.os_type === "windows") return d.os_version || "Windows";
   if (d.os_type === "linux") return d.os_version || "Linux";
+  if (d.os_type === "macos") return d.os_version || "macOS";
   return d.os_type || "device";
 }
 
