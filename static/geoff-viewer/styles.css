@@ -692,3 +692,7 @@ input, textarea { font: inherit; color: inherit; }
   color: var(--g-border);
   margin-bottom: 12px;
 }
+
+/* Evidence source edges */
+.edge.evidence-link { stroke: #06B6D4; stroke-dasharray: 2 2; opacity: 0.6; }
+.edge.evidence-link.highlighted { stroke: #06B6D4; opacity: 1; stroke-width: 2; }
