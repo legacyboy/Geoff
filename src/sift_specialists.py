@@ -278,12 +278,27 @@ class SLEUTHKIT_Specialist:
         # Build the argument list
         cmd_args = list(base_args) if base_args else []
 
+        # Check if inode is in args (last positional arg after image)
+        # Must check BEFORE removing image path
+        has_inode = False
+        inode_value = None
+        for i, a in enumerate(cmd_args):
+            if a == base_image:
+                # Check if next arg exists and is not a flag (inode)
+                if i + 1 < len(cmd_args) and not cmd_args[i + 1].startswith('-'):
+                    has_inode = True
+                    inode_value = cmd_args[i + 1]
+
         # Remove duplicate image paths if segments will be added
         # _find_image_segments handles image path resolution
         for i, a in enumerate(cmd_args):
             if a == base_image:
                 cmd_args[i] = None
         cmd_args = [a for a in cmd_args if a is not None]
+
+        # If inode was present, remove it temporarily and add at end
+        if has_inode:
+            cmd_args = [a for a in cmd_args if a != inode_value]
 
         # If partitions were detected and no offset is already specified, use first partition offset
         offset_provided = False
@@ -310,6 +325,10 @@ class SLEUTHKIT_Specialist:
         # Pass all image segments as arguments
         for seg in segments:
             cmd_args.append(seg)
+
+        # Add inode at the very end (required by TSK syntax)
+        if has_inode and inode_value:
+            cmd_args.append(inode_value)
 
         raw = self.run(tool, cmd_args)
 

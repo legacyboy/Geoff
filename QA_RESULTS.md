@@ -3555,3 +3555,20 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 28
 - **Result:** 
 
+
+---
+## QA Run: 2026-04-21 15:30:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 7
+- **Result:** 
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 7
+- **Result:** 
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 000
+- Attempting restart...
+- Restart result: HTTP 000
