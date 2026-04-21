@@ -278,6 +278,13 @@ class SLEUTHKIT_Specialist:
         # Build the argument list
         cmd_args = list(base_args) if base_args else []
 
+        # Remove duplicate image paths if segments will be added
+        # _find_image_segments handles image path resolution
+        for i, a in enumerate(cmd_args):
+            if a == base_image:
+                cmd_args[i] = None
+        cmd_args = [a for a in cmd_args if a is not None]
+
         # If partitions were detected and no offset is already specified, use first partition offset
         offset_provided = False
         for i, a in enumerate(cmd_args):
