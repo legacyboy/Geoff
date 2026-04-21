@@ -453,22 +453,25 @@ class SLEUTHKIT_Specialist:
             stripped = line.strip()
             if not stripped:
                 continue
-            # fls -p output format: r/r *inode: name   or d/d *inode: name
-            match = re.match(r'^([rvmldc]/[rda])\s+(\*?)(\d+)[\s-]+:\s+(.*)', stripped)
+            # fls -p output format: r/r *inode-meta: name or d/d *inode-meta: name
+            # inode can be composite like 3519-144-6 (meta_addr-attr_type-attr_id)
+            match = re.match(r'^([rvmldc]/[rda])\s+(\*?)([\d-]+)\s*:\s+(.*)', stripped)
             if not match:
                 # Alternate format: type meta_inode name
-                match2 = re.match(r'^([rvmldc]/[rda])\s+(\*?)(\d+)\s+(.*)', stripped)
+                match2 = re.match(r'^([rvmldc]/[rda])\s+(\*?)([\d-]+)\s+(.*)', stripped)
                 if match2:
                     file_type = match2.group(1)
                     is_deleted = '*' in match2.group(2)
-                    meta_inode = int(match2.group(3))
+                    meta_inode_raw = match2.group(3)
+                    meta_inode = int(meta_inode_raw.split('-')[0]) if '-' in meta_inode_raw else int(meta_inode_raw)
                     name = match2.group(4).strip()
                 else:
                     continue
             else:
                 file_type = match.group(1)
                 is_deleted = '*' in match.group(2)
-                meta_inode = int(match.group(3))
+                meta_inode_raw = match.group(3)
+                meta_inode = int(meta_inode_raw.split('-')[0]) if '-' in meta_inode_raw else int(meta_inode_raw)
                 name = match.group(4).strip()
 
             entry = {
@@ -498,6 +501,7 @@ class SLEUTHKIT_Specialist:
             'files': files[:500],
             'directories': dirs[:200],
             'deleted_files': deleted[:200],
+            'stdout': raw['stdout'],  # For backward compatibility with enrichment code
             'raw_output': raw['stdout'][:50000],
             'timestamp': datetime.now().isoformat()
         }
