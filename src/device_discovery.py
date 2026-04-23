@@ -860,14 +860,14 @@ class DeviceDiscovery:
             mmls_result = subprocess.run(["mmls", image_path], capture_output=True, text=True, timeout=30)
             for line in mmls_result.stdout.split("\n"):
                 # Look for lines with partition info: "000:000   0000000063   ...   NTFS"
+                # Format: Slot Start End Length Description
+                # Example: "002:  000:000   0000000063   0020948759   0020948697   NTFS / exFAT (0x07)"
                 if "NTFS" in line or "exFAT" in line or "0x07" in line:
                     parts = line.split()
-                    # Format: Slot Start End Length Description
-                    # Example: "000:000   0000000063   0020948759   0020948697   NTFS / exFAT (0x07)"
                     if len(parts) >= 5:
-                        # parts[1] is the Start sector
+                        # parts[0] = "002:", parts[1] = "000:000", parts[2] = Start sector
                         try:
-                            offset = int(parts[1])
+                            offset = int(parts[2])
                             break
                         except ValueError:
                             continue
@@ -893,39 +893,39 @@ class DeviceDiscovery:
                 return
             
             # Parse binary for ComputerName
-            # Search for ComputerName registry path (UTF-16LE encoded)
-            search_path = b"ControlSet001\\Control\\ComputerName\\ComputerName"
-            search_path_utf16 = search_path.decode('ascii').encode('utf-16le')
+            # Registry can store key names in ASCII or UTF-16LE
+            # Search for ASCII "ComputerName" first (common in SYSTEM hive)
+            search_path_ascii = b"ComputerName\x00\x00"
+            path_pos = system_data.find(search_path_ascii)
             
-            path_pos = system_data.find(search_path_utf16)
             if path_pos == -1:
-                for cs in [b"ControlSet002", b"CurrentControlSet"]:
-                    alt_path = cs + b"\\Control\\ComputerName\\ComputerName"
-                    alt_path_utf16 = alt_path.decode('ascii').encode('utf-16le')
-                    path_pos = system_data.find(alt_path_utf16)
-                    if path_pos != -1:
-                        break
+                # Try UTF-16LE encoded path
+                search_path = b"ControlSet001\\Control\\ComputerName\\ComputerName"
+                search_path_utf16 = search_path.decode('ascii').encode('utf-16le')
+                path_pos = system_data.find(search_path_utf16)
+                if path_pos == -1:
+                    for cs in [b"ControlSet002", b"CurrentControlSet"]:
+                        alt_path = cs + b"\\Control\\ComputerName\\ComputerName"
+                        alt_path_utf16 = alt_path.decode('ascii').encode('utf-16le')
+                        path_pos = system_data.find(alt_path_utf16)
+                        if path_pos != -1:
+                            break
             
             if path_pos != -1:
-                after_path = system_data[path_pos + len(search_path_utf16):path_pos + len(search_path_utf16) + 300]
-                # Registry value format: type(4 bytes) + size(4 bytes) + data
-                # Look for UTF-16LE hostname string (alphanumeric with hyphens)
-                hostname_match = re.search(b'([A-Za-z0-9][A-Za-z0-9-]{0,13}[A-Za-z0-9])(?:\x00\x00)', after_path)
+                after_path = system_data[path_pos + len(search_path_ascii) if search_path_ascii in system_data else path_pos + len(search_path_utf16):path_pos + 400]
+                # Registry value data is UTF-16LE: hostname followed by null terminators
+                # Pattern: J\x00E\x00A\x00N\x00-\x001\x003\x00F\x00B\x00F\x000\x003\x008\x00A\x003\x00\x00\x00
+                hostname_match = re.search(b'(([A-Za-z0-9]\x00){2,30}\x00\x00)', after_path)
                 if hostname_match:
-                    hostname = hostname_match.group(1).decode('utf-16le', errors='ignore').strip()
-                    if hostname and len(hostname) <= 15:
-                        dev["hostname"] = hostname.upper()
-                        dev["discovery_method"] = "registry_hostname"
-                        self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname}")
-                        return
-                else:
-                    # Fallback: search entire file for hostname-like strings after ComputerName
-                    for match in re.finditer(b'[A-Za-z0-9][A-Za-z0-9-]{1,14}[A-Za-z0-9]', after_path):
-                        candidate = match.group().decode('ascii', errors='ignore')
-                        if 2 <= len(candidate) <= 15 and candidate[0].isalpha():
-                            dev["hostname"] = candidate.upper()
+                    raw_hostname = hostname_match.group(1)
+                    # Decode UTF-16LE (every other byte is null)
+                    hostname = raw_hostname.decode('utf-16le', errors='ignore').rstrip('\x00')
+                    if hostname and 2 <= len(hostname) <= 30:
+                        # Validate hostname format
+                        if re.match(r'^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]?$', hostname):
+                            dev["hostname"] = hostname.upper()
                             dev["discovery_method"] = "registry_hostname"
-                            self._log("hostname_found", f"Hostname from SYSTEM hive (fallback): {candidate}")
+                            self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname}")
                             return
         except subprocess.TimeoutExpired:
             self._log("hostname_error", "icat timed out")
