@@ -850,22 +850,38 @@ class DeviceDiscovery:
             self._log("hostname_search", "SYSTEM hive inode not found in file listing")
             return
         
-        # Extract SYSTEM hive
-        extract_result = sk.extract_file(image_path, system_inode)
-        if extract_result.get("status") != "success":
-            self._log("hostname_error", f"Failed to extract SYSTEM hive: {extract_result}")
-            return
+        # Extract SYSTEM hive using icat directly (binary-safe)
+        import subprocess
+        import tempfile
         
-        extracted_path = extract_result.get("extracted_path")
-        if not extracted_path or not Path(extracted_path).exists():
-            self._log("hostname_error", "Extracted SYSTEM hive file not found")
-            return
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".system") as tmp:
+            tmp_path = tmp.name
         
-        # Parse binary for ComputerName
         try:
-            with open(extracted_path, 'rb') as f:
-                system_data = f.read()
+            # Build icat command with partition offset if available
+            cmd = ["icat"]
+            # Check for partition offset in evidence path metadata
+            # Format: image.E01:offset or just image.E01
+            if ":" in image_path:
+                parts = image_path.rsplit(":", 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    cmd.extend(["-o", parts[1]])
+                    image_path = parts[0]
             
+            cmd.extend([image_path, system_inode])
+            
+            # Run icat and capture binary output
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            if result.returncode != 0:
+                self._log("hostname_error", f"icat failed: {result.stderr.decode('utf-8', errors='replace')[:200]}")
+                return
+            
+            system_data = result.stdout
+            if not system_data:
+                self._log("hostname_error", "icat returned empty data")
+                return
+            
+            # Parse binary for ComputerName
             # Search for ComputerName registry path (UTF-16LE encoded)
             search_path = b"ControlSet001\\Control\\ComputerName\\ComputerName"
             search_path_utf16 = search_path.decode('ascii').encode('utf-16le')
@@ -880,8 +896,10 @@ class DeviceDiscovery:
                         break
             
             if path_pos != -1:
-                after_path = system_data[path_pos + len(search_path_utf16):path_pos + len(search_path_utf16) + 200]
-                hostname_match = re.search(b'([A-Za-z0-9-]{2,32})(?:\x00\x00)+', after_path)
+                after_path = system_data[path_pos + len(search_path_utf16):path_pos + len(search_path_utf16) + 300]
+                # Registry value format: type(4 bytes) + size(4 bytes) + data
+                # Look for UTF-16LE hostname string (alphanumeric with hyphens)
+                hostname_match = re.search(b'([A-Za-z0-9][A-Za-z0-9-]{0,13}[A-Za-z0-9])(?:\x00\x00)', after_path)
                 if hostname_match:
                     hostname = hostname_match.group(1).decode('utf-16le', errors='ignore').strip()
                     if hostname and len(hostname) <= 15:
@@ -889,8 +907,13 @@ class DeviceDiscovery:
                         dev["discovery_method"] = "registry_hostname"
                         self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname}")
                         return
+        except subprocess.TimeoutExpired:
+            self._log("hostname_error", "icat timed out")
         except Exception as e:
-            self._log("hostname_error", f"Failed to parse SYSTEM hive: {e}")
+            self._log("hostname_error", f"Failed to extract/parse SYSTEM hive: {e}")
+        finally:
+            if Path(tmp_path).exists():
+                Path(tmp_path).unlink()
     
     def _extract_hostname_from_linux_image(self, dev: dict, sk: 'SLEUTHKIT_Specialist', image_path: str, file_listing: str):
         """
@@ -909,26 +932,34 @@ class DeviceDiscovery:
             self._log("hostname_search", "/etc/hostname inode not found")
             return
         
-        # Extract /etc/hostname
-        extract_result = sk.extract_file(image_path, hostname_inode)
-        if extract_result.get("status") != "success":
-            self._log("hostname_error", f"Failed to extract /etc/hostname: {extract_result}")
-            return
+        # Extract using icat directly
+        import subprocess
         
-        extracted_path = extract_result.get("extracted_path")
-        if not extracted_path:
-            self._log("hostname_error", "Extracted /etc/hostname file not found")
-            return
+        cmd = ["icat"]
+        clean_image_path = image_path
+        if ":" in image_path:
+            parts = image_path.rsplit(":", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                cmd.extend(["-o", parts[1]])
+                clean_image_path = parts[0]
+        
+        cmd.extend([clean_image_path, hostname_inode])
         
         try:
-            with open(extracted_path, 'r') as f:
-                hostname = f.read().strip()
+            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            if result.returncode != 0:
+                self._log("hostname_error", f"icat failed: {result.stderr.decode('utf-8', errors='replace')[:200]}")
+                return
+            
+            hostname = result.stdout.decode('utf-8', errors='replace').strip()
             if hostname:
                 dev["hostname"] = hostname
                 dev["discovery_method"] = "linux_hostname_file"
                 self._log("hostname_found", f"Hostname from /etc/hostname: {hostname}")
+        except subprocess.TimeoutExpired:
+            self._log("hostname_error", "icat timed out")
         except Exception as e:
-            self._log("hostname_error", f"Failed to read /etc/hostname: {e}")
+            self._log("hostname_error", f"Failed to extract /etc/hostname: {e}")
     
     def _extract_hostname_from_macos_image(self, dev: dict, sk: 'SLEUTHKIT_Specialist', image_path: str, file_listing: str):
         """
@@ -938,34 +969,47 @@ class DeviceDiscovery:
         """
         # Find preferences plist inode
         plist_inode = None
-        plist_path_in_image = None
         for line in file_listing.split("\n"):
             line_lower = line.lower()
             if ("preferences.plist" in line_lower or "systemconfiguration" in line_lower) and "plist" in line_lower:
                 match = re.search(r'\s([\d-]+):\s*(.*)$', line)
                 if match:
                     plist_inode = match.group(1)
-                    plist_path_in_image = match.group(2)
                     break
         
         if not plist_inode:
             self._log("hostname_search", "macOS preferences plist not found")
             return
         
-        # Extract plist
-        extract_result = sk.extract_file(image_path, plist_inode)
-        if extract_result.get("status") != "success":
-            self._log("hostname_error", f"Failed to extract preferences plist: {extract_result}")
-            return
+        # Extract using icat directly
+        import subprocess
+        import tempfile
         
-        extracted_path = extract_result.get("extracted_path")
-        if not extracted_path:
-            self._log("hostname_error", "Extracted preferences plist not found")
-            return
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".plist") as tmp:
+            tmp_path = tmp.name
+        
+        cmd = ["icat"]
+        clean_image_path = image_path
+        if ":" in image_path:
+            parts = image_path.rsplit(":", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                cmd.extend(["-o", parts[1]])
+                clean_image_path = parts[0]
+        
+        cmd.extend([clean_image_path, plist_inode])
         
         try:
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            if result.returncode != 0:
+                self._log("hostname_error", f"icat failed: {result.stderr.decode('utf-8', errors='replace')[:200]}")
+                return
+            
+            # Write binary output to temp file
+            Path(tmp_path).write_bytes(result.stdout)
+            
+            # Parse plist
             import plistlib
-            with open(extracted_path, 'rb') as f:
+            with open(tmp_path, 'rb') as f:
                 plist = plistlib.load(f)
             
             # Navigate to ComputerName - structure varies by macOS version
@@ -983,8 +1027,13 @@ class DeviceDiscovery:
                 dev["hostname"] = str(computer_name)
                 dev["discovery_method"] = "macos_plist_computer_name"
                 self._log("hostname_found", f"Hostname from macOS plist: {computer_name}")
+        except subprocess.TimeoutExpired:
+            self._log("hostname_error", "icat timed out")
         except Exception as e:
-            self._log("hostname_error", f"Failed to parse macOS plist: {e}")
+            self._log("hostname_error", f"Failed to extract/parse macOS plist: {e}")
+        finally:
+            if Path(tmp_path).exists():
+                Path(tmp_path).unlink()
 
     @staticmethod
     def _normalize_username(username: str) -> str:
