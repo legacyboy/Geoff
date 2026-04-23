@@ -696,3 +696,36 @@ input, textarea { font: inherit; color: inherit; }
 /* Evidence source edges */
 .edge.evidence-link { stroke: #06B6D4; stroke-dasharray: 2 2; opacity: 0.6; }
 .edge.evidence-link.highlighted { stroke: #06B6D4; opacity: 1; stroke-width: 2; }
+
+/* Exfiltration edges */
+.edge.exfil { stroke: #EC4899; stroke-dasharray: 2 2; opacity: 0.6; }
+.edge.exfil.highlighted { stroke: #EC4899; opacity: 1; stroke-width: 2; }
+
+/* Node type-specific styling */
+.node.evidence rect {
+  fill: rgba(6, 182, 212, 0.15);
+  stroke: #06B6D4;
+}
+.node.evidence text {
+  fill: var(--g-text);
+}
+.node.service rect {
+  fill: rgba(236, 72, 153, 0.15);
+  stroke: #EC4899;
+}
+.node.service text {
+  fill: var(--g-text);
+}
+
+/* Responsive layout for many evidence files */
+.graph-svg text {
+  font-size: 10px;
+}
+@media (max-width: 800px) {
+  .graph-svg text {
+    font-size: 9px;
+  }
+  .node rect, .node circle {
+    stroke-width: 1;
+  }
+}
