@@ -893,40 +893,31 @@ class DeviceDiscovery:
                 return
             
             # Parse binary for ComputerName
-            # Registry can store key names in ASCII or UTF-16LE
-            # Search for ASCII "ComputerName" first (common in SYSTEM hive)
-            search_path_ascii = b"ComputerName\x00\x00"
-            path_pos = system_data.find(search_path_ascii)
+            # Registry value data follows the key name
+            # Look for the pattern: ComputerName\x00\x00 followed by value metadata then UTF-16LE hostname
+            # The actual hostname value is preceded by type/size metadata
+            hostname_found = None
             
-            if path_pos == -1:
-                # Try UTF-16LE encoded path
-                search_path = b"ControlSet001\\Control\\ComputerName\\ComputerName"
-                search_path_utf16 = search_path.decode('ascii').encode('utf-16le')
-                path_pos = system_data.find(search_path_utf16)
-                if path_pos == -1:
-                    for cs in [b"ControlSet002", b"CurrentControlSet"]:
-                        alt_path = cs + b"\\Control\\ComputerName\\ComputerName"
-                        alt_path_utf16 = alt_path.decode('ascii').encode('utf-16le')
-                        path_pos = system_data.find(alt_path_utf16)
-                        if path_pos != -1:
-                            break
-            
-            if path_pos != -1:
-                after_path = system_data[path_pos + len(search_path_ascii) if search_path_ascii in system_data else path_pos + len(search_path_utf16):path_pos + 400]
-                # Registry value data is UTF-16LE: hostname followed by null terminators
-                # Pattern: J\x00E\x00A\x00N\x00-\x001\x003\x00F\x00B\x00F\x000\x003\x008\x00A\x003\x00\x00\x00
-                hostname_match = re.search(b'(([A-Za-z0-9]\x00){2,30}\x00\x00)', after_path)
-                if hostname_match:
-                    raw_hostname = hostname_match.group(1)
-                    # Decode UTF-16LE (every other byte is null)
+            # Search for ComputerName followed by UTF-16LE hostname pattern
+            # Pattern: ComputerName nulls, then type/size, then UTF-16LE hostname ending with double null
+            for m in re.finditer(b'ComputerName\x00\x00.{20,80}?(([A-Za-z]\x00[A-Za-z0-9\x00-]*[A-Za-z0-9]\x00)\x00\x00)', system_data, re.DOTALL):
+                try:
+                    raw_hostname = m.group(1)
+                    # Decode UTF-16LE (remove null bytes between chars)
                     hostname = raw_hostname.decode('utf-16le', errors='ignore').rstrip('\x00')
+                    # Validate: must start with letter, alphanumeric with hyphens, 2-30 chars
                     if hostname and 2 <= len(hostname) <= 30:
-                        # Validate hostname format
-                        if re.match(r'^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]?$', hostname):
-                            dev["hostname"] = hostname.upper()
-                            dev["discovery_method"] = "registry_hostname"
-                            self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname}")
-                            return
+                        if re.match(r'^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]?$', hostname) and hostname.upper() != 'SYSTEM':
+                            hostname_found = hostname.upper()
+                            break
+                except:
+                    continue
+            
+            if hostname_found:
+                dev["hostname"] = hostname_found
+                dev["discovery_method"] = "registry_hostname"
+                self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname_found}")
+                return
         except subprocess.TimeoutExpired:
             self._log("hostname_error", "icat timed out")
         except Exception as e:
