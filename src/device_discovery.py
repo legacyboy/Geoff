@@ -831,6 +831,7 @@ class DeviceDiscovery:
         """
         Extract hostname from Windows disk image by finding and parsing SYSTEM hive.
         SYSTEM hive is at Windows/System32/config/SYSTEM (Win7+) or WINDOWS/system32/config/SYSTEM (WinXP).
+        Uses mmls to detect partition offset, then icat to extract the hive.
         """
         # Find SYSTEM hive inode
         system_inode = None
@@ -852,28 +853,38 @@ class DeviceDiscovery:
         
         # Extract SYSTEM hive using icat directly (binary-safe)
         import subprocess
-        import tempfile
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".system") as tmp:
-            tmp_path = tmp.name
+        # Detect partition offset using mmls
+        offset = None
+        try:
+            mmls_result = subprocess.run(["mmls", image_path], capture_output=True, text=True, timeout=30)
+            for line in mmls_result.stdout.split("\n"):
+                # Look for lines with partition info: "000:000   0000000063   ...   NTFS"
+                if "NTFS" in line or "exFAT" in line or "0x07" in line:
+                    parts = line.split()
+                    # Format: Slot Start End Length Description
+                    # Example: "000:000   0000000063   0020948759   0020948697   NTFS / exFAT (0x07)"
+                    if len(parts) >= 5:
+                        # parts[1] is the Start sector
+                        try:
+                            offset = int(parts[1])
+                            break
+                        except ValueError:
+                            continue
+        except Exception as e:
+            self._log("hostname_error", f"mmls failed: {e}")
+        
+        # Build icat command with partition offset
+        cmd = ["icat"]
+        if offset is not None:
+            cmd.extend(["-o", str(offset)])
+        cmd.extend([image_path, system_inode])
         
         try:
-            # Build icat command with partition offset if available
-            cmd = ["icat"]
-            # Check for partition offset in evidence path metadata
-            # Format: image.E01:offset or just image.E01
-            if ":" in image_path:
-                parts = image_path.rsplit(":", 1)
-                if len(parts) == 2 and parts[1].isdigit():
-                    cmd.extend(["-o", parts[1]])
-                    image_path = parts[0]
-            
-            cmd.extend([image_path, system_inode])
-            
             # Run icat and capture binary output
-            result = subprocess.run(cmd, capture_output=True, timeout=60)
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
             if result.returncode != 0:
-                self._log("hostname_error", f"icat failed: {result.stderr.decode('utf-8', errors='replace')[:200]}")
+                self._log("hostname_error", f"icat failed (offset={offset}): {result.stderr.decode('utf-8', errors='replace')[:200]}")
                 return
             
             system_data = result.stdout
@@ -907,13 +918,19 @@ class DeviceDiscovery:
                         dev["discovery_method"] = "registry_hostname"
                         self._log("hostname_found", f"Hostname from SYSTEM hive: {hostname}")
                         return
+                else:
+                    # Fallback: search entire file for hostname-like strings after ComputerName
+                    for match in re.finditer(b'[A-Za-z0-9][A-Za-z0-9-]{1,14}[A-Za-z0-9]', after_path):
+                        candidate = match.group().decode('ascii', errors='ignore')
+                        if 2 <= len(candidate) <= 15 and candidate[0].isalpha():
+                            dev["hostname"] = candidate.upper()
+                            dev["discovery_method"] = "registry_hostname"
+                            self._log("hostname_found", f"Hostname from SYSTEM hive (fallback): {candidate}")
+                            return
         except subprocess.TimeoutExpired:
             self._log("hostname_error", "icat timed out")
         except Exception as e:
             self._log("hostname_error", f"Failed to extract/parse SYSTEM hive: {e}")
-        finally:
-            if Path(tmp_path).exists():
-                Path(tmp_path).unlink()
     
     def _extract_hostname_from_linux_image(self, dev: dict, sk: 'SLEUTHKIT_Specialist', image_path: str, file_listing: str):
         """
