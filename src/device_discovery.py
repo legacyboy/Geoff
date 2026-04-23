@@ -894,20 +894,19 @@ class DeviceDiscovery:
             
             # Parse binary for ComputerName
             # Registry value data follows the key name
-            # Look for the pattern: ComputerName\x00\x00 followed by value metadata then UTF-16LE hostname
-            # The actual hostname value is preceded by type/size metadata
+            # Pattern: ComputerName\x00\x00\x00\x00 + metadata + UTF-16LE hostname + \x00\x00
+            # Example: ComputerName nulls + d8ffffff + J\x00E\x00A\x00N\x00-\x001\x003\x00F\x00B\x00F\x000\x003\x008\x00A\x003\x00\x00\x00
             hostname_found = None
             
-            # Search for ComputerName followed by UTF-16LE hostname pattern
-            # Pattern: ComputerName nulls, then type/size, then UTF-16LE hostname ending with double null
-            for m in re.finditer(b'ComputerName\x00\x00.{20,80}?(([A-Za-z]\x00[A-Za-z0-9\x00-]*[A-Za-z0-9]\x00)\x00\x00)', system_data, re.DOTALL):
+            # Search for ComputerName followed by UTF-16LE hostname (10+ chars to avoid false positives)
+            for m in re.finditer(b'ComputerName\x00\x00\x00\x00.{4}?(([A-Za-z]\x00){2,}([A-Za-z0-9-]\x00){8,}([A-Za-z0-9]\x00)\x00\x00)', system_data, re.DOTALL):
                 try:
                     raw_hostname = m.group(1)
                     # Decode UTF-16LE (remove null bytes between chars)
                     hostname = raw_hostname.decode('utf-16le', errors='ignore').rstrip('\x00')
-                    # Validate: must start with letter, alphanumeric with hyphens, 2-30 chars
-                    if hostname and 2 <= len(hostname) <= 30:
-                        if re.match(r'^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]?$', hostname) and hostname.upper() != 'SYSTEM':
+                    # Validate: must start with letter, alphanumeric with hyphens, reasonable length
+                    if hostname and 8 <= len(hostname) <= 30:
+                        if re.match(r'^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]?$', hostname):
                             hostname_found = hostname.upper()
                             break
                 except:
