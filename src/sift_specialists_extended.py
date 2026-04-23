@@ -518,19 +518,30 @@ class REGISTRY_Specialist:
         users = []
         current_user = {}
         for line in raw.split('\n'):
-            line = line.strip()
-            if line.startswith('Username:') or line.startswith('User Name:'):
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+            # Match "Username        : Administrator [500]" or "Username: value"
+            if line_stripped.startswith('Username') and ':' in line_stripped:
                 if current_user.get('username'):
                     users.append(current_user)
-                current_user = {'username': line.split(':', 1)[1].strip()}
-            elif 'SID:' in line and ':' in line:
-                current_user['sid'] = line.split(':', 1)[1].strip()
-            elif 'Last Logon:' in line and ':' in line:
-                current_user['last_logon'] = line.split(':', 1)[1].strip()
-            elif 'Account Type:' in line and ':' in line:
-                current_user['type'] = line.split(':', 1)[1].strip()
-            elif 'Enabled' in line and ':' in line:
-                current_user['enabled'] = 'yes' in line.lower() or 'true' in line.lower()
+                # Extract username, strip [RID] suffix
+                val = line_stripped.split(':', 1)[1].strip()
+                username = val.split('[')[0].strip()
+                current_user = {'username': username}
+            elif 'SID:' in line_stripped and ':' in line_stripped:
+                current_user['sid'] = line_stripped.split(':', 1)[1].strip()
+            elif 'Last Login' in line_stripped and ':' in line_stripped:
+                # "Last Login Date : Mon Jul 21 01:22:18 2008 Z"
+                val = line_stripped.split(':', 1)[1].strip()
+                if val.lower() != 'never':
+                    current_user['last_logon'] = val
+            elif 'Account Type:' in line_stripped and ':' in line_stripped:
+                current_user['type'] = line_stripped.split(':', 1)[1].strip()
+            elif 'Account Disabled' in line_stripped:
+                current_user['enabled'] = False
+            elif 'Normal user account' in line_stripped or 'Account Enabled' in line_stripped:
+                current_user['enabled'] = current_user.get('enabled', True)
         if current_user.get('username'):
             users.append(current_user)
         return {

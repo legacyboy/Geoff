@@ -223,7 +223,8 @@ class DeviceDiscovery:
                     del device_map[dev_id]
 
         # Strategy 3: Build user map from discovered owners + user profiles
-        all_users = {}  # normalized_username -> {aliases, devices}
+        # Merge directory-based profiles with SAM registry accounts
+        all_users = {}  # normalized_username -> {aliases, devices, metadata}
         for dev_id, dev in device_map.items():
             owner = dev.get("owner")
             if owner:
@@ -238,7 +239,7 @@ class DeviceDiscovery:
                 all_users[norm]["devices"].append(dev_id)
                 all_users[norm]["aliases"].add(owner)
 
-            # Also check user profiles in metadata
+            # Add directory-based user profiles (includes system accounts)
             for profile in dev.get("metadata", {}).get(
                     "user_profiles_found", []):
                 norm = self._normalize_username(profile)
@@ -248,34 +249,57 @@ class DeviceDiscovery:
                         "display_name": profile,
                         "aliases": set(),
                         "devices": [],
+                        "metadata": {"source": "directory"}
                     }
+                    # Mark system accounts
+                    system_accounts = {"administrator", "localservice", "networkservice", 
+                                       "system", "default", "public", "all users", "default user",
+                                       "admin", "defaultuser0", "defaultuser1"}
+                    if profile.lower() in system_accounts:
+                        all_users[norm]["metadata"]["system_account"] = True
                 if dev_id not in all_users[norm]["devices"]:
                     all_users[norm]["devices"].append(dev_id)
                 all_users[norm]["aliases"].add(profile)
 
-            # Also add SAM users from registry
+            # Add SAM registry users (prefer SAM data for duplicates)
             for sam_user in dev.get("metadata", {}).get("sam_users", []):
                 username = sam_user.get("username")
                 if not username:
                     continue
                 norm = self._normalize_username(username)
                 if norm not in all_users:
+                    # New user from SAM
                     all_users[norm] = {
                         "username": norm,
                         "display_name": username,
                         "aliases": set(),
                         "devices": [],
+                        "metadata": {
+                            "source": "sam",
+                            "sid": sam_user.get("sid"),
+                            "last_login": sam_user.get("last_login"),
+                            "account_type": sam_user.get("account_type", "user"),
+                            "enabled": sam_user.get("enabled", True),
+                            "system_account": sam_user.get("type", "user").lower() in ("system", "builtin")
+                        }
                     }
+                else:
+                    # Duplicate: prefer SAM data (has SID, last_login, account_type)
+                    existing = all_users[norm]
+                    if existing.get("metadata", {}).get("source") != "sam":
+                        # Upgrade with SAM data
+                        existing["metadata"] = existing.get("metadata", {})
+                        existing["metadata"]["source"] = "sam"
+                        existing["metadata"]["sid"] = sam_user.get("sid")
+                        existing["metadata"]["last_login"] = sam_user.get("last_login")
+                        existing["metadata"]["account_type"] = sam_user.get("account_type", "user")
+                        existing["metadata"]["enabled"] = sam_user.get("enabled", True)
+                
                 if dev_id not in all_users[norm]["devices"]:
                     all_users[norm]["devices"].append(dev_id)
                 all_users[norm]["aliases"].add(username)
-                # Add SAM-specific details
-                all_users[norm]["sid"] = sam_user.get("sid")
-                all_users[norm]["last_login"] = sam_user.get("last_login")
-                all_users[norm]["account_type"] = sam_user.get("account_type", "user")
-                all_users[norm]["enabled"] = sam_user.get("enabled", True)
 
-        # Convert sets to lists for JSON
+        # Convert sets to lists for JSON and build final user_map
         user_map = {}
         for uname, udata in all_users.items():
             user_map[uname] = {
@@ -287,7 +311,18 @@ class DeviceDiscovery:
                     if udata["devices"] else None,
                 "role": "user",
                 "confidence": "HIGH" if len(udata["devices"]) > 1 else "MEDIUM",
+                "metadata": udata.get("metadata", {}),
+                "system_account": udata.get("metadata", {}).get("system_account", False),
             }
+            # Include SAM-specific fields at top level if present
+            if "sid" in udata.get("metadata", {}):
+                user_map[uname]["sid"] = udata["metadata"]["sid"]
+            if "last_login" in udata.get("metadata", {}):
+                user_map[uname]["last_login"] = udata["metadata"]["last_login"]
+            if "account_type" in udata.get("metadata", {}):
+                user_map[uname]["account_type"] = udata["metadata"]["account_type"]
+            if "enabled" in udata.get("metadata", {}):
+                user_map[uname]["enabled"] = udata["metadata"]["enabled"]
 
         return device_map, user_map
 
@@ -410,9 +445,14 @@ class DeviceDiscovery:
 
     def _extract_windows_users(self, dev: dict, sk: 'SLEUTHKIT_Specialist', image_path: str, file_listing: str):
         """
-        Parse fls output to find user profile directories.
+        Parse fls output to find user profile directories AND SAM registry accounts.
         Supports both WinXP (Documents and Settings/) and Win7+ (Users/).
         Uses targeted directory listing if recursive listing is too large.
+        Merges directory-based profiles with SAM registry accounts.
+        
+        Priority:
+        1. Targeted listing of Documents and Settings/ or Users/ directories (most accurate)
+        2. Fallback to pattern matching in recursive listing (less accurate)
         """
         skip_profiles = {"default", "public", "all users", "default user",
                          "desktop.ini", ".", "..", "local settings", "application data",
@@ -421,120 +461,215 @@ class DeviceDiscovery:
                          "printhood", "user account pictures", "default pictures"}
         profiles = []
 
-        # First try to find users from the given listing
-        # Check for Users/ directory (Win7+)
+        # FIRST: Try to find the Documents and Settings or Users directory inodes
+        # and do targeted listing (most accurate method)
+        doc_settings_inode = None
+        users_inode = None
+        
         for line in file_listing.split("\n"):
-            line_lower = line.lower().strip()
-            if "/users/" in line_lower or "\\users\\" in line_lower:
-                parts = line.split("/")
-                for i, part in enumerate(parts):
-                    if part.lower().strip().rstrip(":") == "users" and i + 1 < len(parts):
-                        uname = parts[i + 1].strip().rstrip("/")
-                        if uname.lower() not in skip_profiles and uname:
-                            profiles.append(uname)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Look for TOP-LEVEL Documents and Settings or Users directories only
+            # These appear as "d/d inode:\tDocuments and Settings" or "d/d inode:\tUsers"
+            # NOT as paths containing /Documents and Settings/ or /Users/
+            if stripped.endswith("\tDocuments and Settings") or stripped == "Documents and Settings":
+                match = re.search(r'([\d-]+):\s*Documents and Settings$', stripped)
+                if match:
+                    doc_settings_inode = match.group(1)
+            elif "\tUsers" in stripped or stripped.endswith("\tUsers"):
+                # Must be a top-level directory, not nested (e.g., not /some/path/Users)
+                # Check that there's no slash before "Users" in the path part
+                if re.search(r':\s*Users$', stripped):
+                    match = re.search(r'([\d-]+):\s*Users$', stripped)
+                    if match:
+                        users_inode = match.group(1)
 
-            # Check for Documents and Settings/ directory (WinXP)
-            elif "/documents and settings/" in line_lower:
-                parts = line.split("/")
-                for i, part in enumerate(parts):
-                    if "documents and settings" in part.lower() and i + 1 < len(parts):
-                        uname = parts[i + 1].strip().rstrip("/")
-                        if uname.lower() not in skip_profiles and uname and len(uname) > 1:
-                            profiles.append(uname)
+        # List Documents and Settings directory to find users (WinXP)
+        if doc_settings_inode:
+            try:
+                sub_result = sk.list_files(image_path, inode=doc_settings_inode, recursive=False)
+                sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
+                for line in sub_stdout.split("\n"):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    # Parse child entry: "type inode:\tname" e.g., "d/d 10222-144-6:\tAdministrator"
+                    # Split on tab or colon+whitespace
+                    parts = re.split(r'[:\t]+\s*', stripped, maxsplit=2)
+                    if len(parts) >= 2:
+                        name = parts[-1].strip()
+                        if name.lower() not in skip_profiles and len(name) > 1:
+                            profiles.append(name)
+            except Exception as e:
+                self._log("user_extract_error", f"Failed to list Documents and Settings: {e}")
 
-        # If no users found from top-level, try targeted directory listing
+        # List Users directory to find users (Win7+) - only if no profiles found yet
+        if users_inode and not profiles:
+            try:
+                sub_result = sk.list_files(image_path, inode=users_inode, recursive=False)
+                sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
+                for line in sub_stdout.split("\n"):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    parts = re.split(r'[:\t]+\s*', stripped, maxsplit=2)
+                    if len(parts) >= 2:
+                        name = parts[-1].strip()
+                        if name.lower() not in skip_profiles and len(name) > 1:
+                            profiles.append(name)
+            except Exception as e:
+                self._log("user_extract_error", f"Failed to list Users: {e}")
+
+        # SECOND: If still no profiles found, fall back to pattern matching in recursive listing
+        # This is less accurate but catches edge cases
         if not profiles:
-            # Find the Documents and Settings inode
-            doc_settings_inode = None
-            users_inode = None
             for line in file_listing.split("\n"):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                # Parse fls format: type meta_inode: name
-                if "Documents and Settings" in stripped:
-                    parts = stripped.split(":")
-                    if len(parts) >= 2:
-                        meta_part = parts[0].strip()
-                        # Extract inode from "d/d 3519-144-6" format
-                        match = re.search(r'\s([\d-]+)$', meta_part)
-                        if match:
-                            doc_settings_inode = match.group(1)
-                elif "/Users" in stripped or stripped.endswith("Users"):
-                    parts = stripped.split(":")
-                    if len(parts) >= 2:
-                        meta_part = parts[0].strip()
-                        match = re.search(r'\s([\d-]+)$', meta_part)
-                        if match:
-                            users_inode = match.group(1)
+                line_lower = line.lower().strip()
+                # Only match direct children of /Users/ or /Documents and Settings/
+                # Pattern: /Users/username/ or /Documents and Settings/username/
+                # where username is followed by / (not more path components we care about)
+                if "/users/" in line_lower:
+                    # Extract username from path like /Users/username/something
+                    match = re.search(r'/users/([^/]+)', line_lower)
+                    if match:
+                        uname = match.group(1).strip()
+                        # Only accept if it looks like a top-level profile (not nested like /caches/users/xxx)
+                        if '/users/' + uname + '/' in line_lower and '/application data/' not in line_lower and '/caches/' not in line_lower:
+                            if uname not in skip_profiles and uname and len(uname) > 1:
+                                profiles.append(uname)
+                elif "/documents and settings/" in line_lower:
+                    match = re.search(r'/documents and settings/([^/]+)', line_lower)
+                    if match:
+                        uname = match.group(1).strip()
+                        if uname not in skip_profiles and uname and len(uname) > 1:
+                            profiles.append(uname)
 
-            # List the Documents and Settings directory to find users
-            if doc_settings_inode:
-                try:
-                    sub_result = sk.list_files(image_path, inode=doc_settings_inode, recursive=False)
-                    sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
-                    for line in sub_stdout.split("\n"):
-                        stripped = line.strip()
-                        if not stripped:
-                            continue
-                        # Parse child entry: type inode: name
-                        parts = stripped.split(":")
-                        if len(parts) >= 2:
-                            name = parts[-1].strip()
-                            if name.lower() not in skip_profiles and len(name) > 1:
-                                profiles.append(name)
-                except Exception as e:
-                    self._log("user_extract_error", f"Failed to list Documents and Settings: {e}")
-
-            # List the Users directory to find users
-            if users_inode:
-                try:
-                    sub_result = sk.list_files(image_path, inode=users_inode, recursive=False)
-                    sub_stdout = sub_result.get("stdout", "") or sub_result.get("raw_output", "")
-                    for line in sub_stdout.split("\n"):
-                        stripped = line.strip()
-                        if not stripped:
-                            continue
-                        parts = stripped.split(":")
-                        if len(parts) >= 2:
-                            name = parts[-1].strip()
-                            if name.lower() not in skip_profiles and len(name) > 1:
-                                profiles.append(name)
-                except Exception as e:
-                    self._log("user_extract_error", f"Failed to list Users: {e}")
-
+        # Deduplicate directory profiles
         profiles = list(set(profiles))
+        
+        # Extract SAM users from registry if SAM hive is available
+        sam_users = []
+        sam_hive_path = None
+        
+        # Look for SAM hive in the file listing
+        for line in file_listing.split("\n"):
+            line_lower = line.lower()
+            if "config/sam" in line_lower or "config\\sam" in line_lower:
+                # Parse fls output format: type inode: path
+                match = re.search(r'([\d-]+):\s*.*sam$', line, re.IGNORECASE)
+                if match:
+                    sam_inode = match.group(1)
+                    # Extract SAM hive using icat
+                    import subprocess
+                    
+                    # Detect partition offset
+                    offset = None
+                    try:
+                        mmls_result = subprocess.run(["mmls", image_path], capture_output=True, text=True, timeout=30)
+                        for mmls_line in mmls_result.stdout.split("\n"):
+                            if "NTFS" in mmls_line or "exFAT" in mmls_line or "0x07" in mmls_line:
+                                mmls_parts = mmls_line.split()
+                                if len(mmls_parts) >= 5:
+                                    try:
+                                        offset = int(mmls_parts[2])
+                                        break
+                                    except ValueError:
+                                        continue
+                    except Exception:
+                        pass
+                    
+                    # Extract SAM hive
+                    cmd = ["icat"]
+                    if offset is not None:
+                        cmd.extend(["-o", str(offset)])
+                    cmd.extend([image_path, sam_inode])
+                    
+                    try:
+                        result = subprocess.run(cmd, capture_output=True, timeout=120)
+                        if result.returncode == 0 and result.stdout:
+                            # Write to temp file for RegRipper
+                            import tempfile
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".sam") as tmp:
+                                tmp.write(result.stdout)
+                                sam_hive_path = tmp.name
+                            
+                            # Use REGISTRY_Specialist to parse SAM
+                            from sift_specialists_extended import REGISTRY_Specialist
+                            reg_spec = REGISTRY_Specialist()
+                            sam_result = reg_spec.extract_sam_users(sam_hive_path)
+                            
+                            if sam_result.get("status") == "success":
+                                sam_users = sam_result.get("users", [])
+                            
+                            # Clean up temp file
+                            try:
+                                os.unlink(sam_hive_path)
+                            except OSError:
+                                pass
+                    except subprocess.TimeoutExpired:
+                        self._log("sam_extract_error", "icat timed out for SAM hive")
+                    except Exception as e:
+                        self._log("sam_extract_error", f"Failed to extract SAM hive: {e}")
+                    break
+        
+        # Store directory profiles in metadata
         dev["metadata"]["user_profiles_found"] = profiles
         
-        if profiles:
-            # System accounts to skip when determining owner
-            skip_accounts = {
-                "administrator", "admin", "defaultuser0", "defaultuser1",
-                "localservice", "networkservice", "system", "default",
-                "public", "all users", "default user"
-            }
-            
-            # Filter out system accounts
-            non_system = [p for p in profiles if p.lower() not in skip_accounts]
-            
-            if len(non_system) == 1:
-                # Single non-system user = owner
-                dev["owner"] = non_system[0]
-                dev["owner_confidence"] = "MEDIUM"
-            elif len(non_system) > 1:
-                # Multiple non-system users: pick shortest name or first alphabetically
-                # Shorter names are more likely to be the primary user (e.g., "jean" vs "jeanm57-admin")
-                non_system_sorted = sorted(non_system, key=lambda x: (len(x), x.lower()))
-                dev["owner"] = non_system_sorted[0]
-                dev["owner_confidence"] = "MEDIUM"
-            elif len(profiles) == 1:
-                # Only one profile found (even if it's a system account)
-                dev["owner"] = profiles[0]
-                dev["owner_confidence"] = "LOW"
-            else:
-                # Only system accounts found
-                dev["owner"] = None
-                dev["owner_confidence"] = "NONE"
+        # Store SAM users in metadata with source marking
+        if sam_users:
+            dev["metadata"]["sam_users"] = [
+                {
+                    "username": u.get("username"),
+                    "sid": u.get("sid"),
+                    "last_login": u.get("last_logon"),
+                    "account_type": u.get("type", "user"),
+                    "enabled": u.get("enabled", True),
+                    "source": "sam"
+                }
+                for u in sam_users
+            ]
+            self._log("sam_users_found", 
+                      f"Found {len(sam_users)} accounts in SAM: " + 
+                      ", ".join([u.get("username", "unknown") for u in sam_users]))
+        
+        # Build combined user list for owner detection
+        # Directory profiles include system accounts; SAM has actual Windows accounts
+        all_usernames = set(profiles)  # Start with directory profiles
+        
+        # Add SAM usernames
+        for sam_user in sam_users:
+            username = sam_user.get("username")
+            if username:
+                all_usernames.add(username)
+        
+        # System accounts to skip when determining owner
+        skip_accounts = {
+            "administrator", "admin", "defaultuser0", "defaultuser1",
+            "localservice", "networkservice", "system", "default",
+            "public", "all users", "default user"
+        }
+        
+        # Filter out system accounts for owner detection
+        non_system = [p for p in all_usernames if p.lower() not in skip_accounts]
+        
+        if len(non_system) == 1:
+            # Single non-system user = owner
+            dev["owner"] = non_system[0]
+            dev["owner_confidence"] = "MEDIUM"
+        elif len(non_system) > 1:
+            # Multiple non-system users: pick shortest name or first alphabetically
+            non_system_sorted = sorted(non_system, key=lambda x: (len(x), x.lower()))
+            dev["owner"] = non_system_sorted[0]
+            dev["owner_confidence"] = "MEDIUM"
+        elif len(all_usernames) == 1:
+            # Only one profile found (even if it's a system account)
+            dev["owner"] = list(all_usernames)[0]
+            dev["owner_confidence"] = "LOW"
+        else:
+            # Only system accounts found
+            dev["owner"] = None
+            dev["owner_confidence"] = "NONE"
 
     def _enrich_from_system_hive(self, dev: dict, hive_path: str):
         """
