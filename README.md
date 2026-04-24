@@ -346,7 +346,7 @@ The following mobile forensic capabilities were added in the latest update:
 | `recover_deleted_sqlite_messages` | Both | WAL/journal recovery for deleted messages |
 | `extract_mobile_photo_exif` | Both | EXIF/GPS extraction from DCIM |
 
-**Total Mobile Functions:** 23 iOS + 20+ Android = 43+ mobile forensic methods
+**Total Mobile Functions:** 15 iOS + 13 Android + 4 cross-platform = 32 mobile forensic methods
 
 ---
 
@@ -570,7 +570,7 @@ http://localhost:9999/mcp
 | `list_evidence` | List evidence files (optionally scoped to a case) |
 | `get_case_report` | Fetch the Markdown narrative report for a completed case |
 | `get_findings` | Fetch the structured JSON findings for a completed case |
-| `list_playbooks` | List all 19+ SIFT playbooks with IDs and names |
+| `list_playbooks` | List all 25 SIFT playbooks with IDs and names |
 | `chat` | Send a reasoning question to Geoff's LLM layer |
 | `disk_analyze` | Call a SleuthKit specialist function directly |
 | `memory_analyze` | Call a Volatility memory analysis function directly |

@@ -74,13 +74,22 @@ def _validate_evidence_path(path: str) -> str:
     if _UNSAFE_PATH_CHARS.search(path):
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
     # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
-    real = os.path.realpath(path)
-    allowed_bases = [b for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR] if b]
-    # Only enforce the base-dir check when at least one allowed base is configured
-    if allowed_bases and not any(
-        real.startswith(base + os.sep) or real == base for base in allowed_bases
-    ):
-        raise ValueError(f"Evidence path resolves outside allowed directories: {path!r} → {real}")
+    real_path = Path(os.path.realpath(path))
+    allowed_bases = [Path(os.path.realpath(b)) for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR] if b]
+    # Only enforce the base-dir check when at least one allowed base is configured.
+    # Using relative_to() avoids the startswith() prefix-collision bug where
+    # /mnt/evidence_real would slip past a base of /mnt/evidence.
+    if allowed_bases:
+        inside = False
+        for base in allowed_bases:
+            try:
+                real_path.relative_to(base)
+                inside = True
+                break
+            except ValueError:
+                continue
+        if not inside:
+            raise ValueError(f"Evidence path resolves outside allowed directories: {path!r} → {real_path}")
     return path
 
 
@@ -154,9 +163,10 @@ class FindingsWriter:
     accumulated in memory up to *max_in_memory* entries.
     """
 
-    def __init__(self, jsonl_path: Path, max_in_memory: int = _MAX_IN_MEMORY_FINDINGS):
+    def __init__(self, jsonl_path: Path, max_in_memory: int = _MAX_IN_MEMORY_FINDINGS, job_id: str = None):
         self._path = jsonl_path
         self._max = max_in_memory
+        self._job_id = job_id
         self._index: dict = {}   # step_key -> status
         self._records: list = [] # in-memory accumulation (capped)
         self._lock = threading.Lock()
@@ -171,17 +181,22 @@ class FindingsWriter:
             if len(self._records) < self._max:
                 self._records.append(record)
             elif len(self._records) == self._max:
-                print(
-                    f"[GEOFF] FindingsWriter: in-memory cap ({self._max}) reached; "
-                    "further findings written to disk only.",
-                    flush=True,
+                cap_msg = (
+                    f"FindingsWriter: in-memory cap ({self._max}) reached; "
+                    "further findings written to disk only."
                 )
+                _log_info(cap_msg)
+                if self._job_id:
+                    _fe_log(self._job_id, f"⚠ {cap_msg}")
         # Write to JSONL outside the lock to avoid blocking
         try:
             with open(self._path, "a") as fh:
                 fh.write(json.dumps(record, default=str) + "\n")
         except OSError as exc:
-            print(f"[GEOFF] FindingsWriter: failed to write {self._path}: {exc}", flush=True)
+            err_msg = f"FindingsWriter: failed to write {self._path}: {exc}"
+            _log_info(err_msg)
+            if self._job_id:
+                _fe_log(self._job_id, f"⚠ {err_msg}")
 
     def is_completed(self, step_key: str) -> bool:
         with self._lock:
@@ -345,6 +360,22 @@ def _log_info(msg: str):
     print(f"[GEOFF] {msg}")
 
 
+def _audit_append(case_work_dir, event: str, **fields):
+    """Append a state-transition record to the case's audit_trail.jsonl.
+
+    Silent best-effort: audit logging must never break an investigation.
+    """
+    if case_work_dir is None:
+        return
+    try:
+        path = Path(str(case_work_dir)) / 'audit_trail.jsonl'
+        record = {'ts': datetime.now().isoformat(), 'event': event, **fields}
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, default=str) + '\n')
+    except Exception as e:
+        _log_info(f"audit_trail append failed ({event}): {e}")
+
+
 # ---------------------------------------------------------------------------
 # JSON Schema Enforcement for Investigation State
 # ---------------------------------------------------------------------------
@@ -466,8 +497,8 @@ class ActionLogger:
                         rotated = f"{self.action_log}.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                         os.rename(self.action_log, rotated)
                         _log_info(f"Log rotated: {rotated}")
-                except Exception:
-                    pass  # Non-critical
+                except Exception as rot_exc:
+                    _log_info(f"action log rotation skipped: {rot_exc}")
         except Exception as e:
             _log_error(f"ActionLogger log write {self.action_log}", e)
             # Fallback to regular write
@@ -1039,7 +1070,8 @@ or
         )
         corrected = _call_manager_llm(correction_prompt, timeout=90)
         return corrected if corrected.strip() else response
-    except Exception:
+    except Exception as corr_exc:
+        _log_info(f"chat self-correction skipped: {corr_exc}")
         return response
 
 
@@ -1719,7 +1751,7 @@ PLAYBOOK_STEPS = {
             ("mobile", "extract_android_usage_stats",      {"data_dir": "{mobile}"}),
             ("mobile", "extract_mobile_photo_exif",        {"source_dir": "{mobile}", "platform": "android"}),
             # Android — security
-            ("mobile", "detect_jailbreak_indicators",      {"backup_dir": "", "data_dir": "{mobile}"}),
+            ("mobile", "detect_root_indicators",           {"data_dir": "{mobile}"}),
             ("mobile", "run_aleapp",                       {"data_dir": "{mobile}"}),
         ],
     },
@@ -2061,8 +2093,8 @@ def _reconstruct_attack_chain(findings: list, indicator_hits: list, device_map: 
             t0 = _dt.fromisoformat(first_ts[:19])
             t1 = _dt.fromisoformat(last_ts[:19])
             dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
-        except Exception:
-            pass
+        except Exception as dwell_exc:
+            _log_info(f"dwell calculation skipped: {dwell_exc}")
 
     # Lateral movement path: devices sorted by first activity
     lateral_path = sorted(device_first_seen.keys(),
@@ -2226,10 +2258,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (first partition)")
                                     break
                     if img not in image_offsets:
-                        image_offsets[img] = 2048  # fallback to common default
+                        # 2048 sectors (1 MiB) is the modern MBR/GPT alignment default
+                        # chosen for 4K-sector drives; matches what fdisk/gdisk/Windows
+                        # create since ~2009. Exotic/legacy layouts may need manual offset.
+                        image_offsets[img] = 2048
                         _fe_log(job_id, f"Using default offset 2048 for {Path(img).name}")
                 except Exception as e:
-                    image_offsets[img] = 2048
+                    image_offsets[img] = 2048  # see note above on 1 MiB alignment
                     _fe_log(job_id, f"Partition detection failed for {Path(img).name}: {e}, using offset 2048")
 
     # ------------------------------------------------------------------
@@ -2297,6 +2332,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _log_error(f"git init case_work_dir {case_work_dir}", e)
 
     _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
+    _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir))
 
     # Crash Recovery — reset any 'running' steps from previous runs
     for pb_file in case_work_dir.glob("output/*.json"):
@@ -2312,8 +2348,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             if changed:
                 _atomic_write(pb_file, json.dumps(pb_steps, default=str, indent=2))
                 _log_info(f"Crash recovery: reset 'running' steps in {pb_file.name} to 'failed'")
-        except Exception:
-            pass  # Non-critical recovery — don't block startup
+        except Exception as crash_exc:
+            _log_info(f"crash recovery skipped for {pb_file.name}: {crash_exc}")
 
     # Disk State Reconciliation — find orphaned artifacts not tracked in state
     try:
@@ -2329,8 +2365,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     if isinstance(result, dict):
                         for art in result.get("artifacts", []):
                             tracked_files.add(str(art))
-            except Exception:
-                pass
+            except Exception as track_exc:
+                _log_info(f"artifact tracking skipped for {pb_file.name}: {track_exc}")
         # Scan for untracked files in case work dir
         untracked = []
         for f in case_work_dir.rglob("*"):
@@ -2351,7 +2387,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Run PB-SIFT-000 (Triage) first to get the execution plan.
     # Then execute ONLY the playbooks listed in that plan.
-    findings_writer = FindingsWriter(case_work_dir / "findings.jsonl")
+    findings_writer = FindingsWriter(case_work_dir / "findings.jsonl", job_id=job_id)
     critic_results = []
     playbooks_run = []
     steps_completed = 0
@@ -2777,8 +2813,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                             pb_output.parent.mkdir(parents=True, exist_ok=True)
                             pb_findings_running = pb_findings + [step_record]
                             _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
-                        except Exception:
-                            pass  # Non-critical — best-effort state persistence
+                        except Exception as persist_exc:
+                            _log_info(f"playbook state persistence skipped for {playbook_id}: {persist_exc}")
 
                         # Retry logic for transient failures
                         MAX_RETRIES = 2
@@ -2906,20 +2942,24 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                             import tempfile, shutil
                                             original = new_params.get("hive_path") or new_params.get("ntuser_path")
                                             if original and Path(original).exists():
-                                                with tempfile.NamedTemporaryFile(suffix=".hive", delete=False) as tmp:
-                                                    shutil.copy2(original, tmp.name)
-                                                for key in ["hive_path", "ntuser_path", "system_path"]:
-                                                    if key in new_params:
-                                                        new_params[key] = tmp.name
-                                                healed_result = _run_step_via_orchestrator(module, function, new_params)
-                                                if healed_result.get("status") == "success":
-                                                    healed = True
-                                                    result = healed_result
-                                                # cleanup tmp file
+                                                tmp_name = None
                                                 try:
-                                                    os.unlink(tmp.name)
-                                                except OSError:
-                                                    pass
+                                                    with tempfile.NamedTemporaryFile(suffix=".hive", delete=False) as tmp:
+                                                        shutil.copy2(original, tmp.name)
+                                                        tmp_name = tmp.name
+                                                    for key in ["hive_path", "ntuser_path", "system_path"]:
+                                                        if key in new_params:
+                                                            new_params[key] = tmp_name
+                                                    healed_result = _run_step_via_orchestrator(module, function, new_params)
+                                                    if healed_result.get("status") == "success":
+                                                        healed = True
+                                                        result = healed_result
+                                                finally:
+                                                    if tmp_name:
+                                                        try:
+                                                            os.unlink(tmp_name)
+                                                        except OSError as unlink_exc:
+                                                            _log_info(f"tmp hive unlink failed for {tmp_name}: {unlink_exc}")
                                                     
                                         elif action == "skip":
                                             _fe_log(job_id, f"  ⎘ Critic recommends skip (non-critical)")
@@ -3052,6 +3092,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                                 critic_results.append(critic_retry)
                                                 _fe_log(job_id, f"  ✓ Self-correction accepted by Critic for {module}.{function}")
                                                 corrected = True
+                                                _audit_append(
+                                                    case_work_dir, "self_correction",
+                                                    playbook_id=playbook_id, module=module, function=function,
+                                                    device_id=device_id,
+                                                )
                                         except Exception as retry_ce:
                                             _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
 
@@ -3063,6 +3108,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                             steps_unverified += 1
                                         step_record["unverified_reason"] = issues[:5]
                                         _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
+                                        _audit_append(
+                                            case_work_dir, "unverified",
+                                            playbook_id=playbook_id, module=module, function=function,
+                                            device_id=device_id, reason=issues[:5],
+                                        )
                                 elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is True:
                                     _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
                                 # Validate IOC formats from step result
@@ -3157,6 +3207,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 if anti_forensics_hit:
                     confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                     _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                    _audit_append(case_work_dir, "anti_forensics_cascade", device_id=device_id)
                     # Downgrade all findings across ALL playbooks and mark compromised
                     for f in findings_writer.all_records():
                         if isinstance(f.get("result"), dict):
@@ -3180,6 +3231,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
                 "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
             })
+            _audit_append(
+                case_work_dir, "playbook_complete",
+                playbook_id=playbook_id, device_id=device_id,
+                steps_attempted=len(pb_findings),
+                steps_completed=sum(1 for s in pb_findings if s.get("status") == "completed"),
+                steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
+                steps_failed=sum(1 for s in pb_findings if s.get("status") == "failed"),
+            )
 
             # Git commit after each playbook — part of transaction, not optional
             try:
@@ -3547,6 +3606,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         'description': f"Find Evil run on {evidence_dir}",
     })
 
+    _audit_append(
+        case_work_dir, "find_evil_complete",
+        job_id=job_id, case_name=case_name, evil_found=evil_found,
+        severity=severity, elapsed_seconds=round(elapsed, 1),
+        steps_completed=steps_completed, steps_failed=steps_failed,
+        steps_skipped=steps_skipped,
+    )
     _update_job(100, "complete", "Done", log_msg="\u2714 Find Evil complete")
     return report
 
@@ -5414,8 +5480,8 @@ def chat():
                 elif os.path.exists(_active_evidence_dir):
                     files = [f for f in os.listdir(_active_evidence_dir) if not f.startswith('.')]
                     case_match = active_basename if active_basename else "active"
-            except Exception:
-                pass
+            except Exception as list_exc:
+                _log_info(f"active evidence directory listing skipped: {list_exc}")
 
         # If tool request detected, run it
         if tool_request and case_match:
@@ -5730,6 +5796,12 @@ def list_tools():
     return jsonify({'tools': get_available_tools_status()})
 
 
+@app.route('/health', methods=['GET'])
+def health():
+    """Basic liveness probe. Returns 200 without running the full self-check."""
+    return jsonify({'status': 'ok'})
+
+
 @app.route('/health/detailed', methods=['GET'])
 @_require_auth
 def health_detailed():
@@ -5768,7 +5840,7 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
                    'extract_ios_contacts', 'extract_ios_mail', 'extract_ios_location',
                    'extract_ios_accounts', 'extract_ios_keychain', 'extract_ios_health',
                    'extract_ios_notifications', 'extract_ios_device_info', 'extract_ios_usage_stats',
-                   'detect_jailbreak_indicators', 'run_ileapp',
+                   'detect_jailbreak_indicators', 'detect_root_indicators', 'run_ileapp',
                    'extract_android_sms', 'extract_android_call_logs', 'extract_android_contacts',
                    'extract_android_email', 'extract_android_browser_history', 'extract_android_location',
                    'extract_android_accounts', 'extract_android_device_info',

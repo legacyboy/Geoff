@@ -125,7 +125,7 @@ def start_find_evil(evidence_dir: str) -> Dict[str, Any]:
     """
     Start a full triage-driven forensic investigation on an evidence directory.
 
-    Runs all 19 SIFT playbooks (PB-SIFT-000 through PB-SIFT-021) automatically.
+    Runs all 25 SIFT playbooks (PB-SIFT-000 through PB-SIFT-024) automatically.
     Returns a job_id immediately; poll get_job_status for progress.
 
     Args:
