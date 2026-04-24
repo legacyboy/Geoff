@@ -2264,6 +2264,16 @@ class MOBILE_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+    def detect_root_indicators(self, data_dir: str) -> Dict[str, Any]:
+        """Detect Android root indicators (Magisk, SuperSU, busybox, su).
+
+        Thin Android-specific wrapper over detect_jailbreak_indicators so the
+        README-advertised API name exists as its own callable.
+        """
+        result = self.detect_jailbreak_indicators(data_dir=data_dir)
+        result['tool'] = 'android_root_detector'
+        return result
+
     # -- Android extended extraction -----------------------------------------
 
     @staticmethod
