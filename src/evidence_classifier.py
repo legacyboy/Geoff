@@ -157,8 +157,8 @@ class AIEvidenceClassifier:
         if "permission denied" in error_msg:
             return self._heal_permission_error(error)
         
-        # Heal timeout errors
-        if "timeout" in error_msg:
+        # Heal timeout errors (both TimeoutError type and timeout in message)
+        if "timeout" in error_msg or "timeouterror" in error_type.lower():
             return self._heal_timeout(error)
         
         # Heal subprocess errors (file command missing)
@@ -173,9 +173,9 @@ class AIEvidenceClassifier:
         if "json" in error_type.lower() or "parse" in error_msg:
             return self._heal_json_error(error)
         
-        # Unknown error — no healing available
-        self._log("healing_unknown", f"{operation_name}: No healing strategy for {error_type}")
-        return False
+        # Unknown error — still allow retry (might be transient)
+        self._log("healing_unknown", f"{operation_name}: No healing strategy for {error_type}, allowing retry")
+        return True
 
     def _heal_missing_dependency(self, error_msg: str) -> bool:
         """Attempt to install missing Python package."""
