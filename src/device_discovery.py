@@ -585,6 +585,7 @@ class DeviceDiscovery:
                         cmd.extend(["-o", str(offset)])
                     cmd.extend([image_path, sam_inode])
                     
+                    sam_hive_path = None
                     try:
                         result = subprocess.run(cmd, capture_output=True, timeout=120)
                         if result.returncode == 0 and result.stdout:
@@ -593,24 +594,24 @@ class DeviceDiscovery:
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".sam") as tmp:
                                 tmp.write(result.stdout)
                                 sam_hive_path = tmp.name
-                            
+
                             # Use REGISTRY_Specialist to parse SAM
                             from sift_specialists_extended import REGISTRY_Specialist
                             reg_spec = REGISTRY_Specialist()
                             sam_result = reg_spec.extract_sam_users(sam_hive_path)
-                            
+
                             if sam_result.get("status") == "success":
                                 sam_users = sam_result.get("users", [])
-                            
-                            # Clean up temp file
-                            try:
-                                os.unlink(sam_hive_path)
-                            except OSError:
-                                pass
                     except subprocess.TimeoutExpired:
                         self._log("sam_extract_error", "icat timed out for SAM hive")
                     except Exception as e:
                         self._log("sam_extract_error", f"Failed to extract SAM hive: {e}")
+                    finally:
+                        if sam_hive_path:
+                            try:
+                                os.unlink(sam_hive_path)
+                            except OSError:
+                                pass
                     break
         
         # Store directory profiles in metadata

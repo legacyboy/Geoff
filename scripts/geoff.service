@@ -1,5 +1,8 @@
 # G.E.O.F.F. Systemd Service
 # Git-backed Evidence Operations Forensic Framework
+#
+# Installs at /opt/geoff by default (matches install.sh INSTALL_DIR).
+# Edit the paths below if you used `install.sh --dir /some/other/path`.
 
 [Unit]
 Description=G.E.O.F.F. Digital Forensics Platform
@@ -11,7 +14,7 @@ User=sansforensics
 Group=sansforensics
 
 # Working directory
-WorkingDirectory=/home/sansforensics
+WorkingDirectory=/opt/geoff
 
 # Environment variables
 Environment="GEOFF_EVIDENCE_PATH=/home/sansforensics/evidence-storage/cases"
@@ -20,10 +23,10 @@ Environment="GEOFF_GIT_DIR=/home/sansforensics/geoff-git"
 Environment="GEOFF_PORT=8080"
 Environment="OLLAMA_URL=http://192.168.1.31:11434"
 Environment="GEOFF_MODEL=qwen3-coder-next:cloud"
-Environment="PYTHONPATH=/home/sansforensics"
+Environment="PYTHONPATH=/opt/geoff/src"
 
-# Main service
-ExecStart=/usr/bin/python3 /home/sansforensics/geoff_web.py
+# Main service — uses the venv created by install.sh if present, falls back to system python.
+ExecStart=/opt/geoff/venv/bin/python /opt/geoff/src/geoff_integrated.py
 
 # Auto-restart on failure
 Restart=always
