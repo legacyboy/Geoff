@@ -31,6 +31,9 @@ if SRC_DIR not in sys.path:
 # STRICT_MODE - when True, re-raise exceptions after logging; when False (default), log and continue
 STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 
+# AI_EVIDENCE_CLASSIFICATION - when True, use AI-based evidence classification with self-healing
+AI_EVIDENCE_CLASSIFICATION = os.environ.get("GEOFF_AI_CLASSIFICATION", "true").lower() == "true"
+
 # Threading locks
 _log_lock = threading.Lock()
 _state_lock = threading.Lock()
