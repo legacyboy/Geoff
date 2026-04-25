@@ -1823,7 +1823,7 @@ PLAYBOOK_STEPS = {
 }
 
 
-def _detect_file_type_from_header(path: str) -> Optional[str]:
+def _detect_file_type_from_header(path: str) -> str | None:
     """Detect file type from magic bytes (fast, no external tools needed)."""
     try:
         with open(path, "rb") as f:
