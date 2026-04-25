@@ -1745,7 +1745,7 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-021": {  # Mobile Analysis
         "mobile_backups": [
             # iOS — device metadata and account inventory
-            ("mobile", "analyze_ios_backup",               {"backup_path": "{mobile}"}),
+            ("mobile", "analyze_ios_backup",               {"backup_dir": "{mobile}"}),
             ("mobile", "extract_ios_device_info",          {"backup_dir": "{mobile}"}),
             ("mobile", "extract_ios_accounts",             {"backup_dir": "{mobile}"}),
             # iOS — communications
