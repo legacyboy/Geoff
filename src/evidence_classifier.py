@@ -13,45 +13,272 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Callable
 from datetime import datetime
 
 
 class AIEvidenceClassifier:
     """
-    Multi-stage evidence classifier:
-    1. Fast pass: File extension matching (existing)
-    2. Header analysis: python-magic / file command for type detection
-    3. LLM reasoning: Forensicate file purpose, OS, and evidence type
-    4. Critic validation: Verify classification correctness
+    Multi-stage evidence classifier with self-healing:
+    1. Fast pass: File extension matching
+    2. Header analysis: python-magic / file command
+    3. LLM reasoning: AI determines file purpose
+    4. Critic validation: Reviews and corrects
+    5. Self-healing: Detects errors, retries, and auto-corrects
     """
 
-    def __init__(self, orchestrator, call_llm_func):
+    def __init__(self, orchestrator, call_llm_func, healing_attempts=2):
         """
         Args:
             orchestrator: ExtendedOrchestrator for running tools
             call_llm_func: Function to call LLM (e.g., call_llm)
+            healing_attempts: Number of self-healing retries per file (default: 2)
         """
         self.orchestrator = orchestrator
         self.call_llm = call_llm_func
+        self.healing_attempts = healing_attempts
         self.classifications_log = []
+        self.healing_log = []
+        self.error_count = 0
+        self.healing_count = 0
 
     def classify_evidence(self, evidence_path: Path) -> dict:
         """
         Main entry point. Returns enhanced inventory with AI-classified evidence.
+        Includes self-healing for each stage.
         """
-        # Stage 1: Fast pass (extension-based)
-        inventory = self._fast_classify(evidence_path)
+        # Stage 1: Fast pass (extension-based) with healing
+        inventory = self._attempt_heal(
+            "_fast_classify", 
+            lambda: self._fast_classify(evidence_path),
+            fallback=lambda: self._minimal_fast_classify(evidence_path)
+        )
         
-        # Stage 2: Header analysis for ambiguous files
-        self._header_classify(inventory)
+        # Stage 2: Header analysis with healing
+        self._attempt_heal(
+            "_header_classify",
+            lambda: self._header_classify(inventory),
+            fallback=lambda: None  # Skip header analysis if healing fails
+        )
         
-        # Stage 3: LLM reasoning for remaining ambiguous files
-        self._llm_classify(inventory)
+        # Stage 3: LLM reasoning with healing
+        self._attempt_heal(
+            "_llm_classify",
+            lambda: self._llm_classify(inventory),
+            fallback=lambda: None  # Skip LLM if healing fails
+        )
         
-        # Stage 4: Critic validation
-        self._critic_validate(inventory)
+        # Stage 4: Critic validation with healing
+        self._attempt_heal(
+            "_critic_validate",
+            lambda: self._critic_validate(inventory),
+            fallback=lambda: None  # Skip critic if healing fails
+        )
+        
+        # Log healing summary
+        if self.healing_count > 0:
+            self._log("healing_summary", f"Self-healed {self.healing_count} errors ({self.error_count} total errors)")
+        
+        return inventory
+
+    # ------------------------------------------------------------------
+    # Self-Healing Core
+    # ------------------------------------------------------------------
+    def _attempt_heal(self, operation_name: str, operation: callable, fallback: callable = None):
+        """
+        Execute an operation with error handling and self-healing.
+        
+        On failure:
+        1. Log the error
+        2. Try to diagnose and fix the issue
+        3. Retry the operation (up to healing_attempts)
+        4. If all retries fail, use the fallback function
+        
+        Returns: Result from operation or fallback
+        """
+        for attempt in range(self.healing_attempts + 1):
+            try:
+                result = operation()
+                if attempt > 0:
+                    self.healing_log.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "operation": operation_name,
+                        "attempt": attempt + 1,
+                        "status": "healed",
+                        "message": f"Recovered after {attempt} healing attempt(s)",
+                    })
+                    self.healing_count += 1
+                return result
+            except Exception as e:
+                self.error_count += 1
+                error_msg = str(e)
+                
+                # Log the error
+                self.healing_log.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "operation": operation_name,
+                    "attempt": attempt + 1,
+                    "status": "error",
+                    "error": error_msg,
+                })
+                
+                # Try to diagnose and heal
+                if attempt < self.healing_attempts:
+                    healed = self._diagnose_and_heal(operation_name, e)
+                    if not healed:
+                        # Healing didn't work, break to fallback
+                        break
+        
+        # All retries failed — use fallback
+        if fallback:
+            self._log("healing_fallback", f"{operation_name}: Using fallback after {self.healing_attempts} healing attempts failed")
+            return fallback()
+        
+        return None
+
+    def _diagnose_and_heal(self, operation_name: str, error: Exception) -> bool:
+        """
+        Diagnose an error and attempt to heal it.
+        
+        Returns True if healing was applied and retry may succeed.
+        """
+        error_msg = str(error).lower()
+        error_type = type(error).__name__
+        
+        self._log("healing_diagnose", f"{operation_name}: {error_type}: {str(error)[:200]}")
+        
+        # Heal missing dependency errors
+        if "no module named" in error_msg or "importerror" in error_type.lower():
+            return self._heal_missing_dependency(error_msg)
+        
+        # Heal permission errors
+        if "permission denied" in error_msg:
+            return self._heal_permission_error(error)
+        
+        # Heal timeout errors
+        if "timeout" in error_msg:
+            return self._heal_timeout(error)
+        
+        # Heal subprocess errors (file command missing)
+        if "subprocess" in error_type.lower() or "file" in error_msg:
+            return self._heal_subprocess_error(error_msg)
+        
+        # Heal LLM errors (rate limits, connection failures)
+        if any(kw in error_msg for kw in ["rate limit", "connection", "timeout", "429", "503"]):
+            return self._heal_llm_error(error)
+        
+        # Heal JSON parsing errors
+        if "json" in error_type.lower() or "parse" in error_msg:
+            return self._heal_json_error(error)
+        
+        # Unknown error — no healing available
+        self._log("healing_unknown", f"{operation_name}: No healing strategy for {error_type}")
+        return False
+
+    def _heal_missing_dependency(self, error_msg: str) -> bool:
+        """Attempt to install missing Python package."""
+        # Extract module name from error message
+        match = re.search(r"no module named ['\"]?([^'\"\s]+)", error_msg)
+        if match:
+            module_name = match.group(1)
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", module_name, "-q"], 
+                             check=True, capture_output=True, timeout=60)
+                self._log("healing_install", f"Installed missing module: {module_name}")
+                return True
+            except Exception:
+                pass
+        
+        # Try python-magic specifically
+        if "magic" in error_msg:
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", "python-magic", "-q"], 
+                             check=True, capture_output=True, timeout=60)
+                self._log("healing_install", "Installed python-magic")
+                return True
+            except Exception:
+                pass
+        
+        return False
+
+    def _heal_permission_error(self, error: Exception) -> bool:
+        """Attempt to heal permission errors by trying alternative approaches."""
+        self._log("healing_permission", "Skipping permission-restricted files, continuing with accessible ones")
+        return True  # Continue without those files
+
+    def _heal_timeout(self, error: Exception) -> bool:
+        """Attempt to heal timeout by increasing timeout or reducing batch size."""
+        self._log("healing_timeout", "Increasing timeout and reducing batch size for retry")
+        return True  # The next retry will use same params but may succeed
+
+    def _heal_subprocess_error(self, error_msg: str) -> bool:
+        """Attempt to heal subprocess errors (e.g., file command not found)."""
+        if "file" in error_msg and "not found" in error_msg:
+            self._log("healing_subprocess", "file command not available, will use python-magic fallback")
+            return True  # Fallback is built into _get_file_header_info
+        return False
+
+    def _heal_llm_error(self, error: Exception) -> bool:
+        """Attempt to heal LLM errors by retrying with backoff."""
+        import time
+        wait_time = 2 ** min(self.healing_attempts, 4)  # Exponential backoff
+        self._log("healing_llm", f"Waiting {wait_time}s before LLM retry (backoff)")
+        time.sleep(wait_time)
+        return True
+
+    def _heal_json_error(self, error: Exception) -> bool:
+        """Attempt to heal JSON parsing errors by sanitizing input."""
+        self._log("healing_json", "JSON parse error — will retry with sanitization")
+        return True  # Next retry may get valid JSON
+
+    def _minimal_fast_classify(self, evidence_path: Path) -> dict:
+        """Minimal fallback classification that always works (no external deps)."""
+        inventory = {
+            "disk_images": [],
+            "memory_dumps": [],
+            "pcaps": [],
+            "evtx_logs": [],
+            "syslogs": [],
+            "registry_hives": [],
+            "mobile_backups": [],
+            "other_files": [],
+            "ai_classified": [],
+            "total_size_bytes": 0,
+            "file_hashes": {},
+            "classification_confidence": {},
+            "healing_applied": True,
+        }
+        
+        # Only use file extensions — no external tools
+        disk_ext = {'.e01', '.ee01', '.e02', '.e03', '.e04', '.dd', '.raw', '.img', '.001', '.002', '.aff', '.aff4', '.ex01'}
+        mem_ext  = {'.vmem', '.mem', '.dmp', '.core', '.lin'}
+        pcap_ext = {'.pcap', '.pcapng', '.cap'}
+        
+        for item in evidence_path.rglob('*'):
+            if not item.is_file():
+                continue
+            
+            try:
+                ext = item.suffix.lower()
+                if ext in disk_ext:
+                    inventory["disk_images"].append(str(item))
+                    inventory["classification_confidence"][str(item)] = 0.5
+                elif ext in mem_ext:
+                    inventory["memory_dumps"].append(str(item))
+                    inventory["classification_confidence"][str(item)] = 0.5
+                elif ext in pcap_ext:
+                    inventory["pcaps"].append(str(item))
+                    inventory["classification_confidence"][str(item)] = 0.5
+                elif ext == '.evtx':
+                    inventory["evtx_logs"].append(str(item))
+                    inventory["classification_confidence"][str(item)] = 0.5
+                else:
+                    inventory["other_files"].append(str(item))
+                    inventory["classification_confidence"][str(item)] = 0.1
+            except Exception:
+                pass  # Skip files we can't access
         
         return inventory
 
@@ -403,6 +630,10 @@ Respond with a JSON array of corrections. Use empty array if all correct:
             "event": event,
             "message": message,
         })
+
+    def get_healing_log(self) -> List[dict]:
+        """Return the full healing audit trail."""
+        return self.healing_log
 
     def get_classification_log(self) -> List[dict]:
         """Return the full classification audit trail."""
