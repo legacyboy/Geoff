@@ -2677,6 +2677,28 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         if "android_accounts" in meta:
             _fe_log(job_id, f"    🤖 Android accounts: {len(meta['android_accounts'])}")
 
+    # Phase 1f: Update device maps with extracted archive contents
+    # Mobile functions need the extracted directory, not the archive path
+    extracted_archives = inventory.get("extracted_archives", [])
+    for dev_id, dev in device_map.items():
+        for archive_info in extracted_archives:
+            archive_path = archive_info.get("archive")
+            extracted_dir = archive_info.get("extracted_dir")
+            # If this device has the archive in its evidence files, add extracted files
+            if archive_path in dev.get("evidence_files", []):
+                extracted_files = archive_info.get("files", [])
+                # Add extracted files to device's evidence files
+                dev["evidence_files"].extend(extracted_files)
+                # Remove the archive itself from evidence files (replaced by extracted contents)
+                if archive_path in dev["evidence_files"]:
+                    dev["evidence_files"].remove(archive_path)
+                _fe_log(job_id, f"  Device {dev_id}: replaced archive with {len(extracted_files)} extracted files")
+                # Update the mobile_backups list in inventory too
+                if archive_path in inventory.get("mobile_backups", []):
+                    inventory["mobile_backups"].remove(archive_path)
+                    inventory["mobile_backups"].extend(extracted_files)
+                _fe_log(job_id, f"  📱 Device {dev_id} evidence_files updated with extracted {Path(extracted_dir).name}")
+
     # Determine OS from dominant device type (for playbook selection)
     os_type = _detect_os_from_devices(device_map)
     # Triage indicators still useful for initial severity classification
