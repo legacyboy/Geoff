@@ -371,11 +371,14 @@ class DeviceDiscovery:
                 self._extract_android_users(dev, fpath)
                 # Also extract contacts from Android backup
                 self._extract_android_contacts(dev, fpath)
-            elif fname.endswith(".zip") and "backup" in fpath.lower():
-                self._extract_ios_accounts(dev, fpath)
-                # Also extract keychain entries from iOS backup
-                backup_dir = str(Path(fpath).parent)
-                self._extract_ios_keychain(dev, backup_dir)
+            elif fname.endswith(".zip"):
+                # Try to extract accounts/keychain from any iOS or Android zip
+                if "ios" in fpath.lower() or "backup" in fpath.lower() or "iphone" in fpath.lower():
+                    self._extract_ios_accounts(dev, fpath)
+                    self._extract_ios_keychain(dev, fpath)
+                if "android" in fpath.lower():
+                    self._extract_android_contacts(dev, fpath)
+                    self._extract_android_users(dev, fpath)
 
         # Check for registry hives directly
         for fpath in dev["evidence_files"]:
@@ -969,22 +972,23 @@ class DeviceDiscovery:
         except Exception as e:
             self._log("android_accounts_error", f"Failed to extract Android users: {e}")
 
-    def _extract_ios_keychain(self, dev, backup_dir):
+    def _extract_ios_keychain(self, dev, backup_path):
         """Extract iOS keychain entries from keychain-2.db."""
         try:
-            backup_path = Path(backup_dir)
+            backup_path = Path(backup_path)
             keychain_db = list(backup_path.rglob("keychain-2.db"))
             
             # Also search inside zip archives
             if not keychain_db:
-                for zip_file in backup_path.rglob("*.zip"):
+                zip_files = list(backup_path.rglob("*.zip")) if backup_path.is_dir() else [backup_path] if backup_path.suffix == '.zip' else []
+                for zip_file in zip_files:
                     try:
                         import zipfile
                         with zipfile.ZipFile(zip_file, 'r') as zf:
                             for name in zf.namelist():
-                                if 'keychain-2.db' in name or 'keychain' in name.lower():
-                                    self._log("ios_keychain_found", f"Found keychain in zip: {name}")
-                                    dev["metadata"]["keychain_in_zip"] = str(zip_file)
+                                if 'keychain-2.db' in name or 'KeychainDump' in name:
+                                    self._log("ios_keychain_found", f"Found keychain in zip: {zip_file.name}/{name}")
+                                    dev["metadata"]["keychain_in_zip"] = f"{zip_file.name}/{name}"
                                     break
                     except:
                         pass
