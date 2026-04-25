@@ -3170,7 +3170,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                                 _audit_append(
                                                     case_work_dir, "self_correction",
                                                     playbook_id=playbook_id, module=module, function=function,
-                                                    device_id=device_id,
+                                                    device_id=dev_id,
                                                 )
                                         except Exception as retry_ce:
                                             _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
@@ -3186,7 +3186,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         _audit_append(
                                             case_work_dir, "unverified",
                                             playbook_id=playbook_id, module=module, function=function,
-                                            device_id=device_id, reason=issues[:5],
+                                            device_id=dev_id, reason=issues[:5],
                                         )
                                 elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is True:
                                     _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
@@ -3284,7 +3284,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
                         confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                     _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
-                    _audit_append(case_work_dir, "anti_forensics_cascade", device_id=device_id)
+                    _audit_append(case_work_dir, "anti_forensics_cascade", device_id=dev_id)
                     cascaded_now = _apply_anti_forensics_cascade(findings_writer)
                     _fe_log(job_id, f"  Cascade tagged {cascaded_now} existing findings (later findings will be tagged at job end)")
 
@@ -3298,7 +3298,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             })
             _audit_append(
                 case_work_dir, "playbook_complete",
-                playbook_id=playbook_id, device_id=device_id,
+                playbook_id=playbook_id, device_id=dev_id,
                 steps_attempted=len(pb_findings),
                 steps_completed=sum(1 for s in pb_findings if s.get("status") == "completed"),
                 steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
