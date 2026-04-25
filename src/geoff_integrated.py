@@ -67,7 +67,7 @@ from evidence_classifier import AIEvidenceClassifier, classify_with_ai
 # ---------------------------------------------------------------------------
 
 # Shell metacharacters that could enable command injection via evidence paths
-_UNSAFE_PATH_CHARS = re.compile(r'[;&|`$(){}[\]<>\\!\n\r\t]')
+_UNSAFE_PATH_CHARS = re.compile(r'[;&|`$<>\!\n\r\t]')
 
 
 def _validate_evidence_path(path: str) -> str:
