@@ -6482,7 +6482,7 @@ def find_evil_route():
     """
     try:
         data = request.json or {}
-        evidence_dir = data.get('evidence_dir', '').strip() or EVIDENCE_BASE_DIR
+        evidence_dir = data.get('evidence_dir', '').strip() or data.get('evidence_path', '').strip() or EVIDENCE_BASE_DIR
 
         # If not an absolute path or doesn't exist as-is, try joining with EVIDENCE_BASE_DIR
         # so the user can paste just a folder name from the evidence tab (e.g. "IR-016-CloudJack")
