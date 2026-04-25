@@ -36,6 +36,7 @@ _log_lock = threading.Lock()
 _state_lock = threading.Lock()
 
 import requests
+import hmac
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
@@ -360,6 +361,32 @@ def _log_info(msg: str):
     print(f"[GEOFF] {msg}")
 
 
+def _apply_anti_forensics_cascade(findings_writer) -> int:
+    """Idempotently downgrade confidence on every finding and tag it as compromised.
+
+    Safe to call repeatedly: a finding already tagged with "anti-forensics" in
+    its compromised_by list is skipped, so the CONFIRMED → POSSIBLE → UNVERIFIED
+    chain isn't applied twice. Returns the number of newly cascaded findings.
+    """
+    cascaded = 0
+    for f in findings_writer.all_records():
+        result = f.get("result")
+        if not isinstance(result, dict):
+            continue
+        already = result.get("compromised_by") or []
+        if "anti-forensics" in already:
+            continue
+        confidence = result.get("confidence", "")
+        if confidence == "CONFIRMED":
+            result["confidence"] = "POSSIBLE"
+        elif confidence == "POSSIBLE":
+            result["confidence"] = "UNVERIFIED"
+        result.setdefault("compromised_by", []).append("anti-forensics")
+        result["confidence_modifier"] = "downgraded-by-anti-forensics"
+        cascaded += 1
+    return cascaded
+
+
 def _audit_append(case_work_dir, event: str, **fields):
     """Append a state-transition record to the case's audit_trail.jsonl.
 
@@ -547,7 +574,7 @@ def _require_auth(f):
             request.headers.get('X-API-Key', '')
             or request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
         )
-        if not provided or provided != GEOFF_API_KEY:
+        if not provided or not hmac.compare_digest(provided, GEOFF_API_KEY):
             return jsonify({'error': 'Unauthorized — provide a valid X-API-Key header'}), 401
         return f(*args, **kwargs)
     return _decorated
@@ -1242,21 +1269,23 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
 
     # Spawn find_evil pipeline in a background thread
     fe_job_id = f"inv-{case_name}-{uuid.uuid4().hex[:8]}"
-    _find_evil_jobs[fe_job_id] = {
-        "status": "starting",
-        "case_name": case_name,
-        "evidence_path": evidence_path,
-        "work_dir": str(case_work_path),
-        "started_at": datetime.now().isoformat(),
-        "progress_pct": 0,
-    }
+    with _state_lock:
+        _find_evil_jobs[fe_job_id] = {
+            "status": "starting",
+            "case_name": case_name,
+            "evidence_path": evidence_path,
+            "work_dir": str(case_work_path),
+            "started_at": datetime.now().isoformat(),
+            "progress_pct": 0,
+        }
 
     def _run_find_evil_bg():
         try:
             find_evil(evidence_path, job_id=fe_job_id)
         except Exception as e:
-            _find_evil_jobs[fe_job_id]["status"] = "error"
-            _find_evil_jobs[fe_job_id]["error"] = str(e)
+            with _state_lock:
+                _find_evil_jobs[fe_job_id]["status"] = "error"
+                _find_evil_jobs[fe_job_id]["error"] = str(e)
 
     bg_thread = threading.Thread(target=_run_find_evil_bg, daemon=True)
     bg_thread.start()
@@ -2454,6 +2483,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     execution_plan = []
     skipped_playbooks = []
     confidence_modifiers = []
+    anti_forensics_detected = False
 
     # Always include core playbooks
     core_playbooks = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
@@ -3205,23 +3235,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     if anti_forensics_hit:
                         break
                 if anti_forensics_hit:
-                    confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                    anti_forensics_detected = True
+                    if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
+                        confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                     _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
                     _audit_append(case_work_dir, "anti_forensics_cascade", device_id=device_id)
-                    # Downgrade all findings across ALL playbooks and mark compromised
-                    for f in findings_writer.all_records():
-                        if isinstance(f.get("result"), dict):
-                            confidence = f["result"].get("confidence", "")
-                            if confidence == "CONFIRMED":
-                                f["result"]["confidence"] = "POSSIBLE"
-                            elif confidence == "POSSIBLE":
-                                f["result"]["confidence"] = "UNVERIFIED"
-                            # Mark all findings as potentially compromised
-                            if "compromised_by" not in f["result"]:
-                                f["result"]["compromised_by"] = []
-                            if "anti-forensics" not in f["result"]["compromised_by"]:
-                                f["result"]["compromised_by"].append("anti-forensics")
-                            f["result"]["confidence_modifier"] = "downgraded-by-anti-forensics"
+                    cascaded_now = _apply_anti_forensics_cascade(findings_writer)
+                    _fe_log(job_id, f"  Cascade tagged {cascaded_now} existing findings (later findings will be tagged at job end)")
 
             playbooks_run.append({
                 "playbook_id": playbook_id,
@@ -3297,6 +3317,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                     })
                                 except Exception as e:
                                     _log_error(f"Unattributed evidence step failed: {module}.{function}", e)
+
+    # If PB-SIFT-012 fired earlier in the plan, any findings produced by
+    # later playbooks won't have been downgraded yet. Apply the cascade once
+    # more now that every playbook has run. The helper is idempotent, so
+    # findings already tagged by the first pass are skipped.
+    if anti_forensics_detected:
+        late = _apply_anti_forensics_cascade(findings_writer)
+        if late:
+            _fe_log(job_id, f"⚠ Anti-forensics cascade (final pass): downgraded {late} additional findings produced after PB-SIFT-012")
+            _audit_append(case_work_dir, "anti_forensics_cascade_final", late_findings=late)
 
     # ------------------------------------------------------------------
     # Phase 3b-new: Super-Timeline Build
