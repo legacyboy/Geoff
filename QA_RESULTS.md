@@ -7112,3 +7112,15 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 0
 - **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-bab8f86df912","message":"Find Evil job started. Poll /find-evil/status/fe-bab8f86df912 for progress.","status":"running"}
 
+
+---
+## QA Run: 2026-04-25 02:30:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 02:45:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found

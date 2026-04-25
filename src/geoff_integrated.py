@@ -22,6 +22,10 @@ import time
 import uuid
 import traceback
 import hashlib
+import tarfile
+import zipfile
+import gzip
+import shutil
 
 # Add src directory to path (works for both local and deployed)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1924,6 +1928,99 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
     return inventory
 
 
+def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: str = None) -> dict:
+    """Extract compressed archive (.tar.gz, .zip, .tar, .7z) for forensic analysis.
+
+    Disk space is expected in DFIR. Extracts all contents so mobile and file
+    analysis tools can process them natively.
+
+    Returns {"status": "extracted", "extracted_dir": str, "files": list}
+            or {"status": "error", "error": str}
+    """
+    archive = Path(archive_path)
+    if not archive.exists():
+        return {"status": "error", "error": f"Archive not found: {archive_path}"}
+
+    # Use provided dir or create extraction dir alongside archive
+    if extract_dir is None:
+        extract_dir = str(archive.with_suffix(""))
+    extract_path = Path(extract_dir)
+
+    # If already extracted, return existing
+    if extract_path.exists() and any(extract_path.iterdir()):
+        existing_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+        return {
+            "status": "already_extracted",
+            "extracted_dir": str(extract_path),
+            "files": existing_files,
+            "file_count": len(existing_files),
+        }
+
+    try:
+        extract_path.mkdir(parents=True, exist_ok=True)
+        _fe_log(job_id, f"  📦 Extracting {archive.name} → {extract_dir}")
+        start = time.time()
+
+        # Detect archive type from header and extract
+        with open(archive_path, "rb") as f:
+            header = f.read(8)
+
+        extracted_files = []
+
+        if header[:2] == b'PK':
+            # ZIP archive
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                zf.extractall(extract_dir)
+            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+
+        elif header[:2] == b'\x1f\x8b':
+            # GZIP compressed (tar.gz or single .gz file)
+            if str(archive).endswith('.tar.gz') or str(archive).endswith('.tgz'):
+                with tarfile.open(archive_path, 'r:gz') as tf:
+                    tf.extractall(extract_dir)
+            else:
+                # Single .gz file
+                out_path = extract_path / archive.stem
+                with gzip.open(archive_path, 'rb') as gz:
+                    with open(out_path, 'wb') as out:
+                        shutil.copyfileobj(gz, out)
+            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+
+        elif header[257:262] == b'ustar':
+            # Plain TAR
+            with tarfile.open(archive_path, 'r') as tf:
+                tf.extractall(extract_dir)
+            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+
+        elif header[:6] == b'7z\xbc\xaf\x27\x1c':
+            # 7-Zip — requires p7zip-full
+            result = safe_run(
+                ["7z", "x", "-y", f"-o{extract_dir}", archive_path],
+                timeout=3600
+            )
+            if result["code"] != 0:
+                return {"status": "error", "error": f"7z extraction failed: {result['stderr'][:200]}"}
+            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+
+        else:
+            return {"status": "error", "error": f"Unknown archive format: {archive.name}"}
+
+        elapsed = time.time() - start
+        _fe_log(job_id, f"  ✅ Extracted {len(extracted_files)} files ({elapsed:.1f}s)")
+
+        return {
+            "status": "extracted",
+            "extracted_dir": str(extract_path),
+            "files": extracted_files,
+            "file_count": len(extracted_files),
+            "elapsed_seconds": round(elapsed, 1),
+        }
+
+    except Exception as e:
+        _fe_log(job_id, f"  ✗ Extraction failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 
 def _detect_file_type_from_header(path: str) -> str | None:
     """Detect file type from magic bytes (fast, no external tools needed)."""
@@ -2491,7 +2588,49 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     inventory = _validate_inventory_classification(inventory, job_id)
     _fe_log(job_id, f"  Validation: {len(inventory.get('other_files', []))} files remain in other_files for generic analysis")
 
-    # Phase 1a: Device Discovery & User Attribution
+    # Phase 1c: Extract compressed archives
+    # DFIR requires full extraction — disk space usage is expected
+    _update_job(4, "extraction", "Extracting compressed archives")
+    extracted_archives = []
+    for archive_path in inventory.get("mobile_backups", []) + inventory.get("other_files", []):
+        header_type = _detect_file_type_from_header(archive_path)
+        if header_type in ("zip_archive", "gzip_archive", "tar_archive", "7zip_archive"):
+            result = _extract_archive(archive_path, job_id=job_id)
+            if result.get("status") in ("extracted", "already_extracted"):
+                extracted_dir = result.get("extracted_dir")
+                extracted_files = result.get("files", [])
+                extracted_archives.append({
+                    "archive": archive_path,
+                    "extracted_dir": extracted_dir,
+                    "file_count": result.get("file_count", 0),
+                    "files": extracted_files,
+                })
+                # Add extracted files to inventory for processing
+                for fpath in extracted_files:
+                    fheader = _detect_file_type_from_header(fpath)
+                    if fheader == "sqlite_db":
+                        if fpath not in inventory["mobile_backups"]:
+                            inventory["mobile_backups"].append(fpath)
+                    elif fheader in ("elf_binary", "pe_binary", "macho_binary"):
+                        if fpath not in inventory["other_files"]:
+                            inventory["other_files"].append(fpath)
+                    else:
+                        if fpath not in inventory["other_files"]:
+                            inventory["other_files"].append(fpath)
+                _fe_log(job_id, f"  📦 Extracted {result.get('file_count')} files from {Path(archive_path).name}")
+            else:
+                _fe_log(job_id, f"  ⚠ Extraction failed for {Path(archive_path).name}: {result.get('error', 'unknown')}")
+
+    if extracted_archives:
+        _fe_log(job_id, f"  Total archives extracted: {len(extracted_archives)}")
+        inventory["extracted_archives"] = extracted_archives
+
+    # Phase 1d: Re-validate after extraction
+    _update_job(5, "revalidation", "Re-validating after extraction")
+    inventory = _validate_inventory_classification(inventory, job_id)
+    _fe_log(job_id, f"  Post-extraction: {len(inventory.get('other_files', []))} files remain in other_files")
+
+    # Phase 1e: Rebuild device map with extracted files
     _update_job(3, "discovery", "Identifying devices and users")
     device_disc = DeviceDiscovery(orchestrator)
     device_map, user_map = device_disc.discover(evidence_path, inventory)
