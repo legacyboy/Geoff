@@ -142,8 +142,18 @@ def _parse_regripper_output(raw: str) -> Dict[str, Any]:
 class REGISTRY_Specialist:
     """Specialist for Windows Registry forensics – fully parsed output."""
 
-    def __init__(self, regripper_path: str = "/usr/local/bin/rip.pl"):
-        self.regripper_path = regripper_path
+    def __init__(self, regripper_path: str = None):
+        # Caller may pin a path; otherwise resolve via PATH (rip.pl/rip), then
+        # fall back to the SIFT default. Distro packages drop rip.pl in /usr/bin
+        # while the legacy SIFT installer puts it under /usr/local/bin.
+        if regripper_path:
+            self.regripper_path = regripper_path
+        else:
+            self.regripper_path = (
+                shutil.which("rip.pl")
+                or shutil.which("rip")
+                or "/usr/local/bin/rip.pl"
+            )
         self.common_hives = [
             'NTUSER.DAT', 'SYSTEM', 'SOFTWARE', 'SECURITY', 'SAM', 'AmCache.hve',
         ]
@@ -4461,7 +4471,7 @@ class PHOTOREC_Specialist:
         finally:
             try:
                 os.unlink(config_file)
-            except:
+            except OSError:
                 pass
 
 
