@@ -357,6 +357,8 @@ class DeviceDiscovery:
             fname = Path(fpath).name.lower()
             if fname == "info.plist":
                 self._enrich_from_ios_plist(dev, fpath)
+                # Also extract Apple ID from the plist
+                self._extract_ios_plist_accounts(dev, fpath)
             elif fname == "manifest.db":
                 dev["device_type"] = "ios_mobile"
                 dev["os_type"] = "ios"
@@ -367,8 +369,13 @@ class DeviceDiscovery:
             elif fname.endswith(".ab") or "android" in fname.lower():
                 self._enrich_from_android_backup(dev, fpath)
                 self._extract_android_users(dev, fpath)
+                # Also extract contacts from Android backup
+                self._extract_android_contacts(dev, fpath)
             elif fname.endswith(".zip") and "backup" in fpath.lower():
                 self._extract_ios_accounts(dev, fpath)
+                # Also extract keychain entries from iOS backup
+                backup_dir = str(Path(fpath).parent)
+                self._extract_ios_keychain(dev, backup_dir)
 
         # Check for registry hives directly
         for fpath in dev["evidence_files"]:
@@ -961,6 +968,64 @@ class DeviceDiscovery:
                 self._log("android_accounts_found", f"Found {len(accounts)} Android accounts")
         except Exception as e:
             self._log("android_accounts_error", f"Failed to extract Android users: {e}")
+
+    def _extract_ios_keychain(self, dev, backup_dir):
+        """Extract iOS keychain entries from keychain-2.db."""
+        try:
+            backup_path = Path(backup_dir)
+            keychain_db = list(backup_path.rglob("keychain-2.db"))
+            if not keychain_db:
+                return
+            
+            import sqlite3
+            conn = sqlite3.connect(f"file:{keychain_db[0]}?mode=ro", uri=True, timeout=5)
+            rows = conn.execute(
+                "SELECT service, account FROM genp WHERE service IS NOT NULL LIMIT 100"
+            ).fetchall()
+            conn.close()
+            
+            entries = [{"service": r[0], "account": r[1]} for r in rows if r[0]]
+            if entries:
+                dev["metadata"]["keychain_entries"] = entries
+                self._log("ios_keychain_found", f"Found {len(entries)} keychain entries")
+        except Exception as e:
+            self._log("ios_keychain_error", f"Failed to extract iOS keychain: {e}")
+
+    def _extract_ios_plist_accounts(self, dev, plist_path):
+        """Extract Apple ID from Info.plist."""
+        try:
+            import plistlib
+            with open(plist_path, "rb") as f:
+                plist = plistlib.load(f)
+            
+            apple_id = plist.get("AppleID") or plist.get("iTunesAppleID")
+            if apple_id:
+                dev["metadata"]["apple_id"] = apple_id
+                self._log("ios_apple_id_found", f"Found Apple ID: {apple_id}")
+        except Exception as e:
+            self._log("ios_plist_accounts_error", f"Failed to extract Apple ID from plist: {e}")
+
+    def _extract_android_contacts(self, dev, backup_path):
+        """Extract contacts from Android contacts2.db."""
+        try:
+            backup = Path(backup_path)
+            contacts_db = list(backup.rglob("contacts2.db"))
+            if not contacts_db:
+                return
+            
+            import sqlite3
+            conn = sqlite3.connect(f"file:{contacts_db[0]}?mode=ro", uri=True, timeout=5)
+            rows = conn.execute(
+                "SELECT display_name, phone_number FROM data WHERE display_name IS NOT NULL LIMIT 50"
+            ).fetchall()
+            conn.close()
+            
+            contacts = [{"name": r[0], "phone": r[1]} for r in rows if r[0]]
+            if contacts:
+                dev["metadata"]["contacts"] = contacts
+                self._log("android_contacts_found", f"Found {len(contacts)} contacts")
+        except Exception as e:
+            self._log("android_contacts_error", f"Failed to extract Android contacts: {e}")
 
     def _enrich_from_sam_hive(self, dev: dict, hive_path: str):
         """
