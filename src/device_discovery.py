@@ -362,8 +362,13 @@ class DeviceDiscovery:
                 dev["os_type"] = "ios"
             elif fname == "deviceinfo.txt":
                 self._enrich_from_deviceinfo(dev, fpath)
+            elif fname == "build.prop":
+                self._extract_build_prop(dev, fpath)
             elif fname.endswith(".ab") or "android" in fname.lower():
                 self._enrich_from_android_backup(dev, fpath)
+                self._extract_android_users(dev, fpath)
+            elif fname.endswith(".zip") and "backup" in fpath.lower():
+                self._extract_ios_accounts(dev, fpath)
 
         # Check for registry hives directly
         for fpath in dev["evidence_files"]:
@@ -879,6 +884,83 @@ class DeviceDiscovery:
         except Exception as e:
             self._log("deviceinfo_error",
                       f"Failed to parse DeviceInfo.txt: {e}")
+
+    def _extract_build_prop(self, dev: dict, prop_path: str):
+        """Parse Android build.prop for device model, version, and user."""
+        try:
+            with open(prop_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            
+            model = re.search(r'ro\.product\.model=(.+)', content)
+            if model:
+                dev["device_type"] = model.group(1).strip()
+                dev["metadata"]["model"] = model.group(1).strip()
+            
+            version = re.search(r'ro\.build\.version\.release=(.+)', content)
+            if version:
+                dev["os_version"] = version.group(1).strip()
+                dev["os_type"] = "android"
+            
+            user = re.search(r'ro\.build\.user=(.+)', content)
+            if user:
+                dev["owner"] = user.group(1).strip()
+                dev["owner_confidence"] = "MEDIUM"
+                dev["discovery_method"] = "build_prop"
+            
+            self._log("build_prop_parsed", f"build.prop: model={dev.get('device_type')}, user={dev.get('owner')}")
+        except Exception as e:
+            self._log("build_prop_error", f"Failed to parse build.prop: {e}")
+
+    def _extract_ios_accounts(self, dev: dict, backup_dir: str):
+        """Extract Apple ID / iCloud accounts from iOS backup."""
+        try:
+            backup_path = Path(backup_dir)
+            accounts = []
+            
+            # Check for Accounts3.sqlite
+            accounts_db = list(backup_path.rglob("Accounts3.sqlite"))
+            if accounts_db:
+                import sqlite3
+                conn = sqlite3.connect(f"file:{accounts_db[0]}?mode=ro", uri=True, timeout=5)
+                rows = conn.execute("SELECT identifier, account_description FROM accounts LIMIT 20").fetchall()
+                for r in rows:
+                    accounts.append({"id": r[0], "desc": r[1]})
+                conn.close()
+            
+            if accounts:
+                dev["metadata"]["ios_accounts"] = accounts
+                dev["user_accounts"] = [a["id"] for a in accounts if a["id"]]
+                self._log("ios_accounts_found", f"Found {len(accounts)} iOS accounts")
+        except Exception as e:
+            self._log("ios_accounts_error", f"Failed to extract iOS accounts: {e}")
+
+    def _extract_android_users(self, dev: dict, backup_path: str):
+        """Extract Google accounts from Android backup."""
+        try:
+            backup = Path(backup_path)
+            accounts = []
+            
+            # Look for accounts.db in backup
+            db_files = list(backup.rglob("accounts.db"))
+            if db_files:
+                import sqlite3
+                conn = sqlite3.connect(f"file:{db_files[0]}?mode=ro", uri=True, timeout=5)
+                rows = conn.execute("SELECT name, type FROM accounts LIMIT 20").fetchall()
+                for r in rows:
+                    accounts.append({"name": r[0], "type": r[1]})
+                conn.close()
+            
+            # Also check for Google account in backup metadata
+            google_account = list(backup.rglob("*/com.google.android.gm/databases/*"))
+            if google_account:
+                dev["metadata"]["gmail_databases"] = len(google_account)
+            
+            if accounts:
+                dev["metadata"]["android_accounts"] = accounts
+                dev["user_accounts"] = [a["name"] for a in accounts if a["name"]]
+                self._log("android_accounts_found", f"Found {len(accounts)} Android accounts")
+        except Exception as e:
+            self._log("android_accounts_error", f"Failed to extract Android users: {e}")
 
     def _enrich_from_sam_hive(self, dev: dict, hive_path: str):
         """
