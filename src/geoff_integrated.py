@@ -1823,6 +1823,64 @@ PLAYBOOK_STEPS = {
 }
 
 
+def _detect_file_type_from_header(path: str) -> Optional[str]:
+    """Detect file type from magic bytes (fast, no external tools needed)."""
+    try:
+        with open(path, "rb") as f:
+            header = f.read(8)
+        
+        if not header:
+            return None
+        
+        # ZIP archives (iOS backups, Cellebrite extractions)
+        if header[:2] == b'PK':
+            return "zip_archive"
+        
+        # GZIP compressed files (tar.gz backups)
+        if header[:2] == b'\x1f\x8b':
+            return "gzip_archive"
+        
+        # TAR archives
+        if len(header) >= 8 and header[257:262] == b'ustar':
+            return "tar_archive"
+        
+        # 7-Zip
+        if header[:6] == b'7z\xbc\xaf\x27\x1c':
+            return "7zip_archive"
+        
+        # SQLite databases (mobile artifacts)
+        if header[:16] == b'SQLite format 3\x00':
+            return "sqlite_db"
+        
+        # Windows registry
+        if header[:4] == b'regf':
+            return "registry_hive"
+        
+        # EWF disk image (EnCase)
+        if header[:3] == b'EVF':
+            return "ewf_disk_image"
+        
+        # PCAP
+        if header[:4] in (b'\xa1\xb2\xc3\xd4', b'\xd4\xc3\xb2\xa1', b'\x0a\x0d\x0d\x0a'):
+            return "pcap"
+        
+        # ELF binary (Linux)
+        if header[:4] == b'\x7fELF':
+            return "elf_binary"
+        
+        # Mach-O binary (macOS/iOS)
+        if header[:4] in (b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf'):
+            return "macho_binary"
+        
+        # Windows PE
+        if header[:2] == b'MZ':
+            return "pe_binary"
+        
+        return None
+    except:
+        return None
+
+
 def _inventory_evidence(evidence_path: Path) -> dict:
     """Walk the evidence directory and categorise every file."""
     inventory = {
@@ -1844,8 +1902,6 @@ def _inventory_evidence(evidence_path: Path) -> dict:
     registry_names = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
                       'usrclass.dat', 'default', 'system.sav', 'software.sav'}
     mobile_indicators = {'info.plist', 'manifest.db', 'manifest.plist'}
-    mobile_ext = {'.tar.gz', '.zip', '.ab'}  # Android/iOS backup archives
-    mobile_name_indicators = {'android', 'ios', 'iphone', 'ipad', 'pixel', 'galaxy', 'samsung', 'mobile', 'backup'}
     syslog_names = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
 
     for item in evidence_path.rglob('*'):
@@ -1858,17 +1914,49 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             size = 0
         inventory["total_size_bytes"] += size
 
-        # Hash evidence files for chain of custody
-        file_hash = _hash_file(str(item))
-        inventory["file_hashes"][str(item)] = file_hash
-        if file_hash == "hash_failed":
-            inventory["integrity_failures"] = inventory.get("integrity_failures", []) + [str(item)]
+        # Hash evidence files for chain of custody (skip very large files to prevent hangs)
+        if size < 1_000_000_000:  # Skip hashing files over 1GB
+            file_hash = _hash_file(str(item))
+            inventory["file_hashes"][str(item)] = file_hash
+            if file_hash == "hash_failed":
+                inventory["integrity_failures"] = inventory.get("integrity_failures", []) + [str(item)]
+        else:
+            inventory["file_hashes"][str(item)] = "skipped_too_large"
+            inventory["total_size_bytes"] += size
 
         ext = item.suffix.lower()
-        # Check compound suffix like .tar.gz
-        compound_ext = ''.join(item.suffixes[-2:]).lower() if len(item.suffixes) >= 2 else ext
         name_lower = item.name.lower()
+        
+        # PRIMARY: Content-based detection from file header (magic bytes)
+        header_type = _detect_file_type_from_header(str(item))
+        
+        # SECONDARY: Filename-based detection
+        if header_type == "zip_archive" or header_type == "gzip_archive" or header_type == "tar_archive" or header_type == "7zip_archive":
+            # Archive detected from header — check if it's mobile-related by name
+            if any(ind in name_lower for ind in ('android', 'ios', 'iphone', 'ipad', 'pixel', 'galaxy', 'samsung', 'mobile', 'backup', 'cellebrite', 'extractions')):
+                inventory["mobile_backups"].append(str(item))
+            else:
+                # Could be any archive — let AI decide later
+                inventory["other_files"].append(str(item))
+            continue
+        elif header_type == "sqlite_db":
+            # SQLite DBs are often mobile artifacts (contacts, messages, etc.)
+            if any(ind in name_lower for ind in ('contacts', 'messages', 'sms', 'accounts', 'call', 'mail', 'chat', 'whatsapp', 'signal', 'telegram')):
+                inventory["mobile_backups"].append(str(item))
+            else:
+                inventory["other_files"].append(str(item))
+            continue
+        elif header_type == "registry_hive":
+            inventory["registry_hives"].append(str(item))
+            continue
+        elif header_type == "ewf_disk_image":
+            inventory["disk_images"].append(str(item))
+            continue
+        elif header_type == "pcap":
+            inventory["pcaps"].append(str(item))
+            continue
 
+        # FALLBACK: Extension-based classification for known types
         if ext in disk_ext:
             inventory["disk_images"].append(str(item))
         elif ext in mem_ext:
@@ -1883,19 +1971,13 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             inventory["syslogs"].append(str(item))
         elif name_lower in mobile_indicators:
             inventory["mobile_backups"].append(str(item))
-        elif ext in mobile_ext or compound_ext in mobile_ext or any(ind in name_lower for ind in mobile_name_indicators):
-            inventory["mobile_backups"].append(str(item))
         else:
             inventory["other_files"].append(str(item))
 
     # --- NEW: AI-based classification for ambiguous files ---
-    # If AI classification is enabled and we have ambiguous files + an LLM available,
-    # use the AIEvidenceClassifier for a second pass.
     if AI_EVIDENCE_CLASSIFICATION and inventory["other_files"]:
         try:
-            # Only run AI classification if we have an orchestrator and LLM function in scope
-            # (called later in find_evil when these are available)
-            pass  # Placeholder — actual AI classification happens in find_evil after init
+            pass
         except Exception:
             pass
 

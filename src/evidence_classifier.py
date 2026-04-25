@@ -447,7 +447,7 @@ class AIEvidenceClassifier:
             return "registry_hives"
         
         # Archives (could be mobile backup)
-        if any(kw in header_lower for kw in ['zip archive', 'tar archive', 'ios backup', 'itunes backup']):
+        if any(kw in header_lower for kw in ['zip archive', 'tar archive', 'gzip compressed', 'compressed data', 'ios backup', 'itunes backup']):
             return "mobile_backups"
         
         # Logs
