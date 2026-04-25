@@ -1844,6 +1844,8 @@ def _inventory_evidence(evidence_path: Path) -> dict:
     registry_names = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
                       'usrclass.dat', 'default', 'system.sav', 'software.sav'}
     mobile_indicators = {'info.plist', 'manifest.db', 'manifest.plist'}
+    mobile_ext = {'.tar.gz', '.zip', '.ab'}  # Android/iOS backup archives
+    mobile_name_indicators = {'android', 'ios', 'iphone', 'ipad', 'pixel', 'galaxy', 'samsung', 'mobile', 'backup'}
     syslog_names = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
 
     for item in evidence_path.rglob('*'):
@@ -1878,6 +1880,8 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         elif name_lower in syslog_names or name_lower.startswith('syslog'):
             inventory["syslogs"].append(str(item))
         elif name_lower in mobile_indicators:
+            inventory["mobile_backups"].append(str(item))
+        elif ext in mobile_ext or any(ind in name_lower for ind in mobile_name_indicators):
             inventory["mobile_backups"].append(str(item))
         else:
             inventory["other_files"].append(str(item))
