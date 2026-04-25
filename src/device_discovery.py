@@ -857,7 +857,8 @@ class DeviceDiscovery:
             if owner_match:
                 owner_raw = owner_match.group(1).strip()
                 # Parse "This Is's iPhone" → owner "This Is"
-                name_match = re.match(r"^(.+?)['']s\s+(iphone|ipad|ipod|android|samsung|pixel|device)",
+                # Handle both ASCII apostrophe and Unicode right single quotation mark
+                name_match = re.match(r"^(.+?)[\u0027\u2019]s\s+(iphone|ipad|ipod|android|samsung|pixel|device)",
                                      owner_raw, re.IGNORECASE)
                 if name_match:
                     dev["owner"] = name_match.group(1).strip()
