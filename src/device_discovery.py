@@ -380,6 +380,16 @@ class DeviceDiscovery:
                     self._extract_android_contacts(dev, fpath)
                     self._extract_android_users(dev, fpath)
 
+        # Also search ALL zip files in inventory (they may be assigned to other devices)
+        all_zips = inventory.get("mobile_backups", []) + inventory.get("disk_images", [])
+        for fpath in all_zips:
+            if not fpath.endswith(".zip"):
+                continue
+            if "ios" in fpath.lower() or "backup" in fpath.lower() or "iphone" in fpath.lower():
+                self._extract_ios_keychain(dev, fpath)
+            if "android" in fpath.lower():
+                self._extract_android_contacts(dev, fpath)
+
         # Check for registry hives directly
         for fpath in dev["evidence_files"]:
             fname = Path(fpath).name.lower()
