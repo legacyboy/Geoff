@@ -974,6 +974,21 @@ class DeviceDiscovery:
         try:
             backup_path = Path(backup_dir)
             keychain_db = list(backup_path.rglob("keychain-2.db"))
+            
+            # Also search inside zip archives
+            if not keychain_db:
+                for zip_file in backup_path.rglob("*.zip"):
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(zip_file, 'r') as zf:
+                            for name in zf.namelist():
+                                if 'keychain-2.db' in name or 'keychain' in name.lower():
+                                    self._log("ios_keychain_found", f"Found keychain in zip: {name}")
+                                    dev["metadata"]["keychain_in_zip"] = str(zip_file)
+                                    break
+                    except:
+                        pass
+            
             if not keychain_db:
                 return
             
@@ -1010,6 +1025,21 @@ class DeviceDiscovery:
         try:
             backup = Path(backup_path)
             contacts_db = list(backup.rglob("contacts2.db"))
+            
+            # Also search inside zip archives
+            if not contacts_db:
+                for zip_file in backup.rglob("*.zip"):
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(zip_file, 'r') as zf:
+                            for name in zf.namelist():
+                                if 'contacts2.db' in name or 'contacts' in name.lower():
+                                    self._log("android_contacts_found", f"Found contacts DB in zip: {name}")
+                                    dev["metadata"]["contacts_in_zip"] = str(zip_file)
+                                    break
+                    except:
+                        pass
+            
             if not contacts_db:
                 return
             
