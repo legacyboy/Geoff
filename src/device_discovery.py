@@ -360,6 +360,8 @@ class DeviceDiscovery:
             elif fname == "manifest.db":
                 dev["device_type"] = "ios_mobile"
                 dev["os_type"] = "ios"
+            elif fname == "deviceinfo.txt":
+                self._enrich_from_deviceinfo(dev, fpath)
             elif fname.endswith(".ab") or "android" in fname.lower():
                 self._enrich_from_android_backup(dev, fpath)
 
@@ -818,6 +820,64 @@ class DeviceDiscovery:
         except Exception as e:
             self._log("plist_error",
                       f"Failed to parse Info.plist: {e}")
+
+    def _enrich_from_deviceinfo(self, dev: dict, info_path: str):
+        """
+        Parse Cellebrite DeviceInfo.txt for device name, owner, and metadata.
+        
+        File format:
+            Device Model:iPhone 11 (N104AP)
+            OS Version:iOS None
+            Device owner:This Is's iPhone
+            Vendor:Apple
+        """
+        try:
+            with open(info_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            
+            # Extract device model
+            model_match = re.search(r'Device Model:(.+)', content)
+            if model_match:
+                dev["device_type"] = model_match.group(1).strip()
+                dev["metadata"]["device_model"] = model_match.group(1).strip()
+            
+            # Extract OS version
+            os_match = re.search(r'OS Version:(.+)', content)
+            if os_match:
+                dev["os_version"] = os_match.group(1).strip()
+                if "ios" in dev["os_version"].lower():
+                    dev["os_type"] = "ios"
+                    dev["device_type"] = "ios_mobile"
+                elif "android" in dev["os_version"].lower():
+                    dev["os_type"] = "android"
+                    dev["device_type"] = "android_mobile"
+            
+            # Extract device owner
+            owner_match = re.search(r'Device owner:(.+)', content)
+            if owner_match:
+                owner_raw = owner_match.group(1).strip()
+                # Parse "This Is's iPhone" → owner "This Is"
+                name_match = re.match(r"^(.+?)['']s\s+(iphone|ipad|ipod|android|samsung|pixel|device)",
+                                     owner_raw, re.IGNORECASE)
+                if name_match:
+                    dev["owner"] = name_match.group(1).strip()
+                    dev["owner_confidence"] = "HIGH"
+                else:
+                    # Just use the raw owner string if no pattern match
+                    dev["owner"] = owner_raw
+                    dev["owner_confidence"] = "MEDIUM"
+                dev["discovery_method"] = "cellebrite_deviceinfo"
+            
+            # Extract vendor
+            vendor_match = re.search(r'Vendor:(.+)', content)
+            if vendor_match:
+                dev["metadata"]["vendor"] = vendor_match.group(1).strip()
+            
+            self._log("deviceinfo_parsed",
+                      f"DeviceInfo: owner={dev.get('owner')}, model={dev.get('device_type')}")
+        except Exception as e:
+            self._log("deviceinfo_error",
+                      f"Failed to parse DeviceInfo.txt: {e}")
 
     def _enrich_from_sam_hive(self, dev: dict, hive_path: str):
         """
