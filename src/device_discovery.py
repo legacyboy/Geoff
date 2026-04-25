@@ -166,8 +166,14 @@ class DeviceDiscovery:
                 }
             # Mobile backups
             for mob in inventory.get("mobile_backups", []):
-                mob_dir = str(Path(mob).parent)
-                dev_id = f"mobile_{Path(mob_dir).name}"
+                mob_path = Path(mob)
+                # If mob is a directory (extracted archive), use it directly
+                if mob_path.is_dir():
+                    mob_dir = str(mob_path)
+                    dev_id = f"mobile_{mob_path.name}"
+                else:
+                    mob_dir = str(mob_path.parent)
+                    dev_id = f"mobile_{mob_path.parent.name}"
                 if dev_id not in device_map:
                     device_map[dev_id] = {
                         "device_id": dev_id,

@@ -2620,6 +2620,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     else:
                         if fpath not in inventory["other_files"]:
                             inventory["other_files"].append(fpath)
+                # Remove the archive from inventory so device discovery uses extracted dir
+                if archive_path in inventory.get("mobile_backups", []):
+                    inventory["mobile_backups"].remove(archive_path)
+                    # Add the extracted directory as the mobile backup source
+                    if extracted_dir not in inventory["mobile_backups"]:
+                        inventory["mobile_backups"].append(extracted_dir)
+                if archive_path in inventory.get("other_files", []):
+                    inventory["other_files"].remove(archive_path)
+                    if extracted_dir not in inventory["other_files"]:
+                        inventory["other_files"].append(extracted_dir)
                 _fe_log(job_id, f"  📦 Extracted {result.get('file_count')} files from {Path(archive_path).name}")
             else:
                 _fe_log(job_id, f"  ⚠ Extraction failed for {Path(archive_path).name}: {result.get('error', 'unknown')}")
