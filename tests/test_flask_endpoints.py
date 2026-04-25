@@ -51,12 +51,14 @@ def app(test_dirs):
     os.environ['GEOFF_EVIDENCE_PATH'] = test_dirs['evidence']
     os.environ['GEOFF_CASES_PATH'] = test_dirs['cases']
     os.environ['GEOFF_API_KEY'] = ''
-    
-    # Clear module cache if needed
-    mods_to_clear = [k for k in sys.modules.keys() if k.startswith('geoff')]
-    for mod in mods_to_clear:
-        del sys.modules[mod]
-    
+
+    # Re-import geoff_integrated so it picks up the new env. Don't touch
+    # other geoff_* modules: deleting geoff_mcp_server here breaks
+    # @patch('geoff_mcp_server.X') decorators in test_mcp_server.py, since
+    # those tests bind their function references to the original module
+    # object at import time and the patch ends up on a stale re-import.
+    sys.modules.pop('geoff_integrated', None)
+
     from geoff_integrated import app
     app.config['TESTING'] = True
     return app
@@ -75,12 +77,11 @@ def auth_app(test_dirs):
     os.environ['GEOFF_EVIDENCE_PATH'] = test_dirs['evidence']
     os.environ['GEOFF_CASES_PATH'] = test_dirs['cases']
     os.environ['GEOFF_API_KEY'] = 'test-secret-key'
-    
-    # Clear module cache
-    mods_to_clear = [k for k in sys.modules.keys() if k.startswith('geoff')]
-    for mod in mods_to_clear:
-        del sys.modules[mod]
-    
+
+    # Only re-import geoff_integrated; see comment in `app` fixture above
+    # for why we don't blanket-delete geoff_* modules.
+    sys.modules.pop('geoff_integrated', None)
+
     from geoff_integrated import app
     app.config['TESTING'] = True
     return app
