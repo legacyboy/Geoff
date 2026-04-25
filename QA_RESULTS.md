@@ -7186,3 +7186,158 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 0
 - **Result:** {"error":"Evidence path resolves outside allowed directories: '/tmp/qa_empty_*' \u2192 /tmp/qa_empty_*","status":"error"}
 
+
+---
+## QA Run: 2026-04-25 04:45:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What artifacts indicate persistence on Windows?\"}'"`
+- **Exit code:** 143
+- **Result:** 
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 05:00:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What is the difference between mmls and fsstat?\"}'"`
+- **Exit code:** 7
+- **Result:** 
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 000
+- Attempting restart...
+- Restart result: HTTP 000
+
+---
+## QA Run: 2026-04-25 05:15:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+
+---
+## QA Run: 2026-04-25 05:30:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 05:45:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-4157a5785744","message":"Find Evil job started. Poll /find-evil/status/fe-4157a5785744 for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-2a520794656a","message":"Find Evil job started. Poll /find-evil/status/fe-2a520794656a for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-6f67cf85fff3","message":"Find Evil job started. Poll /find-evil/status/fe-6f67cf85fff3 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 06:00:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-d8890e2828a0","message":"Find Evil job started. Poll /find-evil/status/fe-d8890e2828a0 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 06:15:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 06:30:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 06:45:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 07:00:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+
+---
+## QA Run: 2026-04-25 07:15:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-f8a0df136776","message":"Find Evil job started. Poll /find-evil/status/fe-f8a0df136776 for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-942e31ba7819","message":"Find Evil job started. Poll /find-evil/status/fe-942e31ba7819 for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-30c85ef24474","message":"Find Evil job started. Poll /find-evil/status/fe-30c85ef24474 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 07:30:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-c4713f752556","message":"Find Evil job started. Poll /find-evil/status/fe-c4713f752556 for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-db9eb1f22eb6","message":"Find Evil job started. Poll /find-evil/status/fe-db9eb1f22eb6 for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-df06bc80376e","message":"Find Evil job started. Poll /find-evil/status/fe-df06bc80376e for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 07:45:01 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"response":"[ERROR] Ollama returned 401: unauthorized\n"}
+
+
+---
+## QA Run: 2026-04-25 08:00:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-d2bf6d4f15a5","message":"Find Evil job started. Poll /find-evil/status/fe-d2bf6d4f15a5 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 08:15:01 CDT — Scenario: edge_case_non_image
+### Find Evil on non-image file
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/tmp' \u2192 /tmp","status":"error"}
+
