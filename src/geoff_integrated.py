@@ -1941,9 +1941,12 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
     if not archive.exists():
         return {"status": "error", "error": f"Archive not found: {archive_path}"}
 
-    # Use provided dir or create extraction dir alongside archive
+    # Use provided dir or create extraction dir in cases work dir (writable)
     if extract_dir is None:
-        extract_dir = str(archive.with_suffix(""))
+        # Extract to a temp dir under CASES_WORK_DIR, not alongside the archive
+        # which may be read-only (evidence preservation)
+        base_name = archive.name.replace('.tar.gz', '').replace('.tgz', '').replace('.zip', '').replace('.tar', '').replace('.7z', '').replace('.gz', '')
+        extract_dir = os.path.join(CASES_WORK_DIR, "extractions", f"{base_name}_{hash(archive_path) % 10000:04d}")
     extract_path = Path(extract_dir)
 
     # If already extracted, return existing
