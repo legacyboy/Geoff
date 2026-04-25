@@ -57,6 +57,7 @@ from host_correlator import HostCorrelator
 from super_timeline import SuperTimeline
 from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
+from evidence_classifier import AIEvidenceClassifier, classify_with_ai
 
 # ---------------------------------------------------------------------------
 # Helper Functions
@@ -1878,7 +1879,33 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         else:
             inventory["other_files"].append(str(item))
 
+    # --- NEW: AI-based classification for ambiguous files ---
+    # If AI classification is enabled and we have ambiguous files + an LLM available,
+    # use the AIEvidenceClassifier for a second pass.
+    if AI_EVIDENCE_CLASSIFICATION and inventory["other_files"]:
+        try:
+            # Only run AI classification if we have an orchestrator and LLM function in scope
+            # (called later in find_evil when these are available)
+            pass  # Placeholder — actual AI classification happens in find_evil after init
+        except Exception:
+            pass
+
     return inventory
+
+
+def _inventory_evidence_with_ai(evidence_path: Path, orchestrator, call_llm_func) -> dict:
+    """
+    Enhanced evidence inventory using AI-based classification.
+    
+    First runs fast extension-based classification, then uses:
+    1. File header analysis (python-magic / file command)
+    2. LLM reasoning for ambiguous files
+    3. Critic validation for accuracy
+    
+    Returns inventory with 'ai_classified' metadata and confidence scores.
+    """
+    classifier = AIEvidenceClassifier(orchestrator, call_llm_func)
+    return classifier.classify_evidence(evidence_path)
 
 
 def _detect_os(inventory: dict) -> str:
@@ -2219,7 +2246,22 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     # Phase 1: Evidence Inventory
     # ------------------------------------------------------------------
-    inventory = _inventory_evidence(evidence_path)
+    # Use AI-based classification if enabled
+    if AI_EVIDENCE_CLASSIFICATION:
+        try:
+            inventory = _inventory_evidence_with_ai(evidence_path, orchestrator, call_llm)
+            ai_count = len(inventory.get('ai_classified', []))
+            if ai_count > 0:
+                _fe_log(job_id, f"  AI classified {ai_count} ambiguous files")
+                for ai_item in inventory.get("ai_classified", [])[:5]:
+                    _fe_log(job_id, f"    AI: {Path(ai_item['path']).name} -> {ai_item['evidence_type']} ({ai_item.get('method', 'unknown')}, conf: {ai_item.get('confidence', 0):.1f})")
+            else:
+                _fe_log(job_id, "  AI classification: no ambiguous files")
+        except Exception as e:
+            _fe_log(job_id, f"  AI classification failed: {e}, falling back")
+            inventory = _inventory_evidence(evidence_path)
+    else:
+        inventory = _inventory_evidence(evidence_path)
 
     # Phase 1a: Device Discovery & User Attribution
     _update_job(3, "discovery", "Identifying devices and users")
