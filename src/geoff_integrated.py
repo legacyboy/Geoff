@@ -1865,6 +1865,8 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             inventory["integrity_failures"] = inventory.get("integrity_failures", []) + [str(item)]
 
         ext = item.suffix.lower()
+        # Check compound suffix like .tar.gz
+        compound_ext = ''.join(item.suffixes[-2:]).lower() if len(item.suffixes) >= 2 else ext
         name_lower = item.name.lower()
 
         if ext in disk_ext:
@@ -1881,7 +1883,7 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             inventory["syslogs"].append(str(item))
         elif name_lower in mobile_indicators:
             inventory["mobile_backups"].append(str(item))
-        elif ext in mobile_ext or any(ind in name_lower for ind in mobile_name_indicators):
+        elif ext in mobile_ext or compound_ext in mobile_ext or any(ind in name_lower for ind in mobile_name_indicators):
             inventory["mobile_backups"].append(str(item))
         else:
             inventory["other_files"].append(str(item))
