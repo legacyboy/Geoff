@@ -2295,6 +2295,20 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"  Device: {dev_id} ({dev.get('device_type', 'unknown')}) "
                         f"owner={dev.get('owner', 'unknown')} "
                         f"files={len(dev.get('evidence_files', []))}")
+        # Log mobile metadata discoveries
+        meta = dev.get("metadata", {})
+        if "keychain_in_zip" in meta:
+            _fe_log(job_id, f"    📱 Found keychain in zip: {meta['keychain_in_zip']}")
+        if "contacts_in_zip" in meta:
+            _fe_log(job_id, f"    📱 Found contacts in zip: {meta['contacts_in_zip']}")
+        if "keychain_entries" in meta:
+            _fe_log(job_id, f"    🔑 Extracted {len(meta['keychain_entries'])} keychain entries")
+        if "apple_id" in meta:
+            _fe_log(job_id, f"    🍎 Apple ID: {meta['apple_id']}")
+        if "ios_accounts" in meta:
+            _fe_log(job_id, f"    👤 iOS accounts: {len(meta['ios_accounts'])}")
+        if "android_accounts" in meta:
+            _fe_log(job_id, f"    🤖 Android accounts: {len(meta['android_accounts'])}")
 
     # Determine OS from dominant device type (for playbook selection)
     os_type = _detect_os_from_devices(device_map)
