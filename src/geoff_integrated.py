@@ -1378,6 +1378,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-022": "Browser Forensics",
     "PB-SIFT-023": "Email Forensics",
     "PB-SIFT-024": "macOS Forensics",
+    "PB-SIFT-025": "Generic File Analysis",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1820,7 +1821,97 @@ PLAYBOOK_STEPS = {
             ("macos", "analyze_launch_agents", {"directory": "{file}"}),
         ],
     },
+    "PB-SIFT-025": {  # Generic File Analysis — every unclassified file gets analysed
+        "other_files": [
+            ("remnux", "die_scan",       {"target_file": "{file}"}),
+            ("remnux", "exiftool_scan",  {"target_file": "{file}"}),
+            ("remnux", "clamav_scan",    {"target_file": "{file}"}),
+            ("remnux", "ssdeep_hash",    {"target_file": "{file}"}),
+            ("remnux", "floss_strings",  {"target_file": "{file}"}),
+            ("remnux", "radare2_analyze",{"target_file": "{file}"}),
+            ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
+        ],
+    },
 }
+
+# Mapping of header-detected file types to inventory buckets for validation
+_HEADER_TYPE_MAP = {
+    "ewf_disk_image": "disk_images",
+    "pcap": "pcaps",
+    "registry_hive": "registry_hives",
+    "sqlite_db": "other_files",  # May be mobile — validated by name
+    "zip_archive": "other_files",  # May be mobile — validated by name
+    "gzip_archive": "other_files",  # May be mobile — validated by name
+    "tar_archive": "other_files",
+    "7zip_archive": "other_files",
+    "elf_binary": "other_files",
+    "macho_binary": "other_files",
+    "pe_binary": "other_files",
+}
+
+
+def _validate_inventory_classification(inventory: dict, job_id: str = None) -> dict:
+    """Validate and re-classify files that may have been mis-categorized.
+
+    Geoff should NEVER leave files unprocessed in evidence. This function:
+      1. Re-scans every file in 'other_files' using content-based detection
+      2. Moves files with detectable headers to the correct bucket
+      3. Warns about files that appear misclassified
+      4. Returns the corrected inventory with a 'validation_log'
+
+    Files that cannot be positively identified remain in 'other_files'
+    for the catch-all PB-SIFT-025 (Generic File Analysis).
+    """
+    validation_log = []
+    moved = {k: [] for k in inventory if k != "other_files" and isinstance(inventory[k], list)}
+
+    # Files to re-check: everything currently in 'other_files'
+    to_check = list(inventory.get("other_files", []))
+    still_other = []
+
+    for fpath in to_check:
+        # Skip directories, symlinks, etc.
+        p = Path(fpath)
+        if not p.is_file():
+            still_other.append(fpath)
+            continue
+
+        # Fast header-based re-detection
+        header_type = _detect_file_type_from_header(fpath)
+        target_bucket = _HEADER_TYPE_MAP.get(header_type)
+
+        if target_bucket and target_bucket in inventory:
+            # Move to correct bucket
+            if fpath not in inventory[target_bucket]:
+                inventory[target_bucket].append(fpath)
+            moved[target_bucket].append(fpath)
+            msg = f"VALIDATION: {p.name} -> {target_bucket} (header: {header_type})"
+            validation_log.append(msg)
+            if job_id:
+                _fe_log(job_id, f"  ⚠ {msg}")
+        else:
+            # Remains in other_files for generic analysis
+            still_other.append(fpath)
+
+    # Update other_files to only contain unclassified files
+    inventory["other_files"] = still_other
+
+    # Log summary
+    total_moved = sum(len(v) for v in moved.values())
+    if total_moved > 0:
+        summary = f"VALIDATION: {total_moved} file(s) reclassified from other_files"
+        for bucket, files in moved.items():
+            if files:
+                summary += f" | {bucket}: {len(files)}"
+        if job_id:
+            _fe_log(job_id, f"  ⚠ {summary}")
+        validation_log.insert(0, summary)
+    else:
+        validation_log.append("VALIDATION: No misclassifications detected")
+
+    inventory["validation_log"] = validation_log
+    return inventory
+
 
 
 def _detect_file_type_from_header(path: str) -> str | None:
@@ -2354,6 +2445,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         inventory = _inventory_evidence(evidence_path)
 
+    # Phase 0b: Validate classification — NEVER leave files unprocessed
+    _update_job(2, "validation", "Re-checking file classifications")
+    inventory = _validate_inventory_classification(inventory, job_id)
+    _fe_log(job_id, f"  Validation: {len(inventory.get('other_files', []))} files remain in other_files for generic analysis")
+
     # Phase 1a: Device Discovery & User Attribution
     _update_job(3, "discovery", "Identifying devices and users")
     device_disc = DeviceDiscovery(orchestrator)
@@ -2699,6 +2795,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         execution_plan.append("PB-SIFT-016")
     else:
         skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
+
+    # Generic File Analysis — ALWAYS run when unclassified files remain
+    if len(inventory["other_files"]) > 0:
+        execution_plan.append("PB-SIFT-025")
+        _fe_log(job_id, f"  PB-SIFT-025: Generic File Analysis queued for {len(inventory['other_files'])} unclassified file(s)")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
 
     # Classification based on indicator hits — must be computed before manager review
     hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
