@@ -2805,6 +2805,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         continue
                     item_stem = Path(item).stem
                     for module, function, raw_params in step_templates:
+                        # Filter mobile steps by device type
+                        if playbook_id == "PB-SIFT-021":
+                            device_type = (dev.get("device_type") or "").lower()
+                            is_ios = device_type in ("ios_mobile", "ios")
+                            is_android = device_type in ("android_mobile", "android")
+                            
+                            # iOS-only steps
+                            if function.startswith("extract_ios_") or function in ("analyze_ios_backup", "run_ileapp"):
+                                if not is_ios:
+                                    continue
+                            # Android-only steps
+                            elif function.startswith("extract_android_") or function in ("analyze_android", "run_aleapp"):
+                                if not is_android:
+                                    continue
+                            # Platform-agnostic steps (whatsapp, telegram, photo_exif) — skip if neither
+                            elif function in ("extract_whatsapp", "extract_telegram", "extract_mobile_photo_exif"):
+                                if not (is_ios or is_android):
+                                    continue
+
                         _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
 
                         # Build actual params by substituting placeholders
