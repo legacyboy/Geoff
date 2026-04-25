@@ -1847,6 +1847,14 @@ _HEADER_TYPE_MAP = {
     "elf_binary": "other_files",
     "macho_binary": "other_files",
     "pe_binary": "other_files",
+    "dmg_image": "disk_images",
+    "vmdk_image": "disk_images",
+    "vhd_image": "disk_images",
+    "qcow2_image": "disk_images",
+    "iso_image": "disk_images",
+    "ova_archive": "other_files",
+    "jpeg_image": "other_files",
+    "png_image": "other_files",
 }
 
 
@@ -1880,8 +1888,8 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
         header_type = _detect_file_type_from_header(fpath)
         target_bucket = _HEADER_TYPE_MAP.get(header_type)
 
-        if target_bucket and target_bucket in inventory:
-            # Move to correct bucket
+        if target_bucket and target_bucket in inventory and target_bucket != "other_files":
+            # Move to correct bucket (only if it's a different bucket)
             if fpath not in inventory[target_bucket]:
                 inventory[target_bucket].append(fpath)
             moved[target_bucket].append(fpath)
@@ -1892,6 +1900,9 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
         else:
             # Remains in other_files for generic analysis
             still_other.append(fpath)
+            # Log detected type even if staying in other_files (audit trail)
+            if header_type and job_id:
+                _fe_log(job_id, f"  ✓ {p.name}: detected as {header_type} -> other_files (generic analysis)")
 
     # Update other_files to only contain unclassified files
     inventory["other_files"] = still_other
@@ -1966,6 +1977,36 @@ def _detect_file_type_from_header(path: str) -> str | None:
         # Windows PE
         if header[:2] == b'MZ':
             return "pe_binary"
+        
+        # DMG (Apple disk image) — koly signature
+        if b'koly' in header:
+            return "dmg_image"
+        
+        # VMDK (VMware disk) — sparse or descriptor
+        if header[:4] == b'KDMV' or b'Disk DescriptorFile' in header[:32]:
+            return "vmdk_image"
+        
+        # ISO 9660 / UDF
+        if header[:5] == b'CD001' or header[:4] in (b'NSR0', b'NSR02', b'NSR03'):
+            return "iso_image"
+        
+        # VHD/VHDX (Microsoft virtual disk)
+        if header[:4] == b'vhdx' or header[:8] == b'conectix':
+            return "vhd_image"
+        
+        # QCOW2 (QEMU disk)
+        if header[:4] == b'QFI\xfb':
+            return "qcow2_image"
+        
+        # OVA — XML with OVF namespace
+        if b'<?xml' in header[:8] and b'ovf' in header[:64].lower():
+            return "ova_archive"
+        
+        # JPEG/PNG images (mobile photo evidence)
+        if header[:4] == b'\xff\xd8\xff\xe0' or header[:4] == b'\xff\xd8\xff\xe1':
+            return "jpeg_image"
+        if header[:8] == b'\x89PNG\r\n\x1a\n':
+            return "png_image"
         
         return None
     except:
