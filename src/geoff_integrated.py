@@ -116,7 +116,12 @@ def _hash_file(path):
 
 
 def _atomic_write(path, data, mode='w'):
-    """Atomically write data to path using temp file + replace."""
+    """Atomically write data to path using temp file + replace.
+
+    Parent directory is created on demand: callers shouldn't have to
+    pre-mkdir each subdirectory of the case work dir before writing.
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = str(path) + '.tmp'
     try:
         with open(tmp, mode) as f:
@@ -2767,6 +2772,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         case_work_dir.mkdir(parents=True, exist_ok=True)
     # Create evidence separation directories
     (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
+    (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
     
     # Write evidence manifest to evidence/raw/ (references, not copies/links)
     # Raw evidence stays in its original location — only derived artifacts go here
@@ -6516,6 +6522,14 @@ def find_evil_route():
         data = request.json or {}
         evidence_dir = data.get('evidence_dir', '').strip() or data.get('evidence_path', '').strip() or EVIDENCE_BASE_DIR
 
+        # Reject shell-metacharacter input up front — before any path massaging
+        # below silently rewrites it to something benign and hides the attempt.
+        if _UNSAFE_PATH_CHARS.search(evidence_dir):
+            return jsonify({
+                "status": "error",
+                "error": f"Evidence path contains unsafe characters and will not be processed: {evidence_dir!r}",
+            }), 400
+
         # If not an absolute path or doesn't exist as-is, try joining with EVIDENCE_BASE_DIR
         # so the user can paste just a folder name from the evidence tab (e.g. "IR-016-CloudJack")
         if evidence_dir and not Path(evidence_dir).is_absolute():
@@ -6525,7 +6539,7 @@ def find_evil_route():
             if Path(candidate).exists():
                 evidence_dir = candidate
 
-        # Reject paths containing shell metacharacters
+        # Reject paths that resolve outside allowed directories
         try:
             _validate_evidence_path(evidence_dir)
         except ValueError as e:
