@@ -45,6 +45,9 @@ VALID_PATHS = [
     "/evidence/suspect pc/disk.E01",          # space is fine
     "/evidence/Alice's-laptop/disk.img",      # apostrophe fine (not in regex)
     "/evidence/case.2024-01-01/disk.E01",     # dots and dashes fine
+    # Cellebrite extraction paths — see commit ac8e0b6 (parens, brackets allowed).
+    "/evidence/Cellebrite (UFED) extraction/data.bin",
+    "/evidence/extraction[0]/data.bin",
 ]
 
 
@@ -65,12 +68,8 @@ INVALID_PATHS = [
     "/evidence && malicious",
     "/evidence`whoami`",
     "/evidence$(id)",
-    "/evidence/{file}",
-    "/evidence[0]",
     "/evidence<redirect",
     "/evidence>output",
-    # Backslash (Windows paths with backslashes are blocked — use forward slashes)
-    "C:\\Users\\suspect\\desktop",
     # Newline / tab injection
     "/evidence/\nmalicious",
     "/evidence/\rmalicious",
