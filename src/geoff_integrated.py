@@ -361,7 +361,7 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
     if job_id:
         _fe_log(job_id, log_msg)
     else:
-        print(f"[GEOFF] error: {log_msg}")
+        print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
     if STRICT_MODE:
         if e:
             raise e
@@ -371,7 +371,7 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
 
 def _log_info(msg: str):
     """Info-level logger — not an error."""
-    print(f"[GEOFF] {msg}")
+    print(f"[GEOFF] {msg}", file=sys.stderr)
 
 
 def _apply_anti_forensics_cascade(findings_writer) -> int:
@@ -472,7 +472,7 @@ def _resolve_dir(env_var, default_path, fallback_subdir):
     except (PermissionError, OSError):
         fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
         Path(fallback).mkdir(parents=True, exist_ok=True)
-        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
+        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}", file=sys.stderr)
         return fallback
 
 EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
@@ -915,7 +915,7 @@ def call_llm(user_message, context="", agent_type="manager"):
         else:
             return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
     except Exception as e:
-        print(f"[GEOFF] LLM Error: {e}")
+        print(f"[GEOFF] LLM Error: {e}", file=sys.stderr)
         if STRICT_MODE:
             raise
         return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
@@ -1264,7 +1264,7 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     except (PermissionError, OSError):
         case_work_path = Path(tempfile.gettempdir()) / "geoff-cases" / case_work_dir
         case_work_path.mkdir(parents=True, exist_ok=True)
-        print(f"[GEOFF] Case work dir fallback: {case_work_path}")
+        print(f"[GEOFF] Case work dir fallback: {case_work_path}", file=sys.stderr)
 
     # Initialize git repo
     git_dir = case_work_path / ".git"
@@ -1332,7 +1332,7 @@ def get_evidence_recursive(path, prefix=""):
                 size = os.path.getsize(item_path)
                 items.append(f"{display_name} ({size} bytes)")
     except Exception as e:
-        print(f"[GEOFF] Error reading evidence directory: {e}")
+        print(f"[GEOFF] Error reading evidence directory: {e}", file=sys.stderr)
     return items
 
 
@@ -2147,7 +2147,7 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         try:
             size = item.stat().st_size
         except OSError as e:
-            print(f"[GEOFF] Cannot stat {item}: {e}")
+            print(f"[GEOFF] Cannot stat {item}: {e}", file=sys.stderr)
             size = 0
         inventory["total_size_bytes"] += size
 
@@ -6519,7 +6519,10 @@ def find_evil_route():
         { "job_id": "...", "status": "running" }
     """
     try:
-        data = request.json or {}
+        # Tolerate missing/malformed JSON body — bare POST returns 400, not 500.
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"status": "error", "error": "Request body must be a JSON object"}), 400
         evidence_dir = data.get('evidence_dir', '').strip() or data.get('evidence_path', '').strip() or EVIDENCE_BASE_DIR
 
         # Reject shell-metacharacter input up front — before any path massaging
