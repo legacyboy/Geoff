@@ -1910,8 +1910,14 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
 
     # Files to re-check: everything currently in 'other_files'
     to_check = list(inventory.get("other_files", []))
-    still_other = []
 
+    # Guard against runaway validation on huge extractions (e.g. 500K+ iOS files)
+    VALIDATION_LIMIT = 5000
+    if len(to_check) > VALIDATION_LIMIT:
+        _fe_log(job_id, f"  ⚠ {len(to_check)} files in other_files — validating first {VALIDATION_LIMIT} (rest to PB-SIFT-025)")
+        to_check = to_check[:VALIDATION_LIMIT]
+
+    still_other = []
     for fpath in to_check:
         # Skip directories, symlinks, etc.
         p = Path(fpath)
@@ -1940,7 +1946,12 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
                 _fe_log(job_id, f"  ✓ {p.name}: detected as {header_type} -> other_files (generic analysis)")
 
     # Update other_files to only contain unclassified files
-    inventory["other_files"] = still_other
+    # Include files we didn't validate (truncated) + files that stayed in other_files
+    if len(inventory.get("other_files", [])) > VALIDATION_LIMIT:
+        unvalidated = inventory["other_files"][VALIDATION_LIMIT:]
+        inventory["other_files"] = still_other + unvalidated
+    else:
+        inventory["other_files"] = still_other
 
     # Log summary
     total_moved = sum(len(v) for v in moved.values())
