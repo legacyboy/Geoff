@@ -233,7 +233,8 @@ class DeviceDiscovery:
         all_users = {}  # normalized_username -> {aliases, devices, metadata}
         for dev_id, dev in device_map.items():
             owner = dev.get("owner")
-            if owner:
+            # Skip None and literal "null" string (unset device owner)
+            if owner and str(owner).lower() != "null":
                 norm = self._normalize_username(owner)
                 if norm not in all_users:
                     all_users[norm] = {
@@ -887,18 +888,23 @@ class DeviceDiscovery:
             owner_match = re.search(r'Device owner:(.+)', content)
             if owner_match:
                 owner_raw = owner_match.group(1).strip()
-                # Parse "This Is's iPhone" → owner "This Is"
-                # Handle both ASCII apostrophe and Unicode right single quotation mark
-                name_match = re.match(r"^(.+?)[\u0027\u2019]s\s+(iphone|ipad|ipod|android|samsung|pixel|device)",
-                                     owner_raw, re.IGNORECASE)
-                if name_match:
-                    dev["owner"] = name_match.group(1).strip()
-                    dev["owner_confidence"] = "HIGH"
+                # Skip if owner is literally "null" (unset device)
+                if owner_raw.lower() == "null":
+                    dev["owner"] = None
+                    dev["owner_confidence"] = "NONE"
                 else:
-                    # Just use the raw owner string if no pattern match
-                    dev["owner"] = owner_raw
-                    dev["owner_confidence"] = "MEDIUM"
-                dev["discovery_method"] = "cellebrite_deviceinfo"
+                    # Parse "This Is's iPhone" → owner "This Is"
+                    # Handle both ASCII apostrophe and Unicode right single quotation mark
+                    name_match = re.match(r"^(.+?)[\u0027\u2019]s\s+(iphone|ipad|ipod|android|samsung|pixel|device)",
+                                         owner_raw, re.IGNORECASE)
+                    if name_match:
+                        dev["owner"] = name_match.group(1).strip()
+                        dev["owner_confidence"] = "HIGH"
+                    else:
+                        # Just use the raw owner string if no pattern match
+                        dev["owner"] = owner_raw
+                        dev["owner_confidence"] = "MEDIUM"
+                    dev["discovery_method"] = "cellebrite_deviceinfo"
             
             # Extract vendor
             vendor_match = re.search(r'Vendor:(.+)', content)

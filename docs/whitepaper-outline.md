@@ -116,7 +116,7 @@ The evaluation needs to support three claims: (1) Geoff matches an expert SIFT w
 ### 6.1 Datasets `[TODO]`
 
 - Public DFIR datasets — candidates: NIST CFReDS, DFRWS Rodeo, Magnet weekly CTF cases, CFReDS hacking cases. Pick 5-10 cases covering varied attack patterns (ransomware, lateral movement, insider, web shell).
-- Ground truth: published walkthroughs / official solutions.
+- Ground truth: published walkthroughs.
 
 ### 6.2 Baselines `[TODO]`
 
