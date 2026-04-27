@@ -130,7 +130,9 @@ def test_in_memory_cap_prints_warning(tmp_path, capsys):
     for i in range(4):
         fw.append(_make_record(f"step{i}"))
     captured = capsys.readouterr()
-    assert "cap" in captured.out.lower() or "in-memory" in captured.out.lower()
+    # Warning goes to stderr so JSON output on stdout stays parseable for the CLI.
+    combined = (captured.out + captured.err).lower()
+    assert "cap" in combined or "in-memory" in combined
 
 
 # ---------------------------------------------------------------------------
