@@ -2235,21 +2235,36 @@ class MOBILE_Specialist:
         if data_dir:
             data_path = Path(data_dir)
             root_patterns = [
-                ('**/su', 'su binary', 'high'),
-                ('**/.magisk', 'Magisk hidden directory', 'high'),
-                ('**/magisk', 'Magisk binary', 'high'),
-                ('**/busybox', 'BusyBox binary', 'medium'),
-                ('**/.superuser*', 'Superuser config', 'medium'),
+                ('su', 'su binary', 'high'),
+                ('.magisk', 'Magisk hidden directory', 'high'),
+                ('magisk', 'Magisk binary', 'high'),
+                ('busybox', 'BusyBox binary', 'medium'),
+                ('.superuser', 'Superuser config', 'medium'),
             ]
-            for pattern, desc, confidence in root_patterns:
-                matches = list(data_path.glob(pattern))
-                if matches:
-                    indicators.append({
-                        'type': 'root_binary', 'platform': 'android',
-                        'indicator': desc,
-                        'paths': [str(m.relative_to(data_path)) for m in matches[:5]],
-                        'confidence': confidence,
-                    })
+            # Use os.walk instead of Path.glob for speed on large trees
+            _max_walk = 50000
+            _walked = 0
+            for root, dirs, files in os.walk(data_dir):
+                for fname in files:
+                    _walked += 1
+                    if _walked > _max_walk:
+                        break
+                    for pattern_name, desc, confidence in root_patterns:
+                        if pattern_name.startswith('.'):
+                            if fname.startswith(pattern_name) or fname == pattern_name[1:]:
+                                pass  # handled below
+                        if fname == pattern_name or fname.startswith(pattern_name):
+                            indicators.append({
+                                'type': 'root_binary', 'platform': 'android',
+                                'indicator': desc,
+                                'paths': [str(Path(root).relative_to(data_path) / fname)],
+                                'confidence': confidence,
+                            })
+                            break
+                    if len([i for i in indicators if i['type'] == 'root_binary']) >= 5:
+                        break
+                if _walked > _max_walk:
+                    break
             root_pkgs = {
                 'com.topjohnwu.magisk': 'Magisk root manager',
                 'eu.chainfire.supersu': 'SuperSU root manager',
