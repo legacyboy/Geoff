@@ -2661,17 +2661,26 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     "files": extracted_files,
                 })
                 # Add extracted files to inventory for processing
-                for fpath in extracted_files:
+                # CAP: Limit to first 1000 files to prevent runaway loops on massive extractions
+                # DeviceDiscovery will handle the directory contents directly
+                _file_cap = 1000
+                _added = 0
+                for fpath in extracted_files[:_file_cap]:
                     fheader = _detect_file_type_from_header(fpath)
                     if fheader == "sqlite_db":
                         if fpath not in inventory["mobile_backups"]:
                             inventory["mobile_backups"].append(fpath)
+                            _added += 1
                     elif fheader in ("elf_binary", "pe_binary", "macho_binary"):
                         if fpath not in inventory["other_files"]:
                             inventory["other_files"].append(fpath)
+                            _added += 1
                     else:
                         if fpath not in inventory["other_files"]:
                             inventory["other_files"].append(fpath)
+                            _added += 1
+                if len(extracted_files) > _file_cap:
+                    _fe_log(job_id, f"  ⚠ Only added first {_file_cap}/{len(extracted_files)} files to inventory (rest via DeviceDiscovery)")
                 # Remove the archive from inventory so device discovery uses extracted dir
                 if archive_path in inventory.get("mobile_backups", []):
                     inventory["mobile_backups"].remove(archive_path)
