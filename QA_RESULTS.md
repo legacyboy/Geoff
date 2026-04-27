@@ -7341,3 +7341,645 @@ SyntaxError: f-string: expecting '=', or '!', or ':', or '}'
 - **Exit code:** 0
 - **Result:** {"error":"Evidence path resolves outside allowed directories: '/tmp' \u2192 /tmp","status":"error"}
 
+
+---
+## QA Run: 2026-04-25 08:30:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+
+---
+## QA Run: 2026-04-25 08:45:01 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 28
+- **Result:** 
+
+
+---
+## QA Run: 2026-04-25 09:00:01 CDT — Scenario: individual_specialist
+
+---
+## QA Run: 2026-04-25 09:15:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 09:30:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/home/sansforensics/evidence-storage/evidence/../../../etc/passwd' \u2192 /home/etc/passwd","status":"error"}
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Error opening image file (raw_open: file \"/etc/shadow\" - Permission denied)\n","stdout":"","timestamp":"2026-04-25T14:30:02.107020","tool":"fls"}
+
+
+---
+## QA Run: 2026-04-25 09:45:01 CDT — Scenario: individual_specialist
+
+---
+## QA Run: 2026-04-25 10:00:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/hacking-case","job_id":"fe-ca27fd699065","message":"Find Evil job started. Poll /find-evil/status/fe-ca27fd699065 for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence/data-leakage-case","job_id":"fe-32489b9461f9","message":"Find Evil job started. Poll /find-evil/status/fe-32489b9461f9 for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence-storage/evidence","job_id":"fe-7ea4fb592ab8","message":"Find Evil job started. Poll /find-evil/status/fe-7ea4fb592ab8 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-25 10:15:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+
+---
+## QA Run: 2026-04-25 10:30:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"How do I detect timestomping?\"}'"`
+- **Exit code:** 28
+- **Result:** 
+
+
+---
+## QA Run: 2026-04-25 10:45:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+
+---
+## QA Run: 2026-04-25 11:00:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 20:15:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 20:30:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 20:45:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What artifacts indicate persistence on Windows?\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 21:00:01 CDT — Scenario: empty_directory
+### Find Evil on empty directory
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp/qa_empty_*\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 21:15:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 21:30:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What IOCs should I look for in a ransomware case?\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 21:45:01 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+-### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 23:30:02 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-25 23:45:01 CDT — Scenario: edge_case_non_image
+### Find Evil on non-image file
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 00:00:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 00:15:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 00:30:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 00:45:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 01:00:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restar- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 01:30:01 CDT — Scenario: edge_case_non_image
+### Find Evil on non-image file
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 01:45:01 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 02:00:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 02:15:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 02:30:02 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 02:45:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 03:00:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 03:15:01 CDT — Scenario: individual_specialist
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 03:30:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 03:45:01 CDT — Scenario: individual_specialist
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 04:00:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 04:15:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 04:30:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 04:45:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 05:00:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 05:15:01 CDT — Scenario: report_analysis
+- **SKIPPED:** No recent reports found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 05:30:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-26 05:45:01 CDT — Scenario: report_analysis
+- **SKIPPED:- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-27 01:30:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What IOCs should I look for in a ransomware case?\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection timed out
+
+- **SKIPPED:** No recent reports found
+- **SKIPPED:** No recent reports found
+### Allowlist: bash bypass
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+### Concurrent job 1 (hacking case)
+- **Exit code:** 255
+- **Exit code:** 255
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+### Chat: tool request
+- **Exit code:** 255
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+Connection reset by 127.0.0.1 port 2222
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+### Find Evil on E01 segments
+Connection reset by 127.0.0.1 port 2222
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+Connection reset by 127.0.0.1 port 2222
+### Concurrent job 1 (hacking case)
+
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+
+
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 255
+- **Exit code:** 255
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 255
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+Connection reset by 127.0.0.1 port 2222
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+Connection reset by 127.0.0.1 port 2222
+
+
+- **SKIPPED:** No DD images found
+- **Result:** kex_exchange_identification: read: Connection reset by peer
+Connection reset by 127.0.0.1 port 2222
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 255
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- Attempting restart...
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- HTTP status: 
+- Attempting restart...
+- Attempting restart...
+### Find Evil on non-image file
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+### ⚠️ GEOFF HEALTH CHECK FAILED
+### Concurrent job 2 (data leakage)
+### Allowlist: python bypass
+- HTTP status: 
+- HTTP status: 
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- Attempting restart...
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- Attempting restart...
+- **Exit code:** 255
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+
+### Concurrent job 2 (data leakage)
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- HTTP status: 
+- Attempting restart...
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 255
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+- HTTP status: 
+- Attempting restart...
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 255
+- **Result:** ssh: connect to host localhost port 2222: Connection refused
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+### ⚠️ GEOFF HEALTH CHECK FAILED
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- HTTP status: 
+- Attempting restart...
+- Attempting restart...
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+- Restart result: HTTP 
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 
+- Attempting restart...
+- Restart result: HTTP 
+
+---
+## QA Run: 2026-04-27 01:45:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence/data-leakage-case","job_id":"fe-ca8b591e565d","message":"Find Evil job started. Poll /find-evil/status/fe-ca8b591e565d for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-27 02:00:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence/data-leakage-case","job_id":"fe-01eeb1d33f15","message":"Find Evil job started. Poll /find-evil/status/fe-01eeb1d33f15 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-27 02:15:02 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 28
+- **Result:** 
+
+
+---
+## QA Run: 2026-04-27 02:30:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence/data-leakage-case","job_id":"fe-f0c468ad9aa8","message":"Find Evil job started. Poll /find-evil/status/fe-f0c468ad9aa8 for progress.","status":"running"}
+

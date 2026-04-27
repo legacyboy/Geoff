@@ -400,6 +400,32 @@ def _apply_anti_forensics_cascade(findings_writer) -> int:
     return cascaded
 
 
+def _apply_anti_forensics_cascade(findings_writer) -> int:
+    """Idempotently downgrade confidence on every finding and tag it as compromised.
+
+    Safe to call repeatedly: a finding already tagged with "anti-forensics" in
+    its compromised_by list is skipped, so the CONFIRMED → POSSIBLE → UNVERIFIED
+    chain isn't applied twice. Returns the number of newly cascaded findings.
+    """
+    cascaded = 0
+    for f in findings_writer.all_records():
+        result = f.get("result")
+        if not isinstance(result, dict):
+            continue
+        already = result.get("compromised_by") or []
+        if "anti-forensics" in already:
+            continue
+        confidence = result.get("confidence", "")
+        if confidence == "CONFIRMED":
+            result["confidence"] = "POSSIBLE"
+        elif confidence == "POSSIBLE":
+            result["confidence"] = "UNVERIFIED"
+        result.setdefault("compromised_by", []).append("anti-forensics")
+        result["confidence_modifier"] = "downgraded-by-anti-forensics"
+        cascaded += 1
+    return cascaded
+
+
 def _audit_append(case_work_dir, event: str, **fields):
     """Append a state-transition record to the case's audit_trail.jsonl.
 
