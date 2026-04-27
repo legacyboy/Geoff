@@ -1993,7 +1993,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
 
     # If already extracted, return existing
     if extract_path.exists() and any(extract_path.iterdir()):
-        existing_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+        existing_files = _list_extracted_files(extract_dir)
         return {
             "status": "already_extracted",
             "extracted_dir": str(extract_path),
@@ -2016,7 +2016,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
             # ZIP archive
             with zipfile.ZipFile(archive_path, 'r') as zf:
                 zf.extractall(extract_dir)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[:2] == b'\x1f\x8b':
             # GZIP compressed (tar.gz or single .gz file)
@@ -2029,13 +2029,13 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
                 with gzip.open(archive_path, 'rb') as gz:
                     with open(out_path, 'wb') as out:
                         shutil.copyfileobj(gz, out)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[257:262] == b'ustar':
             # Plain TAR
             with tarfile.open(archive_path, 'r') as tf:
                 tf.extractall(extract_dir)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[:6] == b'7z\xbc\xaf\x27\x1c':
             # 7-Zip — requires p7zip-full
@@ -2045,7 +2045,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
             )
             if result["code"] != 0:
                 return {"status": "error", "error": f"7z extraction failed: {result['stderr'][:200]}"}
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         else:
             return {"status": "error", "error": f"Unknown archive format: {archive.name}"}
@@ -2066,6 +2066,16 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
         return {"status": "error", "error": str(e)}
 
 
+
+
+def _list_extracted_files(extract_dir: str, max_files: int = 100000):
+    files = []
+    for root, dirs, fnames in os.walk(extract_dir):
+        for fname in fnames:
+            files.append(os.path.join(root, fname))
+        if len(files) > max_files:
+            break
+    return files
 
 def _detect_file_type_from_header(path: str) -> str | None:
     """Detect file type from magic bytes (fast, no external tools needed)."""
