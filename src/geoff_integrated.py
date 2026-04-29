@@ -1414,6 +1414,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-023": "Email Forensics",
     "PB-SIFT-024": "macOS Forensics",
     "PB-SIFT-025": "Generic File Analysis",
+    "PB-SIFT-026": "File Carving & Recovery",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1865,6 +1866,11 @@ PLAYBOOK_STEPS = {
             ("remnux", "floss_strings",  {"target_file": "{file}"}),
             ("remnux", "radare2_analyze",{"target_file": "{file}"}),
             ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
+        ],
+    },
+    "PB-SIFT-026": {  # File Carving & Recovery — triggered automatically when needed
+        "disk_images": [
+            ("photorec", "recover_files", {"image": "{image}", "output_dir": "{output_dir}/carved"}),
         ],
     },
 }
@@ -3176,6 +3182,66 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
             break
 
+    # --- Automatic Carving Decision ---
+    # Geoff decides when to carve data from images based on evidence state
+    carving_needed = False
+    carving_reasons = []
+    
+    # 1. Disk images present but filesystem appears empty/unusual
+    for img in inventory.get("disk_images", []):
+        img_path = Path(str(img))
+        if img_path.exists():
+            size_mb = img_path.stat().st_size / (1024*1024)
+            # Large image but few files = likely wiped or raw
+            if size_mb > 100:
+                # Check if we got meaningful filesystem data
+                has_meaningful_data = False
+                for dev_id, dev in device_map.items():
+                    dev_files = dev.get("evidence_files", [])
+                    dev_img_files = [f for f in dev_files if str(f) == str(img)]
+                    if len(dev_files) > 5:  # Arbitrary threshold
+                        has_meaningful_data = True
+                        break
+                if not has_meaningful_data:
+                    carving_needed = True
+                    carving_reasons.append(f"Large disk image {img_path.name} ({size_mb:.0f}MB) with minimal filesystem recovery")
+    
+    # 2. Raw binary dumps (NAND, mobile chip-off) that need carving
+    raw_extensions = {".bin", ".img", ".raw", ".dd", ".nand"}
+    for f in inventory.get("other_files", []) + inventory.get("disk_images", []):
+        if Path(str(f)).suffix.lower() in raw_extensions:
+            carving_needed = True
+            carving_reasons.append(f"Raw binary dump detected: {Path(str(f)).name}")
+    
+    # 3. Anti-forensics detected → carve for deleted files
+    if "ANTI-FORENSICS-CONFIRMED" in confidence_modifiers:
+        carving_needed = True
+        carving_reasons.append("Anti-forensics detected — carving for deleted/wiped files")
+    
+    # 4. Mobile backups that are raw dumps (not structured backups)
+    for mb in inventory.get("mobile_backups", []):
+        mb_path = Path(str(mb))
+        if mb_path.is_file() and mb_path.suffix.lower() in {".bin", ".img", ".raw"}:
+            carving_needed = True
+            carving_reasons.append(f"Raw mobile dump: {mb_path.name}")
+    
+    if carving_needed:
+        _fe_log(job_id, f"🔪 Carving triggered: {len(carving_reasons)} reason(s)")
+        for reason in carving_reasons[:3]:
+            _fe_log(job_id, f"  - {reason}")
+        # Add carving playbook if not already in plan
+        carving_pb = "PB-SIFT-026"  # File Carving & Recovery
+        if carving_pb not in execution_plan and carving_pb in PLAYBOOK_STEPS:
+            execution_plan.append(carving_pb)
+            _fe_log(job_id, f"  Added {carving_pb} to execution plan")
+        elif carving_pb not in PLAYBOOK_STEPS:
+            # Fallback: use anti-forensics playbook's carving steps
+            if "PB-SIFT-012" not in execution_plan:
+                execution_plan.append("PB-SIFT-012")
+                _fe_log(job_id, f"  Added PB-SIFT-012 (Anti-Forensics) for carving fallback")
+    else:
+        _fe_log(job_id, "🔪 Carving: not needed (filesystem data recovered)")
+
     # Emit the Phase 12 execution plan
     execution_plan_output = {
         "case_id": str(case_work_dir.name),
@@ -3922,6 +3988,18 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"Behavioral analysis failed: {e}")
         all_behavioral_flags = {}
 
+    # Flag if no behavioral data recovered from any device
+    if not all_behavioral_flags or all(len(flags) == 0 for flags in all_behavioral_flags.values()):
+        _fe_log(job_id, "⚠️  No behavioral data recovered from any device — potential anti-forensics")
+        if not all_behavioral_flags:
+            all_behavioral_flags = {}
+        all_behavioral_flags["_no_recovery"] = [{
+            "flag_type": "no_recovery",
+            "severity": "MEDIUM",
+            "description": "No behavioral data recovered from evidence — potential anti-forensics (wiped, encrypted, or corrupted)",
+            "device_id": "all"
+        }]
+
     # ------------------------------------------------------------------
     # Phase 3d-new: Cross-Host Correlation
     # ------------------------------------------------------------------
@@ -3972,6 +4050,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 # Timeline anomalies with off-hours activity = potential data exfil
                 if flag.get("flag_type") == "timeline_anomaly":
                     severity_counts["MEDIUM"] += 1  # Boost severity
+                    evil_found = True
+                # No recovery = potential anti-forensics
+                if flag.get("flag_type") == "no_recovery":
                     evil_found = True
 
     # From specialist results
