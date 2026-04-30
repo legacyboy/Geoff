@@ -1,5 +1,5 @@
-# PB-SIFT-004: Network Device Forensics Playbook
-## Network Hardware Analysis — Routers, Switches, Firewalls, Access Points
+# PB-SIFT-004: Privilege Escalation Indicators Playbook
+## Privilege Escalation Indicators — Static Image Analysis
 
 **Objective:** High-fidelity forensic analysis of network infrastructure devices to identify unauthorized access, configuration tampering, rogue devices, and malicious traffic patterns.
 
