@@ -10454,3 +10454,62 @@ Connection reset by 127.0.0.1 port 2222
 - **Exit code:** 0
 - **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
 
+
+---
+## QA Run: 2026-04-29 22:15:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/home/sansforensics/evidence/../../../etc/passwd' \u2192 /etc/passwd","status":"error"}
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Error opening image file (raw_open: file \"/etc/shadow\" - Permission denied)\n","stdout":"","timestamp":"2026-04-30T03:15:02.248630","tool":"fls"}
+
+
+---
+## QA Run: 2026-04-29 22:30:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+
+---
+## QA Run: 2026-04-29 22:45:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence/data-leakage-case","job_id":"fe-3b56953e38da","message":"Find Evil job started. Poll /find-evil/status/fe-3b56953e38da for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-29 23:00:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp; cat /etc/passwd'","status":"error"}
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp | id'","status":"error"}
+
+
+---
+## QA Run: 2026-04-29 23:15:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What artifacts indicate persistence on Windows?\"}'"`
+- **Exit code:** 0
+- **Result:** {"response":"**Hypothesis 1** \u2014 Testing whether persistence artifacts on Windows can be identified through Windows Registry analysis capabilities.\n\n**Evidence** \u2014 The available forensic capabilities list \"Windows Registry Analysis (RegRipper)\" which explicitly includes \"persistence mechanisms\" and \"service enumeration\" as supported analysis categories. Additionally, \"Memory Forensics (Volatility)\" lists \"registry analysis\" and \"malware detection,\" while \"IOC Extraction\"
+
+
+---
+## QA Run: 2026-04-29 23:30:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
