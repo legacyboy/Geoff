@@ -118,7 +118,7 @@ creds = m.extract_credentials('memory.raw')
 - `volatility2` (Python 2) — legacy OS support (Win2K, Server 2003, profiles without ISF symbols)
 - `rekall` — alternative memory forensic framework
 - `yara` — memory-resident malware signature scanning
-- `strings` — extracting strings from dumped memory regions
+- strings extraction (specialist) — extracting strings from dumped memory regions
 
 ## Notes
 

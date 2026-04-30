@@ -119,7 +119,7 @@ Detect, identify, and attempt recovery of encrypted containers and volumes inclu
 - `veracrypt` (CLI) — VeraCrypt volume mounting (non-forensic, for testing)
 - `cryptsetup luksDump` — LUKS header parsing
 - `ent` / `entcalc` — entropy analysis for hidden volume detection
-- `strings` + regex — recovery key pattern matching
+- strings extraction (specialist) + regex — recovery key pattern matching
 
 ## Notes
 

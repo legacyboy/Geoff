@@ -98,11 +98,11 @@
 
 ### A.3 — Encryption Key Recovery
 - [ ] **Key Material Hunt:** Search memory and temp directories for encryption keys:
-    - `vol.py windows.filescan.FileScan` to find temporary files
+    - memory file scan (specialist) to find temporary files
     - Check `C:\Users\<user>\AppData\Local\Temp\` for key files
     - Search for files with high entropy (potential key material)
 - [ ] **AES Key Extraction:** If key found in temp file, extract and convert to hex for decryption.
-- [ ] **Memory Key Recovery:** Search process memory for 32-byte random values (AES-256 keys) using `vol.py windows.memmap.Memmap`.
+- [ ] **Memory Key Recovery:** Search process memory for 32-byte random values (AES-256 keys) using memory.memmap analysis.
 - [ ] **Decryption Testing:** Attempt decryption of sample encrypted file with recovered key before full recovery.
 
 ### A.4 — USB HID Keylog Analysis
