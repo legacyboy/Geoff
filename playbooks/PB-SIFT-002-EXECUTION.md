@@ -2,6 +2,7 @@
 ## Execution Indicators — Static Image Analysis
 
 **Objective:** Identification and analysis of mobile device artifacts discovered within a desktop forensic image, backups, or full filesystem extractions using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, registry, memory`
 
 ---
 

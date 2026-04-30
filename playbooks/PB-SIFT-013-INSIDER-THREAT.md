@@ -2,6 +2,7 @@
 ## Insider Threat Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of cloud-based data movement, SaaS application abuse, and the theft of cloud authentication tokens using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, memory, cloud, browser`
 
 ---
 

@@ -2,6 +2,7 @@
 ## Persistence Mechanism Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of persistence mechanisms used by attackers to maintain access to a system across reboots and user logoffs using the SIFT Workstation toolset.
+**Specialist:** `registry, memory, sleuthkit`
 
 ---
 

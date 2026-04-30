@@ -2,6 +2,7 @@
 ## File Carving — Automatic Recovery from Raw Images and Unallocated Space
 
 **Objective:** Recover deleted, fragmented, or hidden files from disk images, memory dumps, and raw binary data when standard filesystem analysis yields insufficient results.
+**Specialist:** `photorec, sleuthkit`
 
 **Trigger Conditions:**
 - Large disk image (>100MB) with minimal filesystem recovery

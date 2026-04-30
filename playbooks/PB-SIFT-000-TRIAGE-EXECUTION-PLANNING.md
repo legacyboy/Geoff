@@ -2,6 +2,7 @@
 ## Case Intake & Playbook Selection
 
 **Objective:** Autonomous assessment of available evidence to score quality, determine incident type, and generate a weighted, optimized execution plan for all subsequent SIFT playbooks. This is the mandatory entry point for every case — no other playbook may run until PB-SIFT-000 completes and emits its execution plan.
+**Specialist:** `multiple (triage orchestration)`
 
 ---
 

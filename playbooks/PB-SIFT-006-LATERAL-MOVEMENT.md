@@ -2,6 +2,7 @@
 ## Lateral Movement Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and mapping of lateral movement within a network using digital forensic images and the SIFT Workstation toolset.
+**Specialist:** `memory, network, registry, logs`
 
 ---
 
