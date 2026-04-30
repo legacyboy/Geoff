@@ -53,6 +53,7 @@ Reconstruct temporal event sequences across all evidence sources using Plaso (lo
 
 - [ ] **MFT Parsing:** Run `zimmerman.parse_mft(mft_file, output_csv)` using MFTECmd for the most comprehensive MFT timeline — includes Standard Information and File Name timestamps (MACB times).
 - [ ] **EVTX Timeline:** Run `zimmerman.parse_evtx_zimmerman(evtx_file, output_csv)` using EvtxECmd for detailed event log timeline — superior to python-evtx for complex event correlation.
+    > **Specialist Method:** `logs.parse_evtx`
 
 ## VSS Cross-Timeline
 
