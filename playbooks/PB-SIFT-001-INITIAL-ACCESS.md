@@ -3,6 +3,8 @@
 
 **Objective:** High-fidelity detection and reconstruction of the initial entry vector (Patient Zero) into a compromised system using the SIFT Workstation toolset.
 
+**Specialist:** `memory`, `browser`, `email`, `network`
+
 ---
 
 ### Phase 1 — Evidence Integrity
@@ -12,7 +14,9 @@
 ---
 
 ### Phase 2 — Memory Analysis
-- [ ] **Parent Process Audit:** Check for browser or email client processes that spawned unexpected child processes — flag immediately.
+- [ ] **Parent Process Audit:** Check for browser or email client processes that spawned unexpected child processes — flag immediately (`memory.extract_processes`).
+- [ ] **Command Line History:** Extract command lines from memory to find encoded PowerShell, suspicious paths (`memory.extract_processes` with cmdline analysis).
+- [ ] **Suspicious Children:** Flag `winword.exe` spawning `cmd.exe`, `excel.exe` spawning `powershell.exe`, `adobe.exe` spawning `wscript.exe`.
 - [ ] **Sourcing Patterns:** Flag `outlook.exe`, `thunderbird.exe`, or webmail browser tabs spawning `cmd.exe`, `powershell.exe`, or `wscript.exe`.
 - [ ] **Cradle Detection:** Check command lines for download cradle patterns initiated from Office or browser processes.
 - [ ] **Exploit Artifacts:** Flag exploit-related memory artifacts — heap spray patterns, ROP chain indicators, shellcode in non-executable regions.

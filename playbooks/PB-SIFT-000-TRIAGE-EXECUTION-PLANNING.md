@@ -36,19 +36,19 @@
 
 ### Phase 3 — Memory-First Rapid Analysis (CTF Technique)
 When memory dump available, perform quick-win analysis before deep disk forensics:
-- [ ] **Process Snapshot:** Run `vol.py windows.pslist.PsList` to get active process list.
+- [ ] **Process Snapshot:** Run `memory.extract_processes` to get active process list (auto-detects Vol2/Vol3).
 - [ ] **Parent-Child Mapping:** Identify process trees; flag processes with unusual parents (e.g., `powershell.exe` under `winword.exe`).
-- [ ] **Network State:** Run `vol.py windows.netscan.NetScan` to capture established connections at acquisition time.
-- [ ] **Command Line History:** Run `vol.py windows.cmdline.CmdLine` to see command-line arguments (reveals encoded PowerShell, suspicious paths).
-- [ ] **User Activity:** Run `vol.py windows.registry.userassist.UserAssist` to find recently executed programs.
-- [ ] **Credential Extraction:** If suspicious privileged processes found, run `vol.py windows.hashdump.Hashdump`.
+- [ ] **Network State:** Run `memory.extract_network` to capture established connections at acquisition time.
+- [ ] **Command Line History:** Analyze process output for command-line arguments (reveals encoded PowerShell, suspicious paths).
+- [ ] **User Activity:** Check process names and execution times for recently executed programs.
+- [ ] **Credential Extraction:** If suspicious privileged processes found, run `memory.extract_credentials`.
 - [ ] **Suspicious Process Memory:** Flag processes with:
     - No legitimate parent (PPID = 0 except system processes)
     - Network connections to uncommon ports
     - Command lines with encoded commands (Base64, -enc, -encodedcommand)
     - Recently executed but not in standard locations
 - [ ] **Memory Hash Validation:** Calculate MD5 of suspicious process memory dumps for IoC matching.
-- [ ] **Acquisition Time Correlation:** Compare memory acquisition timestamp with `windows.info.Info` to detect VM snapshot attacks.
+- [ ] **Acquisition Time Correlation:** Compare memory acquisition timestamp with OS info to detect VM snapshot attacks.
 
 **Memory-First Pivot Indicators:**
 - Web shell processes (`w3wp.exe`, `httpd.exe`) with suspicious command lines → **PB-SIFT-001** priority.
@@ -98,7 +98,7 @@ Perform quick pattern scans to pivot priority:
 - [ ] **Cloud Pivot:** Flag cloud CLI/token cache → Priority: **PB-SIFT-007**.
 - [ ] **LOTL:** Flag encoded PowerShell/LOLBin chains → Priority: **PB-SIFT-010**.
 - [ ] **Lateral Movement:** Flag lateral movement tools → Priority: **PB-SIFT-006**.
-- [ ] **Mobile:** Flag mobile device connection → Add **PB-SIFT-015**.
+- [ ] **Mobile:** Flag mobile device connection → Add **PB-SIFT-021** (Mobile Analysis).
 - [ ] **Web Server Compromise (CTF):** Flag XAMPP/DVWA, suspicious access.log entries, PHP web shells with cmd parameter → Priority: **PB-SIFT-001, 008**.
 - [ ] **SQL Injection Activity (CTF):** Flag sqlmap user-agent, SQLi payloads in logs, INTO OUTFILE attempts → Priority: **PB-SIFT-001, 012**.
 - [ ] **XSS Attack (CTF):** Flag `<script>` tags in web logs, eval(window.name) payloads → Priority: **PB-SIFT-001**.
@@ -121,8 +121,8 @@ Assign classification and execution order:
 | Web shell + Exploit logs | External Breach | 001, 006, 008, 003 | **HIGH** |
 | Cloud tokens + M365 CLI | Cloud Pivot | 013, 007, 005 | **HIGH** |
 | Linux image + SUID/Cron | Linux Compromise | 014, 003, 005 | **HIGH** |
-| macOS image + dylib injection | macOS Compromise | 015, 003, 005 | **HIGH** |
-| Net config + Firmware mismatch | Net Device Comp. | 015 | **HIGH** |
+| macOS image + dylib injection | macOS Compromise | 024, 003, 005 | **HIGH** |
+| Net config + Firmware mismatch | Net Device Comp. | 004 | **HIGH** |
 
 ---
 
@@ -133,7 +133,7 @@ Group playbooks to minimize analysis time:
 - [ ] **Group A (Memory):** Memory phases of 008, 006, 005, 010 (Symmetric/Parallel).
 - [ ] **Group B (Disk):** Disk phases of 008, 003, 010, 001 (Symmetric/Parallel).
 - [ ] **Group C (Logs):** Log phases of 009, 006, 005, 013, 012 (Symmetric/Parallel).
-- [ ] **Group E (Specialist):** 014, 015 (Independent).
+- [ ] **Group E (Specialist):** 014 (Linux), 024 (macOS) — independent execution per OS type.
 - [ ] **Group F (Correlation):** **PB-SIFT-016** (Post-all execution).
 
 ---
@@ -155,7 +155,7 @@ Re-evaluate plan if any of the following are discovered mid-run:
 - [ ] **Lateral Movement:** Add all hosts to **PB-SIFT-016**.
 - [ ] **Cloud Tokens:** Add **PB-SIFT-007**.
 - [ ] **Anti-Forensics:** Downgrade confidence of all completed findings to **POSSIBLE**.
-- [ ] **Mobile Connection:** Add **PB-SIFT-015**.
+- [ ] **Mobile Connection:** Add **PB-SIFT-021** (Mobile Analysis).
 - [ ] **New OS Partition:** Add appropriate OS-specific playbook.
 - [ ] **Insider Threat:** Move case to restricted handling queue.
 - [ ] **Additional Hosts:** Request images for referenced hosts.
