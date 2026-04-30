@@ -18,6 +18,7 @@
 - [ ] **Injection Detection:** Check for injected code regions — ransomware commonly injects into legitimate processes.
 - [ ] **Network State:** Enumerate network connections — flag outbound to TOR exit nodes or unknown C2 infrastructure.
 - [ ] **String Search:** Look for ransom note strings in memory regions.
+    > **Specialist Method:** `sleuthkit.extract_strings`
 
 ---
 
@@ -109,11 +110,13 @@
 ### A.4 — USB HID Keylog Analysis
 - [ ] **PCAP Review:** Analyze `keylog.pcapng` or similar USB keyboard traffic captures.
 - [ ] **HID Data Extraction:** Export USB HID data from packets (tshark: `usb.data_flag == 0` and `usb.capdata`).
+    > **Specialist Method:** `network.analyze_pcap`
 - [ ] **Keystroke Decoding:** Use PUK tool or custom scripts to decode HID keystroke scancodes to ASCII.
 - [ ] **Password Recovery:** Reconstruct typed passwords, credentials, or secret messages from keystroke sequences.
 
 ### A.5 — Steganography Detection
 - [ ] **SpamMimic Detection:** Flag suspicious "spam-like" text in documents or emails that may be steganographic.
+    > **Specialist Method:** `sleuthkit.list_inodes`
 - [ ] **Text Decoding:** Use SpamMimic decoder or similar tools to reveal hidden messages in seemingly random text.
 - [ ] **Email Attachment Analysis:** Check email attachments for embedded data using steganographic techniques.
 

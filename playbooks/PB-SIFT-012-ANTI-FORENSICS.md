@@ -119,5 +119,7 @@
 - [ ] **VSS Timeline Analysis:** Run `vss.analyze_vss_timeline(image)` on surviving shadow copies to reconstruct pre-deletion file state.
 
 ## PhotoRec for Deleted Files
+    > **Specialist Method:** `photorec.carve_files`
 
 - [ ] **Deep Carving:** Run `photorec.recover_files(image, output_dir)` to recover files that were securely deleted or wiped — PhotoRec carves from raw blocks, bypassing filesystem metadata.
+    > **Specialist Method:** `photorec.carve_files`

@@ -10513,3 +10513,26 @@ Connection reset by 127.0.0.1 port 2222
 ---
 ## QA Run: 2026-04-29 23:30:01 CDT — Scenario: single_dd_image
 - **SKIPPED:** No DD images found
+
+---
+## QA Run: 2026-04-29 23:45:01 CDT — Scenario: individual_specialist
+
+---
+## QA Run: 2026-04-30 00:00:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/home/sansforensics/evidence/data-leakage-case","job_id":"fe-42e0f96d4610","message":"Find Evil job started. Poll /find-evil/status/fe-42e0f96d4610 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-04-30 00:15:01 CDT — Scenario: single_dd_image
+- **SKIPPED:** No DD images found
+
+---
+## QA Run: 2026-04-30 00:30:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+

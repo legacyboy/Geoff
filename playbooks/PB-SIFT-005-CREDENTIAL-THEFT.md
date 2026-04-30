@@ -58,6 +58,7 @@
 - [ ] **Replication Traffic:** Flag DCSync traffic patterns — replication requests from non-DC hosts.
 - [ ] **Ticket Anomalies:** Flag Kerberos traffic anomalies — unusual ticket requests or forged PAC structures.
 - [ ] **Buffer Extraction:** Extract any credential-related strings from network buffers in the image.
+    > **Specialist Method:** `sleuthkit.extract_strings`
 
 ---
 
@@ -79,6 +80,9 @@
 - [ ] **VSS SAM Recovery:** Run `vss.extract_vss_files(image, output_dir, interesting_extensions=['.sam'])` to recover SAM hive backups from shadow copies.
 
 ## Volatility Memory Analysis
+    > **Specialist Method:** `memory.extract_processes / memory.extract_dlls / memory.extract_network`
 
 - [ ] **Memory Credential Dump:** Run `volatility.process_list(memory_dump)` to identify credential-related processes (`lsass.exe`, `mimikatz.exe`).
+    > **Specialist Method:** `memory.extract_processes / memory.extract_dlls / memory.extract_network`
 - [ ] **Registry Hive Extraction:** Run `volatility.scan_registry(memory_dump)` to extract registry hives from memory — may contain cached credentials.
+    > **Specialist Method:** `memory.extract_processes / memory.extract_dlls / memory.extract_network`
