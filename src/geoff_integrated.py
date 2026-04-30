@@ -1415,6 +1415,13 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-024": "macOS Forensics",
     "PB-SIFT-025": "Generic File Analysis",
     "PB-SIFT-026": "File Carving & Recovery",
+    "PB-SIFT-027": "Memory Forensics",
+    "PB-SIFT-028": "Windows Modern Artifacts",
+    "PB-SIFT-029": "Encrypted Containers",
+    "PB-SIFT-030": "Cloud Sync Artifacts",
+    "PB-SIFT-031": "Enterprise Collaboration",
+    "PB-SIFT-032": "VM Snapshot Forensics",
+    "PB-SIFT-033": "Container Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1871,6 +1878,85 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-026": {  # File Carving & Recovery — triggered automatically when needed
         "disk_images": [
             ("photorec", "recover_files", {"image": "{image}", "output_dir": "{output_dir}/carved"}),
+        ],
+    },
+    "PB-SIFT-027": {  # Memory Forensics — triggered by .raw/.dmp/.lime/.mem files
+        "memory_dumps": [
+            ("memory", "analyze_memory", {"memory_dump": "{mem}", "output_dir": "{output_dir}/memory"}),
+            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
+            ("memory", "extract_network", {"memory_dump": "{mem}"}),
+            ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
+            ("memory", "extract_registry", {"memory_dump": "{mem}"}),
+            ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-028": {  # Windows Modern Artifacts — triggered by Windows 10/11 OS
+        "disk_images": [
+            ("windows", "analyze_prefetch", {"image": "{image}"}),
+            ("windows", "analyze_jumplists", {"image": "{image}"}),
+            ("windows", "analyze_lnk", {"image": "{image}"}),
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
+            ("windows", "analyze_amcache", {"image": "{image}"}),
+            ("windows", "analyze_srum", {"image": "{image}"}),
+            ("windows", "analyze_timeline", {"image": "{image}"}),
+            ("windows", "analyze_defender", {"image": "{image}"}),
+            ("windows", "analyze_bits", {"image": "{image}"}),
+        ],
+        "registry_hives": [
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
+        ],
+    },
+    "PB-SIFT-029": {  # Encrypted Containers — triggered by encrypted volume detection
+        "disk_images": [
+            ("crypto", "analyze_bitlocker", {"image": "{image}"}),
+            ("crypto", "analyze_filevault", {"image": "{image}"}),
+            ("crypto", "analyze_veracrypt", {"image": "{image}"}),
+            ("crypto", "analyze_luks", {"image": "{image}"}),
+            ("crypto", "search_keys", {"evidence_path": "{image}"}),
+            ("crypto", "detect_encryption_anti_forensics", {"image": "{image}"}),
+        ],
+        "other_files": [
+            ("crypto", "search_keys", {"evidence_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-030": {  # Cloud Sync Artifacts — triggered by cloud sync DBs
+        "other_files": [
+            ("cloud", "analyze_onedrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_googledrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_dropbox", {"db_path": "{file}"}),
+            ("cloud", "analyze_icloud", {"db_path": "{file}"}),
+            ("cloud", "analyze_box", {"db_path": "{file}"}),
+            ("cloud", "detect_exfiltration", {"evidence_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-031": {  # Enterprise Collaboration — triggered by Teams/Slack/Discord/Skype/Zoom artifacts
+        "other_files": [
+            ("collaboration", "analyze_teams", {"db_path": "{file}"}),
+            ("collaboration", "analyze_slack", {"db_path": "{file}"}),
+            ("collaboration", "analyze_discord", {"db_path": "{file}"}),
+            ("collaboration", "analyze_skype", {"db_path": "{file}"}),
+            ("collaboration", "analyze_zoom", {"log_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-032": {  # VM Snapshot Forensics — triggered by .vmss/.vmsn/.vmem files
+        "memory_dumps": [
+            ("vm", "extract_memory", {"vmem_file": "{mem}"}),
+            ("vm", "detect_snapshots", {"config_path": "{file}"}),
+        ],
+        "disk_images": [
+            ("vm", "extract_disk", {"image": "{image}"}),
+            ("vm", "analyze_config", {"config_path": "{file}"}),
+            ("vm", "detect_escape", {"evidence_path": "{image}"}),
+        ],
+    },
+    "PB-SIFT-033": {  # Container Forensics — triggered by Docker/container artifacts
+        "other_files": [
+            ("container", "enumerate", {"evidence_path": "{file}"}),
+            ("container", "extract_filesystem", {"evidence_path": "{file}"}),
+            ("container", "analyze_image", {"image_path": "{file}"}),
+            ("container", "analyze_logs", {"log_path": "{file}"}),
+            ("container", "analyze_kubernetes", {"evidence_path": "{file}"}),
+            ("container", "detect_supply_chain", {"evidence_path": "{file}"}),
         ],
     },
 }
@@ -3040,6 +3126,111 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
     if any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"]):
         execution_plan.append("PB-SIFT-023")
+
+    # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
+
+    # Memory forensics — triggered by memory dump files
+    if inventory["memory_dumps"]:
+        execution_plan.append("PB-SIFT-027")
+        _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
+
+    # Windows Modern Artifacts — triggered by Windows OS + registry hives
+    if os_type == "windows" and inventory["registry_hives"]:
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
+
+    # Encrypted Containers — detect encrypted volume indicators
+    encrypted_indicators = {
+        "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
+        "filevault": ["apfs encrypted", "filevault", "corestorage"],
+        "veracrypt": ["veracrypt", "truecrypt", r"\.tc$"],
+        "luks": ["luks", "cryptsetup", "dm-crypt"],
+    }
+    encrypted_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for etype, indicators in encrypted_indicators.items():
+            if any(ind in f_lower for ind in indicators):
+                encrypted_detected = True
+                break
+    # Also check disk images for high-entropy (potential encrypted containers)
+    if not encrypted_detected:
+        for f in inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            if any(ind in f_lower for ind in [".tc", "veracrypt", "luks", "bitlocker"]):
+                encrypted_detected = True
+                break
+    if encrypted_detected:
+        execution_plan.append("PB-SIFT-029")
+        _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
+
+    # Cloud Sync Artifacts — detect cloud storage sync databases
+    cloud_sync_patterns = {
+        "onedrive": ["onedrive", "skydrive"],
+        "googledrive": ["snapshot.db", "drivefs", "google drive"],
+        "dropbox": ["filecache.db", "dropbox"],
+        "icloud": ["ubiquity", "clouddocs", "icloud"],
+        "box": ["box sync"],
+    }
+    cloud_sync_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for service, patterns in cloud_sync_patterns.items():
+            if any(p in f_lower for p in patterns):
+                cloud_sync_detected = True
+                break
+    if cloud_sync_detected:
+        execution_plan.append("PB-SIFT-030")
+        _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
+
+    # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
+    collab_patterns = {
+        "teams": ["teams", "microsoft teams"],
+        "slack": ["slack"],
+        "discord": ["discord"],
+        "skype": ["skype", "main.db"],
+        "zoom": ["zoom", "zoom.us"],
+    }
+    collab_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for app, patterns in collab_patterns.items():
+            if any(p in f_lower for p in patterns):
+                collab_detected = True
+                break
+    if collab_detected:
+        execution_plan.append("PB-SIFT-031")
+        _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
+
+    # VM Snapshot Forensics — detect VM snapshot/memory files
+    vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
+    vm_detected = False
+    for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
+        if Path(f).suffix.lower() in vm_exts or Path(f).name.lower().endswith(".vmx"):
+            vm_detected = True
+            break
+    if vm_detected:
+        execution_plan.append("PB-SIFT-032")
+        _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
+
+    # Container Forensics — detect Docker/container artifacts
+    container_patterns = {
+        "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
+        "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
+        "podman": ["podman", "containers"],
+    }
+    container_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for runtime, patterns in container_patterns.items():
+            if any(p in f_lower for p in patterns):
+                container_detected = True
+                break
+    if container_detected:
+        execution_plan.append("PB-SIFT-033")
+        _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
+
+    # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
 
     # Add malware playbooks when:
     #   a) triage output flagged a suspicious binary keyword, OR
@@ -6505,10 +6696,17 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
                    'extract_whatsapp', 'extract_telegram',
                    'extract_mobile_photo_exif', 'recover_deleted_sqlite_messages',
                    'run_aleapp'},
-    'browser':    {'extract_downloads', 'extract_cookies', 'extract_history'},
-    'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml'},
+    'browser':    {'extract_downloads', 'extract_cookies', 'extract_history',
+                   'extract_login_data', 'extract_web_data', 'extract_session_restore',
+                   'extract_firefox_key4', 'extract_firefox_formhistory', 'analyze_leveldb',
+                   'extract_saved_passwords'},
+    'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml',
+                   'extract_attachments', 'extract_ios_envelope', 'extract_android_gmail',
+                   'extract_email_provider', 'detect_auto_forward', 'analyze_received_chain'},
     'jumplist':   {'parse_jump_lists', 'parse_lnk_files', 'parse_recent_apps'},
-    'macos':      {'analyze_launch_agents', 'parse_unified_log', 'analyze_fseventsd', 'parse_plist'},
+    'macos':      {'analyze_launch_agents', 'parse_unified_log', 'analyze_fseventsd', 'parse_plist',
+                   'analyze_apfs_snapshot', 'parse_spotlight', 'analyze_t2_secureboot',
+                   'parse_asl_logs', 'analyze_app_bundles', 'check_gatekeeper'},
     'photorec':   {'recover_files'},
     'vss':        {'list_vss', 'extract_vss_files', 'analyze_vss_timeline', 'mount_vss'},
     'zimmerman':  {'parse_evtx_zimmerman', 'parse_mft', 'srum_parse', 'amcache_parse',
@@ -6516,6 +6714,21 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
     'remnux':     {'die_scan', 'exiftool_scan', 'peframe_scan', 'ssdeep_hash', 'hashdeep_audit',
                    'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
                    'radare2_analyze', 'floss_strings', 'clamav_scan'},
+    'memory':     {'analyze_memory', 'extract_processes', 'extract_network',
+                   'find_injected_code', 'extract_registry', 'extract_credentials'},
+    'windows':    {'analyze_prefetch', 'analyze_jumplists', 'analyze_lnk',
+                   'analyze_shimcache', 'analyze_amcache', 'analyze_srum',
+                   'analyze_timeline', 'analyze_defender', 'analyze_bits'},
+    'crypto':     {'analyze_bitlocker', 'analyze_filevault', 'analyze_veracrypt',
+                   'analyze_luks', 'search_keys', 'detect_encryption_anti_forensics'},
+    'cloud':      {'analyze_onedrive', 'analyze_googledrive', 'analyze_dropbox',
+                   'analyze_icloud', 'analyze_box', 'detect_exfiltration'},
+    'collaboration': {'analyze_teams', 'analyze_slack', 'analyze_discord',
+                      'analyze_skype', 'analyze_zoom'},
+    'vm':         {'detect_snapshots', 'extract_memory', 'extract_disk',
+                   'analyze_config', 'detect_escape'},
+    'container':  {'enumerate', 'extract_filesystem', 'analyze_image',
+                   'analyze_logs', 'analyze_kubernetes', 'detect_supply_chain'},
 }
 
 
