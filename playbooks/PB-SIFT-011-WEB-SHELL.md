@@ -1,5 +1,5 @@
-# PB-SIFT-013: Insider Threat Indicators Playbook
-## Insider Threat Indicators — Static Image Analysis
+# PB-SIFT-011: Web Shell Indicators Playbook
+## Web Shell Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of unauthorized data access, hoarding, and exfiltration by an internal user (insider threat) using the SIFT Workstation toolset.
 
