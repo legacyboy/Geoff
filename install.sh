@@ -87,7 +87,7 @@ if [[ "$SKIP_DEPS" == false ]]; then
             regripper libimage-exiftool-perl 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep ewfmount; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
@@ -125,6 +125,35 @@ if [[ "$SKIP_DEPS" == false ]]; then
                 ok "Volatility3 installed in venv"
             else
                 warn "Volatility3 installation may have failed — check manually"
+            fi
+        fi
+        # Volatility2 - install alongside Volatility3 for legacy OS support (Win2K, XP early)
+        vol2_found=false
+        if command -v vol.py &>/dev/null || command -v volatility &>/dev/null; then
+            vol2_found=true
+            info "Volatility2 already installed ($(command -v vol.py 2>/dev/null || command -v volatility 2>/dev/null))"
+        fi
+        if [ "$vol2_found" = false ]; then
+            info "Installing Volatility2 for legacy OS support..."
+            sudo apt-get install -y -qq python2 python2-dev python3-pip 2>/dev/null || true
+            # Install volatility2 from pip (community fork)
+            sudo pip3 install volatility2 --break-system-packages 2>/dev/null || \
+                sudo pip install volatility2 2>/dev/null || \
+                pip3 install --user volatility2 2>/dev/null || true
+            # Also try installing the standalone script
+            if ! command -v vol.py &>/dev/null; then
+                curl -sL "https://github.com/volatilityfoundation/volatility/archive/refs/heads/master.zip" -o "/tmp/vol2.zip" 2>/dev/null && \
+                    unzip -q -o "/tmp/vol2.zip" -d "/tmp/vol2" 2>/dev/null && \
+                    sudo mkdir -p /opt/volatility2 && \
+                    sudo cp -r /tmp/vol2/volatility-master/* /opt/volatility2/ 2>/dev/null && \
+                    sudo ln -sf /opt/volatility2/vol.py /usr/local/bin/vol.py 2>/dev/null && \
+                    rm -rf "/tmp/vol2" "/tmp/vol2.zip" || \
+                    warn "Volatility2 standalone install failed"
+            fi
+            if command -v vol.py &>/dev/null || [ -f "/usr/local/bin/vol.py" ]; then
+                ok "Volatility2 installed"
+            else
+                warn "Volatility2 installation may have failed — legacy memory dumps will need manual processing"
             fi
         fi
         # Install REMnux distro for malware analysis tools
@@ -180,7 +209,7 @@ DIE_EOF
         export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
     fi
     if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
-        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd; do
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd PECmd JLECmd LECmd AppCompatCacheParser; do
             if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
                 # Download from Zimmerman's distribution (net9 builds)
