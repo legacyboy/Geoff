@@ -83,11 +83,11 @@ if [[ "$SKIP_DEPS" == false ]]; then
     if command -v apt-get >/dev/null; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
-            sleuthkit ssdeep hashdeep exiftool plaso-tools \
+            sleuthkit ewf-tools ssdeep hashdeep exiftool plaso-tools \
             regripper libimage-exiftool-perl 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
