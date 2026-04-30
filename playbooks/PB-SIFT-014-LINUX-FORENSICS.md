@@ -2,6 +2,7 @@
 ## Linux Forensic Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of compromise indicators within a Linux-based digital forensic image using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, logs, memory`
 
 ---
 

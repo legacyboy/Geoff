@@ -2,6 +2,7 @@
 ## Anti-Forensics Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of attempts to hinder, deceive, or destroy forensic evidence, including log tampering, file wiping, timestomping, and defense evasion.
+**Specialist:** `sleuthkit, memory, plaso, logs`
 
 ---
 

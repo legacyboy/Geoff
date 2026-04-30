@@ -2,6 +2,7 @@
 ## Privilege Escalation Indicators — Static Image Analysis
 
 **Objective:** High-fidelity forensic analysis of network infrastructure devices to identify unauthorized access, configuration tampering, rogue devices, and malicious traffic patterns.
+**Specialist:** `sleuthkit, registry, memory`
 
 ---
 

@@ -2,6 +2,7 @@
 ## Web Shell Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of unauthorized data access, hoarding, and exfiltration by an internal user (insider threat) using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, logs, memory`
 
 ---
 

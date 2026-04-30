@@ -2,6 +2,7 @@
 ## Ransomware Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of ransomware activity within a digital forensic image using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, memory, logs, registry`
 
 ---
 

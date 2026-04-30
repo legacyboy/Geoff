@@ -2,6 +2,7 @@
 ## C2 Infrastructure — Static Image Analysis
 
 **Objective:** High-fidelity detection of command-and-control infrastructure, beaconing behavior, DNS tunneling, and persistent C2 channels within a forensic image. This playbook runs when C2 indicators are identified during triage (PB-SIFT-000) or when network artifacts suggest active C2 communication.
+**Specialist:** `memory, network, registry, logs`
 
 ---
 

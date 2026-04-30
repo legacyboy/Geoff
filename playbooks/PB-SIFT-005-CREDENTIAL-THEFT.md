@@ -2,6 +2,7 @@
 ## Credential Theft Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of credential harvesting and theft activity within a digital forensic image using the SIFT Workstation toolset.
+**Specialist:** `registry, memory, logs`
 
 ---
 
