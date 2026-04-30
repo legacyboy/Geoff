@@ -4834,16 +4834,37 @@ class MEMORY_Specialist:
     """Specialist for volatile memory forensics using Volatility3/Rekall."""
 
     def __init__(self):
-        self.volatility3_path = self._find_tool('volatility3')
-        self.volatility2_path = self._find_tool('volatility2')
+        self.volatility3_path = self._find_vol3()
+        self.volatility2_path = self._find_vol2()
         self.rekall_path = self._find_tool('rekall')
+
+    def _find_vol3(self) -> Optional[str]:
+        """Find Volatility3 binary (vol or volatility3)."""
+        for cmd in ['vol', 'volatility3']:
+            if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                return cmd
+        for path in ['/home/claw/.local/bin/vol', '/usr/local/bin/vol', '/usr/bin/vol']:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _find_vol2(self) -> Optional[str]:
+        """Find Volatility2 binary (vol.py only, NOT vol which is v3)."""
+        for cmd in ['vol.py']:
+            if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                return cmd
+        for path in ['/usr/local/bin/vol.py', '/opt/volatility2/vol.py']:
+            if Path(path).exists():
+                return path
+        return None
 
     def _find_tool(self, tool: str) -> Optional[str]:
         for cmd in [tool, 'vol.py', 'vol']:
             if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
                 return cmd
         # Check common paths
-        for path in ['/home/claw/.local/bin/vol', '/usr/local/bin/vol', '/usr/bin/vol']:
+        for path in ['/home/claw/.local/bin/vol', '/usr/local/bin/vol', '/usr/bin/vol',
+                     '/usr/local/bin/vol.py', '/opt/volatility2/vol.py']:
             if Path(path).exists():
                 return path
         return None
@@ -4863,17 +4884,101 @@ class MEMORY_Specialist:
         except Exception:
             return None
 
+    def _detect_os_and_vol(self, memory_dump: str) -> Dict[str, Any]:
+        """Auto-detect OS version and choose Volatility version."""
+        result = {
+            'os': 'unknown',
+            'vol_version': 'vol3',
+            'vol_binary': self.volatility3_path or 'vol',
+            'plugin_prefix': 'windows',
+            'error': None,
+        }
+
+        # Try Volatility3 first (faster, modern)
+        if self.volatility3_path:
+            v3_result = subprocess.run(
+                [self.volatility3_path, '-f', memory_dump, 'windows.info'],
+                capture_output=True, text=True, timeout=120
+            )
+            if v3_result.returncode == 0:
+                # Parse OS info from Volatility3 output
+                for line in v3_result.stdout.split('\n'):
+                    if 'NT Build' in line or 'Major/Minor' in line:
+                        # XP = 5.1, Win2K = 5.0, 2003 = 5.2, Vista = 6.0, 7 = 6.1, etc.
+                        if '5.0' in line:
+                            result['os'] = 'win2k'
+                            result['vol_version'] = 'vol2'
+                            result['vol_binary'] = self.volatility2_path or 'vol.py'
+                            result['plugin_prefix'] = ''
+                        elif '5.1' in line:
+                            result['os'] = 'winxp'
+                        elif '5.2' in line:
+                            result['os'] = 'win2003'
+                        elif '6.0' in line:
+                            result['os'] = 'vista'
+                        elif '6.1' in line:
+                            result['os'] = 'win7'
+                        elif '6.2' in line:
+                            result['os'] = 'win8'
+                        elif '6.3' in line:
+                            result['os'] = 'win81'
+                        elif '10.' in line:
+                            result['os'] = 'win10'
+                        break
+                return result
+            else:
+                # Volatility3 failed — try Volatility2 for legacy OS
+                if self.volatility2_path:
+                    v2_result = subprocess.run(
+                        [self.volatility2_path, '-f', memory_dump, 'imageinfo'],
+                        capture_output=True, text=True, timeout=300
+                    )
+                    if v2_result.returncode == 0:
+                        for line in v2_result.stdout.split('\n'):
+                            if 'Suggested Profile' in line or 'Number of Processors' in line:
+                                if 'Win200' in line or 'Windows2000' in line:
+                                    result['os'] = 'win2k'
+                                elif 'WinXPSP' in line:
+                                    result['os'] = 'winxp'
+                                elif 'Win2003' in line:
+                                    result['os'] = 'win2003'
+                                elif 'Vista' in line:
+                                    result['os'] = 'vista'
+                                elif 'Win7' in line:
+                                    result['os'] = 'win7'
+                                break
+                        result['vol_version'] = 'vol2'
+                        result['vol_binary'] = self.volatility2_path or 'vol.py'
+                        result['plugin_prefix'] = ''
+                        return result
+                    else:
+                        result['error'] = f'Volatility3: {v3_result.stderr[:200]}; Volatility2: {v2_result.stderr[:200]}'
+                else:
+                    result['error'] = f'Volatility3 failed: {v3_result.stderr[:200]} (Volatility2 not available)'
+        elif self.volatility2_path:
+            # Only Volatility2 available
+            result['vol_version'] = 'vol2'
+            result['vol_binary'] = self.volatility2_path
+            result['plugin_prefix'] = ''
+        else:
+            result['error'] = 'No Volatility version found'
+
+        return result
+
     def analyze_memory(self, memory_dump: str, output_dir: str) -> Dict[str, Any]:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        profile = self._detect_profile(memory_dump)
+        os_info = self._detect_os_and_vol(memory_dump)
+        profile = self._detect_profile(memory_dump) if os_info['vol_version'] == 'vol3' else None
 
         return {
-            'tool': 'volatility3',
+            'tool': os_info['vol_binary'],
+            'vol_version': os_info['vol_version'],
+            'os': os_info['os'],
             'profile': profile,
-            'status': 'success',
+            'status': 'error' if os_info['error'] else 'success',
             'memory_dump': memory_dump,
             'output_dir': output_dir,
-            'note': 'Profile detection completed. Use extract_processes, extract_network, etc. for detailed analysis.',
+            'note': os_info['error'] or f"Detected {os_info['os']} — using {os_info['vol_version']} ({os_info['vol_binary']})",
             'timestamp': datetime.now().isoformat(),
         }
 
@@ -4881,89 +4986,120 @@ class MEMORY_Specialist:
         if output_dir:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
         try:
-            vol_bin = self.volatility3_path or 'vol'
-            result = subprocess.run(
-                [vol_bin, '-f', memory_dump, 'windows.pslist.PsList'],
-                capture_output=True, text=True, timeout=300
-            )
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                # Volatility2 plugin names
+                plugin = 'pslist'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.pslist.PsList'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return {
-                'tool': 'volatility3.pslist',
+                'tool': f"{os_info['vol_version']}.pslist",
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[:5000],
                 'stderr': result.stderr[:2000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
-            return {'tool': 'volatility3.pslist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+            return {'tool': 'pslist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def extract_network(self, memory_dump: str) -> Dict[str, Any]:
         try:
-            vol_bin = self.volatility3_path or 'vol'
-            result = subprocess.run(
-                [vol_bin, '-f', memory_dump, 'windows.netscan.NetScan'],
-                capture_output=True, text=True, timeout=300
-            )
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'netscan' if os_info['os'] in ('win7', 'win8', 'win81', 'win10') else 'connections'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.netscan.NetScan'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return {
-                'tool': 'volatility3.netscan',
+                'tool': f"{os_info['vol_version']}.{plugin}",
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[:5000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
-            return {'tool': 'volatility3.netscan', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+            return {'tool': 'netscan', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def find_injected_code(self, memory_dump: str) -> Dict[str, Any]:
         try:
-            vol_bin = self.volatility3_path or 'vol'
-            result = subprocess.run(
-                [vol_bin, '-f', memory_dump, 'windows.malfind.Malfind'],
-                capture_output=True, text=True, timeout=300
-            )
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'malfind'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.malfind.Malfind'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return {
-                'tool': 'volatility3.malfind',
+                'tool': f"{os_info['vol_version']}.malfind",
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[:5000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
-            return {'tool': 'volatility3.malfind', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+            return {'tool': 'malfind', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def extract_registry(self, memory_dump: str) -> Dict[str, Any]:
         try:
-            vol_bin = self.volatility3_path or 'vol'
-            result = subprocess.run(
-                [vol_bin, '-f', memory_dump, 'windows.registry.hivelist.HiveList'],
-                capture_output=True, text=True, timeout=300
-            )
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'hivelist'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.registry.hivelist.HiveList'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return {
-                'tool': 'volatility3.hivelist',
+                'tool': f"{os_info['vol_version']}.hivelist",
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[:3000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
-            return {'tool': 'volatility3.hivelist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+            return {'tool': 'hivelist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def extract_credentials(self, memory_dump: str) -> Dict[str, Any]:
         try:
-            vol_bin = self.volatility3_path or 'vol'
-            result = subprocess.run(
-                [vol_bin, '-f', memory_dump, 'windows.lsadump.Lsadump'],
-                capture_output=True, text=True, timeout=300
-            )
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'hashdump'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.lsadump.Lsadump'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             return {
-                'tool': 'volatility3.lsadump',
+                'tool': f"{os_info['vol_version']}.credentials",
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'stdout': result.stdout[:3000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
-            return {'tool': 'volatility3.lsadump', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+            return {'tool': 'credentials', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------
