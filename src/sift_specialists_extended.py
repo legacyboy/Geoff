@@ -5881,6 +5881,85 @@ class CONTAINER_Specialist:
 
 
 # ---------------------------------------------------------------------------
+# DATA_STAGING_Specialist
+# ---------------------------------------------------------------------------
+class DATA_STAGING_Specialist:
+    """Specialist for detecting data staging, collection, and exfil prep."""
+
+    def detect_archives(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            archives = []
+            suspicious = []
+            for ext in ['*.zip', '*.rar', '*.7z', '*.tar.gz', '*.tar.bz2', '*.tar.xz']:
+                if base.is_dir():
+                    for f in base.rglob(ext):
+                        info = {'file': str(f), 'size': f.stat().st_size, 'mtime': f.stat().st_mtime}
+                        archives.append(info)
+                        # Suspicious: large archives in temp dirs
+                        if any(x in str(f).lower() for x in ['\\temp\\', '/tmp/', '/var/tmp/', '\\temp\\', '\\appdata\\']):
+                            suspicious.append(info)
+            return {
+                'tool': 'archive_detection',
+                'status': 'success',
+                'archives_found': len(archives),
+                'archives': archives[:20],
+                'suspicious': suspicious[:10],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'archive_detection', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_bulk_copy(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            indicators = []
+            if base.is_dir():
+                for f in base.rglob('*.log'):
+                    if 'setupapi' in f.name.lower() or 'event' in f.name.lower():
+                        try:
+                            with open(f, 'r', errors='replace') as fh:
+                                for line in fh:
+                                    if any(x in line.lower() for x in ['robocopy', 'xcopy', 'cp -r', 'rsync', 'scp ']):
+                                        indicators.append({'file': str(f), 'line': line.strip()[:200]})
+                        except Exception:
+                            pass
+            return {
+                'tool': 'bulk_copy_detection',
+                'status': 'success',
+                'indicators': len(indicators),
+                'entries': indicators[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'bulk_copy_detection', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_usb_staging(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            usb_events = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if 'setupapi' in f.name.lower() or 'usb' in f.name.lower():
+                        try:
+                            with open(f, 'r', errors='replace') as fh:
+                                for line in fh:
+                                    if 'usbstor' in line.lower() or 'removable' in line.lower():
+                                        usb_events.append({'file': str(f), 'line': line.strip()[:200]})
+                        except Exception:
+                            pass
+            return {
+                'tool': 'usb_staging',
+                'status': 'success',
+                'usb_events': len(usb_events),
+                'entries': usb_events[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'usb_staging', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes new specialists)
 # ---------------------------------------------------------------------------
 
@@ -5905,7 +5984,8 @@ class ExtendedOrchestrator:
         self.jumplist = JUMPLIST_Specialist()
         self.macos = MACOS_Specialist()
 
-        # New specialists (PB-SIFT-027 through PB-SIFT-033)
+        # New specialists (PB-SIFT-015, PB-SIFT-027 through PB-SIFT-033)
+        self.data_staging = DATA_STAGING_Specialist()
         self.memory = MEMORY_Specialist()
         self.windows = WINDOWS_Specialist()
         self.crypto = CRYPTO_Specialist()
@@ -5945,6 +6025,7 @@ class ExtendedOrchestrator:
             'email': self.email,
             'jumplist': self.jumplist,
             'macos': self.macos,
+            'data_staging': self.data_staging,
             'memory': self.memory,
             'windows': self.windows,
             'crypto': self.crypto,
@@ -6106,6 +6187,11 @@ class ExtendedOrchestrator:
                 'category': 'Container Forensics',
                 'functions': ['enumerate', 'extract_filesystem', 'analyze_image', 'analyze_logs', 'analyze_kubernetes', 'detect_supply_chain'],
                 'tools': ['docker', 'dive', 'ctr', 'kubectl'],
+            },
+            'data_staging': {
+                'category': 'Data Staging & Exfil Prep',
+                'functions': ['detect_archives', 'detect_bulk_copy', 'analyze_usb_staging'],
+                'tools': ['strings', '7z', 'unar'],
             },
             'remnux': {
                 'category': 'REMnux Malware Analysis',
