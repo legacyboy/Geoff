@@ -29,7 +29,7 @@
 ---
 
 ### Phase 3 — Super Timeline
-- [ ] **Timeline Construction:** Build full timeline across all artifact sources using `log2timeline`.
+- [ ] **Timeline Construction:** Build full timeline across all artifact sources using plaso.create_timeline (specialist).
 - [ ] **Temporal Anomalies:** Flag file creation or modification bursts during off-hours.
 - [ ] **Suspicious Paths:** Flag executables created or modified in `/tmp`, `/var/tmp`, `/dev/shm`, `/run`, or user home directories.
 - [ ] **System File Integrity:** Flag changes to critical system files — `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `/etc/cron*`, `/etc/ssh/sshd_config`.

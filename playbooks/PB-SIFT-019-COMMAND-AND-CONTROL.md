@@ -12,8 +12,8 @@
 ---
 
 ### Phase 2 — Network State Extraction
-- [ ] **Established Connections:** Extract all established and listening network connections from memory (`vol.py windows.netscan.NetScan`).
-- [ ] **DNS Cache:** Extract DNS resolver cache (`vol.py windows.dnscache.DnsCache`).
+- [ ] **Established Connections:** Extract all established and listening network connections from memory (`memory.extract_network`).
+- [ ] **DNS Cache:** Extract DNS resolver cache (network DNS cache analysis).
 - [ ] **Connection Timeline:** Map network connection timestamps to timeline.
 - [ ] **Beacon Detection:** Identify periodic outbound connections — flag connections with regular intervals (beacon behavior).
 - [ ] **Uncommon Ports:** Flag connections to non-standard ports (not 80, 443, 53, 25, 22).
