@@ -361,7 +361,10 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
     if job_id:
         _fe_log(job_id, log_msg)
     else:
-        print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
+        try:
+            print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
+        except BrokenPipeError:
+            pass
     if STRICT_MODE:
         if e:
             raise e
@@ -371,7 +374,10 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
 
 def _log_info(msg: str):
     """Info-level logger — not an error."""
-    print(f"[GEOFF] {msg}", file=sys.stderr)
+    try:
+        print(f"[GEOFF] {msg}", file=sys.stderr)
+    except BrokenPipeError:
+        pass
 
 
 
