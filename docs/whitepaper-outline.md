@@ -103,7 +103,6 @@ One sentence problem. One sentence approach. One sentence on the three novel con
 - **Manual DFIR practice.** The dominant approach — an experienced analyst with SIFT/EnCase/FTK, working evidence by evidence, writing findings by hand. No automation of interpretation. This is our primary comparison point (§ 6).
 - **SIFT Workstation.** The runtime substrate. Provides tools, not interpretation. Geoff automates the SIFT workflow end-to-end.
 - **Plaso / log2timeline.** Super-timeline construction from heterogeneous sources. We use it; we add per-finding citation and behavioral flagging on top.
-- **SOAR platforms (Splunk SOAR, Cortex XSOAR).** Playbook execution for ticketing and orchestration. Different goal — they automate response workflows, not forensic interpretation or evidence-grounded narrative generation.
 - **LLM agents for security.** PentestGPT, TaskWeaver, AutoGPT-for-IR. These generalize across security tasks; Geoff is DFIR-specific and ground-truth-anchored via the evidence chain.
 - **Reproducible computational research.** Per-case git repo and audit trail borrow from the reproducible-research literature (Kanwal et al., Stodden et al.).
 
