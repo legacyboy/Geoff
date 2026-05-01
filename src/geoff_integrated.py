@@ -1070,27 +1070,6 @@ def call_llm(user_message, context="", agent_type="manager"):
                 raise
             return None
     return None  # All retries exhausted
-        full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
-        response = requests.post(
-            f"{ollama_base_url()}/generate",
-            headers=ollama_headers(),
-            json={
-                "model": model,
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {"temperature": 0.3}
-            },
-            timeout=120
-        )
-        if response.status_code == 200:
-            return response.json().get('response', 'Hmm, let me check that again.')
-        else:
-            return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
-    except Exception as e:
-        print(f"[GEOFF] LLM Error: {e}", file=sys.stderr)
-        if STRICT_MODE:
-            raise
-        return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
 
 def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
