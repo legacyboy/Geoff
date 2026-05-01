@@ -56,6 +56,11 @@ def _run_tool(tool: str, args: List[str], timeout: int = 300) -> Dict[str, Any]:
 
 def _check_tool_available(tool_name: str) -> bool:
     """Check if a tool is available on PATH"""
+    import os
+    # Ensure ~/.local/bin is on PATH (pip installs there on SIFT)
+    local_bin = os.path.expanduser('~/.local/bin')
+    if local_bin not in os.environ.get('PATH', ''):
+        os.environ['PATH'] = local_bin + ':' + os.environ.get('PATH', '')
     # Also check for diec (Detect It Easy console) as 'die' alternative
     if tool_name == 'die':
         result = subprocess.run(['which', 'diec'], capture_output=True)

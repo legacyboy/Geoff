@@ -6200,6 +6200,6 @@ class ExtendedOrchestrator:
                     'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
                     'radare2_analyze', 'floss_strings', 'clamav_scan',
                 ] if self.remnux else [],
-                'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'r2', 'floss']),
+                'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'pdf-parser.py', 'oledump.py', 'js-beautify', 'r2', 'floss']),
             },
         }
