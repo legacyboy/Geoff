@@ -50,24 +50,55 @@ class GeoffCritic:
         return h
 
     def _call_critic_llm(self, prompt: str) -> str:
-        """Call LLM for sanity check review"""
-        try:
-            response = requests.post(
-                f"{self._base_url()}/generate",
-                headers=self._ollama_headers(),
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.2}
-                },
-                timeout=60
-            )
-            if response.status_code == 200:
-                return response.json().get('response', '')
-        except Exception as e:
-            print(f"[CRITIC] LLM Error: {e}")
-        return ""
+        """Call LLM for sanity check review
+
+        Returns the LLM response, or empty string on failure.
+        On Ollama timeout after retries, returns empty string so the caller
+        can mark the step needs_review instead of producing a finding.
+        """
+        _max_retries = 3
+        _backoff = [30, 60, 120]
+        _error_patterns = (
+            "Having trouble connecting to Ollama",
+            "Check OLLAMA_URL",
+            "[ERROR] Ollama returned",
+        )
+
+        for attempt in range(_max_retries + 1):
+            try:
+                response = requests.post(
+                    f"{self._base_url()}/generate",
+                    headers=self._ollama_headers(),
+                    json={
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {"temperature": 0.2}
+                    },
+                    timeout=60
+                )
+                if response.status_code == 200:
+                    result_text = response.json().get('response', '')
+                    # Reject error messages that leaked into the response
+                    if any(pat in result_text for pat in _error_patterns):
+                        if attempt < _max_retries:
+                            print(f"[CRITIC] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
+                            import time; time.sleep(_backoff[attempt])
+                            continue
+                        return ""  # Final attempt still returned error text
+                    return result_text
+                else:
+                    if attempt < _max_retries:
+                        print(f"[CRITIC] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
+                        import time; time.sleep(_backoff[attempt])
+                        continue
+                    return ""
+            except Exception as e:
+                print(f"[CRITIC] LLM Error (attempt {attempt+1}): {e}")
+                if attempt < _max_retries:
+                    import time; time.sleep(_backoff[attempt])
+                    continue
+        return ""  # All retries exhausted
 
     def validate_tool_output(self, tool_name: str, tool_params: Dict,
                             raw_output: str, geoff_analysis: str) -> Dict[str, Any]:
@@ -101,6 +132,21 @@ Respond in JSON:
 }}"""
 
         critic_response = self._call_critic_llm(sanity_prompt)
+
+        # If critic LLM was unavailable after retries, mark as needs_review
+        if not critic_response or not critic_response.strip():
+            return {
+                "hallucinations": [],
+                "nonsense": [],
+                "invalid_iocs": [],
+                "passes_sanity": None,
+                "needs_review": True,
+                "unverified_reason": "Ollama timeout - critic validation failed",
+                "parse_error": True,
+                "raw_critic_response": "Ollama unavailable after retries",
+                "tool_name": tool_name,
+                "timestamp": datetime.now().isoformat(),
+            }
 
         try:
             json_match = re.search(r'\{.*\}', critic_response, re.DOTALL)

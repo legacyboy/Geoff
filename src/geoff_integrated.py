@@ -921,47 +921,103 @@ def call_llm(user_message, context="", agent_type="manager"):
 
     agent_type: "manager", "forensicator", or "critic" - determines which model to use
     """
-    try:
-        model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
+    # Retry with exponential backoff on Ollama timeouts/connection errors
+    _ollama_error_patterns = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+    _max_retries = 3
+    _backoff_times = [30, 60, 120]  # seconds
 
-        full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
-        response = requests.post(
-            f"{ollama_base_url()}/generate",
-            headers=ollama_headers(),
-            json={
-                "model": model,
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {"temperature": 0.3}
-            },
-            timeout=120
-        )
-        if response.status_code == 200:
-            return response.json().get('response', 'Hmm, let me check that again.')
-        else:
-            return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
-    except Exception as e:
-        print(f"[GEOFF] LLM Error: {e}", file=sys.stderr)
-        if STRICT_MODE:
-            raise
-        return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
+    for attempt in range(_max_retries + 1):
+        try:
+            model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
+
+            full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+            response = requests.post(
+                f"{ollama_base_url()}/generate",
+                headers=ollama_headers(),
+                json={
+                    "model": model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3}
+                },
+                timeout=120
+            )
+            if response.status_code == 200:
+                result_text = response.json().get('response', 'Hmm, let me check that again.')
+                # Reject error messages that leaked into the response
+                if any(pat in result_text for pat in _ollama_error_patterns):
+                    if attempt < _max_retries:
+                        print(f"[GEOFF] Ollama error in response, retrying ({attempt+1}/{_max_retries})...", file=sys.stderr)
+                        import time; time.sleep(_backoff_times[attempt])
+                        continue
+                    # Final attempt still returned error — return marker
+                    return None
+                return result_text
+            else:
+                error_msg = f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
+                if attempt < _max_retries:
+                    print(f"[GEOFF] Ollama HTTP error, retrying ({attempt+1}/{_max_retries})...", file=sys.stderr)
+                    import time; time.sleep(_backoff_times[attempt])
+                    continue
+                return None
+        except Exception as e:
+            print(f"[GEOFF] LLM Error (attempt {attempt+1}): {e}", file=sys.stderr)
+            if attempt < _max_retries:
+                import time; time.sleep(_backoff_times[attempt])
+                continue
+            if STRICT_MODE:
+                raise
+            return None
+    return None  # All retries exhausted
 
 
 def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
-    """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping."""
-    try:
-        model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
-        response = requests.post(
-            f"{ollama_base_url()}/generate",
-            headers=ollama_headers(),
-            json={"model": model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": 0.1}},
-            timeout=timeout,
-        )
-        if response.status_code == 200:
-            return response.json().get("response", "")
-    except Exception as e:
-        print(f"[MANAGER] LLM error: {e}")
+    """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping.
+
+    Returns empty string on failure. Caller should handle None/empty gracefully.
+    """
+    _max_retries = 3
+    _backoff = [30, 60, 120]
+    _error_patterns = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+
+    for attempt in range(_max_retries + 1):
+        try:
+            model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
+            response = requests.post(
+                f"{ollama_base_url()}/generate",
+                headers=ollama_headers(),
+                json={"model": model, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.1}},
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                result_text = response.json().get("response", "")
+                if any(pat in result_text for pat in _error_patterns):
+                    if attempt < _max_retries:
+                        print(f"[MANAGER] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
+                        import time; time.sleep(_backoff[attempt])
+                        continue
+                    return ""  # Final attempt still had error text
+                return result_text
+            else:
+                if attempt < _max_retries:
+                    print(f"[MANAGER] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
+                    import time; time.sleep(_backoff[attempt])
+                    continue
+                return ""
+        except Exception as e:
+            print(f"[MANAGER] LLM error (attempt {attempt+1}): {e}")
+            if attempt < _max_retries:
+                import time; time.sleep(_backoff[attempt])
+                continue
     return ""
 
 
@@ -1470,6 +1526,14 @@ TRIAGE_PATTERNS = {
     "ot_attack": ["modbus", "scada", "plc_attack", "safety_bypass", "sis_bypass",
                   "setpoint_override", "industroyer", "ot_sabotage",
                   "scada_exploit", "industrial_control", "dnp3", "iec-61850"],
+    "phishing": ["phishing", "credential_harvesting", "spoofed_sender", "urgent_action_required",
+                 "verify_your_account", "suspended_account", "click_here_to_verify",
+                 "password_expire", "unauthorized_access", "secure_your_account",
+                 "bit.ly/", "tinyurl.com/", "goo.gl/", "t.co/",
+                 ".scr", ".pif", ".vbs",
+                 "verify_identity", "account_compromised", "bank_notification",
+                 "invoice_attachment", "shipping_notification", "fedex_tracking",
+                 "ups_delivery", "dhl_shipment", "password_reset_required"],
 }
 
 SEVERITY_MAP = {
@@ -1485,6 +1549,7 @@ SEVERITY_MAP = {
     "cryptominer": "HIGH",
     "rootkit": "CRITICAL",
     "ot_attack": "CRITICAL",
+    "phishing": "HIGH",
 }
 
 # MITRE ATT&CK technique IDs per indicator category (Enterprise ATT&CK v14).
@@ -1501,6 +1566,7 @@ MITRE_TAGS = {
     "cryptominer":       ["T1496"],
     "rootkit":           ["T1014", "T1543.003"],
     "ot_attack":         ["T0855", "T0816", "T0879"],
+    "phishing":          ["T1566", "T1534"],
 }
 
 # Map each playbook to its specialist steps.
@@ -1844,6 +1910,10 @@ PLAYBOOK_STEPS = {
         ],
     },
     "PB-SIFT-023": {  # Email Forensics
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "extract_email_artifacts", {"image": "{image}", "offset": "{offset}"}),
+        ],
         "other_files": [
             ("email", "analyze_pst", {"pst_path": "{file}"}),
             ("email", "analyze_mbox", {"mbox_path": "{file}"}),
@@ -3092,10 +3162,134 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     #   1. Evidence types available
     #   2. Indicator hits from triage scans
     #   3. OS detection
+    #   4. Artifact detection inside disk images (fls output)
     execution_plan = []
     skipped_playbooks = []
     confidence_modifiers = []
     anti_forensics_detected = False
+
+    # --- Scan triage_findings for artifacts INSIDE disk images ---
+    # The fls/list_files results from PB-SIFT-001 are in triage_findings.
+    # When we have disk images, key artifacts (email, browser, registry, etc.)
+    # are INSIDE the image — they won't appear in inventory's top-level files.
+    # We must detect them from the fls file listing.
+    _disk_artifacts = {
+        "email": False,       # PST/OST/DBX/EML inside image
+        "browser": False,    # Browser history/cookies inside image
+        "registry": False,   # Registry hives inside image
+        "evtx": False,       # Event logs inside image
+        "memory_dumps_in_image": False,  # hiberfil/pagefile inside image
+    }
+    _email_paths_inside = []   # Collect paths for icat extraction
+    _browser_paths_inside = []
+
+    # Patterns for detecting artifacts inside fls output
+    _email_patterns = [
+        ".pst", ".ost", ".dbx", ".eml",
+        "outlook", "thunderbird",
+        "application data/microsoft/outlook",
+        "local settings/application data/microsoft/outlook",
+        "local settings/application data/identities",
+        "application data/thunderbird",
+        "windows mail",
+    ]
+    _browser_patterns = [
+        "places.sqlite", "history", "cookies.db", "cookies.sqlite",
+        "chrome/user data", "firefox/profiles",
+        "application data/google/chrome",
+        "application data/mozilla/firefox",
+        "local settings/application data/google/chrome",
+        "local settings/application data/mozilla/firefox",
+        "appdata/roaming/mozilla/firefox",
+        "appdata/local/google/chrome",
+        "appdata/roaming/microsoft/edge",
+        "microsoftedge",
+    ]
+    _registry_patterns = [
+        "software", "system", "ntuser.dat", "sam", "security", "default",
+        "system32/config/software", "system32/config/system",
+        "system32/config/sam", "system32/config/security",
+    ]
+    _evtx_patterns = [
+        ".evlx", ".evtx", "system32/winevt/logs/",
+    ]
+    _memory_patterns = [
+        "hiberfil.sys", "pagefile.sys", ".dmp",
+    ]
+
+    for tf in triage_findings:
+        # Look for sleuthkit list_files results (fls output)
+        if tf.get("module") == "sleuthkit" and tf.get("function") in ("list_files", "analyze_filesystem"):
+            result = tf.get("result", {})
+            # fls results may be in various formats depending on orchestrator
+            # Try common result structures
+            file_list = None
+            if isinstance(result, dict):
+                # Could be {"files": [...]} or {"output": "..."} or {"file_list": [...]}
+                file_list = result.get("files") or result.get("file_list")
+                if file_list is None and isinstance(result.get("output"), str):
+                    # fls output is a text blob — scan it directly
+                    file_list = None  # will scan output string below
+                    output_str = result["output"].lower()
+                    for pat in _email_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["email"] = True
+                    for pat in _browser_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["browser"] = True
+                    for pat in _registry_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["registry"] = True
+                    for pat in _evtx_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["evtx"] = True
+                    for pat in _memory_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["memory_dumps_in_image"] = True
+            if isinstance(file_list, list):
+                for fentry in file_list:
+                    f_str = str(fentry).lower() if isinstance(fentry, (str, dict)) else ""
+                    if isinstance(fentry, dict):
+                        f_str = (fentry.get("name", "") + " " + fentry.get("path", "")).lower()
+                    for pat in _email_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["email"] = True
+                    for pat in _browser_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["browser"] = True
+                    for pat in _registry_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["registry"] = True
+                    for pat in _evtx_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["evtx"] = True
+                    for pat in _memory_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["memory_dumps_in_image"] = True
+        # Also scan string results from triage
+        elif tf.get("module") == "strings" or tf.get("function") == "extract_strings":
+            result_str = json.dumps(tf.get("result", {}), default=str).lower()
+            for pat in _email_patterns[:6]:  # Only check top patterns for strings
+                if pat in result_str:
+                    _disk_artifacts["email"] = True
+
+    # Also check indicator_hits for phishing/email categories
+    for hit in indicator_hits:
+        if isinstance(hit, dict) and hit.get("category") in ("phishing", "email", "credential_theft"):
+            _disk_artifacts["email"] = True
+
+    # For disk images with Windows OS, assume common artifacts exist even if
+    # fls output hasn't been parsed yet (PB-SIFT-001 may not have completed
+    # its full recursive scan at triage time)
+    has_disk_images = bool(inventory.get("disk_images"))
+    if has_disk_images and os_type == "windows":
+        # Windows images almost always have registry + evtx + email potential
+        _disk_artifacts["registry"] = True
+        _disk_artifacts["evtx"] = True
+        # Don't assume email unless detected — but enable browser (common)
+        _disk_artifacts["browser"] = True
+
+    _fe_log(job_id, f"  Disk artifact detection: {_disk_artifacts}")
 
     # Always include core playbooks
     core_playbooks = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
@@ -3119,13 +3313,30 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
 
-    # Browser forensics — always run (relevant for insider threat, credential theft, etc.)
-    execution_plan.append("PB-SIFT-022")
+    # Browser forensics — run when browser artifacts detected
+    # (Inside disk images OR as standalone files, plus always relevant)
+    if _disk_artifacts.get("browser") or inventory["disk_images"]:
+        execution_plan.append("PB-SIFT-022")
+    else:
+        # Still add browser forensics for non-disk-image cases with browser files
+        execution_plan.append("PB-SIFT-022")
 
-    # Email forensics — run when email-like files are present
+    # Email forensics — run when email-like files are present as standalone
+    # OR when email artifacts are detected inside disk images
     email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
-    if any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"]):
+    _standalone_email = any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"])
+    _image_email = _disk_artifacts.get("email", False)
+    if _standalone_email or _image_email:
         execution_plan.append("PB-SIFT-023")
+        if _image_email:
+            _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (email artifacts detected inside disk image)")
+    elif has_disk_images and os_type == "windows":
+        # Windows disk images: schedule email forensics proactively —
+        # Outlook/Outlook Express data is common and critical for phishing cases
+        execution_plan.append("PB-SIFT-023")
+        _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (Windows disk image — email likely present)")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-023", "reason": "No email files or email artifacts inside images"})
 
     # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
 
@@ -3135,9 +3346,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
 
     # Windows Modern Artifacts — triggered by Windows OS + registry hives
-    if os_type == "windows" and inventory["registry_hives"]:
+    # (standalone OR detected inside disk images)
+    if os_type == "windows" and (inventory["registry_hives"] or _disk_artifacts.get("registry")):
         execution_plan.append("PB-SIFT-028")
         _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
+    elif has_disk_images and os_type == "windows":
+        # Windows image without explicit registry detection — still queue it
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued (Windows disk image)")
 
     # Encrypted Containers — detect encrypted volume indicators
     encrypted_indicators = {
@@ -3832,6 +4048,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         device_context={"device_id": dev_id, "os_type": os_type},
                                     )
                                     step_record["forensicator"] = forensicator_notes
+                                    # Handle Ollama timeout — forensicator marks needs_review
+                                    if forensicator_notes.get("needs_review") and forensicator_notes.get("error") == "ollama_timeout":
+                                        step_record["needs_review"] = True
+                                        step_record["unverified_reason"] = forensicator_notes.get("unverified_reason", "Ollama timeout")
+                                        _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} — marked needs_review")
                                     sig = forensicator_notes.get("significance", "UNKNOWN")
                                     note = forensicator_notes.get("analyst_note") or ""
                                     if sig in ("CRITICAL", "HIGH"):
@@ -3888,8 +4109,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
                                     step_record["invalid_iocs"] = critic_val["invalid_iocs"]
 
-                                # Enforce Critic verdict with self-correction
-                                if isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
+                                # Handle Ollama timeout — critic marks needs_review
+                                if isinstance(critic_val, dict) and critic_val.get("needs_review") and critic_val.get("unverified_reason"):
+                                    step_record["needs_review"] = True
+                                    step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
+                                    _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
+                                    # Skip further critic processing for this step
+                                elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
                                     issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
                                     short = "; ".join(str(i) for i in issues[:2]) if issues else "sanity check failed"
                                     _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")

@@ -10974,3 +10974,24 @@ Connection reset by 127.0.0.1 port 2222
 - **Exit code:** 0
 - **Result:** {"error":"Evidence path resolves outside allowed directories: '/tmp' \u2192 /tmp","status":"error"}
 
+
+---
+## QA Run: 2026-05-01 01:00:01 CDT — Scenario: command_injection
+### Command injection in evidence_dir
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp; cat /etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp; cat /etc/passwd'","status":"error"}
+
+### Command injection via pipe
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/tmp | id\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path contains unsafe characters and will not be processed: '/tmp | id'","status":"error"}
+
+
+---
+## QA Run: 2026-05-01 01:15:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
