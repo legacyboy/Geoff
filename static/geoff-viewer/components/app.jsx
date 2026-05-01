@@ -9,12 +9,13 @@ function App() {
   const [dropActive, setDropActive] = useState(false);
   const [fileName, setFileName] = useState("sample_report.js (demo)");
 
-  // Load report from URL params or API on mount
+  // Load report from URL params or API on mount, and restore selection from URL.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const caseDir = params.get('case');
+    const initialSel = params.get('sel');
+    if (initialSel) setSelected(initialSel);
     if (caseDir) {
-      // Fetch report JSON from Geoff API
       fetch(`/reports/${encodeURIComponent(caseDir)}/json`)
         .then(res => {
           if (!res.ok) throw new Error('Report not found');
@@ -26,12 +27,42 @@ function App() {
         })
         .catch(err => {
           setFileName(caseDir);
-          // Fall back to demo data
           setReport(window.GEOFF_SAMPLE);
         });
       return;
     }
     setReport(window.GEOFF_SAMPLE);
+  }, []);
+
+  // Sync selection to URL so views are bookmarkable / shareable.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selected) params.set('sel', selected);
+    else params.delete('sel');
+    const qs = params.toString();
+    const url = window.location.pathname + (qs ? '?' + qs : '');
+    window.history.replaceState({}, '', url);
+  }, [selected]);
+
+  // Keyboard: Esc to deselect, "/" to focus search.
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || "";
+      const editing = tag === "INPUT" || tag === "TEXTAREA" || (e.target && e.target.isContentEditable);
+      if (e.key === "Escape") {
+        if (editing && tag === "INPUT" && e.target.id === "entity-search") {
+          if (e.target.value) { setSearch(""); e.target.value = ""; }
+          else e.target.blur();
+        } else if (!editing) {
+          setSelected(null);
+        }
+      } else if (e.key === "/" && !editing) {
+        const input = document.getElementById("entity-search");
+        if (input) { e.preventDefault(); input.focus(); input.select(); }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Drag-and-drop JSON file handling
@@ -191,6 +222,7 @@ function App() {
             onSelect={setSelected}
             hoverId={hoverId}
             onHover={setHoverId}
+            sevFilter={sevFilter}
           />
         </section>
 
@@ -199,7 +231,7 @@ function App() {
             <span>Detail</span>
             <span className="count">{selected ? selected.replace(":", " · ") : "case overview"}</span>
           </div>
-          <DetailPanel report={report} selected={selected} onSelect={setSelected} />
+          <DetailPanel report={report} selected={selected} onSelect={setSelected} onSearch={setSearch} />
         </aside>
       </div>
 

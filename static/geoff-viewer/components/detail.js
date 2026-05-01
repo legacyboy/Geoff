@@ -8,11 +8,13 @@ const {
 function DetailPanel({
   report,
   selected,
-  onSelect
+  onSelect,
+  onSearch
 }) {
   if (!selected) return /*#__PURE__*/React.createElement(CaseOverview, {
     report: report,
-    onSelect: onSelect
+    onSelect: onSelect,
+    onSearch: onSearch
   });
   if (selected.startsWith("u:")) {
     return /*#__PURE__*/React.createElement(UserDetail, {
@@ -43,6 +45,66 @@ function DetailPanel({
     });
   }
   return null;
+}
+const IOC_GROUPS = [{
+  key: "ip_addresses",
+  label: "IP addresses"
+}, {
+  key: "file_hashes",
+  label: "Hashes"
+}, {
+  key: "urls",
+  label: "URLs"
+}, {
+  key: "registry_keys",
+  label: "Registry keys"
+}, {
+  key: "file_paths",
+  label: "File paths"
+}, {
+  key: "email_addresses",
+  label: "Emails"
+}, {
+  key: "domains",
+  label: "Domains"
+}];
+function IOCPanel({
+  iocs,
+  onSearch
+}) {
+  const present = IOC_GROUPS.filter(g => Array.isArray(iocs[g.key]) && iocs[g.key].length > 0);
+  if (present.length === 0) return null;
+  const total = present.reduce((acc, g) => acc + iocs[g.key].length, 0);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title"
+  }, "IOCs ", /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, total)), /*#__PURE__*/React.createElement("div", {
+    className: "ioc-list"
+  }, present.map(g => /*#__PURE__*/React.createElement("div", {
+    key: g.key,
+    className: "ioc-group"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ioc-group-label"
+  }, g.label, /*#__PURE__*/React.createElement("span", {
+    className: "ioc-group-count"
+  }, iocs[g.key].length)), iocs[g.key].map((v, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "ioc-row",
+    title: "Click to search · " + v
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ioc-val",
+    onClick: () => onSearch && onSearch(String(v))
+  }, String(v)), /*#__PURE__*/React.createElement("button", {
+    className: "ioc-copy",
+    title: "Copy",
+    onClick: e => {
+      e.stopPropagation();
+      navigator.clipboard && navigator.clipboard.writeText(String(v));
+    }
+  }, "\u29C9")))))));
 }
 function EvidenceDetail({
   report,
@@ -218,7 +280,8 @@ function ServiceDetail({
 }
 function CaseOverview({
   report,
-  onSelect
+  onSelect,
+  onSearch
 }) {
   const devCount = Object.keys(report.device_map || {}).length;
   const userCount = Object.keys(report.user_map || {}).length;
@@ -309,7 +372,10 @@ function CaseOverview({
     className: "count"
   }, (report.timeline || []).length)), /*#__PURE__*/React.createElement(TimelineMini, {
     events: report.timeline || []
-  })), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(IOCPanel, {
+    iocs: report.iocs || {},
+    onSearch: onSearch
+  }), /*#__PURE__*/React.createElement("div", {
     className: "section"
   }, /*#__PURE__*/React.createElement("div", {
     className: "section-title"

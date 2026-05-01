@@ -3,8 +3,8 @@
 
 const { Fragment } = React;
 
-function DetailPanel({ report, selected, onSelect }) {
-  if (!selected) return <CaseOverview report={report} onSelect={onSelect} />;
+function DetailPanel({ report, selected, onSelect, onSearch }) {
+  if (!selected) return <CaseOverview report={report} onSelect={onSelect} onSearch={onSearch} />;
   if (selected.startsWith("u:")) {
     return <UserDetail report={report} username={selected.slice(2)} onSelect={onSelect} />;
   }
@@ -18,6 +18,47 @@ function DetailPanel({ report, selected, onSelect }) {
     return <ServiceDetail report={report} serviceName={selected.slice(2)} onSelect={onSelect} />;
   }
   return null;
+}
+
+const IOC_GROUPS = [
+  { key: "ip_addresses",   label: "IP addresses" },
+  { key: "file_hashes",    label: "Hashes" },
+  { key: "urls",           label: "URLs" },
+  { key: "registry_keys",  label: "Registry keys" },
+  { key: "file_paths",     label: "File paths" },
+  { key: "email_addresses",label: "Emails" },
+  { key: "domains",        label: "Domains" },
+];
+
+function IOCPanel({ iocs, onSearch }) {
+  const present = IOC_GROUPS.filter(g => Array.isArray(iocs[g.key]) && iocs[g.key].length > 0);
+  if (present.length === 0) return null;
+  const total = present.reduce((acc, g) => acc + iocs[g.key].length, 0);
+  return (
+    <div className="section">
+      <div className="section-title">IOCs <span className="count">{total}</span></div>
+      <div className="ioc-list">
+        {present.map(g => (
+          <div key={g.key} className="ioc-group">
+            <div className="ioc-group-label">
+              {g.label}
+              <span className="ioc-group-count">{iocs[g.key].length}</span>
+            </div>
+            {iocs[g.key].map((v, i) => (
+              <div key={i} className="ioc-row" title={"Click to search · " + v}>
+                <span className="ioc-val" onClick={() => onSearch && onSearch(String(v))}>{String(v)}</span>
+                <button
+                  className="ioc-copy"
+                  title="Copy"
+                  onClick={(e) => { e.stopPropagation(); navigator.clipboard && navigator.clipboard.writeText(String(v)); }}
+                >⧉</button>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function EvidenceDetail({ report, evidenceType, onSelect }) {
@@ -130,7 +171,7 @@ function ServiceDetail({ report, serviceName, onSelect }) {
   );
 }
 
-function CaseOverview({ report, onSelect }) {
+function CaseOverview({ report, onSelect, onSearch }) {
   const devCount = Object.keys(report.device_map || {}).length;
   const userCount = Object.keys(report.user_map || {}).length;
   let allFlags = 0, crit = 0, high = 0;
@@ -183,6 +224,8 @@ function CaseOverview({ report, onSelect }) {
         <div className="section-title">Timeline <span className="count">{(report.timeline || []).length}</span></div>
         <TimelineMini events={report.timeline || []} />
       </div>
+
+      <IOCPanel iocs={report.iocs || {}} onSearch={onSearch} />
 
       <div className="section">
         <div className="section-title">Select an entity</div>
