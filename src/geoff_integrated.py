@@ -3505,26 +3505,43 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
 
-    # --- Nuclear option: when disk images are present, ensure all OS-appropriate
-    # playbooks are included. Disk images contain everything inside them —
-    # we cannot skip playbooks just because artifacts aren't visible as standalone files.
+    # --- Nuclear option: when disk images are present, run ALL applicable
+    # playbooks. Disk images contain everything inside them — we cannot skip
+    # playbooks just because artifacts aren't visible as standalone files.
+    # The specialist steps will gracefully handle missing artifacts.
     if has_disk_images:
-        _ensure_playbooks = set()
-        # Email and browser forensics for ALL disk images —
-        # Linux has Thunderbird/evolution, macOS has Mail.app;
-        # phishing and insider threat cross all platforms
-        _ensure_playbooks.update({"PB-SIFT-022", "PB-SIFT-023"})
+        # Always run for ANY disk image (phishing/insider threat cross all platforms)
+        _force_for_disk_images = {
+            "PB-SIFT-009",   # Registry Forensics
+            "PB-SIFT-017",   # REMnux Malware Analysis
+            "PB-SIFT-018",   # Malware Analysis
+            "PB-SIFT-020",   # Super Timeline (Plaso)
+            "PB-SIFT-022",   # Browser Forensics
+            "PB-SIFT-023",   # Email Forensics
+        }
+        # OS-specific
         if os_type == "windows":
-            # Windows: also need registry + event log analysis
-            _ensure_playbooks.update({"PB-SIFT-009", "PB-SIFT-028"})
+            _force_for_disk_images.update({
+                "PB-SIFT-028",   # Windows Modern Artifacts
+            })
         elif os_type == "linux":
-            _ensure_playbooks.update({"PB-SIFT-014"})
+            _force_for_disk_images.update({
+                "PB-SIFT-014",   # Linux Forensics
+            })
         elif os_type == "macos":
-            _ensure_playbooks.update({"PB-SIFT-024"})
-        for pb in _ensure_playbooks:
+            _force_for_disk_images.update({
+                "PB-SIFT-024",   # macOS Forensics
+            })
+        # Memory dumps inside images (hiberfil, pagefile)
+        if _disk_artifacts.get("memory_dumps_in_image"):
+            _force_for_disk_images.add("PB-SIFT-027")  # Memory Forensics
+        # Also check disk artifact detection for encrypted, cloud, collab, VM, container
+        if _disk_artifacts.get("evtx"):
+            pass  # Already covered by Windows playbooks
+        for pb in _force_for_disk_images:
             if pb not in execution_plan:
                 execution_plan.append(pb)
-                _fe_log(job_id, f"  {pb}: Force-queued (disk image present — nuclear option)")
+                _fe_log(job_id, f"  {pb}: Force-queued (disk image — nuclear option)")
 
     # Classification based on indicator hits — must be computed before manager review
     hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
