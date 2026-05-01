@@ -28,7 +28,193 @@ function DetailPanel({
       onSelect: onSelect
     });
   }
+  if (selected.startsWith("e:")) {
+    return /*#__PURE__*/React.createElement(EvidenceDetail, {
+      report: report,
+      evidenceType: selected.slice(2),
+      onSelect: onSelect
+    });
+  }
+  if (selected.startsWith("s:")) {
+    return /*#__PURE__*/React.createElement(ServiceDetail, {
+      report: report,
+      serviceName: selected.slice(2),
+      onSelect: onSelect
+    });
+  }
   return null;
+}
+function EvidenceDetail({
+  report,
+  evidenceType,
+  onSelect
+}) {
+  const devices = Object.entries(report.device_map || {});
+  const matchingDevs = devices.filter(([, d]) => (d.evidence_types || []).includes(evidenceType));
+  const files = [];
+  devices.forEach(([devId, d]) => {
+    (d.evidence_files || []).forEach(fp => {
+      const guessed = window.guessEvidenceTypeFromPath && window.guessEvidenceTypeFromPath(fp) || (d.evidence_types || [])[0];
+      if (guessed === evidenceType) files.push({
+        path: fp,
+        devId
+      });
+    });
+  });
+  // Devices contributing to this bucket = either declared the type or own a matching file
+  const devIdSet = new Set(matchingDevs.map(([k]) => k));
+  files.forEach(f => devIdSet.add(f.devId));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "detail-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "entity-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "glyph",
+    style: {
+      background: "rgba(6,182,212,0.1)",
+      color: "#06B6D4",
+      border: "1px solid rgba(6,182,212,0.3)"
+    }
+  }, "\u25EB"), /*#__PURE__*/React.createElement("div", {
+    className: "title-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "kind"
+  }, "Evidence type"), /*#__PURE__*/React.createElement("div", {
+    className: "title"
+  }, (window.formatEvidenceType || (s => s))(evidenceType)), /*#__PURE__*/React.createElement("div", {
+    className: "sub"
+  }, files.length, " file", files.length === 1 ? "" : "s", " across ", devIdSet.size, " device", devIdSet.size === 1 ? "" : "s"))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title"
+  }, "Source devices ", /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, devIdSet.size)), /*#__PURE__*/React.createElement("div", {
+    className: "related-list"
+  }, Array.from(devIdSet).map(devId => {
+    const dev = (report.device_map || {})[devId];
+    if (!dev) return null;
+    const kind = classifyDevice(dev);
+    return /*#__PURE__*/React.createElement("div", {
+      key: devId,
+      className: "related-item",
+      onClick: () => onSelect("d:" + devId)
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `bullet ${kind}`
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "name"
+    }, dev.hostname || devId), /*#__PURE__*/React.createElement("span", {
+      className: "via"
+    }, osLabel(dev)));
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title"
+  }, "Files ", /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, files.length)), files.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: "12px 0"
+    }
+  }, "No individual files matched this type heuristic \u2014 devices declare it but evidence_files is empty or extension-less.") : files.map((f, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "evfile",
+    title: f.path
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "type-tag"
+  }, extType(f.path)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      flex: 1
+    }
+  }, f.path), /*#__PURE__*/React.createElement("span", {
+    className: "via",
+    style: {
+      fontSize: 10,
+      color: "var(--g-text-mute)"
+    }
+  }, f.devId)))));
+}
+function ServiceDetail({
+  report,
+  serviceName,
+  onSelect
+}) {
+  // Reconstruct service nodes' contributing devices and traffic flags.
+  const hits = []; // { devId, host, flag }
+  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const dst = (flag.evidence || {}).dst_host || (flag.evidence || {}).dst_ip || "";
+      if (!dst) return;
+      const svc = window.classifyExfilService && window.classifyExfilService(dst) || "External";
+      if (svc === serviceName) hits.push({
+        devId,
+        host: dst,
+        flag
+      });
+    });
+  });
+  const devSet = new Set(hits.map(h => h.devId));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "detail-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "entity-head"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "glyph",
+    style: {
+      background: "rgba(236,72,153,0.1)",
+      color: "#EC4899",
+      border: "1px solid rgba(236,72,153,0.3)"
+    }
+  }, "\u2197"), /*#__PURE__*/React.createElement("div", {
+    className: "title-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "kind"
+  }, "External service"), /*#__PURE__*/React.createElement("div", {
+    className: "title"
+  }, serviceName), /*#__PURE__*/React.createElement("div", {
+    className: "sub"
+  }, hits.length, " flagged connection", hits.length === 1 ? "" : "s", " from ", devSet.size, " device", devSet.size === 1 ? "" : "s"))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title"
+  }, "Source devices ", /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, devSet.size)), /*#__PURE__*/React.createElement("div", {
+    className: "related-list"
+  }, Array.from(devSet).map(devId => {
+    const dev = (report.device_map || {})[devId];
+    if (!dev) return null;
+    const kind = classifyDevice(dev);
+    return /*#__PURE__*/React.createElement("div", {
+      key: devId,
+      className: "related-item",
+      onClick: () => onSelect("d:" + devId)
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `bullet ${kind}`
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "name"
+    }, dev.hostname || devId), /*#__PURE__*/React.createElement("span", {
+      className: "via"
+    }, osLabel(dev)));
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "section"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title"
+  }, "Connections ", /*#__PURE__*/React.createElement("span", {
+    className: "count"
+  }, hits.length)), hits.map((h, i) => /*#__PURE__*/React.createElement(FindingCard, {
+    key: i,
+    f: {
+      ...h.flag,
+      device_id: h.devId
+    },
+    showDevice: true
+  }))));
 }
 function CaseOverview({
   report,
@@ -271,7 +457,7 @@ function UserDetail({
   }, devices.map(d => {
     const dev = (report.device_map || {})[d];
     if (!dev) return null;
-    const kind = window.classifyDevice(dev);
+    const kind = classifyDevice(dev);
     return /*#__PURE__*/React.createElement("div", {
       key: d,
       className: "related-item",
@@ -282,7 +468,7 @@ function UserDetail({
       className: "name"
     }, dev.hostname || d), /*#__PURE__*/React.createElement("span", {
       className: "via"
-    }, window.osLabel(dev)));
+    }, osLabel(dev)));
   }))), (cu.lateral_movement_indicators || []).length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "section"
   }, /*#__PURE__*/React.createElement("div", {
@@ -351,7 +537,7 @@ function DeviceDetail({
   if (!d) return /*#__PURE__*/React.createElement("div", {
     className: "empty"
   }, "Device not found");
-  const kind = window.classifyDevice(d);
+  const kind = classifyDevice(d);
   const flags = [...((report.behavioral_flags || {})[deviceId] || [])];
   flags.sort((a, b) => sevRank(a.severity) - sevRank(b.severity));
 
@@ -377,7 +563,7 @@ function DeviceDetail({
     className: "title"
   }, d.hostname || d.device_id), /*#__PURE__*/React.createElement("div", {
     className: "sub"
-  }, window.osLabel(d), d.owner && /*#__PURE__*/React.createElement("span", {
+  }, osLabel(d), d.owner && /*#__PURE__*/React.createElement("span", {
     className: `conf conf-${d.owner_confidence}`
   }, d.owner_confidence)))), /*#__PURE__*/React.createElement("div", {
     className: "meta-grid"

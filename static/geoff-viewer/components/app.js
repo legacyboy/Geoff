@@ -4,7 +4,7 @@ const {
   useEffect,
   useCallback
 } = React;
-window.App = function App() {
+function App() {
   const [report, setReport] = useState(null);
   const [selected, setSelected] = useState(null);
   const [hoverId, setHoverId] = useState(null);
@@ -182,7 +182,7 @@ window.App = function App() {
     className: "workspace"
   }, /*#__PURE__*/React.createElement("aside", {
     className: "pane-left"
-  }, /*#__PURE__*/React.createElement(window.EntityTree, {
+  }, /*#__PURE__*/React.createElement(EntityTree, {
     report: report,
     selected: selected,
     onSelect: setSelected,
@@ -245,10 +245,40 @@ window.App = function App() {
       borderRadius: "50%"
     }
   }), " service"), /*#__PURE__*/React.createElement("span", {
+    className: "li"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "sw",
+    style: {
+      background: "var(--ent-evidence)"
+    }
+  }), " evidence"), /*#__PURE__*/React.createElement("span", {
     className: "li",
     style: {
       marginLeft: 6
     }
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "18",
+    height: "6"
+  }, /*#__PURE__*/React.createElement("line", {
+    x1: "0",
+    y1: "3",
+    x2: "18",
+    y2: "3",
+    stroke: "var(--ent-user)"
+  })), "owns"), /*#__PURE__*/React.createElement("span", {
+    className: "li"
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: "18",
+    height: "6"
+  }, /*#__PURE__*/React.createElement("line", {
+    x1: "0",
+    y1: "3",
+    x2: "18",
+    y2: "3",
+    stroke: "var(--g-text-mute)",
+    strokeDasharray: "1 4"
+  })), "seen-on"), /*#__PURE__*/React.createElement("span", {
+    className: "li"
   }, /*#__PURE__*/React.createElement("svg", {
     width: "18",
     height: "6"
@@ -260,10 +290,7 @@ window.App = function App() {
     stroke: "var(--sev-high)",
     strokeDasharray: "4 3"
   })), "lateral"), /*#__PURE__*/React.createElement("span", {
-    className: "li",
-    style: {
-      marginLeft: 6
-    }
+    className: "li"
   }, /*#__PURE__*/React.createElement("svg", {
     width: "18",
     height: "6"
@@ -274,7 +301,7 @@ window.App = function App() {
     y2: "3",
     stroke: "#EC4899",
     strokeDasharray: "2 2"
-  })), "exfil"))), /*#__PURE__*/React.createElement(window.RelationshipGraph, {
+  })), "exfil"))), /*#__PURE__*/React.createElement(RelationshipGraph, {
     report: report,
     selected: selected,
     onSelect: setSelected,
@@ -286,7 +313,7 @@ window.App = function App() {
     className: "pane-header"
   }, /*#__PURE__*/React.createElement("span", null, "Detail"), /*#__PURE__*/React.createElement("span", {
     className: "count"
-  }, selected ? selected.replace(":", " · ") : "case overview")), /*#__PURE__*/React.createElement(window.DetailPanel, {
+  }, selected ? selected.replace(":", " · ") : "case overview")), /*#__PURE__*/React.createElement(DetailPanel, {
     report: report,
     selected: selected,
     onSelect: setSelected
@@ -363,6 +390,7 @@ function extractEntityReport(report, sel) {
   }
   return report;
 }
-ReactDOM.render(/*#__PURE__*/React.createElement(window.App, null), document.getElementById("root"));
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(/*#__PURE__*/React.createElement(App, null));
 
 })();
