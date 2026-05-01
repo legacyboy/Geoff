@@ -374,6 +374,95 @@ def _log_info(msg: str):
     print(f"[GEOFF] {msg}", file=sys.stderr)
 
 
+
+def _re_evaluate_playbooks(completed_playbook, pb_findings, execution_plan, skipped_playbooks,
+                              inventory, os_type, has_disk_images, disk_artifacts,
+                              indicator_hits, job_id):
+    """After each playbook completes, check if new artifacts were discovered
+    that warrant additional playbooks. Pull every thread.
+
+    Returns list of newly-queued playbook IDs (empty if nothing new).
+    """
+    newly_queued = []
+    already_queued = set(execution_plan)
+
+    _new_artifacts = {
+        "email": False, "browser": False, "registry": False, "evtx": False,
+        "memory": False, "pcap": False, "mobile": False, "encrypted": False,
+        "cloud_sync": False, "collaboration": False, "vm": False, "container": False,
+    }
+
+    _sigs = {
+        "email":       [".pst", ".ost", ".dbx", ".eml", ".mbox", "outlook",
+                        "thunderbird", "evolution", "mailbox", "maildir", "sent items"],
+        "browser":     ["places.sqlite", "history", "cookies.db", "chrome/user data",
+                        "firefox/profiles", "sessionstore"],
+        "registry":    ["ntuser.dat", "software", "system", "sam", "security",
+                        "system32/config"],
+        "evtx":        [".evtx", "winevt/logs"],
+        "memory":      ["hiberfil", "pagefile", ".dmp", "memory dump", "vmem"],
+        "pcap":        [".pcap", ".pcapng", "packet capture", "network capture"],
+        "mobile":      ["backup/", "iphone", "android", "manifest.plist", "info.plist",
+                        "build.prop"],
+        "encrypted":   ["bitlocker", "filevault", "veracrypt", "truecrypt", "luks",
+                        "encrypted"],
+        "cloud_sync":  ["onedrive", "skydrive", "dropbox", "filecache.db", "googledrive"],
+        "collaboration":["teams", "slack", "discord", "skype", "zoom"],
+        "vm":          [".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", "vmware"],
+        "container":   ["docker", "containerd", "overlay2", "kubernetes"],
+    }
+
+    for step in pb_findings:
+        result = step.get("result", {})
+        if not isinstance(result, dict):
+            continue
+        result_str = json.dumps(result, default=str).lower()
+        for artifact_type, patterns in _sigs.items():
+            if not _new_artifacts[artifact_type]:
+                for pat in patterns:
+                    if pat in result_str:
+                        _new_artifacts[artifact_type] = True
+                        break
+
+    for hit in indicator_hits:
+        if isinstance(hit, dict):
+            cat = hit.get("category", "").lower()
+            if cat in ("phishing", "email", "credential_theft"):
+                _new_artifacts["email"] = True
+            if cat in ("c2", "beaconing"):
+                _new_artifacts["browser"] = True
+
+    _artifact_to_playbook = {
+        "email":         ["PB-SIFT-023"],
+        "browser":       ["PB-SIFT-022"],
+        "registry":      ["PB-SIFT-009"] + (["PB-SIFT-028"] if os_type == "windows" else []),
+        "evtx":          ["PB-SIFT-028"] if os_type == "windows" else [],
+        "memory":        ["PB-SIFT-027"],
+        "pcap":          ["PB-SIFT-011"],
+        "mobile":        ["PB-SIFT-021"],
+        "encrypted":     ["PB-SIFT-029"],
+        "cloud_sync":    ["PB-SIFT-030"],
+        "collaboration": ["PB-SIFT-031"],
+        "vm":            ["PB-SIFT-032"],
+        "container":     ["PB-SIFT-033"],
+    }
+
+    for artifact_type, is_new in _new_artifacts.items():
+        if is_new:
+            if artifact_type in disk_artifacts:
+                disk_artifacts[artifact_type] = True
+            playbooks = _artifact_to_playbook.get(artifact_type, [])
+            for pb in playbooks:
+                if pb not in already_queued:
+                    execution_plan.append(pb)
+                    already_queued.add(pb)
+                    newly_queued.append(pb)
+                    _fe_log(job_id, f"  ↳ {pb} queued after {completed_playbook} discovered {artifact_type} artifacts")
+                    skipped_playbooks[:] = [s for s in skipped_playbooks if s.get("id") != pb]
+
+    return newly_queued
+
+
 def _apply_anti_forensics_cascade(findings_writer) -> int:
     """Idempotently downgrade confidence on every finding and tag it as compromised.
 
@@ -399,31 +488,6 @@ def _apply_anti_forensics_cascade(findings_writer) -> int:
         cascaded += 1
     return cascaded
 
-
-def _apply_anti_forensics_cascade(findings_writer) -> int:
-    """Idempotently downgrade confidence on every finding and tag it as compromised.
-
-    Safe to call repeatedly: a finding already tagged with "anti-forensics" in
-    its compromised_by list is skipped, so the CONFIRMED → POSSIBLE → UNVERIFIED
-    chain isn't applied twice. Returns the number of newly cascaded findings.
-    """
-    cascaded = 0
-    for f in findings_writer.all_records():
-        result = f.get("result")
-        if not isinstance(result, dict):
-            continue
-        already = result.get("compromised_by") or []
-        if "anti-forensics" in already:
-            continue
-        confidence = result.get("confidence", "")
-        if confidence == "CONFIRMED":
-            result["confidence"] = "POSSIBLE"
-        elif confidence == "POSSIBLE":
-            result["confidence"] = "UNVERIFIED"
-        result.setdefault("compromised_by", []).append("anti-forensics")
-        result["confidence_modifier"] = "downgraded-by-anti-forensics"
-        cascaded += 1
-    return cascaded
 
 
 def _audit_append(case_work_dir, event: str, **fields):
@@ -4361,6 +4425,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 _fe_log(job_id, f"  git commit failed: {gce}")
                 if STRICT_MODE:
                     raise
+
+            # --- Adaptive re-evaluation after each playbook ---
+            # Check what new artifacts were discovered and add playbooks
+            # that are now applicable. Pull every thread.
+            _newly_queued = _re_evaluate_playbooks(
+                playbook_id, pb_findings, execution_plan, skipped_playbooks,
+                inventory, os_type, has_disk_images, _disk_artifacts,
+                indicator_hits, job_id)
+            if _newly_queued:
+                _fe_log(job_id, f"  \u27f3 Re-evaluation queued: {', '.join(_newly_queued)}")
 
     # End of per-device playbook loop
     # Process unattributed evidence (PCAPs, logs not tied to a device)
