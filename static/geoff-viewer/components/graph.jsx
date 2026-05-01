@@ -1,5 +1,7 @@
 // Relationship graph — columnar layout (Accounts | Workstations | Servers | Mobile | Network | Services | Evidence)
 // with edges for ownership, presence, lateral-movement, evidence sources, and exfiltration.
+// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Indicators)
+// with edges for ownership, lateral-movement, and device→IOC connections.
 
 const { useEffect, useMemo, useRef, useState } = React;
 
@@ -15,7 +17,7 @@ function classifyDevice(d) {
   if (t.includes("server")) return "server";
   if (t.includes("mobile") || t.includes("ios") || t.includes("android")) return "mobile";
   if (t.includes("network") || t.includes("pcap")) return "network";
-  return "pc"; // windows_pc, linux_pc, macos_workstation
+  return "pc";
 }
 
 function countFlags(flags) {
@@ -71,6 +73,21 @@ function classifyExfilService(host) {
 }
 
 function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFilter }) {
+// Build deduplicated IOC items from report.iocs
+function buildIocItems(report) {
+  const iocs = report.iocs || {};
+  const items = [];
+  const addIoc = (val, subkind) => {
+    const id = "i:" + val;
+    items.push({ id, kind: "ioc", subkind, raw: val, key: val });
+  };
+  (iocs.ip_addresses    || []).slice(0, 6).forEach(v => addIoc(v, "ip"));
+  (iocs.urls            || []).slice(0, 5).forEach(v => addIoc(v, "url"));
+  (iocs.email_addresses || []).slice(0, 4).forEach(v => addIoc(v, "email"));
+  return items;
+}
+
+function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
   const wrapRef = useRef(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
 
@@ -86,7 +103,6 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
 
   const graph = useMemo(() => buildGraph(report, size), [report, size]);
 
-  // relations set for highlight
   const neighbors = useMemo(() => {
     if (!selected) return null;
     const set = new Set([selected]);
@@ -130,7 +146,7 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
           </g>
         ))}
 
-        {/* Edges */}
+        {/* Edges — IOC edges drawn first (behind) */}
         <g>
           {graph.edges.map((e, i) => {
             const n1 = graph.nodeById[e.from];
@@ -146,6 +162,9 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
             else if (e.kind === "exfiltrated_to") cls += " exfil";
             else if (e.kind === "evidence_source") cls += " evidence-link";
             if (hl) cls += " highlighted";
+            if (e.kind === "lateral") cls += " lateral";
+            if (e.kind === "ioc")     cls += " ioc";
+            if (hl)  cls += " highlighted";
             if (dim) cls += " dimmed";
             return (
               <path key={i} className={cls} d={d}>
@@ -164,6 +183,11 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
             const sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
             const dim = (neighbors && !inNeighborhood) || sevDim;
             let cls = "node node-" + n.kind;
+            const isSel    = selected === n.id;
+            const isHover  = hoverId === n.id;
+            const inNbhd   = neighbors && neighbors.has(n.id);
+            const dim      = neighbors && !inNbhd;
+            let cls = "node";
             if (isSel || isHover) cls += " highlighted";
             if (dim) cls += " dimmed";
             return (
@@ -198,6 +222,10 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                     x={-n.w / 2} y={-n.h / 2}
                     width={n.w} height={n.h} rx={20}
                     fill="rgba(236,72,153,0.15)"
+                ) : n.kind === "ioc" ? (
+                  <polygon
+                    points={`0,${-n.r} ${n.r},0 0,${n.r} ${-n.r},0`}
+                    fill="rgba(239,68,68,0.06)"
                     stroke={n.accent}
                     strokeWidth={isSel ? 2 : 1}
                   />
@@ -212,13 +240,25 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                 )}
                 <text x={0} y={n.kind === "user" ? 4 : -3} textAnchor="middle">
                   {n.label || ""}
+                <text
+                  x={0}
+                  y={n.kind === "user" || n.kind === "ioc" ? 4 : -3}
+                  textAnchor="middle"
+                >
+                  {n.label}
                 </text>
                 {n.sublabel && (
-                  <text x={0} y={n.kind === "user" ? 18 : 12} textAnchor="middle" className="sublabel">
+                  <text
+                    x={0}
+                    y={n.kind === "user" || n.kind === "ioc" ? 18 : 12}
+                    textAnchor="middle"
+                    className="sublabel"
+                  >
                     {n.sublabel}
                   </text>
                 )}
                 {/* Severity / count badge */}
+                {/* Severity badge — not shown on IOC nodes */}
                 {n.badge && (
                   <g transform={`translate(${n.kind === "user" ? n.r - 4 : n.w / 2 - 6}, ${n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6})`}>
                     <circle r={8} className={`flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : ""}`} />
@@ -236,9 +276,10 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
 
 function edgePath(a, b) {
   // Curved connector between two nodes (horizontal S)
+  const isCircular = n => n.kind === "user" || n.kind === "ioc";
   const [from, to] = a.x < b.x ? [a, b] : [b, a];
-  const sx = from.x + (from.kind === "user" ? from.r : from.w / 2);
-  const ex = to.x - (to.kind === "user" ? to.r : to.w / 2);
+  const sx = from.x + (isCircular(from) ? from.r : from.w / 2);
+  const ex = to.x   - (isCircular(to)   ? to.r   : to.w   / 2);
   const sy = from.y, ey = to.y;
   const mx = (sx + ex) / 2;
   return `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
@@ -327,19 +368,40 @@ function buildGraph(report, size) {
   // Node width adapts so columns don't visually overlap when there are 6–7 of them.
   const nodeW = Math.max(96, Math.min(150, colGap * 0.84));
   const labelChars = Math.max(10, Math.floor(nodeW / 8));
+  const users    = Object.entries(report.user_map   || {}).map(([k, u]) => ({ id: "u:" + k, kind: "user", raw: u, key: k }));
+  const devs     = Object.entries(report.device_map || {}).map(([k, d]) => ({ id: "d:" + k, kind: classifyDevice(d), raw: d, key: k }));
+  const iocItems = buildIocItems(report);
+
+  const columns = [
+    { key: "user",    label: "Accounts",    items: users },
+    { key: "pc",      label: "Workstations",items: devs.filter((d) => d.kind === "pc") },
+    { key: "server",  label: "Servers",     items: devs.filter((d) => d.kind === "server") },
+    { key: "mobile",  label: "Mobile",      items: devs.filter((d) => d.kind === "mobile") },
+    { key: "network", label: "Network",     items: devs.filter((d) => d.kind === "network") },
+    { key: "ioc",     label: "Indicators",  items: iocItems },
+  ].filter((c) => c.items.length > 0).map((c) => ({ ...c, count: c.items.length }));
+
+  const colCount = columns.length;
+  const padX     = 40;
+  const innerW   = size.w - padX * 2;
+  const colGap   = innerW / colCount;
 
   const accentMap = {
-    user: "#10B981",
-    pc: "#3B82F6",
-    server: "#A78BFA",
-    mobile: "#F59E0B",
+    user:    "#10B981",
+    pc:      "#3B82F6",
+    server:  "#A78BFA",
+    mobile:  "#F59E0B",
     network: "#64748B",
     service: "#EC4899",
     evidence: "#06B6D4",
+    // IOC subkinds
+    ip:      "#EF4444",
+    url:     "#F97316",
+    email:   "#EC4899",
   };
 
   const nodeById = {};
-  const nodes = [];
+  const nodes    = [];
 
   columns.forEach((col, ci) => {
     col.x = padX + colGap * ci + colGap / 2;
@@ -390,6 +452,42 @@ function buildGraph(report, size) {
         accent: accentMap[kind] || "#64748B",
         badge,
         raw: item.raw || item,
+    const topY    = 70;
+    const bottomY = size.h - 40;
+    const gapY    = (bottomY - topY) / Math.max(col.items.length, 1);
+
+    col.items.forEach((item, ri) => {
+      const y      = topY + gapY * ri + gapY / 2;
+      const isIoc  = item.kind === "ioc";
+      const isUser = item.kind === "user";
+
+      const flags = isIoc  ? { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
+                  : isUser ? aggregateUserFlags(report, item.key)
+                  :          countFlags((report.behavioral_flags || {})[item.key] || []);
+      const sev = maxSev(flags);
+
+      const label    = isIoc  ? item.raw
+                     : isUser ? (item.raw.display_name || item.raw.username || item.key)
+                     :          (item.raw.hostname || item.key);
+      const sublabel = isIoc  ? item.subkind.toUpperCase()
+                     : isUser ? (item.raw.role || "user")
+                     :          osLabel(item.raw);
+
+      const accentKey = isIoc ? item.subkind : item.kind;
+      const node = {
+        id:       item.id,
+        kind:     item.kind,
+        subkind:  item.subkind,
+        key:      item.key,
+        label:    truncate(label, 18),
+        sublabel: truncate(sublabel, 22),
+        x: col.x,
+        y,
+        r: isIoc ? 22 : 28,     // diamond/circle radius
+        w: 150, h: 44,          // rectangle dimensions (unused for user/ioc)
+        accent: accentMap[accentKey] || "#64748B",
+        badge:  (!isIoc && flags.total > 0) ? { count: flags.total, sev } : null,
+        raw:    item.raw,
       };
       nodes.push(node);
       nodeById[node.id] = node;
@@ -435,6 +533,17 @@ function buildGraph(report, size) {
   }
 
   // Lateral movement: device <-> device
+
+  // Ownership: user → device
+  for (const [uname, u] of Object.entries(report.user_map || {})) {
+    for (const devId of (u.devices || [])) {
+      if (nodeById["u:" + uname] && nodeById["d:" + devId]) {
+        edges.push({ from: "u:" + uname, to: "d:" + devId, kind: "owns" });
+      }
+    }
+  }
+
+  // Lateral movement: device → device (dashed amber)
   for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
     for (const ind of (cu && cu.lateral_movement_indicators) || []) {
       const a = "d:" + ind.from_device;
@@ -479,6 +588,23 @@ function buildGraph(report, size) {
   });
 
   return { nodes, edges, nodeById, columns, totalH };
+  // Device → IOC: scan behavioral_flags evidence for matching IOC values
+  if (iocItems.length > 0) {
+    for (const [devId, flags] of Object.entries(report.behavioral_flags || {})) {
+      const devKey  = "d:" + devId;
+      if (!nodeById[devKey]) continue;
+      const evText  = JSON.stringify(flags);
+      for (const item of iocItems) {
+        if (evText.includes(item.raw) && nodeById[item.id]) {
+          if (!edges.some(e => e.from === devKey && e.to === item.id)) {
+            edges.push({ from: devKey, to: item.id, kind: "ioc" });
+          }
+        }
+      }
+    }
+  }
+
+  return { nodes, edges, nodeById, columns };
 }
 
 function aggregateUserFlags(report, username) {
@@ -492,18 +618,23 @@ function aggregateUserFlags(report, username) {
     agg.HIGH += c.HIGH;
     agg.MEDIUM += c.MEDIUM;
     agg.LOW += c.LOW;
+    agg.total += c.total; agg.CRITICAL += c.CRITICAL;
+    agg.HIGH  += c.HIGH;  agg.MEDIUM   += c.MEDIUM; agg.LOW += c.LOW;
   }
   return agg;
 }
 
 function osLabel(d) {
   const t = (d.device_type || "").toLowerCase();
-  if (t.includes("ios")) return "iOS " + (d.os_version || "");
+  if (t.includes("ios"))     return "iOS "     + (d.os_version || "");
   if (t.includes("android")) return "Android " + (d.os_version || "");
   if (t.includes("server")) return d.os_version || d.os_type || "server";
   if (d.os_type === "windows") return d.os_version || "Windows";
   if (d.os_type === "linux") return d.os_version || "Linux";
   if (d.os_type === "macos") return d.os_version || "macOS";
+  if (t.includes("server"))  return d.os_version || d.os_type;
+  if (d.os_type === "windows") return d.os_version || "Windows";
+  if (d.os_type === "linux")   return d.os_version || "Linux";
   return d.os_type || "device";
 }
 
@@ -563,3 +694,9 @@ window.osLabel = osLabel;
 window.formatEvidenceType = formatEvidenceType;
 window.classifyExfilService = classifyExfilService;
 window.guessEvidenceTypeFromPath = guessEvidenceTypeFromPath;
+window.RelationshipGraph   = RelationshipGraph;
+window.classifyDevice      = classifyDevice;
+window.countFlags          = countFlags;
+window.maxSev              = maxSev;
+window.aggregateUserFlags  = aggregateUserFlags;
+window.osLabel             = osLabel;

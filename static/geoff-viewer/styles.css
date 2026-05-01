@@ -616,7 +616,7 @@ input, textarea { font: inherit; color: inherit; }
   font-size: 9.5px;
 }
 .node.dimmed { opacity: 0.25; }
-.node.highlighted rect, .node.highlighted circle { stroke-width: 2; filter: drop-shadow(0 0 8px currentColor); }
+.node.highlighted rect, .node.highlighted circle, .node.highlighted polygon { stroke-width: 2; filter: drop-shadow(0 0 8px currentColor); }
 .edge {
   stroke: var(--g-border);
   stroke-width: 1;
@@ -631,6 +631,8 @@ input, textarea { font: inherit; color: inherit; }
 .edge.owns.highlighted { stroke: var(--ent-user); opacity: 1; stroke-width: 2; }
 .edge.seen-on { stroke: var(--g-text-mute); stroke-dasharray: 1 4; opacity: 0.55; }
 .edge.seen-on.highlighted { stroke: var(--g-text-dim); opacity: 1; stroke-width: 1.6; }
+.edge.ioc { stroke: #EF4444; stroke-dasharray: 3 5; opacity: 0.5; }
+.edge.ioc.highlighted { opacity: 1; stroke-width: 1.6; }
 
 .col-header {
   font-family: var(--font-mono);
