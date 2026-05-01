@@ -70,7 +70,7 @@ function classifyExfilService(host) {
   return null; // unknown — caller decides whether to bucket as "External"
 }
 
-function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
+function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFilter }) {
   const wrapRef = useRef(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
 
@@ -96,6 +96,20 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
     }
     return set;
   }, [selected, graph]);
+
+  // Set of node ids that carry (or transitively touch) a flag of the filtered severity.
+  const sevMatch = useMemo(() => {
+    if (!sevFilter) return null;
+    const set = new Set();
+    const flagsByDev = report.behavioral_flags || {};
+    Object.entries(flagsByDev).forEach(([devId, flags]) => {
+      if ((flags || []).some(f => f.severity === sevFilter)) set.add("d:" + devId);
+    });
+    Object.entries(report.user_map || {}).forEach(([uname, u]) => {
+      if ((u.devices || []).some(d => set.has("d:" + d))) set.add("u:" + uname);
+    });
+    return set;
+  }, [sevFilter, report]);
 
   return (
     <div ref={wrapRef} className="graph-stage">
@@ -133,7 +147,11 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
             else if (e.kind === "evidence_source") cls += " evidence-link";
             if (hl) cls += " highlighted";
             if (dim) cls += " dimmed";
-            return <path key={i} className={cls} d={d} />;
+            return (
+              <path key={i} className={cls} d={d}>
+                <title>{describeEdge(e, n1, n2)}</title>
+              </path>
+            );
           })}
         </g>
 
@@ -143,7 +161,8 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
             const isSel = selected === n.id;
             const isHover = hoverId === n.id;
             const inNeighborhood = neighbors && neighbors.has(n.id);
-            const dim = neighbors && !inNeighborhood;
+            const sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
+            const dim = (neighbors && !inNeighborhood) || sevDim;
             let cls = "node node-" + n.kind;
             if (isSel || isHover) cls += " highlighted";
             if (dim) cls += " dimmed";
@@ -157,6 +176,7 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
                 onMouseLeave={() => onHover(null)}
                 style={{ color: n.accent }}
               >
+                <title>{describeNode(n, report)}</title>
                 {n.kind === "user" ? (
                   <circle
                     cx={0} cy={0} r={n.r}
@@ -488,6 +508,51 @@ function osLabel(d) {
 }
 
 function truncate(s, n) { s = s == null ? "" : String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+function describeNode(n, report) {
+  const lines = [];
+  if (n.kind === "user") {
+    const u = (report.user_map || {})[n.key] || {};
+    lines.push(`Account: ${u.display_name || n.key}`);
+    if (u.role) lines.push(`Role: ${u.role}`);
+    if ((u.aliases || []).length) lines.push(`Aliases: ${u.aliases.join(", ")}`);
+    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+  } else if (n.kind === "evidence") {
+    const item = n.raw || {};
+    lines.push(`Evidence type: ${formatEvidenceType(item.type || n.key)}`);
+    lines.push(`${(item.files || []).length} file(s) across ${(item.devIds || []).length} device(s)`);
+  } else if (n.kind === "service") {
+    const item = n.raw || {};
+    lines.push(`External service: ${item.name || n.key}`);
+    lines.push(`${(item.hosts || []).length} flagged connection(s)`);
+  } else {
+    const d = (report.device_map || {})[n.key] || {};
+    lines.push(`Device: ${d.hostname || n.key}`);
+    lines.push(`OS: ${osLabel(d)}`);
+    if (d.owner) lines.push(`Owner: ${d.owner}${d.owner_confidence ? ` (${d.owner_confidence})` : ""}`);
+    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function describeEdge(e, n1, n2) {
+  const a = n1.label || n1.key;
+  const b = n2.label || n2.key;
+  switch (e.kind) {
+    case "owns": return `${a} owns ${b}`;
+    case "seen_on": return `${a} seen on ${b} (not owner)`;
+    case "lateral": return `Lateral movement: ${a} → ${b}${e.method ? `\nMethod: ${e.method}` : ""}${e.via ? `\nUser: ${e.via}` : ""}`;
+    case "exfiltrated_to": {
+      const parts = [`Exfil/C2: ${a} → ${b}`];
+      if (e.host) parts.push(`Host: ${e.host}`);
+      if (e.bytes) parts.push(`Bytes: ${e.bytes.toLocaleString()}`);
+      if (e.flag) parts.push(`Flag: ${e.flag}`);
+      return parts.join("\n");
+    }
+    case "evidence_source": return `Evidence source: ${a} → ${formatEvidenceType(e.evidence_type || "")}`;
+    default: return `${a} ↔ ${b}`;
+  }
+}
 
 window.RelationshipGraph = RelationshipGraph;
 window.classifyDevice = classifyDevice;
