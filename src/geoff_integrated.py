@@ -365,6 +365,7 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
             print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
         except BrokenPipeError:
             pass
+        print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
     if STRICT_MODE:
         if e:
             raise e
@@ -467,6 +468,7 @@ def _re_evaluate_playbooks(completed_playbook, pb_findings, execution_plan, skip
                     skipped_playbooks[:] = [s for s in skipped_playbooks if s.get("id") != pb]
 
     return newly_queued
+    print(f"[GEOFF] {msg}", file=sys.stderr)
 
 
 def _apply_anti_forensics_cascade(findings_writer) -> int:
@@ -494,6 +496,31 @@ def _apply_anti_forensics_cascade(findings_writer) -> int:
         cascaded += 1
     return cascaded
 
+
+def _apply_anti_forensics_cascade(findings_writer) -> int:
+    """Idempotently downgrade confidence on every finding and tag it as compromised.
+
+    Safe to call repeatedly: a finding already tagged with "anti-forensics" in
+    its compromised_by list is skipped, so the CONFIRMED → POSSIBLE → UNVERIFIED
+    chain isn't applied twice. Returns the number of newly cascaded findings.
+    """
+    cascaded = 0
+    for f in findings_writer.all_records():
+        result = f.get("result")
+        if not isinstance(result, dict):
+            continue
+        already = result.get("compromised_by") or []
+        if "anti-forensics" in already:
+            continue
+        confidence = result.get("confidence", "")
+        if confidence == "CONFIRMED":
+            result["confidence"] = "POSSIBLE"
+        elif confidence == "POSSIBLE":
+            result["confidence"] = "UNVERIFIED"
+        result.setdefault("compromised_by", []).append("anti-forensics")
+        result["confidence_modifier"] = "downgraded-by-anti-forensics"
+        cascaded += 1
+    return cascaded
 
 
 def _audit_append(case_work_dir, event: str, **fields):
@@ -1043,6 +1070,27 @@ def call_llm(user_message, context="", agent_type="manager"):
                 raise
             return None
     return None  # All retries exhausted
+        full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+        response = requests.post(
+            f"{ollama_base_url()}/generate",
+            headers=ollama_headers(),
+            json={
+                "model": model,
+                "prompt": full_prompt,
+                "stream": False,
+                "options": {"temperature": 0.3}
+            },
+            timeout=120
+        )
+        if response.status_code == 200:
+            return response.json().get('response', 'Hmm, let me check that again.')
+        else:
+            return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
+    except Exception as e:
+        print(f"[GEOFF] LLM Error: {e}", file=sys.stderr)
+        if STRICT_MODE:
+            raise
+        return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
 
 
 def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
@@ -3436,6 +3484,111 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         # Windows image without explicit registry detection — still queue it
         execution_plan.append("PB-SIFT-028")
         _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued (Windows disk image)")
+
+    # Encrypted Containers — detect encrypted volume indicators
+    encrypted_indicators = {
+        "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
+        "filevault": ["apfs encrypted", "filevault", "corestorage"],
+        "veracrypt": ["veracrypt", "truecrypt", r"\.tc$"],
+        "luks": ["luks", "cryptsetup", "dm-crypt"],
+    }
+    encrypted_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for etype, indicators in encrypted_indicators.items():
+            if any(ind in f_lower for ind in indicators):
+                encrypted_detected = True
+                break
+    # Also check disk images for high-entropy (potential encrypted containers)
+    if not encrypted_detected:
+        for f in inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            if any(ind in f_lower for ind in [".tc", "veracrypt", "luks", "bitlocker"]):
+                encrypted_detected = True
+                break
+    if encrypted_detected:
+        execution_plan.append("PB-SIFT-029")
+        _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
+
+    # Cloud Sync Artifacts — detect cloud storage sync databases
+    cloud_sync_patterns = {
+        "onedrive": ["onedrive", "skydrive"],
+        "googledrive": ["snapshot.db", "drivefs", "google drive"],
+        "dropbox": ["filecache.db", "dropbox"],
+        "icloud": ["ubiquity", "clouddocs", "icloud"],
+        "box": ["box sync"],
+    }
+    cloud_sync_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for service, patterns in cloud_sync_patterns.items():
+            if any(p in f_lower for p in patterns):
+                cloud_sync_detected = True
+                break
+    if cloud_sync_detected:
+        execution_plan.append("PB-SIFT-030")
+        _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
+
+    # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
+    collab_patterns = {
+        "teams": ["teams", "microsoft teams"],
+        "slack": ["slack"],
+        "discord": ["discord"],
+        "skype": ["skype", "main.db"],
+        "zoom": ["zoom", "zoom.us"],
+    }
+    collab_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for app, patterns in collab_patterns.items():
+            if any(p in f_lower for p in patterns):
+                collab_detected = True
+                break
+    if collab_detected:
+        execution_plan.append("PB-SIFT-031")
+        _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
+
+    # VM Snapshot Forensics — detect VM snapshot/memory files
+    vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
+    vm_detected = False
+    for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
+        if Path(f).suffix.lower() in vm_exts or Path(f).name.lower().endswith(".vmx"):
+            vm_detected = True
+            break
+    if vm_detected:
+        execution_plan.append("PB-SIFT-032")
+        _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
+
+    # Container Forensics — detect Docker/container artifacts
+    container_patterns = {
+        "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
+        "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
+        "podman": ["podman", "containers"],
+    }
+    container_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for runtime, patterns in container_patterns.items():
+            if any(p in f_lower for p in patterns):
+                container_detected = True
+                break
+    if container_detected:
+        execution_plan.append("PB-SIFT-033")
+        _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
+
+    # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
+
+    # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
+
+    # Memory forensics — triggered by memory dump files
+    if inventory["memory_dumps"]:
+        execution_plan.append("PB-SIFT-027")
+        _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
+
+    # Windows Modern Artifacts — triggered by Windows OS + registry hives
+    if os_type == "windows" and inventory["registry_hives"]:
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
 
     # Encrypted Containers — detect encrypted volume indicators
     encrypted_indicators = {
