@@ -92,8 +92,31 @@ if [[ "$SKIP_DEPS" == false ]]; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
         done
+        # Verify REMnux/malware tools are findable
+        for tool in die exiftool hashdeep clamscan upx pdfid oledump.py pdf-parser.py js-beautify floss peframe r2; do
+            if ! command -v $tool &>/dev/null; then
+                warn "$tool not found in PATH — REMnux playbook may skip this tool"
+            fi
+        done
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
-        sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
+        sudo apt-get install -y -qq die upx clamav radare2 2>/dev/null || true
+        # Python-based REMnux tools (install via pip since apt packages may not exist)
+        info "Installing Python-based REMnux/malware tools..."
+        pip3 install --break-system-packages oletools floss jsbeautifier capstone 2>/dev/null || \
+            pip3 install --user oletools floss jsbeautifier capstone 2>/dev/null || true
+        # Ensure ~/.local/bin is on PATH for pip-installed tools
+        LOCAL_BIN="${HOME}/.local/bin"
+        if [ -d "$LOCAL_BIN" ] && [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
+            export PATH="$LOCAL_BIN:$PATH"
+            echo "export PATH=\$PATH:$LOCAL_BIN" >> "${HOME}/.bashrc" 2>/dev/null
+        fi
+        # peframe — install from GitHub (no pip package)
+        if ! command -v peframe &>/dev/null; then
+            info "Installing peframe from GitHub..."
+            pip3 install --break-system-packages git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
+                pip3 install --user git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
+                warn "peframe install failed — PE analysis will use die/file as fallback"
+        fi
         # Tshark (needs non-interactive setup)
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
         sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
