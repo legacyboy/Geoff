@@ -19,3 +19,4 @@ REFACTOR_PROGRESS.log
 *.mem
 *.pcap
 *.evtx
+docs/whitepaper-outline.md
