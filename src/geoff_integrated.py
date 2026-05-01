@@ -3186,13 +3186,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # Patterns for detecting artifacts inside fls output
     _email_patterns = [
-        ".pst", ".ost", ".dbx", ".eml",
-        "outlook", "thunderbird",
+        ".pst", ".ost", ".dbx", ".eml", ".mbox", ".msf",
+        "outlook", "thunderbird", "evolution", "kmail", "mutt", "maildir",
         "application data/microsoft/outlook",
         "local settings/application data/microsoft/outlook",
         "local settings/application data/identities",
         "application data/thunderbird",
         "windows mail",
+        ".local/share/evolution", ".thunderbird/",
+        ".mozilla/thunderbird", "library/mail/",
+        "library/mail/v2", "library/mail/v3",
     ]
     _browser_patterns = [
         "places.sqlite", "history", "cookies.db", "cookies.sqlite",
@@ -3205,6 +3208,14 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "appdata/local/google/chrome",
         "appdata/roaming/microsoft/edge",
         "microsoftedge",
+        # Linux
+        ".config/google-chrome", ".config/chromium", ".mozilla/firefox",
+        ".config/brave", ".local/share/flatpak",
+        # macOS
+        "library/application support/google/chrome",
+        "library/application support/firefox",
+        "library/application support/brave",
+        "library/safari",
     ]
     _registry_patterns = [
         "software", "system", "ntuser.dat", "sam", "security", "default",
@@ -3499,15 +3510,17 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # we cannot skip playbooks just because artifacts aren't visible as standalone files.
     if has_disk_images:
         _ensure_playbooks = set()
+        # Email and browser forensics for ALL disk images —
+        # Linux has Thunderbird/evolution, macOS has Mail.app;
+        # phishing and insider threat cross all platforms
+        _ensure_playbooks.update({"PB-SIFT-022", "PB-SIFT-023"})
         if os_type == "windows":
-            # Windows images: email, registry, event logs, browser are almost always present
-            _ensure_playbooks.update({"PB-SIFT-009", "PB-SIFT-022", "PB-SIFT-023", "PB-SIFT-028"})
+            # Windows: also need registry + event log analysis
+            _ensure_playbooks.update({"PB-SIFT-009", "PB-SIFT-028"})
         elif os_type == "linux":
             _ensure_playbooks.update({"PB-SIFT-014"})
         elif os_type == "macos":
             _ensure_playbooks.update({"PB-SIFT-024"})
-        # Always ensure browser and email for any disk image (phishing, insider threat)
-        _ensure_playbooks.update({"PB-SIFT-022", "PB-SIFT-023"})
         for pb in _ensure_playbooks:
             if pb not in execution_plan:
                 execution_plan.append(pb)
