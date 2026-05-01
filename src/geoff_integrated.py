@@ -1901,6 +1901,7 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-022": {  # Browser Forensics
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "extract_browser_artifacts", {"image": "{image}", "offset": "{offset}"}),
         ],
         "other_files": [
             ("browser", "extract_history", {"db_path": "{file}"}),
@@ -3493,6 +3494,25 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
 
+    # --- Nuclear option: when disk images are present, ensure all OS-appropriate
+    # playbooks are included. Disk images contain everything inside them —
+    # we cannot skip playbooks just because artifacts aren't visible as standalone files.
+    if has_disk_images:
+        _ensure_playbooks = set()
+        if os_type == "windows":
+            # Windows images: email, registry, event logs, browser are almost always present
+            _ensure_playbooks.update({"PB-SIFT-009", "PB-SIFT-022", "PB-SIFT-023", "PB-SIFT-028"})
+        elif os_type == "linux":
+            _ensure_playbooks.update({"PB-SIFT-014"})
+        elif os_type == "macos":
+            _ensure_playbooks.update({"PB-SIFT-024"})
+        # Always ensure browser and email for any disk image (phishing, insider threat)
+        _ensure_playbooks.update({"PB-SIFT-022", "PB-SIFT-023"})
+        for pb in _ensure_playbooks:
+            if pb not in execution_plan:
+                execution_plan.append(pb)
+                _fe_log(job_id, f"  {pb}: Force-queued (disk image present — nuclear option)")
+
     # Classification based on indicator hits — must be computed before manager review
     hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
     classification = "Unknown"
@@ -3535,6 +3555,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity = "HIGH"
     elif "anti_forensics" in hit_categories:
         classification = "Destructive/Anti-Forensics"
+        severity = "HIGH"
+    elif "phishing" in hit_categories:
+        classification = "Phishing"
         severity = "HIGH"
     elif malware_analysis_warranted:
         classification = "Malware"
