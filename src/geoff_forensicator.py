@@ -62,7 +62,7 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
                     "stream": False,
                     "options": {"temperature": 0.1}
                 },
-                timeout=120
+                timeout=300  # 5 min — cloud models can be slow
             )
             if response.status_code == 200:
                 result_text = response.json().get('response', '')

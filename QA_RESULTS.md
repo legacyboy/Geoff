@@ -11615,3 +11615,84 @@ Connection reset by 127.0.0.1 port 2222
 ---
 ## QA Run: 2026-05-01 17:00:01 CDT — Scenario: single_dd_image
 - **SKIPPED:** No DD images found
+
+---
+## QA Run: 2026-05-01 17:15:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/mnt/evidence/data-leakage-case","job_id":"fe-6c0b8df1b0fb","message":"Find Evil job started. Poll /find-evil/status/fe-6c0b8df1b0fb for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-05-01 17:30:01 CDT — Scenario: concurrent_jobs
+### Concurrent job 1 (hacking case)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/hacking-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/mnt/evidence/hacking-case","job_id":"fe-82066fb4e460","message":"Find Evil job started. Poll /find-evil/status/fe-82066fb4e460 for progress.","status":"running"}
+
+### Concurrent job 2 (data leakage)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/mnt/evidence/data-leakage-case","job_id":"fe-86bb08ac800e","message":"Find Evil job started. Poll /find-evil/status/fe-86bb08ac800e for progress.","status":"running"}
+
+### Concurrent job 3 (full evidence dir)
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/home/sansforensics/evidence-storage/evidence' \u2192 /home/sansforensics/evidence-storage/evidence","status":"error"}
+
+
+---
+## QA Run: 2026-05-01 17:45:01 CDT — Scenario: chat_tool_request
+### Chat: tool request
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"Run mmls on the hacking case evidence\"}'"`
+- **Exit code:** 28
+- **Result:** 
+
+
+---
+## QA Run: 2026-05-01 18:00:01 CDT — Scenario: allowlist_bypass
+### Allowlist: bash bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"bash\", \"args\": [\"-c\", \"id\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+### Allowlist: python bypass
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/passwd\", \"tool\": \"python3\", \"args\": [\"-c\", \"import os; os.system('id')\"]}}'"`
+- **Exit code:** 0
+- **Result:** {"error":"SLEUTHKIT_Specialist.list_files() got an unexpected keyword argument 'tool'","status":"error"}
+
+
+---
+## QA Run: 2026-05-01 18:15:01 CDT — Scenario: e01_segments
+### Find Evil on E01 segments
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/home/sansforensics/evidence-storage/evidence/data-leakage-case\"}'"`
+- **Exit code:** 0
+- **Result:** {"evidence_dir":"/mnt/evidence/data-leakage-case","job_id":"fe-de4d530d0114","message":"Find Evil job started. Poll /find-evil/status/fe-de4d530d0114 for progress.","status":"running"}
+
+
+---
+## QA Run: 2026-05-01 18:30:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/mnt/evidence/../../../etc/passwd' \u2192 /etc/passwd","status":"error"}
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Error opening image file (raw_open: file \"/etc/shadow\" - Permission denied)\n","stdout":"","timestamp":"2026-05-01T23:30:02.630638","tool":"fls"}
+
+
+---
+## QA Run: 2026-05-01 18:45:01 CDT — Scenario: path_traversal
+### Path traversal attempt
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"../../../etc/passwd\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/mnt/evidence/../../../etc/passwd' \u2192 /etc/passwd","status":"error"}
+
+### Path traversal via run-tool
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/run-tool -H 'Content-Type: application/json' -d '{\"module\": \"sleuthkit\", \"function\": \"list_files\", \"params\": {\"image\": \"/etc/shadow\"}}'"`
+- **Exit code:** 0
+- **Result:** {"returncode":1,"status":"error","stderr":"Error opening image file (raw_open: file \"/etc/shadow\" - Permission denied)\n","stdout":"","timestamp":"2026-05-01T23:45:02.416632","tool":"fls"}
+

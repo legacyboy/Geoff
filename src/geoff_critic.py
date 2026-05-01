@@ -75,7 +75,7 @@ class GeoffCritic:
                         "stream": False,
                         "options": {"temperature": 0.2}
                     },
-                    timeout=60
+                    timeout=180
                 )
                 if response.status_code == 200:
                     result_text = response.json().get('response', '')

@@ -812,7 +812,7 @@ class _StepTimeout(Exception):
     """Raised when a step exceeds its watchdog timeout."""
     pass
 
-def _run_step_with_watchdog(func, args, step_timeout=600):
+def _run_step_with_watchdog(func, args, step_timeout=1800):
     """Run a step function with a watchdog timer. Raises _StepTimeout if exceeded."""
     if not hasattr(signal, 'SIGALRM'):
         # Windows or environments without SIGALRM — just run without watchdog
@@ -1041,7 +1041,7 @@ def call_llm(user_message, context="", agent_type="manager"):
                     "stream": False,
                     "options": {"temperature": 0.3}
                 },
-                timeout=120
+                timeout=300  # 5 min — cloud models can be slow
             )
             if response.status_code == 200:
                 result_text = response.json().get('response', 'Hmm, let me check that again.')
@@ -1072,7 +1072,7 @@ def call_llm(user_message, context="", agent_type="manager"):
     return None  # All retries exhausted
 
 
-def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
+def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
     """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping.
 
     Returns empty string on failure. Caller should handle None/empty gracefully.
@@ -1228,7 +1228,7 @@ Respond ONLY in valid JSON (no extra text):
 }}"""
 
     try:
-        response = _call_manager_llm(prompt, timeout=60)
+        response = _call_manager_llm(prompt, timeout=180)
         m = re.search(r'\{.*\}', response, re.DOTALL)
         if m:
             return json.loads(m.group())
@@ -1287,7 +1287,7 @@ or
             f"Provide a corrected response that only references evidence present in the context above. "
             f"If the context does not contain sufficient information, say so explicitly.\n\nGeoff:"
         )
-        corrected = _call_manager_llm(correction_prompt, timeout=90)
+        corrected = _call_manager_llm(correction_prompt, timeout=180)
         return corrected if corrected.strip() else response
     except Exception as corr_exc:
         _log_info(f"chat self-correction skipped: {corr_exc}")
