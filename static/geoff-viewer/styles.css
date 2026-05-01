@@ -28,6 +28,8 @@
   --ent-server:   #8B5CF6;
   --ent-mobile:   #F59E0B;
   --ent-network:  #64748B;
+  --ent-service:  #EC4899;
+  --ent-evidence: #06B6D4;
 
   --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
@@ -297,7 +299,8 @@ input, textarea { font: inherit; color: inherit; }
 .graph-stage {
   flex: 1;
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ----- Right pane: detail ----- */
@@ -584,10 +587,9 @@ input, textarea { font: inherit; color: inherit; }
 
 /* ===================== Graph SVG ===================== */
 .graph-svg {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
-  height: 100%;
+  /* height set inline by JS so the surrounding stage scrolls when columns are dense */
 }
 .node {
   cursor: pointer;
@@ -617,6 +619,10 @@ input, textarea { font: inherit; color: inherit; }
 .edge.highlighted { stroke: var(--g-blue); stroke-width: 1.6; opacity: 1; }
 .edge.lateral { stroke: var(--sev-high); stroke-dasharray: 4 3; }
 .edge.lateral.highlighted { stroke: var(--sev-crit); }
+.edge.owns { stroke: var(--ent-user); opacity: 0.75; stroke-width: 1.3; }
+.edge.owns.highlighted { stroke: var(--ent-user); opacity: 1; stroke-width: 2; }
+.edge.seen-on { stroke: var(--g-text-mute); stroke-dasharray: 1 4; opacity: 0.55; }
+.edge.seen-on.highlighted { stroke: var(--g-text-dim); opacity: 1; stroke-width: 1.6; }
 
 .col-header {
   font-family: var(--font-mono);
@@ -632,9 +638,12 @@ input, textarea { font: inherit; color: inherit; }
 
 /* Flag badge on nodes */
 .node .flag-badge {
-  fill: var(--sev-high);
+  fill: var(--sev-med);
 }
+.node .flag-badge.high { fill: var(--sev-high); }
 .node .flag-badge.crit { fill: var(--sev-crit); }
+.node-evidence .flag-badge { fill: #06B6D4; }
+.node-service .flag-badge { fill: #EC4899; }
 .node .flag-badge-text {
   fill: var(--g-bg);
   font-size: 9px;

@@ -1,6 +1,6 @@
 (function() {
-// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Services)
-// with edges for ownership, lateral-movement, evidence sources, and exfiltration.
+// Relationship graph — columnar layout (Accounts | Workstations | Servers | Mobile | Network | Services | Evidence)
+// with edges for ownership, presence, lateral-movement, evidence sources, and exfiltration.
 
 const {
   useEffect,
@@ -8,6 +8,13 @@ const {
   useRef,
   useState
 } = React;
+
+// Column layout constants — one source of truth so render and layout stay in sync.
+const HEADER_Y = 70;
+const FOOTER_Y = 40;
+const MIN_ROW_H = 64;
+const NODE_H = 44;
+const USER_R = 26;
 function classifyDevice(d) {
   const t = (d.device_type || "").toLowerCase();
   if (t.includes("server")) return "server";
@@ -35,6 +42,38 @@ function maxSev(counts) {
   if (counts.MEDIUM) return "MEDIUM";
   if (counts.LOW) return "LOW";
   return null;
+}
+function formatEvidenceType(t) {
+  if (!t) return "Evidence";
+  return t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+function guessEvidenceTypeFromPath(p) {
+  const fname = (p || "").split("/").pop().toLowerCase();
+  const ext = fname.includes(".") ? fname.split(".").pop() : "";
+  if (["e01", "ex01", "aff", "aff4", "dd", "img", "raw", "vmdk", "vhdx"].includes(ext)) return "disk_images";
+  if (ext === "evtx") return "evtx_logs";
+  if (["mem", "lime", "vmem", "dmp"].includes(ext)) return "memory_dumps";
+  if (["pcap", "pcapng"].includes(ext)) return "pcaps";
+  if (ext === "log" || fname.endsWith("syslog") || fname.endsWith("auth.log")) return "syslogs";
+  if (ext === "plist") return "plists";
+  if (ext === "db" || ext === "sqlite" || fname === "manifest.db") return "databases";
+  if (["dat", "reg", "hive"].includes(ext)) return "registry_hives";
+  if (fname === "ntuser.dat" || fname === "system" || fname === "software" || fname === "security" || fname === "sam") return "registry_hives";
+  if (ext === "ab") return "mobile_backups";
+  return null;
+}
+function classifyExfilService(host) {
+  const h = (host || "").toLowerCase();
+  if (h.includes("mega.")) return "Mega.nz";
+  if (h.includes("gmail") || h.includes("google")) return "Google";
+  if (h.includes("onedrive") || h.includes("microsoft")) return "OneDrive";
+  if (h.includes("dropbox")) return "Dropbox";
+  if (h.includes("aol")) return "AOL";
+  if (h.includes("yahoo")) return "Yahoo";
+  if (h.includes("protonmail")) return "ProtonMail";
+  if (h.includes("sharepoint")) return "SharePoint";
+  if (h.includes("icloud")) return "iCloud";
+  return null; // unknown — caller decides whether to bucket as "External"
 }
 function RelationshipGraph({
   report,
@@ -77,8 +116,10 @@ function RelationshipGraph({
     className: "graph-stage"
   }, /*#__PURE__*/React.createElement("svg", {
     className: "graph-svg",
-    viewBox: `0 0 ${size.w} ${size.h}`,
-    preserveAspectRatio: "xMidYMid meet"
+    width: "100%",
+    height: graph.totalH,
+    viewBox: `0 0 ${size.w} ${graph.totalH}`,
+    preserveAspectRatio: "xMidYMin meet"
   }, graph.columns.map(col => /*#__PURE__*/React.createElement("g", {
     key: col.key
   }, /*#__PURE__*/React.createElement("text", {
@@ -91,7 +132,7 @@ function RelationshipGraph({
     x1: col.x,
     y1: 44,
     x2: col.x,
-    y2: size.h - 16
+    y2: graph.totalH - 16
   }))), /*#__PURE__*/React.createElement("g", null, graph.edges.map((e, i) => {
     const n1 = graph.nodeById[e.from];
     const n2 = graph.nodeById[e.to];
@@ -100,9 +141,7 @@ function RelationshipGraph({
     const hl = neighbors && neighbors.has(e.from) && neighbors.has(e.to);
     const dim = neighbors && !hl;
     let cls = "edge";
-    if (e.kind === "lateral") cls += " lateral";
-    if (e.kind === "exfiltrated_to") cls += " exfil";
-    if (e.kind === "evidence_source") cls += " evidence-link";
+    if (e.kind === "owns") cls += " owns";else if (e.kind === "seen_on") cls += " seen-on";else if (e.kind === "lateral") cls += " lateral";else if (e.kind === "exfiltrated_to") cls += " exfil";else if (e.kind === "evidence_source") cls += " evidence-link";
     if (hl) cls += " highlighted";
     if (dim) cls += " dimmed";
     return /*#__PURE__*/React.createElement("path", {
@@ -115,7 +154,7 @@ function RelationshipGraph({
     const isHover = hoverId === n.id;
     const inNeighborhood = neighbors && neighbors.has(n.id);
     const dim = neighbors && !inNeighborhood;
-    let cls = "node";
+    let cls = "node node-" + n.kind;
     if (isSel || isHover) cls += " highlighted";
     if (dim) cls += " dimmed";
     return /*#__PURE__*/React.createElement("g", {
@@ -167,7 +206,7 @@ function RelationshipGraph({
       x: 0,
       y: n.kind === "user" ? 4 : -3,
       textAnchor: "middle"
-    }, n.label), n.sublabel && /*#__PURE__*/React.createElement("text", {
+    }, n.label || ""), n.sublabel && /*#__PURE__*/React.createElement("text", {
       x: 0,
       y: n.kind === "user" ? 18 : 12,
       textAnchor: "middle",
@@ -176,7 +215,7 @@ function RelationshipGraph({
       transform: `translate(${n.kind === "user" ? n.r - 4 : n.w / 2 - 6}, ${n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6})`
     }, /*#__PURE__*/React.createElement("circle", {
       r: 8,
-      className: `flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : ""}`
+      className: `flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : ""}`
     }), /*#__PURE__*/React.createElement("text", {
       className: "flag-badge-text"
     }, n.badge.count)));
@@ -184,8 +223,6 @@ function RelationshipGraph({
 }
 function edgePath(a, b) {
   // Curved connector between two nodes (horizontal S)
-  const x1 = a.x + (a.kind === "user" ? a.r : a.w / 2);
-  const x2 = b.x - (b.kind === "user" ? b.r : b.w / 2);
   const [from, to] = a.x < b.x ? [a, b] : [b, a];
   const sx = from.x + (from.kind === "user" ? from.r : from.w / 2);
   const ex = to.x - (to.kind === "user" ? to.r : to.w / 2);
@@ -195,66 +232,86 @@ function edgePath(a, b) {
   return `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
 }
 function buildGraph(report, size) {
-  const users = Object.entries(report.user_map || {}).map(([k, u]) => ({
+  const userMap = report.user_map || {};
+  const deviceMap = report.device_map || {};
+  const flagsByDevice = report.behavioral_flags || {};
+  const users = Object.entries(userMap).map(([k, u]) => ({
     id: "u:" + k,
     kind: "user",
     raw: u || {},
     key: k
   }));
-  const devs = Object.entries(report.device_map || {}).map(([k, d]) => ({
+  const devs = Object.entries(deviceMap).map(([k, d]) => ({
     id: "d:" + k,
-    kind: classifyDevice(d),
+    kind: classifyDevice(d || {}),
     raw: d || {},
     key: k
   }));
 
-  // Add exfiltration service nodes if detected
+  // Aggregate exfiltration services (one node per known service brand)
   const exfilServices = new Map();
-  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
-    flags.forEach(flag => {
-      if (flag.flag_type === 'exfiltration' || flag.flag_type === 'c2_traffic') {
-        const evidence = flag.evidence || {};
-        const dstHost = evidence.dst_host || evidence.dst_ip || '';
-        if (dstHost) {
-          // Detect service type
-          let serviceType = 'external';
-          if (dstHost.includes('mega') || dstHost.includes('mega.')) serviceType = 'Mega.nz';else if (dstHost.includes('gmail') || dstHost.includes('google')) serviceType = 'Google';else if (dstHost.includes('onedrive') || dstHost.includes('microsoft')) serviceType = 'OneDrive';else if (dstHost.includes('dropbox')) serviceType = 'Dropbox';else if (dstHost.includes('aol')) serviceType = 'AOL';else if (dstHost.includes('yahoo')) serviceType = 'Yahoo';else if (dstHost.includes('protonmail')) serviceType = 'ProtonMail';
-          if (!exfilServices.has(serviceType)) {
-            exfilServices.set(serviceType, {
-              id: "s:" + serviceType,
-              kind: "service",
-              name: serviceType,
-              hosts: []
-            });
-          }
-          exfilServices.get(serviceType).hosts.push({
-            host: dstHost,
-            devId,
-            flag
-          });
-        }
-      }
-    });
-  });
-
-  // Add evidence source nodes for each device's evidence files
-  const evidenceNodes = [];
-  const evidenceFiles = new Map(); // path -> { device_ids: [], type }
-
-  // Collect all evidence files and which devices they belong to
-  Object.entries(report.device_map || {}).forEach(([devId, dev]) => {
-    (dev.evidence_files || []).forEach(fpath => {
-      const fname = fpath.split('/').pop();
-      if (!evidenceFiles.has(fpath)) {
-        evidenceFiles.set(fpath, {
-          filename: fname,
-          device_ids: [],
-          type: dev.evidence_types?.[0] || 'unknown'
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const evidence = flag.evidence || {};
+      const dstHost = evidence.dst_host || evidence.dst_ip || "";
+      if (!dstHost) return;
+      const serviceType = classifyExfilService(dstHost) || "External";
+      if (!exfilServices.has(serviceType)) {
+        exfilServices.set(serviceType, {
+          id: "s:" + serviceType,
+          kind: "service",
+          name: serviceType,
+          hosts: []
         });
       }
-      evidenceFiles.get(fpath).device_ids.push(devId);
+      exfilServices.get(serviceType).hosts.push({
+        host: dstHost,
+        devId,
+        flag
+      });
     });
   });
+
+  // Aggregate evidence by TYPE (one bucket per evidence_type — not per file).
+  // This keeps the graph readable when devices have lots of evidence.
+  const evidenceBuckets = new Map(); // type -> { type, devIds:Set, files:[{path,devId}] }
+  const getBucket = t => {
+    if (!evidenceBuckets.has(t)) {
+      evidenceBuckets.set(t, {
+        type: t,
+        devIds: new Set(),
+        files: []
+      });
+    }
+    return evidenceBuckets.get(t);
+  };
+  Object.entries(deviceMap).forEach(([devId, dev]) => {
+    const declared = dev && dev.evidence_types || [];
+    const files = dev && dev.evidence_files || [];
+    // Ensure each declared type has an edge to the device, even if no files match it
+    declared.forEach(t => {
+      getBucket(t).devIds.add(devId);
+    });
+    // Bucket each file by guessed type (fall back to first declared, then "other")
+    files.forEach(fp => {
+      const guessed = guessEvidenceTypeFromPath(fp);
+      const t = guessed || declared[0] || "other";
+      const b = getBucket(t);
+      b.devIds.add(devId);
+      b.files.push({
+        path: fp,
+        devId
+      });
+    });
+  });
+  const evidenceItems = Array.from(evidenceBuckets.values()).map(b => ({
+    id: "e:" + b.type,
+    kind: "evidence",
+    type: b.type,
+    devIds: Array.from(b.devIds),
+    files: b.files
+  }));
   const columns = [{
     key: "user",
     label: "Accounts",
@@ -282,20 +339,24 @@ function buildGraph(report, size) {
   }, {
     key: "evidence",
     label: "Evidence",
-    items: Array.from(evidenceFiles.entries()).map(([path, info]) => ({
-      id: "e:" + path,
-      kind: "evidence",
-      path: path,
-      ...info
-    }))
+    items: evidenceItems
   }].filter(c => c.items.length > 0).map(c => ({
     ...c,
     count: c.items.length
   }));
+
+  // Layout sizing — let the graph grow taller when a column has many items, so
+  // the surrounding container scrolls instead of nodes being squashed on top of each other.
+  const maxItems = Math.max(1, ...columns.map(c => c.items.length));
+  const computedH = HEADER_Y + FOOTER_Y + maxItems * MIN_ROW_H;
+  const totalH = Math.max(size.h, computedH);
   const colCount = columns.length;
-  const padX = 40;
+  const padX = 32;
   const innerW = size.w - padX * 2;
   const colGap = innerW / colCount;
+  // Node width adapts so columns don't visually overlap when there are 6–7 of them.
+  const nodeW = Math.max(96, Math.min(150, colGap * 0.84));
+  const labelChars = Math.max(10, Math.floor(nodeW / 8));
   const accentMap = {
     user: "#10B981",
     pc: "#3B82F6",
@@ -307,99 +368,130 @@ function buildGraph(report, size) {
   };
   const nodeById = {};
   const nodes = [];
-
-  // Add device/user nodes
-  columns.filter(c => c.key !== 'service').forEach((col, ci) => {
+  columns.forEach((col, ci) => {
     col.x = padX + colGap * ci + colGap / 2;
-    const topY = 70;
-    const bottomY = size.h - 40;
+    const topY = HEADER_Y;
+    const bottomY = totalH - FOOTER_Y;
     const gapY = (bottomY - topY) / Math.max(col.items.length, 1);
     col.items.forEach((item, ri) => {
       const y = topY + gapY * ri + gapY / 2;
-      const flags = item.kind === "user" ? aggregateUserFlags(report, item.key) : countFlags((report.behavioral_flags || {})[item.key] || []);
-      const sev = maxSev(flags);
-      const label = item.kind === "user" ? (item.raw || {}).display_name || (item.raw || {}).username || item.key : (item.raw || {}).hostname || item.key;
-      const sublabel = item.kind === "user" ? (item.raw || {}).role || "user" : osLabel(item.raw || {});
-      const node = {
-        id: item.id,
-        kind: item.kind,
-        key: item.key,
-        label: truncate(label, 18),
-        sublabel: truncate(sublabel, 22),
-        x: col.x,
-        y,
-        r: 28,
-        // for user circles
-        w: 150,
-        h: 44,
-        // for rectangles
-        accent: accentMap[item.kind] || "#64748B",
-        badge: flags.total > 0 ? {
+      let label = "",
+        sublabel = "",
+        badge = null;
+      const kind = item.kind;
+      if (kind === "user") {
+        const flags = aggregateUserFlags(report, item.key);
+        const sev = maxSev(flags);
+        label = item.raw && (item.raw.display_name || item.raw.username) || item.key;
+        sublabel = item.raw && item.raw.role || "user";
+        badge = flags.total > 0 ? {
           count: flags.total,
           sev
-        } : null,
-        raw: item.raw
+        } : null;
+      } else if (kind === "evidence") {
+        const fileCount = (item.files || []).length;
+        const devCount = (item.devIds || []).length;
+        label = formatEvidenceType(item.type);
+        sublabel = `${fileCount} file${fileCount === 1 ? "" : "s"} · ${devCount} dev${devCount === 1 ? "" : "s"}`;
+        badge = fileCount > 0 ? {
+          count: fileCount,
+          sev: null
+        } : null;
+      } else if (kind === "service") {
+        label = item.name;
+        sublabel = `${item.hosts.length} connection${item.hosts.length === 1 ? "" : "s"}`;
+        badge = {
+          count: item.hosts.length,
+          sev: "HIGH"
+        };
+      } else {
+        // device kinds: pc, server, mobile, network
+        const flags = countFlags(flagsByDevice[item.key] || []);
+        const sev = maxSev(flags);
+        label = item.raw && item.raw.hostname || item.key;
+        sublabel = osLabel(item.raw || {});
+        badge = flags.total > 0 ? {
+          count: flags.total,
+          sev
+        } : null;
+      }
+      const node = {
+        id: item.id,
+        kind,
+        key: item.key || item.type || item.name,
+        label: truncate(label, labelChars + 4),
+        sublabel: truncate(sublabel, labelChars + 8),
+        x: col.x,
+        y,
+        r: USER_R,
+        w: nodeW,
+        h: NODE_H,
+        accent: accentMap[kind] || "#64748B",
+        badge,
+        raw: item.raw || item
       };
       nodes.push(node);
       nodeById[node.id] = node;
     });
   });
 
-  // Add service nodes
-  const serviceCol = columns.find(c => c.key === 'service');
-  if (serviceCol) {
-    const topY = 70;
-    const bottomY = size.h - 40;
-    const gapY = (bottomY - topY) / Math.max(serviceCol.items.length, 1);
-    serviceCol.items.forEach((item, ri) => {
-      const y = topY + gapY * ri + gapY / 2;
-      const node = {
-        id: item.id,
-        kind: "service",
-        key: item.name,
-        label: truncate(item.name, 18),
-        sublabel: item.hosts.length + " connection(s)",
-        x: serviceCol.x,
-        y,
-        r: 28,
-        w: 150,
-        h: 44,
-        accent: accentMap.service,
-        badge: {
-          count: item.hosts.length,
-          sev: "HIGH"
-        },
-        raw: {
-          name: item.name,
-          hosts: item.hosts
-        }
-      };
-      nodes.push(node);
-      nodeById[node.id] = node;
-    });
-  }
-
   // Build edges
   const edges = [];
-  // ownership: user <-> device
-  for (const [uname, u] of Object.entries(report.user_map || {})) {
-    for (const devId of u.devices || []) {
-      if (nodeById["u:" + uname] && nodeById["d:" + devId]) {
-        edges.push({
-          from: "u:" + uname,
-          to: "d:" + devId,
-          kind: "owns"
-        });
-      }
+  const seenEdge = new Set();
+  const addEdge = e => {
+    const k = `${e.from}|${e.to}|${e.kind}`;
+    if (seenEdge.has(k)) return;
+    seenEdge.add(k);
+    edges.push(e);
+  };
+
+  // User <-> Device: distinguish ownership from presence.
+  // Source 1: user_map[*].devices
+  for (const [uname, u] of Object.entries(userMap)) {
+    for (const devId of u && u.devices || []) {
+      if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
+      const dev = deviceMap[devId] || {};
+      const isOwner = dev.owner === uname;
+      addEdge({
+        from: "u:" + uname,
+        to: "d:" + devId,
+        kind: isOwner ? "owns" : "seen_on"
+      });
     }
   }
-  // lateral movement edges (device <-> device)
+  // Source 2: device_map[*].metadata.user_profiles_found — catches users who
+  // appear on a device but aren't listed in their own user_map.devices entry.
+  for (const [devId, dev] of Object.entries(deviceMap)) {
+    const profiles = dev && dev.metadata && dev.metadata.user_profiles_found || [];
+    for (const uname of profiles) {
+      if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
+      const isOwner = dev.owner === uname;
+      addEdge({
+        from: "u:" + uname,
+        to: "d:" + devId,
+        kind: isOwner ? "owns" : "seen_on"
+      });
+    }
+  }
+  // Source 3: also accept the device's declared owner, even if user_map.devices missed it.
+  for (const [devId, dev] of Object.entries(deviceMap)) {
+    const owner = dev && dev.owner;
+    if (owner && nodeById["u:" + owner] && nodeById["d:" + devId]) {
+      addEdge({
+        from: "u:" + owner,
+        to: "d:" + devId,
+        kind: "owns"
+      });
+    }
+  }
+
+  // Lateral movement: device <-> device
   for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
-    for (const ind of cu.lateral_movement_indicators || []) {
+    for (const ind of cu && cu.lateral_movement_indicators || []) {
       const a = "d:" + ind.from_device;
       const b = "d:" + ind.to_device;
       if (nodeById[a] && nodeById[b]) {
-        edges.push({
+        addEdge({
           from: a,
           to: b,
           kind: "lateral",
@@ -409,40 +501,40 @@ function buildGraph(report, size) {
       }
     }
   }
-  // Exfiltration edges: device -> service
-  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
-    flags.forEach(flag => {
-      if (flag.flag_type === 'exfiltration' || flag.flag_type === 'c2_traffic') {
-        const evidence = flag.evidence || {};
-        const dstHost = evidence.dst_host || evidence.dst_ip || '';
-        if (dstHost) {
-          let serviceType = 'external';
-          if (dstHost.includes('mega') || dstHost.includes('mega.')) serviceType = 'Mega.nz';else if (dstHost.includes('gmail') || dstHost.includes('google')) serviceType = 'Google';else if (dstHost.includes('onedrive') || dstHost.includes('microsoft')) serviceType = 'OneDrive';else if (dstHost.includes('dropbox')) serviceType = 'Dropbox';else if (dstHost.includes('aol')) serviceType = 'AOL';else if (dstHost.includes('yahoo')) serviceType = 'Yahoo';else if (dstHost.includes('protonmail')) serviceType = 'ProtonMail';
-          const serviceNodeId = "s:" + serviceType;
-          if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
-            edges.push({
-              from: "d:" + devId,
-              to: serviceNodeId,
-              kind: "exfiltrated_to",
-              host: dstHost,
-              bytes: evidence.bytes_sent,
-              flag: flag.summary
-            });
-          }
-        }
+
+  // Exfiltration: device -> service
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const evidence = flag.evidence || {};
+      const dstHost = evidence.dst_host || evidence.dst_ip || "";
+      if (!dstHost) return;
+      const serviceType = classifyExfilService(dstHost) || "External";
+      const serviceNodeId = "s:" + serviceType;
+      if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
+        addEdge({
+          from: "d:" + devId,
+          to: serviceNodeId,
+          kind: "exfiltrated_to",
+          host: dstHost,
+          bytes: evidence.bytes_sent,
+          flag: flag.summary
+        });
       }
     });
   });
 
-  // Add evidence source edges: device -> evidence file
-  evidenceFiles.forEach((info, path) => {
-    info.device_ids.forEach(devId => {
-      if (nodeById["d:" + devId] && nodeById["e:" + path]) {
-        edges.push({
+  // Evidence: device -> type bucket
+  evidenceBuckets.forEach((b, t) => {
+    const eId = "e:" + t;
+    if (!nodeById[eId]) return;
+    b.devIds.forEach(devId => {
+      if (nodeById["d:" + devId]) {
+        addEdge({
           from: "d:" + devId,
-          to: "e:" + path,
+          to: eId,
           kind: "evidence_source",
-          evidence_type: info.type
+          evidence_type: t
         });
       }
     });
@@ -451,7 +543,8 @@ function buildGraph(report, size) {
     nodes,
     edges,
     nodeById,
-    columns
+    columns,
+    totalH
   };
 }
 function aggregateUserFlags(report, username) {
@@ -484,14 +577,14 @@ function osLabel(d) {
   const t = (d.device_type || "").toLowerCase();
   if (t.includes("ios")) return "iOS " + (d.os_version || "");
   if (t.includes("android")) return "Android " + (d.os_version || "");
-  if (t.includes("server")) return d.os_version || d.os_type;
+  if (t.includes("server")) return d.os_version || d.os_type || "server";
   if (d.os_type === "windows") return d.os_version || "Windows";
   if (d.os_type === "linux") return d.os_version || "Linux";
   if (d.os_type === "macos") return d.os_version || "macOS";
   return d.os_type || "device";
 }
 function truncate(s, n) {
-  s = s || "";
+  s = s == null ? "" : String(s);
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 window.RelationshipGraph = RelationshipGraph;
@@ -500,5 +593,8 @@ window.countFlags = countFlags;
 window.maxSev = maxSev;
 window.aggregateUserFlags = aggregateUserFlags;
 window.osLabel = osLabel;
+window.formatEvidenceType = formatEvidenceType;
+window.classifyExfilService = classifyExfilService;
+window.guessEvidenceTypeFromPath = guessEvidenceTypeFromPath;
 
 })();
