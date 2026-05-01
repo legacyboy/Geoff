@@ -11,7 +11,123 @@ function DetailPanel({ report, selected, onSelect }) {
   if (selected.startsWith("d:")) {
     return <DeviceDetail report={report} deviceId={selected.slice(2)} onSelect={onSelect} />;
   }
+  if (selected.startsWith("e:")) {
+    return <EvidenceDetail report={report} evidenceType={selected.slice(2)} onSelect={onSelect} />;
+  }
+  if (selected.startsWith("s:")) {
+    return <ServiceDetail report={report} serviceName={selected.slice(2)} onSelect={onSelect} />;
+  }
   return null;
+}
+
+function EvidenceDetail({ report, evidenceType, onSelect }) {
+  const devices = Object.entries(report.device_map || {});
+  const matchingDevs = devices.filter(([, d]) => (d.evidence_types || []).includes(evidenceType));
+  const files = [];
+  devices.forEach(([devId, d]) => {
+    (d.evidence_files || []).forEach(fp => {
+      const guessed = (window.guessEvidenceTypeFromPath && window.guessEvidenceTypeFromPath(fp)) || (d.evidence_types || [])[0];
+      if (guessed === evidenceType) files.push({ path: fp, devId });
+    });
+  });
+  // Devices contributing to this bucket = either declared the type or own a matching file
+  const devIdSet = new Set(matchingDevs.map(([k]) => k));
+  files.forEach(f => devIdSet.add(f.devId));
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: "rgba(6,182,212,0.1)", color: "#06B6D4", border: "1px solid rgba(6,182,212,0.3)" }}>◫</div>
+        <div className="title-wrap">
+          <div className="kind">Evidence type</div>
+          <div className="title">{(window.formatEvidenceType || ((s) => s))(evidenceType)}</div>
+          <div className="sub">{files.length} file{files.length === 1 ? "" : "s"} across {devIdSet.size} device{devIdSet.size === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Source devices <span className="count">{devIdSet.size}</span></div>
+        <div className="related-list">
+          {Array.from(devIdSet).map((devId) => {
+            const dev = (report.device_map || {})[devId];
+            if (!dev) return null;
+            const kind = classifyDevice(dev);
+            return (
+              <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                <span className={`bullet ${kind}`} />
+                <span className="name">{dev.hostname || devId}</span>
+                <span className="via">{osLabel(dev)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Files <span className="count">{files.length}</span></div>
+        {files.length === 0
+          ? <div className="empty" style={{ padding: "12px 0" }}>No individual files matched this type heuristic — devices declare it but evidence_files is empty or extension-less.</div>
+          : files.map((f, i) => (
+              <div key={i} className="evfile" title={f.path}>
+                <span className="type-tag">{extType(f.path)}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{f.path}</span>
+                <span className="via" style={{ fontSize: 10, color: "var(--g-text-mute)" }}>{f.devId}</span>
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+function ServiceDetail({ report, serviceName, onSelect }) {
+  // Reconstruct service nodes' contributing devices and traffic flags.
+  const hits = []; // { devId, host, flag }
+  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const dst = (flag.evidence || {}).dst_host || (flag.evidence || {}).dst_ip || "";
+      if (!dst) return;
+      const svc = (window.classifyExfilService && window.classifyExfilService(dst)) || "External";
+      if (svc === serviceName) hits.push({ devId, host: dst, flag });
+    });
+  });
+  const devSet = new Set(hits.map(h => h.devId));
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: "rgba(236,72,153,0.1)", color: "#EC4899", border: "1px solid rgba(236,72,153,0.3)" }}>↗</div>
+        <div className="title-wrap">
+          <div className="kind">External service</div>
+          <div className="title">{serviceName}</div>
+          <div className="sub">{hits.length} flagged connection{hits.length === 1 ? "" : "s"} from {devSet.size} device{devSet.size === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Source devices <span className="count">{devSet.size}</span></div>
+        <div className="related-list">
+          {Array.from(devSet).map((devId) => {
+            const dev = (report.device_map || {})[devId];
+            if (!dev) return null;
+            const kind = classifyDevice(dev);
+            return (
+              <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                <span className={`bullet ${kind}`} />
+                <span className="name">{dev.hostname || devId}</span>
+                <span className="via">{osLabel(dev)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Connections <span className="count">{hits.length}</span></div>
+        {hits.map((h, i) => <FindingCard key={i} f={{ ...h.flag, device_id: h.devId }} showDevice />)}
+      </div>
+    </div>
+  );
 }
 
 function CaseOverview({ report, onSelect }) {
