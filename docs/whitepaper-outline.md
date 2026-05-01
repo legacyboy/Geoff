@@ -6,7 +6,7 @@
 
 ## Abstract (~250 words, last to write)
 
-One sentence problem. One sentence approach. One sentence on the three novel contributions (multi-agent pipeline, evidence chain, behavioral analysis replacing YARA). One sentence on the empirical result — needs evaluation numbers from § 6 before this can be written. One sentence positioning vs SIFT and SOAR.
+One sentence problem. One sentence approach. One sentence on the three novel contributions (multi-agent pipeline, evidence chain, behavioral analysis replacing YARA). One sentence on the empirical result — needs evaluation numbers from § 6 before this can be written. One sentence on the evaluation: Geoff matches or exceeds manual SIFT analyst findings on public DFIR datasets, with measurable hallucination rate.
 
 ---
 
@@ -100,52 +100,65 @@ One sentence problem. One sentence approach. One sentence on the three novel con
 
 ## 5. Related Work
 
-- **SIFT Workstation.** The runtime substrate. Provides tools, not interpretation.
-- **Plaso / log2timeline.** Super-timeline construction from heterogeneous sources. We use it; we add per-finding citation.
-- **YARA / sigma rules.** Static signature matching. We argue behavioral analysis is the right primitive for kill-chain reconstruction.
-- **SOAR platforms (Splunk SOAR, Cortex XSOAR).** Playbook execution. Different goal — ticketing/orchestration, not forensic interpretation.
-- **LLM agents for security.** Recent work on LLM red teaming and SOC-assistant agents. Position Geoff as DFIR-specific and ground-truth-anchored via the evidence chain.
-- **Reproducible computational research.** Position the per-case git repo and audit trail as borrowing from the reproducible-research literature (Kanwal et al., Stodden et al.).
+- **Manual DFIR practice.** The dominant approach — an experienced analyst with SIFT/EnCase/FTK, working evidence by evidence, writing findings by hand. No automation of interpretation. This is our primary comparison point (§ 6).
+- **SIFT Workstation.** The runtime substrate. Provides tools, not interpretation. Geoff automates the SIFT workflow end-to-end.
+- **Plaso / log2timeline.** Super-timeline construction from heterogeneous sources. We use it; we add per-finding citation and behavioral flagging on top.
+- **SOAR platforms (Splunk SOAR, Cortex XSOAR).** Playbook execution for ticketing and orchestration. Different goal — they automate response workflows, not forensic interpretation or evidence-grounded narrative generation.
+- **Commercial triage suites (Magnet AXIOM, Cellebrite).** Proprietary, black-box. No evidence-chain traceability, no self-validation, no reproducibility.
+- **LLM agents for security.** PentestGPT, TaskWeaver, AutoGPT-for-IR. These generalize across security tasks; Geoff is DFIR-specific and ground-truth-anchored via the evidence chain.
+- **Reproducible computational research.** Per-case git repo and audit trail borrow from the reproducible-research literature (Kanwal et al., Stodden et al.).
 
 ---
 
 ## 6. Evaluation `[TODO — this is the gap; below is the design we'd run]`
 
-The evaluation needs to support three claims: (1) Geoff matches an expert SIFT workflow on technique recall, (2) the Critic catches LLM hallucinations at a measurable rate, (3) the anti-forensics cascade reduces false-confident findings. None of this exists in the codebase yet — these are the experiments that have to be run.
+The evaluation answers one question: **Does Geoff find what a human analyst would find, and does it invent things that aren't there?** We compare Geoff directly against manual SIFT investigations — the same tools, the same evidence, the same ground truth.
 
 ### 6.1 Datasets `[TODO]`
 
-- Public DFIR datasets — candidates: NIST CFReDS, DFRWS Rodeo, Magnet weekly CTF cases, CFReDS hacking cases. Pick 5-10 cases covering varied attack patterns (ransomware, lateral movement, insider, web shell).
-- Ground truth: published walkthroughs.
+Public DFIR datasets with published walkthroughs that serve as ground truth:
+- NIST CFReDS hacking case (already in evidence pool)
+- NIST CFReDS data leakage case (already in evidence pool)
+- M57 Jean phishing case (already in evidence pool)
+- DFRWS 2017 IoT challenge (already downloaded)
+- Magnet CTF weekly cases (2-3 selected for coverage)
 
-### 6.2 Baselines `[TODO]`
+Each case must have a published walkthrough or expert-produced findings list that constitutes ground truth.
 
-- B1: vanilla SIFT analyst workflow — assume an analyst runs the same SIFT tools (SleuthKit, Volatility, Plaso, RegRipper) and produces a written report. Approximate this from the published walkthroughs.
-- B2: SIFT + YARA + sigma — same but with signature-based detection bolted on.
-- B3: Geoff with single-agent (Manager only, no Critic) ablation — measures the contribution of the Critic.
-- B4: full Geoff three-agent pipeline.
+### 6.2 Baseline: Manual SIFT Investigation `[TODO]`
 
-### 6.3 Metrics `[TODO]`
+For each case, the baseline is a human analyst working the same evidence with SIFT tools (SleuthKit, Volatility, Plaso, RegRipper, Zimmerman tools). Ground truth is derived from:
+- Published case walkthroughs (CFReDS, DFRWS, Magnet)
+- Where walkthroughs are unavailable, an experienced analyst produces findings independently
 
-- **Technique recall.** Of the MITRE techniques present in the case ground truth, what fraction does each system surface?
-- **Technique precision.** Of techniques claimed, what fraction are in the ground truth?
-- **Citation grounding rate.** Of factual claims in Geoff's narrative report, what fraction map to a specific evidence-chain anchor that an analyst can verify? (Sample 50 claims per case, expert-verify.)
-- **Hallucination rate.** Of Forensicator interpretations, what fraction did the Critic reject? Of those, what fraction would have been wrong? (Manual audit on a sample.)
-- **Wall-clock time.** Geoff vs an analyst's reported triage time.
-- **Reproducibility.** Run Geoff three times on the same case; measure overlap of techniques surfaced and key evidence anchors.
+The comparison is apples-to-apples: same tools, same evidence, same MITRE technique taxonomy.
 
-### 6.4 Ablation studies `[TODO]`
+### 6.3 Metrics
 
-- Critic on vs off — does precision drop measurably without the Critic?
-- Anti-forensics cascade on vs off — on cases that contain anti-forensics indicators, does the cascade reduce false-confident CONFIRMED findings?
-- Behavioral analyzer vs YARA — on cases with novel-strain malware, does behavioral analysis catch it and YARA miss it?
-- Cloud vs local model profile — does the local 14B/32B profile reach the same conclusions as the cloud profile? Measure agreement on technique list.
+| Metric | Definition |
+|--------|------------|
+| **Finding recall** | % of ground-truth findings that Geoff surfaces |
+| **Finding precision** | % of Geoff's findings that match ground truth |
+| **False positive rate** | Geoff findings not in ground truth / total Geoff findings |
+| **Hallucination rate** | Geoff claims with no evidence-chain anchor (invented artifacts) / total Geoff claims |
+| **Time to triage** | Geoff wall-clock vs analyst's reported or estimated triage time |
+| **Narrative quality** | Blind expert rating (1-5) comparing Geoff's report to the analyst's, on completeness, accuracy, and actionability |
+
+### 6.4 Methodology
+
+1. Run Geoff on each case (N≥3 runs per case to measure reproducibility)
+2. Extract Geoff's findings, map each to MITRE ATT&CK technique
+3. Compare against ground truth: count matches (TP), missed findings (FN), invented findings (FP), and ungrounded claims (hallucinations)
+4. For narrative quality: present Geoff's report and the analyst's report (anonymized, randomized order) to 2-3 experienced DFIR analysts for blind rating
+5. Report mean and 95% CI across all cases for each metric
 
 ### 6.5 Threats to validity `[TODO]`
 
 - Public DFIR datasets are curated and may not represent the messiness of real cases.
 - Ground truth is the published walkthrough, which is itself analyst-produced; "Geoff agrees with the walkthrough" is not the same as "Geoff is correct."
 - LLM non-determinism — every result needs N≥3 runs and a confidence interval.
+- The Critic is itself an LLM; we mitigate with structural checks (IOC format, schema validation) but a sufficiently confident wrong Forensicator + permissive Critic will produce a wrong-and-confident finding.
+- The anti-forensics cascade is keyword-driven; an attacker who clears logs without leaving the keywords (e.g. via a custom binary) won't trigger it.
 
 ---
 
@@ -188,7 +201,7 @@ One paragraph. Restate the contribution. Restate the empirical result (filled in
 
 ## What's blocking submission today
 
-1. **Evaluation section is empty.** All eight novelty claims rely on it. Estimated effort: 2-4 weeks of someone running cases and tabulating, plus the LLM cost.
-2. **No baseline comparison code.** Need a script that takes a case and produces "vanilla SIFT analyst would have done X" — most likely by parsing the published walkthrough.
+1. **Evaluation section is empty.** All novelty claims rely on it. Estimated effort: 2-4 weeks of running cases and tabulating findings against ground truth, plus LLM cost.
+2. **Ground truth walkthroughs.** Need to formalize findings for each dataset case into a structured MITRE-mapped list that Geoff's output can be compared against.
 3. **Dataset choice.** Pick 5-10 cases up front and lock them in; otherwise the evaluation drifts.
 4. **Author list, affiliations, IRB.** Out of scope here but needed before submission.
