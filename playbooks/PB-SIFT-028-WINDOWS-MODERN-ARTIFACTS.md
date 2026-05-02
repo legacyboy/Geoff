@@ -20,11 +20,25 @@ Extract and analyze Windows 10/11 modern forensic artifacts including Prefetch, 
 
 ### Jump Lists Analysis (`windows.analyze_jumplists`)
 
-- Parse `CustomDestinations` and `AutomaticDestinations` Jump List files in `%AppData%\Microsoft\Windows\Recent\`
-- Extract application IDs, target paths, and last access timestamps
-- Identify applications launched and files accessed by each user
-- Flag access to files that were later deleted (Jump Lists persist after deletion)
-- Detect lateral movement: RDP mstsc.exe Jump Lists to internal IPs
+- Parse `AutomaticDestinations` in `%AppData%\Microsoft\Windows\Recent\AutomaticDestinations\` (OLE Compound Document format)
+- Parse `CustomDestinations` in `%AppData%\Microsoft\Windows\Recent\CustomDestinations\` (MS-SHLLINK format)
+- **Specialist Method:** `windows.analyze_jumplists(user_profile_path)`
+- Extract application IDs (AppID) — map AppIDs to application names using known AppID database
+- Extract target file paths, access timestamps, and creation timestamps from each Jump List entry
+- Creation timestamp = first item added; Modification timestamp = last item added
+- Flag access to files that were later deleted (Jump Lists persist after deletion — **critical for anti-forensics**)
+- Detect lateral movement: RDP mstsc.exe Jump Lists showing connections to internal IPs
+- Identify document access patterns: correlate files opened by same application across Jump Lists
+- **Deep Parsing — AutomaticDestinations:**
+  - Each `.automaticDestinations-ms` file is an OLE compound document containing multiple streams
+  - Stream `DestList` contains MRU list with timestamps and file paths
+  - Parse with JLECmd for full extraction: `JLECmd.exe -d <path> --csv <output>`
+- **Deep Parsing — CustomDestinations:**
+  - Each `.customDestinations-ms` file contains raw LNK data concatenated
+  - Parse with JLECmd: `JLECmd.exe -d <path> --csv <output>`
+  - Custom entries show pinned items (user explicitly pinned = high significance)
+- **SANS FOR500 Alignment:** Jump Lists are a **★★★★** priority artifact — one of the primary sources for user activity tracking and proving file access
+
 
 ### LNK File Analysis (`windows.analyze_lnk`)
 
@@ -51,6 +65,18 @@ Extract and analyze Windows 10/11 modern forensic artifacts including Prefetch, 
 - Flag programs with no known publisher or unusual install locations
 - Detect anti-forensics: programs uninstalled but still in AmCache
 - Note: AmCache is updated on program creation/modification, not execution
+
+
+### USRCLASS.DAT ShellBags Analysis (`windows.analyze_shellbags`)
+
+- Parse `USRCLASS.DAT` from `\Users\<username>\AppData\Local\Microsoft\Windows\` for ShellBags
+- **Specialist Method:** `registry.extract_keys(usrclass_dat_path, 'Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU')`
+- Extract folder navigation history including network paths (UNC), removable media, and Control Panel items
+- Flag navigation to hidden directories, network shares, or deleted folders (ShellBags persist after deletion)
+- Cross-reference ShellBags timestamps with Prefetch and Jump Lists for user activity corroboration
+- Detect exotic items: mobile device paths, ZIP archives browsed as folders, Control Panel applets
+- Note: USRCLASS.DAT ShellBags capture folder navigation that NTUSER.DAT ShellBags miss — both must be parsed
+- **SANS FOR500 Alignment:** ShellBags are a **★★★★** priority artifact (SANS Windows Forensic Analysis poster) proving user folder navigation even after deletion
 
 ### SRUM (System Resource Usage Monitor) Analysis (`windows.analyze_srum`)
 

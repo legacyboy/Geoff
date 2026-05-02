@@ -73,6 +73,41 @@
 
 ---
 
+
+
+#### 4.6 — Alternate Data Streams (ADS) Detection
+- [ ] **ADS Scan:** Enumerate all alternate data streams on NTFS volumes — flag any stream beyond `Zone.Identifier`
+    > **Specialist Method:** `sleuthkit.list_files(evidence_path, show_ads=True)`
+- [ ] **Zone.Identifier Analysis:** Extract `Zone.Identifier` ADS from downloaded files — identify download source (Internet vs. local)
+    - Zone 1: Local intranet
+    - Zone 2: Trusted sites
+    - Zone 3: Internet (downloaded from web — **flag for initial access vectors**)
+    - Zone 4: Restricted
+- [ ] **Hidden Executable Streams:** Flag ADS containing executable code — `.exe`, `.ps1`, `.vbs` in alternate streams
+- [ ] **Data Exfiltration via ADS:** Check for large ADS containing compressed or encrypted data — steganographic or exfiltration channel
+- [ ] **Anti-Forensics via ADS:** Flag files where primary stream is deleted but ADS persists — attacker may hide tools in ADS and delete the host file
+- [ ] **Malware Dropper Detection:** Known malware families use ADS to store secondary payloads (e.g., PoC-Stream, Stream-Dropper families)
+- [ ] **Cross-Reference:** Correlate ADS content with Prefetch and ShimCache — executable stored in ADS may have a Prefetch entry
+- **SANS FOR500 Alignment:** ADS are a **★★★** priority artifact — Zone.Identifier is the primary download source indicator; hidden streams are a known malware technique
+
+#### 4.7 — Volume Shadow Copy (VSS) Recovery & Anti-Forensics Detection
+- [ ] **VSS Existence Check:** Enumerate Volume Shadow Copies on all NTFS volumes — `vss.list_vss(image)`
+    - If NO shadow copies exist on a system that should have them (Windows Vista+ with System Protection enabled), flag as **CRITICAL** anti-forensics indicator (ransomware or attacker deleted VSS)
+- [ ] **VSS Deletion Artifacts:** Search for VSS deletion commands in event logs, ShimCache, and Prefetch:
+    - `vssadmin delete shadows /all /quiet` (EID 4688 if process auditing enabled)
+    - `wmic shadowcopy delete` (ShimCache/AmCache entry)
+    - `bcdedit /set recoveryenabled No` (Prefetch entry for bcdedit.exe)
+    - `wbadmin delete catalog -quiet` (registry key deletion)
+- [ ] **VSS Content Recovery:** If shadow copies survive, extract and compare:
+    - `vss.extract_vss_files(image, output_dir)` — recover pre-incident file versions
+    - `vss.analyze_vss_timeline(image)` — build timeline across shadow copies
+    - Compare VSS files against current filesystem to identify deleted or modified files
+- [ ] **Anti-Forensics VSS Patterns:**
+    - VSS disabled via registry: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore\RPSessionInterval` set to 0
+    - System Protection turned off: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore\DisableSR` set to 1
+    - VSS storage limit reduced to minimum to prevent snapshot creation
+- **SANS FOR500 Alignment:** VSS analysis is **★★★★** for anti-forensics detection — VSS deletion is near-universal in ransomware and common in targeted attacks. SANS FOR500 and FOR508 both emphasize VSS recovery as a primary evidence source
+
 ### Phase 5 — Event Log Analysis
 - [ ] **Critical Log Clears:** Flag log clearing events — EID 1102 (Security log cleared) and EID 104 (System log cleared) — **CRITICAL**.
 - [ ] **Policy Changes:** Flag audit policy changes (EID 4719) — attacker disabling logging before activity.

@@ -17,6 +17,19 @@ Reconstruct temporal event sequences across all evidence sources using Plaso (lo
 - **Success:** Plaso file created, pinfo confirms source count > 0
 - **Failure:** Image format unsupported or corrupted → skip, log error
 
+### Step 1b: NTFS Transaction Log ($LogFile) Analysis
+
+- **Tool:** sleuthkit.list_files (with parse_logfile=True)
+- **Input:** Each disk image with NTFS partition
+- **Output:** Transaction log entries showing file create, delete, rename, modify operations
+- **SANS FOR500 Alignment:** $LogFile is a **★★★★★** priority artifact (SANS cross-artifact correlation matrix) — shows file system transactions that $MFT alone misses
+- **Key Patterns:**
+  - Delete-and-rename sequences (ransomware: `original.doc → original.doc.encrypted → original.doc`)
+  - Transactions in $LogFile not present in $MFT (anti-forensics indicator)
+  - Recent activity window: $LogFile covers only the most recent transactions (typically <1 hour)
+- **Success:** Transaction entries extracted and correlated with $MFT timestamps
+- **Failure:** Filesystem not NTFS or $LogFile unavailable → skip, log warning
+
 ### Step 2: SleuthKit Mactime Body File
 - **Tool:** sleuthkit.list_files_mactime
 - **Input:** Each disk image with detected partition offset

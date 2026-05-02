@@ -146,6 +146,19 @@
 - [ ] Event ID 4103: Module Logging — captures module load events
 - [ ] Decode Base64-encoded blocks automatically
 
+
+- [ ] **PowerShell Script Block Content Deep Extraction:**
+    - **Specialist Method:** `logs.parse_evtx(powershell_evtx, event_ids=[4104], extract_content=True)`
+    - EID 4104 captures the **full script content** before execution — this is the most powerful PowerShell forensics artifact
+    - Extract and reassemble multi-block scripts (script blocks > 2KB are split across multiple 4104 events — correlate by ScriptBlockId)
+    - **Flag as CRITICAL:** Scripts containing `IEX`, `Invoke-Expression`, `DownloadString`, `FromBase64String`, `Net.WebClient`, `New-Object Net.Sockets.TCPClient` — initial access and C2 indicators
+    - **Flag as HIGH:** Scripts with `-enc`/`-encodedCommand` parameters — obfuscation indicator
+    - **Flag as HIGH:** Scripts manipulating `System.Security.Cryptography` or `System.IO.Compression` — encryption/staging
+    - **Flag as MEDIUM:** Scripts accessing `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` or `ScheduledTasks` — persistence
+    - Correlate ScriptBlock timestamps with Prefetch `powershell.exe` run times for execution confirmation
+    - Cross-reference with process creation EID 4688 (if command-line auditing enabled) for parent process context
+- **SANS FOR508 Alignment:** PowerShell Script Block Logging (EID 4104) is **★★★★★** — the single most important artifact for attacker script reconstruction. SANS FOR508 prioritizes this above all other PowerShell artifacts
+
 ### 3.4 — WMI Activity Logs (`logs.parse_evtx`)
 - [ ] **Specialist Method:** `logs.parse_evtx(wmi_evtx, event_ids=[5857, 5858, 5859, 5860, 5861])`
 - [ ] WMI Event Subscription creation (persistence indicator)
