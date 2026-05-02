@@ -11905,3 +11905,23 @@ Connection reset by 127.0.0.1 port 2222
 ---
 ## QA Run: 2026-05-02 00:15:01 CDT — Scenario: report_analysis
 - **SKIPPED:** No recent reports found
+
+---
+## QA Run: 2026-05-02 00:30:01 CDT — Scenario: missing_evidence
+### Find Evil on non-existent path
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/find-evil -H 'Content-Type: application/json' -d '{\"evidence_dir\": \"/nonexistent/path/xyz123\"}'"`
+- **Exit code:** 0
+- **Result:** {"error":"Evidence path resolves outside allowed directories: '/nonexistent/path/xyz123' \u2192 /nonexistent/path/xyz123","status":"error"}
+
+
+---
+## QA Run: 2026-05-02 00:45:01 CDT — Scenario: chat_forensic_question
+### Chat: forensic question
+- **Command:** `ssh -p 2222 sansforensics@localhost "curl -s -m 120 -X POST http://localhost:8080/chat -H 'Content-Type: application/json' -d '{\"message\": \"What artifacts indicate persistence on Windows?\"}'"`
+- **Exit code:** 7
+- **Result:** 
+
+### ⚠️ GEOFF HEALTH CHECK FAILED
+- HTTP status: 000
+- Attempting restart...
+- Restart result: HTTP 000

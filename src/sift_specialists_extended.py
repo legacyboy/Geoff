@@ -222,6 +222,36 @@ class REGISTRY_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+
+    def extract_keys(self, hive_path: str, key_path: Optional[str] = None) -> Dict[str, Any]:
+        """Extract specific registry keys and values from a hive.
+
+        If key_path is specified, extracts only that key and subkeys.
+        Otherwise extracts all keys from the hive using RegRipper.
+        """
+        if key_path:
+            # Use regripper with specific plugin for targeted key extraction
+            # Common key paths map to regripper plugins
+            key_plugin_map = {
+                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Run': 'run',
+                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Run': 'run',
+                r'SYSTEM\CurrentControlSet\Services': 'services',
+                r'SYSTEM\CurrentControlSet\Control\Terminal Server': 'tsclient',
+                r'SOFTWARE\Microsoft\Windows NT\CurrentVersion': 'winver',
+                r'SAM\Domains\Account\Users': 'sampu',
+                r'SECURITY\Policy\Secrets': 'lsa',
+            }
+            plugin = None
+            for k, p in key_plugin_map.items():
+                if k.lower() in key_path.lower():
+                    plugin = p
+                    break
+            if plugin:
+                return self.parse_hive(hive_path, plugin=plugin)
+
+        # Fallback: parse the whole hive
+        return self.parse_hive(hive_path)
+
     def extract_user_assist(self, ntuser_path: str) -> Dict[str, Any]:
         """Extract UserAssist artifacts (program execution counts & timestamps)."""
         meta, raw = self._run_regripper(ntuser_path, 'userassist')
@@ -4494,6 +4524,16 @@ class PHOTOREC_Specialist:
 # VSS (Volume Shadow Copy) Specialist
 # ---------------------------------------------------------------------------
 
+    def carve_files(self, image: str, output_dir: str, file_types: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Carve files from disk image — alias for recover_files with simpler API.
+
+        PhotoRec/foremost-based file carving for recovering deleted files,
+        documents, images, archives from unallocated space.
+        """
+        return self.recover_files(image, output_dir, file_types=file_types)
+
+
+
 class VSS_Specialist:
     """Specialist for Volume Shadow Copy extraction and analysis."""
 
@@ -4982,6 +5022,41 @@ class MEMORY_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+
+    def raw(self, memory_dump: str) -> Dict[str, Any]:
+        """Extract raw memory image metadata (size, format, hash) for baseline info."""
+        try:
+            img_path = Path(memory_dump)
+            if not img_path.exists():
+                return {'tool': 'memory_raw', 'status': 'error', 'error': f'Memory dump not found: {memory_dump}', 'timestamp': datetime.now().isoformat()}
+
+            file_size = img_path.stat().st_size
+            # Determine format from extension
+            ext = img_path.suffix.lower()
+            fmt_map = {'.raw': 'raw', '.img': 'raw', '.dmp': 'windows_dump', '.vmem': 'vmware', '.lime': 'lime', '.elf': 'elf'}
+            img_format = fmt_map.get(ext, 'unknown')
+
+            # Quick hash of first 1MB for identification
+            import hashlib
+            hasher = hashlib.sha256()
+            with open(img_path, 'rb') as f:
+                hasher.update(f.read(1048576))
+            partial_hash = hasher.hexdigest()
+
+            return {
+                'tool': 'memory_raw',
+                'status': 'success',
+                'path': str(img_path),
+                'size_bytes': file_size,
+                'size_mb': round(file_size / (1024 * 1024), 2),
+                'format': img_format,
+                'sha256_partial': partial_hash,
+                'note': 'Partial hash (first 1MB) for identification. Use full hash for verification.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'memory_raw', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
     def extract_processes(self, memory_dump: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
         if output_dir:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -5100,6 +5175,49 @@ class MEMORY_Specialist:
             }
         except Exception as e:
             return {'tool': 'credentials', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_dlls(self, memory_dump: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Extract DLL list from all processes in memory using Volatility3."""
+        try:
+            vol_bin = self.volatility3_path or 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.dlllist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.dlllist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Lists all DLLs loaded by each process — flag unusual DLLs or DLLs loaded from writable paths',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.dlllist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def memmap(self, memory_dump: str) -> Dict[str, Any]:
+        """Dump memory map from memory image using Volatility3."""
+        try:
+            vol_bin = self.volatility3_path or 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.memmap'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.memmap',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Memory map shows virtual-to-physical address mappings — useful for identifying injected regions',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.memmap', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
 
 
 # ---------------------------------------------------------------------------
@@ -5310,6 +5428,258 @@ class WINDOWS_Specialist:
 # ---------------------------------------------------------------------------
 # CRYPTO_Specialist
 # ---------------------------------------------------------------------------
+    def analyze_shellbags(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Parse ShellBags from USRCLASS.DAT to extract folder navigation history.
+
+        USRCLASS.DAT is located at Users/<username>/AppData/Local/Microsoft/Windows/
+        and contains ShellBags that track folder navigation even after folders are deleted.
+        This is a critical SANS FOR500 artifact (★★★★ priority) proving user folder access.
+        """
+        try:
+            import subprocess
+            # Try SBECmd (Eric Zimmerman ShellBags Explorer CLI) first
+            sbecmd_found = False
+            for cmd in ['SBECmd', 'sbecmd']:
+                if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                    sbecmd_found = True
+                    sbecmd = cmd
+                    break
+
+            if sbecmd_found:
+                result = subprocess.run(
+                    [sbecmd, '-d', image, '--csv', output_dir or '/tmp'],
+                    capture_output=True, text=True, timeout=120
+                )
+                return {
+                    'tool': 'SBECmd',
+                    'status': 'success' if result.returncode == 0 else 'error',
+                    'stdout': result.stdout[:3000],
+                    'stderr': result.stderr[:1000],
+                    'note': 'ShellBags from USRCLASS.DAT + NTUSER.DAT — proves folder navigation even after deletion',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            # Fallback: use regripper for ShellBags extraction
+            # Look for USRCLASS.DAT in the image
+            usrclass_paths = list(Path(image).rglob('UsrClass.dat')) if Path(image).is_dir() else []
+            if not usrclass_paths:
+                # Also try case-insensitive
+                usrclass_paths = list(Path(image).rglob('UsrClass.dat')) if Path(image).is_dir() else []
+
+            shellbags_entries = []
+            for usrclass in usrclass_paths[:5]:  # Limit to 5 user profiles
+                try:
+                    rr_result = subprocess.run(
+                        ['regripper', '-r', str(usrclass), '-p', 'shellbags'],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    if rr_result.returncode == 0 and rr_result.stdout.strip():
+                        shellbags_entries.append({
+                            'hive': str(usrclass),
+                            'output': rr_result.stdout[:2000],
+                        })
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    pass
+
+            if shellbags_entries:
+                return {
+                    'tool': 'regripper',
+                    'status': 'success',
+                    'hives_parsed': len(shellbags_entries),
+                    'entries': shellbags_entries,
+                    'note': 'ShellBags from USRCLASS.DAT via regripper — may be less detailed than SBECmd',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            # Final fallback: manual registry key extraction via strings
+            return {
+                'tool': 'shellbags',
+                'status': 'partial',
+                'note': 'SBECmd and regripper not available. Install Eric Zimmerman tools or regripper for full ShellBags analysis.',
+                'usrclass_found': len(usrclass_paths),
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'shellbags', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+    # -----------------------------------------------------------------------
+    # Volatility passthrough methods (Windows memory forensics plugins)
+    # These delegate to MEMORY_Specialist's Volatility infrastructure
+    # -----------------------------------------------------------------------
+
+    def cmdline(self, memory_dump: str) -> Dict[str, Any]:
+        """Extract process command-line arguments from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.cmdline'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.cmdline',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.cmdline', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def dlllist(self, memory_dump: str) -> Dict[str, Any]:
+        """List loaded DLLs for each process from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.dlllist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.dlllist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.dlllist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def info(self, memory_dump: str) -> Dict[str, Any]:
+        """Get Windows OS and memory image info using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.info'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'volatility3.windows.info',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.info', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def lsadump(self, memory_dump: str) -> Dict[str, Any]:
+        """Dump LSA secrets from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.lsadump'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.lsadump',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'note': 'LSA secrets may contain service account passwords and cached credentials',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.lsadump', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def malfind(self, memory_dump: str) -> Dict[str, Any]:
+        """Find injected code in process memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.malfind'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.malfind',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'malfind detects injected code regions (RWX permissions, suspicious DLLs)',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.malfind', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def netscan(self, memory_dump: str) -> Dict[str, Any]:
+        """Scan for network connections and sockets in memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.netscan'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.netscan',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.netscan', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def pslist(self, memory_dump: str) -> Dict[str, Any]:
+        """List processes from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.pslist'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'volatility3.windows.pslist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.pslist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def registry(self, memory_dump: str) -> Dict[str, Any]:
+        """List registry hives in memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.registry.hivelist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.registry.hivelist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Lists all registry hives in memory — useful for finding SAM, SYSTEM, SOFTWARE hives',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.registry', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
 class CRYPTO_Specialist:
     """Specialist for encrypted container detection and recovery."""
 
@@ -6074,7 +6444,7 @@ class ExtendedOrchestrator:
             'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {
                 'category': 'Windows Registry',
-                'functions': ['parse_hive', 'extract_shellbags', 'extract_autoruns', 'extract_services', 'extract_sam_users', 'extract_domain_accounts', 'extract_windows_credentials'],
+                'functions': ['parse_hive', 'extract_keys', 'extract_shellbags', 'extract_autoruns', 'extract_services', 'extract_sam_users', 'extract_domain_accounts', 'extract_windows_credentials'],
                 'tool_availability': avail(['rip.pl']),
             },
             'plaso': {
@@ -6120,7 +6490,7 @@ class ExtendedOrchestrator:
             },
             'photorec': {
                 'category': 'File Carving',
-                'functions': ['recover_files'],
+                'functions': ['recover_files', 'carve_files'],
                 'tool_availability': avail(['photorec', 'foremost']),
             },
             'vss': {
@@ -6155,12 +6525,12 @@ class ExtendedOrchestrator:
             },
             'memory': {
                 'category': 'Memory Forensics',
-                'functions': ['analyze_memory', 'extract_processes', 'extract_network', 'find_injected_code', 'extract_registry', 'extract_credentials'],
+                'functions': ['analyze_memory', 'extract_processes', 'extract_network', 'find_injected_code', 'extract_registry', 'extract_credentials', 'extract_dlls', 'memmap', 'raw'],
                 'tool_availability': avail(['volatility3', 'vol.py', 'vol']),
             },
             'windows': {
                 'category': 'Windows Modern Artifacts',
-                'functions': ['analyze_prefetch', 'analyze_jumplists', 'analyze_lnk', 'analyze_shimcache', 'analyze_amcache', 'analyze_srum', 'analyze_timeline', 'analyze_defender', 'analyze_bits'],
+                'functions': ['analyze_prefetch', 'analyze_jumplists', 'analyze_lnk', 'analyze_shimcache', 'analyze_amcache', 'analyze_srum', 'analyze_timeline', 'analyze_defender', 'analyze_bits', 'analyze_shellbags', 'cmdline', 'dlllist', 'info', 'lsadump', 'malfind', 'netscan', 'pslist', 'registry'],
                 'tool_availability': avail(['PECmd', 'JLECmd', 'LECmd', 'AppCompatCacheParser', 'AmcacheParser', 'SrumECmd']),
             },
             'crypto': {
