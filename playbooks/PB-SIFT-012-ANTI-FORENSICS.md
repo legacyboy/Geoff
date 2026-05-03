@@ -51,10 +51,17 @@
 
 #### 4.3 — Timestomping
 - [ ] **MFT Discrepancy:** Compare `$STANDARD_INFO` timestamps against `$FILE_NAME` timestamps in MFT — discrepancy indicates tampering.
+    - **Command:** `dotnet ${ZIMMERMAN_DIR}/MFTECmd.dll -f '/mnt/evidence/\$MFT' --csv /tmp/mft_output/ --csvf mft.csv`
+    - Then: `grep -i "si<fn\|fn<si\|timestomp" /tmp/mft_output/mft.csv` to flag rows where SI and FN timestamps differ
+    - MFTECmd outputs `SI<FN` flag automatically — sort by this column to prioritise timestomped files
+    - **Key columns to examine:** `SI_Created0x10`, `FN_Created0x30`, `SI_Modified0x10`, `FN_Modified0x30` — SI values user-controllable; FN values kernel-maintained
 - [ ] **Impossible Timestamps:** Flag files with `$STANDARD_INFO` timestamps predating the OS installation date.
+    - Get OS install date: `MFTECmd` output for `\Windows\System32\ntoskrnl.exe` — FN_Created gives true install date
 - [ ] **Bulk Stomping:** Flag files with creation timestamps identical to the second across multiple files — bulk timestomp indicator.
+    - **Command:** `awk -F',' 'NR>1{print $SI_Created0x10}' mft.csv | sort | uniq -d` — duplicate timestamps across files
 - [ ] **Timestamp Mismatch:** Check prefetch timestamps against MFT timestamps for the same binary — inconsistency confirms stomping.
 - [ ] **Logical Impossibility:** Flag files with last modified time earlier than creation time.
+- **SANS FOR500 Alignment:** Timestomping (`$SI` vs `$FN` comparison) is **★★★★** — MFTECmd is the primary tool. SANS FOR500 dedicates significant coursework to MACB timestamp analysis and timestomp detection.
 
 #### 4.4 — Tool & Artifact Removal
 - [ ] **Ghost Binaries:** Check for self-deleting scripts or executables — flag LNK or prefetch entries with no binary present.

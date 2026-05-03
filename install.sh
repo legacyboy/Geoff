@@ -84,10 +84,14 @@ if [[ "$SKIP_DEPS" == false ]]; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
             sleuthkit ewf-tools ssdeep hashdeep exiftool plaso-tools \
-            regripper libimage-exiftool-perl 2>/dev/null || true
+            regripper libimage-exiftool-perl \
+            foremost scalpel tcpflow zeek \
+            libbde-utils libpst-utils libguestfs-tools qemu-utils \
+            bulk-extractor dc3dd cryptsetup testdisk \
+            libmagic1 libmagic-dev 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
@@ -102,8 +106,16 @@ if [[ "$SKIP_DEPS" == false ]]; then
         sudo apt-get install -y -qq die upx clamav radare2 2>/dev/null || true
         # Python-based REMnux tools (install via pip since apt packages may not exist)
         info "Installing Python-based REMnux/malware tools..."
-        pip3 install --break-system-packages oletools floss jsbeautifier capstone 2>/dev/null || \
-            pip3 install --user oletools floss jsbeautifier capstone 2>/dev/null || true
+        pip3 install --break-system-packages \
+            oletools floss jsbeautifier capstone \
+            plyvel pyinstxtractor uncompyle6 \
+            pefile python-magic lief construct \
+            iLEAPP aLeapp 2>/dev/null || \
+            pip3 install --user \
+            oletools floss jsbeautifier capstone \
+            plyvel pyinstxtractor uncompyle6 \
+            pefile python-magic lief construct \
+            iLEAPP aLeapp 2>/dev/null || true
         # Ensure ~/.local/bin is on PATH for pip-installed tools
         LOCAL_BIN="${HOME}/.local/bin"
         if [ -d "$LOCAL_BIN" ] && [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
@@ -232,7 +244,7 @@ DIE_EOF
         export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
     fi
     if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
-        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd PECmd JLECmd LECmd AppCompatCacheParser; do
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd PECmd JLECmd LECmd AppCompatCacheParser WxTCmd RecentFileCacheParser RBCmd SQLECmd; do
             if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
                 # Download from Zimmerman's distribution (net9 builds)
@@ -251,6 +263,54 @@ DIE_EOF
     else
         warn "dotnet not available — Zimmerman tools skipped"
     fi
+
+    # apfs-fuse — APFS volume mounting (macOS + encrypted container playbooks)
+    if ! command -v apfs-fuse &>/dev/null; then
+        info "Installing apfs-fuse for APFS volume support..."
+        sudo apt-get install -y -qq fuse libfuse-dev cmake libattr1-dev zlib1g-dev bzip2 libbz2-dev \
+            libz-dev liblzfse-dev 2>/dev/null || true
+        if ! command -v apfs-fuse &>/dev/null; then
+            git clone --depth=1 https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse 2>/dev/null && \
+                cd /tmp/apfs-fuse && git submodule update --init && \
+                mkdir -p build && cd build && cmake .. && make -j2 && \
+                sudo make install && cd / && rm -rf /tmp/apfs-fuse 2>/dev/null || \
+                warn "apfs-fuse build failed — APFS volumes will need manual mounting"
+        fi
+    else
+        info "apfs-fuse already installed"
+    fi
+
+    # dive — Docker layer explorer (container forensics playbook)
+    if ! command -v dive &>/dev/null; then
+        info "Installing dive for Docker layer analysis..."
+        DIVE_VERSION=$(curl -s https://api.github.com/repos/wagoodman/dive/releases/latest \
+            | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/' 2>/dev/null || echo "0.12.0")
+        curl -sL "https://github.com/wagoodman/dive/releases/download/v${DIVE_VERSION}/dive_${DIVE_VERSION}_linux_amd64.deb" \
+            -o "/tmp/dive.deb" 2>/dev/null && \
+            sudo dpkg -i /tmp/dive.deb 2>/dev/null && rm -f /tmp/dive.deb || \
+            warn "dive install failed — container layer analysis will be manual"
+    else
+        info "dive already installed"
+    fi
+
+    # python-cim — WMI repository parser (persistence playbooks)
+    if ! python3 -c "import cim" &>/dev/null 2>&1; then
+        info "Installing python-cim for WMI repository forensics..."
+        pip3 install --break-system-packages git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
+            pip3 install --user git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
+            warn "python-cim install failed — WMI OBJECTS.DATA parsing will use strings fallback"
+    else
+        info "python-cim already installed"
+    fi
+
+    # iLEAPP / aLeapp — verify install (pip install attempted earlier)
+    for mobile_tool in ileapp aleapp; do
+        if ! command -v $mobile_tool &>/dev/null && ! python3 -c "import ${mobile_tool}" &>/dev/null 2>&1; then
+            warn "$mobile_tool not found — mobile analysis (PB-021) may be limited"
+        else
+            info "$mobile_tool available for mobile forensics"
+        fi
+    done
 
     ok "System dependencies installed"
 fi

@@ -94,9 +94,19 @@
 - [ ] **Module Audit:** Check `/proc/modules`, `/sys/module` — flag unsigned or unknown recently loaded modules.
 - [ ] **Module Config:** Check `/etc/modules` and `/etc/modules-load.d/` — flag unauthorized entries.
 - [ ] **Binary Integrity:** Compare hashes of `ls`, `ps`, `netstat`, `find`, `ss`, `top` against known-good hashes via `debsums` or `rpm -V`.
+    - **Command (Debian/Ubuntu):** `debsums -s 2>/dev/null | grep -v 'OK$'` — report only failed integrity checks
+    - **Command (RHEL/CentOS):** `rpm -Va 2>/dev/null | grep -E '^.{8} '` — flag modified binaries
 - [ ] **LDPRELOAD Check:** Flag `/etc/ld.so.preload` existence as **CRITICAL**.
 - [ ] **DNS Hijacking:** Check `/etc/hosts` for unauthorized entries — C2 redirection or security tool blocking.
 - [ ] **Kernel Hardening:** Check `/proc/sys/kernel/modules_disabled` — flag if set to 0 when policy requires 1.
+- [ ] **Automated Rootkit Scan:** Run dedicated rootkit scanners against the mounted image:
+    - **Command (chkrootkit):** `chkrootkit -r /mnt/evidence 2>/dev/null` — pattern-based rootkit detection across common families (LKM rootkits, Trojaned binaries, backdoor strings)
+    - **Command (rkhunter):** `rkhunter --rootdir /mnt/evidence --check --skip-keypress 2>/dev/null` — hash-based + heuristic rootkit detection
+    - **Install check:** `apt-get install -y chkrootkit rkhunter` if not present on SIFT
+    - Flag: any `INFECTED` or `Warning` output — manually verify to eliminate false positives
+    - Flag: `/dev` directory anomalies (hidden files in `/dev` are a classic rootkit indicator)
+    - Cross-reference rootkit scanner hits with `/proc` inconsistencies and kernel module audit
+- **SANS FOR508 Alignment:** Rootkit detection is **★★★★** — chkrootkit and rkhunter provide fast first-pass triage; manual kernel analysis required for confirmation.
 
 #### 4.7 — Container & Virtualization Artifacts
 - [ ] **Docker Socket:** Check for `/var/run/docker.sock` access outside container management tools.
