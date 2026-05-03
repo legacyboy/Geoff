@@ -36,25 +36,56 @@ def _ollama_headers():
 
 
 def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
-    """Call Forensicator LLM for tool understanding"""
+    """Call Forensicator LLM for tool understanding
+
+    Returns the LLM response, or None on connection failure (after retries).
+    The caller should treat None as "LLM unavailable" and mark the step
+    needs_review rather than producing a finding with error text.
+    """
     url = ollama_url or _ollama_base_url()
-    try:
-        response = requests.post(
-            f"{url}/generate",
-            headers=_ollama_headers(),
-            json={
-                "model": FORENSICATOR_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1}
-            },
-            timeout=120
-        )
-        if response.status_code == 200:
-            return response.json().get('response', '')
-    except Exception as e:
-        print(f"[FORENSICATOR] LLM Error: {e}")
-    return ""
+    _max_retries = 3
+    _backoff = [30, 60, 120]
+    _error_patterns = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+
+    for attempt in range(_max_retries + 1):
+        try:
+            response = requests.post(
+                f"{url}/generate",
+                headers=_ollama_headers(),
+                json={
+                    "model": FORENSICATOR_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1}
+                },
+                timeout=300  # 5 min — cloud models can be slow
+            )
+            if response.status_code == 200:
+                result_text = response.json().get('response', '')
+                # Reject error messages that leaked into the response
+                if any(pat in result_text for pat in _error_patterns):
+                    if attempt < _max_retries:
+                        print(f"[FORENSICATOR] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
+                        import time; time.sleep(_backoff[attempt])
+                        continue
+                    return None  # Final attempt still returned error
+                return result_text
+            else:
+                if attempt < _max_retries:
+                    print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
+                    import time; time.sleep(_backoff[attempt])
+                    continue
+                return None
+        except Exception as e:
+            print(f"[FORENSICATOR] LLM Error (attempt {attempt+1}): {e}")
+            if attempt < _max_retries:
+                import time; time.sleep(_backoff[attempt])
+                continue
+    return None  # All retries exhausted
 
 
 class ForensicatorAgent:
@@ -217,6 +248,19 @@ Assess this result. Respond ONLY in valid JSON (no extra text):
 
         try:
             response = call_forensicator_llm(prompt, self.ollama_url)
+            if response is None:
+                # LLM unavailable after retries — mark as needs_review, not as a finding
+                return {
+                    "significance": "UNKNOWN",
+                    "threat_indicators": [],
+                    "follow_up_needed": True,
+                    "follow_up_reason": "Ollama timeout - forensicator LLM unavailable, manual review required",
+                    "analyst_note": None,
+                    "error": "ollama_timeout",
+                    "needs_review": True,
+                    "unverified_reason": "Ollama timeout - forensicator interpretation failed",
+                    "timestamp": datetime.now().isoformat(),
+                }
             m = re.search(r'\{.*\}', response, re.DOTALL)
             if m:
                 parsed = json.loads(m.group())

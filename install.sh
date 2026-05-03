@@ -83,17 +83,52 @@ if [[ "$SKIP_DEPS" == false ]]; then
     if command -v apt-get >/dev/null; then
         sudo apt-get update -qq
         sudo apt-get install -y -qq python3-pip python3-venv python3.12-venv git curl jq \
-            sleuthkit ssdeep hashdeep exiftool plaso-tools \
-            regripper libimage-exiftool-perl 2>/dev/null || true
+            sleuthkit ewf-tools ssdeep hashdeep exiftool plaso-tools \
+            regripper libimage-exiftool-perl \
+            foremost scalpel tcpflow zeek \
+            libbde-utils libpst-utils libguestfs-tools qemu-utils \
+            bulk-extractor dc3dd cryptsetup testdisk \
+            libmagic1 libmagic-dev 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
         done
+        # Verify REMnux/malware tools are findable
+        for tool in die exiftool hashdeep clamscan upx pdfid oledump.py pdf-parser.py js-beautify floss peframe r2; do
+            if ! command -v $tool &>/dev/null; then
+                warn "$tool not found in PATH — REMnux playbook may skip this tool"
+            fi
+        done
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
-        sudo apt-get install -y -qq die peframe upx clamav radare2 floss 2>/dev/null || true
+        sudo apt-get install -y -qq die upx clamav radare2 2>/dev/null || true
+        # Python-based REMnux tools (install via pip since apt packages may not exist)
+        info "Installing Python-based REMnux/malware tools..."
+        pip3 install --break-system-packages \
+            oletools floss jsbeautifier capstone \
+            plyvel pyinstxtractor uncompyle6 \
+            pefile python-magic lief construct \
+            iLEAPP aLeapp 2>/dev/null || \
+            pip3 install --user \
+            oletools floss jsbeautifier capstone \
+            plyvel pyinstxtractor uncompyle6 \
+            pefile python-magic lief construct \
+            iLEAPP aLeapp 2>/dev/null || true
+        # Ensure ~/.local/bin is on PATH for pip-installed tools
+        LOCAL_BIN="${HOME}/.local/bin"
+        if [ -d "$LOCAL_BIN" ] && [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
+            export PATH="$LOCAL_BIN:$PATH"
+            echo "export PATH=\$PATH:$LOCAL_BIN" >> "${HOME}/.bashrc" 2>/dev/null
+        fi
+        # peframe — install from GitHub (no pip package)
+        if ! command -v peframe &>/dev/null; then
+            info "Installing peframe from GitHub..."
+            pip3 install --break-system-packages git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
+                pip3 install --user git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
+                warn "peframe install failed — PE analysis will use die/file as fallback"
+        fi
         # Tshark (needs non-interactive setup)
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
         sudo apt-get install -y -qq tshark wireshark-common 2>/dev/null || true
@@ -125,6 +160,35 @@ if [[ "$SKIP_DEPS" == false ]]; then
                 ok "Volatility3 installed in venv"
             else
                 warn "Volatility3 installation may have failed — check manually"
+            fi
+        fi
+        # Volatility2 - install alongside Volatility3 for legacy OS support (Win2K, XP early)
+        vol2_found=false
+        if command -v vol.py &>/dev/null || command -v volatility &>/dev/null; then
+            vol2_found=true
+            info "Volatility2 already installed ($(command -v vol.py 2>/dev/null || command -v volatility 2>/dev/null))"
+        fi
+        if [ "$vol2_found" = false ]; then
+            info "Installing Volatility2 for legacy OS support..."
+            sudo apt-get install -y -qq python2 python2-dev python3-pip 2>/dev/null || true
+            # Install volatility2 from pip (community fork)
+            sudo pip3 install volatility2 --break-system-packages 2>/dev/null || \
+                sudo pip install volatility2 2>/dev/null || \
+                pip3 install --user volatility2 2>/dev/null || true
+            # Also try installing the standalone script
+            if ! command -v vol.py &>/dev/null; then
+                curl -sL "https://github.com/volatilityfoundation/volatility/archive/refs/heads/master.zip" -o "/tmp/vol2.zip" 2>/dev/null && \
+                    unzip -q -o "/tmp/vol2.zip" -d "/tmp/vol2" 2>/dev/null && \
+                    sudo mkdir -p /opt/volatility2 && \
+                    sudo cp -r /tmp/vol2/volatility-master/* /opt/volatility2/ 2>/dev/null && \
+                    sudo ln -sf /opt/volatility2/vol.py /usr/local/bin/vol.py 2>/dev/null && \
+                    rm -rf "/tmp/vol2" "/tmp/vol2.zip" || \
+                    warn "Volatility2 standalone install failed"
+            fi
+            if command -v vol.py &>/dev/null || [ -f "/usr/local/bin/vol.py" ]; then
+                ok "Volatility2 installed"
+            else
+                warn "Volatility2 installation may have failed — legacy memory dumps will need manual processing"
             fi
         fi
         # Install REMnux distro for malware analysis tools
@@ -180,7 +244,7 @@ DIE_EOF
         export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
     fi
     if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
-        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd; do
+        for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd PECmd JLECmd LECmd AppCompatCacheParser WxTCmd RecentFileCacheParser RBCmd SQLECmd; do
             if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
                 # Download from Zimmerman's distribution (net9 builds)
@@ -199,6 +263,54 @@ DIE_EOF
     else
         warn "dotnet not available — Zimmerman tools skipped"
     fi
+
+    # apfs-fuse — APFS volume mounting (macOS + encrypted container playbooks)
+    if ! command -v apfs-fuse &>/dev/null; then
+        info "Installing apfs-fuse for APFS volume support..."
+        sudo apt-get install -y -qq fuse libfuse-dev cmake libattr1-dev zlib1g-dev bzip2 libbz2-dev \
+            libz-dev liblzfse-dev 2>/dev/null || true
+        if ! command -v apfs-fuse &>/dev/null; then
+            git clone --depth=1 https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse 2>/dev/null && \
+                cd /tmp/apfs-fuse && git submodule update --init && \
+                mkdir -p build && cd build && cmake .. && make -j2 && \
+                sudo make install && cd / && rm -rf /tmp/apfs-fuse 2>/dev/null || \
+                warn "apfs-fuse build failed — APFS volumes will need manual mounting"
+        fi
+    else
+        info "apfs-fuse already installed"
+    fi
+
+    # dive — Docker layer explorer (container forensics playbook)
+    if ! command -v dive &>/dev/null; then
+        info "Installing dive for Docker layer analysis..."
+        DIVE_VERSION=$(curl -s https://api.github.com/repos/wagoodman/dive/releases/latest \
+            | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/' 2>/dev/null || echo "0.12.0")
+        curl -sL "https://github.com/wagoodman/dive/releases/download/v${DIVE_VERSION}/dive_${DIVE_VERSION}_linux_amd64.deb" \
+            -o "/tmp/dive.deb" 2>/dev/null && \
+            sudo dpkg -i /tmp/dive.deb 2>/dev/null && rm -f /tmp/dive.deb || \
+            warn "dive install failed — container layer analysis will be manual"
+    else
+        info "dive already installed"
+    fi
+
+    # python-cim — WMI repository parser (persistence playbooks)
+    if ! python3 -c "import cim" &>/dev/null 2>&1; then
+        info "Installing python-cim for WMI repository forensics..."
+        pip3 install --break-system-packages git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
+            pip3 install --user git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
+            warn "python-cim install failed — WMI OBJECTS.DATA parsing will use strings fallback"
+    else
+        info "python-cim already installed"
+    fi
+
+    # iLEAPP / aLeapp — verify install (pip install attempted earlier)
+    for mobile_tool in ileapp aleapp; do
+        if ! command -v $mobile_tool &>/dev/null && ! python3 -c "import ${mobile_tool}" &>/dev/null 2>&1; then
+            warn "$mobile_tool not found — mobile analysis (PB-021) may be limited"
+        else
+            info "$mobile_tool available for mobile forensics"
+        fi
+    done
 
     ok "System dependencies installed"
 fi

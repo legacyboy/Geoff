@@ -3,18 +3,177 @@
 
 const { Fragment } = React;
 
-function DetailPanel({ report, selected, onSelect }) {
-  if (!selected) return <CaseOverview report={report} onSelect={onSelect} />;
+function DetailPanel({ report, selected, onSelect, onSearch }) {
+  if (!selected) return <CaseOverview report={report} onSelect={onSelect} onSearch={onSearch} />;
   if (selected.startsWith("u:")) {
     return <UserDetail report={report} username={selected.slice(2)} onSelect={onSelect} />;
   }
   if (selected.startsWith("d:")) {
     return <DeviceDetail report={report} deviceId={selected.slice(2)} onSelect={onSelect} />;
   }
+  if (selected.startsWith("e:")) {
+    return <EvidenceDetail report={report} evidenceType={selected.slice(2)} onSelect={onSelect} />;
+  }
+  if (selected.startsWith("s:")) {
+    return <ServiceDetail report={report} serviceName={selected.slice(2)} onSelect={onSelect} />;
+  if (selected.startsWith("i:")) {
+    return <IocDetail report={report} iocId={selected.slice(2)} onSelect={onSelect} />;
+  }
   return null;
 }
 
-function CaseOverview({ report, onSelect }) {
+const IOC_GROUPS = [
+  { key: "ip_addresses",   label: "IP addresses" },
+  { key: "file_hashes",    label: "Hashes" },
+  { key: "urls",           label: "URLs" },
+  { key: "registry_keys",  label: "Registry keys" },
+  { key: "file_paths",     label: "File paths" },
+  { key: "email_addresses",label: "Emails" },
+  { key: "domains",        label: "Domains" },
+];
+
+function IOCPanel({ iocs, onSearch }) {
+  const present = IOC_GROUPS.filter(g => Array.isArray(iocs[g.key]) && iocs[g.key].length > 0);
+  if (present.length === 0) return null;
+  const total = present.reduce((acc, g) => acc + iocs[g.key].length, 0);
+  return (
+    <div className="section">
+      <div className="section-title">IOCs <span className="count">{total}</span></div>
+      <div className="ioc-list">
+        {present.map(g => (
+          <div key={g.key} className="ioc-group">
+            <div className="ioc-group-label">
+              {g.label}
+              <span className="ioc-group-count">{iocs[g.key].length}</span>
+            </div>
+            {iocs[g.key].map((v, i) => (
+              <div key={i} className="ioc-row" title={"Click to search · " + v}>
+                <span className="ioc-val" onClick={() => onSearch && onSearch(String(v))}>{String(v)}</span>
+                <button
+                  className="ioc-copy"
+                  title="Copy"
+                  onClick={(e) => { e.stopPropagation(); navigator.clipboard && navigator.clipboard.writeText(String(v)); }}
+                >⧉</button>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceDetail({ report, evidenceType, onSelect }) {
+  const devices = Object.entries(report.device_map || {});
+  const matchingDevs = devices.filter(([, d]) => (d.evidence_types || []).includes(evidenceType));
+  const files = [];
+  devices.forEach(([devId, d]) => {
+    (d.evidence_files || []).forEach(fp => {
+      const guessed = (window.guessEvidenceTypeFromPath && window.guessEvidenceTypeFromPath(fp)) || (d.evidence_types || [])[0];
+      if (guessed === evidenceType) files.push({ path: fp, devId });
+    });
+  });
+  // Devices contributing to this bucket = either declared the type or own a matching file
+  const devIdSet = new Set(matchingDevs.map(([k]) => k));
+  files.forEach(f => devIdSet.add(f.devId));
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: "rgba(6,182,212,0.1)", color: "#06B6D4", border: "1px solid rgba(6,182,212,0.3)" }}>◫</div>
+        <div className="title-wrap">
+          <div className="kind">Evidence type</div>
+          <div className="title">{(window.formatEvidenceType || ((s) => s))(evidenceType)}</div>
+          <div className="sub">{files.length} file{files.length === 1 ? "" : "s"} across {devIdSet.size} device{devIdSet.size === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Source devices <span className="count">{devIdSet.size}</span></div>
+        <div className="related-list">
+          {Array.from(devIdSet).map((devId) => {
+            const dev = (report.device_map || {})[devId];
+            if (!dev) return null;
+            const kind = classifyDevice(dev);
+            return (
+              <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                <span className={`bullet ${kind}`} />
+                <span className="name">{dev.hostname || devId}</span>
+                <span className="via">{osLabel(dev)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Files <span className="count">{files.length}</span></div>
+        {files.length === 0
+          ? <div className="empty" style={{ padding: "12px 0" }}>No individual files matched this type heuristic — devices declare it but evidence_files is empty or extension-less.</div>
+          : files.map((f, i) => (
+              <div key={i} className="evfile" title={f.path}>
+                <span className="type-tag">{extType(f.path)}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{f.path}</span>
+                <span className="via" style={{ fontSize: 10, color: "var(--g-text-mute)" }}>{f.devId}</span>
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+function ServiceDetail({ report, serviceName, onSelect }) {
+  // Reconstruct service nodes' contributing devices and traffic flags.
+  const hits = []; // { devId, host, flag }
+  Object.entries(report.behavioral_flags || {}).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const dst = (flag.evidence || {}).dst_host || (flag.evidence || {}).dst_ip || "";
+      if (!dst) return;
+      const svc = (window.classifyExfilService && window.classifyExfilService(dst)) || "External";
+      if (svc === serviceName) hits.push({ devId, host: dst, flag });
+    });
+  });
+  const devSet = new Set(hits.map(h => h.devId));
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: "rgba(236,72,153,0.1)", color: "#EC4899", border: "1px solid rgba(236,72,153,0.3)" }}>↗</div>
+        <div className="title-wrap">
+          <div className="kind">External service</div>
+          <div className="title">{serviceName}</div>
+          <div className="sub">{hits.length} flagged connection{hits.length === 1 ? "" : "s"} from {devSet.size} device{devSet.size === 1 ? "" : "s"}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Source devices <span className="count">{devSet.size}</span></div>
+        <div className="related-list">
+          {Array.from(devSet).map((devId) => {
+            const dev = (report.device_map || {})[devId];
+            if (!dev) return null;
+            const kind = classifyDevice(dev);
+            return (
+              <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                <span className={`bullet ${kind}`} />
+                <span className="name">{dev.hostname || devId}</span>
+                <span className="via">{osLabel(dev)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Connections <span className="count">{hits.length}</span></div>
+        {hits.map((h, i) => <FindingCard key={i} f={{ ...h.flag, device_id: h.devId }} showDevice />)}
+      </div>
+    </div>
+  );
+}
+
+function CaseOverview({ report, onSelect, onSearch }) {
   const devCount = Object.keys(report.device_map || {}).length;
   const userCount = Object.keys(report.user_map || {}).length;
   let allFlags = 0, crit = 0, high = 0;
@@ -67,6 +226,8 @@ function CaseOverview({ report, onSelect }) {
         <div className="section-title">Timeline <span className="count">{(report.timeline || []).length}</span></div>
         <TimelineMini events={report.timeline || []} />
       </div>
+
+      <IOCPanel iocs={report.iocs || {}} onSearch={onSearch} />
 
       <div className="section">
         <div className="section-title">Select an entity</div>
@@ -396,6 +557,76 @@ function extType(path) {
   if (m) return m[1].toLowerCase();
   if (path.endsWith("/")) return "dir";
   return "file";
+}
+
+function getIocSubkind(report, val) {
+  const iocs = report.iocs || {};
+  if ((iocs.ip_addresses    || []).includes(val)) return "ip";
+  if ((iocs.urls            || []).includes(val)) return "url";
+  if ((iocs.email_addresses || []).includes(val)) return "email";
+  return "ioc";
+}
+
+function IocDetail({ report, iocId, onSelect }) {
+  const subkind = getIocSubkind(report, iocId);
+  const subkindLabel = { ip: "IP ADDRESS", url: "URL", email: "EMAIL", ioc: "INDICATOR" }[subkind] || "INDICATOR";
+  const accent = { ip: "#EF4444", url: "#F97316", email: "#EC4899" }[subkind] || "#EF4444";
+
+  const referencingDevices = [];
+  for (const [devId, flags] of Object.entries(report.behavioral_flags || {})) {
+    if (JSON.stringify(flags).includes(iocId)) {
+      referencingDevices.push({ devId, flags });
+    }
+  }
+
+  return (
+    <div className="detail-scroll">
+      <div className="entity-head">
+        <div className="glyph" style={{ background: `rgba(239,68,68,0.1)`, color: accent, border: `1px solid ${accent}55`, fontFamily: "var(--font-mono)", fontSize: 20 }}>◆</div>
+        <div className="title-wrap">
+          <div className="kind">Indicator · {subkindLabel}</div>
+          <div className="title" style={{ wordBreak: "break-all", fontSize: 12 }}>{iocId}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-title">Referenced by <span className="count">{referencingDevices.length}</span></div>
+        {referencingDevices.length === 0
+          ? <div className="empty" style={{ padding: "12px 0" }}>No device evidence links this indicator.</div>
+          : (
+            <div className="related-list">
+              {referencingDevices.map(({ devId }) => {
+                const dev = (report.device_map || {})[devId];
+                if (!dev) return null;
+                const kind = classifyDevice(dev);
+                return (
+                  <div key={devId} className="related-item" onClick={() => onSelect("d:" + devId)}>
+                    <span className={`bullet ${kind}`} />
+                    <span className="name">{dev.hostname || devId}</span>
+                    <span className="via">{osLabel(dev)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </div>
+
+      {referencingDevices.map(({ devId, flags }) => {
+        const relevantFlags = flags.filter(f => JSON.stringify(f.evidence || {}).includes(iocId));
+        if (relevantFlags.length === 0) return null;
+        const dev = (report.device_map || {})[devId];
+        return (
+          <div className="section" key={devId}>
+            <div className="section-title">
+              Findings on {dev?.hostname || devId}
+              <span className="count">{relevantFlags.length}</span>
+            </div>
+            {relevantFlags.map((f, i) => <FindingCard key={i} f={f} />)}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 window.DetailPanel = DetailPanel;

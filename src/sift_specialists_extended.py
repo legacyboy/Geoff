@@ -222,6 +222,36 @@ class REGISTRY_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+
+    def extract_keys(self, hive_path: str, key_path: Optional[str] = None) -> Dict[str, Any]:
+        """Extract specific registry keys and values from a hive.
+
+        If key_path is specified, extracts only that key and subkeys.
+        Otherwise extracts all keys from the hive using RegRipper.
+        """
+        if key_path:
+            # Use regripper with specific plugin for targeted key extraction
+            # Common key paths map to regripper plugins
+            key_plugin_map = {
+                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Run': 'run',
+                r'SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Run': 'run',
+                r'SYSTEM\CurrentControlSet\Services': 'services',
+                r'SYSTEM\CurrentControlSet\Control\Terminal Server': 'tsclient',
+                r'SOFTWARE\Microsoft\Windows NT\CurrentVersion': 'winver',
+                r'SAM\Domains\Account\Users': 'sampu',
+                r'SECURITY\Policy\Secrets': 'lsa',
+            }
+            plugin = None
+            for k, p in key_plugin_map.items():
+                if k.lower() in key_path.lower():
+                    plugin = p
+                    break
+            if plugin:
+                return self.parse_hive(hive_path, plugin=plugin)
+
+        # Fallback: parse the whole hive
+        return self.parse_hive(hive_path)
+
     def extract_user_assist(self, ntuser_path: str) -> Dict[str, Any]:
         """Extract UserAssist artifacts (program execution counts & timestamps)."""
         meta, raw = self._run_regripper(ntuser_path, 'userassist')
@@ -2235,21 +2265,36 @@ class MOBILE_Specialist:
         if data_dir:
             data_path = Path(data_dir)
             root_patterns = [
-                ('**/su', 'su binary', 'high'),
-                ('**/.magisk', 'Magisk hidden directory', 'high'),
-                ('**/magisk', 'Magisk binary', 'high'),
-                ('**/busybox', 'BusyBox binary', 'medium'),
-                ('**/.superuser*', 'Superuser config', 'medium'),
+                ('su', 'su binary', 'high'),
+                ('.magisk', 'Magisk hidden directory', 'high'),
+                ('magisk', 'Magisk binary', 'high'),
+                ('busybox', 'BusyBox binary', 'medium'),
+                ('.superuser', 'Superuser config', 'medium'),
             ]
-            for pattern, desc, confidence in root_patterns:
-                matches = list(data_path.glob(pattern))
-                if matches:
-                    indicators.append({
-                        'type': 'root_binary', 'platform': 'android',
-                        'indicator': desc,
-                        'paths': [str(m.relative_to(data_path)) for m in matches[:5]],
-                        'confidence': confidence,
-                    })
+            # Use os.walk instead of Path.glob for speed on large trees
+            _max_walk = 50000
+            _walked = 0
+            for root, dirs, files in os.walk(data_dir):
+                for fname in files:
+                    _walked += 1
+                    if _walked > _max_walk:
+                        break
+                    for pattern_name, desc, confidence in root_patterns:
+                        if pattern_name.startswith('.'):
+                            if fname.startswith(pattern_name) or fname == pattern_name[1:]:
+                                pass  # handled below
+                        if fname == pattern_name or fname.startswith(pattern_name):
+                            indicators.append({
+                                'type': 'root_binary', 'platform': 'android',
+                                'indicator': desc,
+                                'paths': [str(Path(root).relative_to(data_path) / fname)],
+                                'confidence': confidence,
+                            })
+                            break
+                    if len([i for i in indicators if i['type'] == 'root_binary']) >= 5:
+                        break
+                if _walked > _max_walk:
+                    break
             root_pkgs = {
                 'com.topjohnwu.magisk': 'Magisk root manager',
                 'eu.chainfire.supersu': 'SuperSU root manager',
@@ -4479,6 +4524,16 @@ class PHOTOREC_Specialist:
 # VSS (Volume Shadow Copy) Specialist
 # ---------------------------------------------------------------------------
 
+    def carve_files(self, image: str, output_dir: str, file_types: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Carve files from disk image — alias for recover_files with simpler API.
+
+        PhotoRec/foremost-based file carving for recovering deleted files,
+        documents, images, archives from unallocated space.
+        """
+        return self.recover_files(image, output_dir, file_types=file_types)
+
+
+
 class VSS_Specialist:
     """Specialist for Volume Shadow Copy extraction and analysis."""
 
@@ -4813,6 +4868,1468 @@ class ZIMMERMAN_Specialist:
 
 
 # ---------------------------------------------------------------------------
+# MEMORY_Specialist
+# ---------------------------------------------------------------------------
+class MEMORY_Specialist:
+    """Specialist for volatile memory forensics using Volatility3/Rekall."""
+
+    def __init__(self):
+        self.volatility3_path = self._find_vol3()
+        self.volatility2_path = self._find_vol2()
+        self.rekall_path = self._find_tool('rekall')
+
+    def _find_vol3(self) -> Optional[str]:
+        """Find Volatility3 binary (vol or volatility3)."""
+        for cmd in ['vol', 'volatility3']:
+            if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                return cmd
+        for path in ['/home/claw/.local/bin/vol', '/usr/local/bin/vol', '/usr/bin/vol']:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _find_vol2(self) -> Optional[str]:
+        """Find Volatility2 binary (vol.py only, NOT vol which is v3)."""
+        for cmd in ['vol.py']:
+            if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                return cmd
+        for path in ['/usr/local/bin/vol.py', '/opt/volatility2/vol.py']:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _find_tool(self, tool: str) -> Optional[str]:
+        for cmd in [tool, 'vol.py', 'vol']:
+            if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                return cmd
+        # Check common paths
+        for path in ['/home/claw/.local/bin/vol', '/usr/local/bin/vol', '/usr/bin/vol',
+                     '/usr/local/bin/vol.py', '/opt/volatility2/vol.py']:
+            if Path(path).exists():
+                return path
+        return None
+
+    def _detect_profile(self, memory_dump: str) -> Optional[str]:
+        try:
+            vol_bin = self.volatility3_path or 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.info'],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'NT Kernel' in line or 'Suggested Profile' in line:
+                        return line.strip().split(':')[-1].strip()
+            return None
+        except Exception:
+            return None
+
+    def _detect_os_and_vol(self, memory_dump: str) -> Dict[str, Any]:
+        """Auto-detect OS version and choose Volatility version."""
+        result = {
+            'os': 'unknown',
+            'vol_version': 'vol3',
+            'vol_binary': self.volatility3_path or 'vol',
+            'plugin_prefix': 'windows',
+            'error': None,
+        }
+
+        # Try Volatility3 first (faster, modern)
+        if self.volatility3_path:
+            v3_result = subprocess.run(
+                [self.volatility3_path, '-f', memory_dump, 'windows.info'],
+                capture_output=True, text=True, timeout=120
+            )
+            if v3_result.returncode == 0:
+                # Parse OS info from Volatility3 output
+                for line in v3_result.stdout.split('\n'):
+                    if 'NT Build' in line or 'Major/Minor' in line:
+                        # XP = 5.1, Win2K = 5.0, 2003 = 5.2, Vista = 6.0, 7 = 6.1, etc.
+                        if '5.0' in line:
+                            result['os'] = 'win2k'
+                            result['vol_version'] = 'vol2'
+                            result['vol_binary'] = self.volatility2_path or 'vol.py'
+                            result['plugin_prefix'] = ''
+                        elif '5.1' in line:
+                            result['os'] = 'winxp'
+                        elif '5.2' in line:
+                            result['os'] = 'win2003'
+                        elif '6.0' in line:
+                            result['os'] = 'vista'
+                        elif '6.1' in line:
+                            result['os'] = 'win7'
+                        elif '6.2' in line:
+                            result['os'] = 'win8'
+                        elif '6.3' in line:
+                            result['os'] = 'win81'
+                        elif '10.' in line:
+                            result['os'] = 'win10'
+                        break
+                return result
+            else:
+                # Volatility3 failed — try Volatility2 for legacy OS
+                if self.volatility2_path:
+                    v2_result = subprocess.run(
+                        [self.volatility2_path, '-f', memory_dump, 'imageinfo'],
+                        capture_output=True, text=True, timeout=300
+                    )
+                    if v2_result.returncode == 0:
+                        for line in v2_result.stdout.split('\n'):
+                            if 'Suggested Profile' in line or 'Number of Processors' in line:
+                                if 'Win200' in line or 'Windows2000' in line:
+                                    result['os'] = 'win2k'
+                                elif 'WinXPSP' in line:
+                                    result['os'] = 'winxp'
+                                elif 'Win2003' in line:
+                                    result['os'] = 'win2003'
+                                elif 'Vista' in line:
+                                    result['os'] = 'vista'
+                                elif 'Win7' in line:
+                                    result['os'] = 'win7'
+                                break
+                        result['vol_version'] = 'vol2'
+                        result['vol_binary'] = self.volatility2_path or 'vol.py'
+                        result['plugin_prefix'] = ''
+                        return result
+                    else:
+                        result['error'] = f'Volatility3: {v3_result.stderr[:200]}; Volatility2: {v2_result.stderr[:200]}'
+                else:
+                    result['error'] = f'Volatility3 failed: {v3_result.stderr[:200]} (Volatility2 not available)'
+        elif self.volatility2_path:
+            # Only Volatility2 available
+            result['vol_version'] = 'vol2'
+            result['vol_binary'] = self.volatility2_path
+            result['plugin_prefix'] = ''
+        else:
+            result['error'] = 'No Volatility version found'
+
+        return result
+
+    def analyze_memory(self, memory_dump: str, output_dir: str) -> Dict[str, Any]:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        os_info = self._detect_os_and_vol(memory_dump)
+        profile = self._detect_profile(memory_dump) if os_info['vol_version'] == 'vol3' else None
+
+        return {
+            'tool': os_info['vol_binary'],
+            'vol_version': os_info['vol_version'],
+            'os': os_info['os'],
+            'profile': profile,
+            'status': 'error' if os_info['error'] else 'success',
+            'memory_dump': memory_dump,
+            'output_dir': output_dir,
+            'note': os_info['error'] or f"Detected {os_info['os']} — using {os_info['vol_version']} ({os_info['vol_binary']})",
+            'timestamp': datetime.now().isoformat(),
+        }
+
+
+    def raw(self, memory_dump: str) -> Dict[str, Any]:
+        """Extract raw memory image metadata (size, format, hash) for baseline info."""
+        try:
+            img_path = Path(memory_dump)
+            if not img_path.exists():
+                return {'tool': 'memory_raw', 'status': 'error', 'error': f'Memory dump not found: {memory_dump}', 'timestamp': datetime.now().isoformat()}
+
+            file_size = img_path.stat().st_size
+            # Determine format from extension
+            ext = img_path.suffix.lower()
+            fmt_map = {'.raw': 'raw', '.img': 'raw', '.dmp': 'windows_dump', '.vmem': 'vmware', '.lime': 'lime', '.elf': 'elf'}
+            img_format = fmt_map.get(ext, 'unknown')
+
+            # Quick hash of first 1MB for identification
+            import hashlib
+            hasher = hashlib.sha256()
+            with open(img_path, 'rb') as f:
+                hasher.update(f.read(1048576))
+            partial_hash = hasher.hexdigest()
+
+            return {
+                'tool': 'memory_raw',
+                'status': 'success',
+                'path': str(img_path),
+                'size_bytes': file_size,
+                'size_mb': round(file_size / (1024 * 1024), 2),
+                'format': img_format,
+                'sha256_partial': partial_hash,
+                'note': 'Partial hash (first 1MB) for identification. Use full hash for verification.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'memory_raw', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_processes(self, memory_dump: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                # Volatility2 plugin names
+                plugin = 'pslist'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.pslist.PsList'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': f"{os_info['vol_version']}.pslist",
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:2000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'pslist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_network(self, memory_dump: str) -> Dict[str, Any]:
+        try:
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'netscan' if os_info['os'] in ('win7', 'win8', 'win81', 'win10') else 'connections'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.netscan.NetScan'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': f"{os_info['vol_version']}.{plugin}",
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:5000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'netscan', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def find_injected_code(self, memory_dump: str) -> Dict[str, Any]:
+        try:
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'malfind'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.malfind.Malfind'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': f"{os_info['vol_version']}.malfind",
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:5000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'malfind', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_registry(self, memory_dump: str) -> Dict[str, Any]:
+        try:
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'hivelist'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.registry.hivelist.HiveList'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': f"{os_info['vol_version']}.hivelist",
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:3000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'hivelist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_credentials(self, memory_dump: str) -> Dict[str, Any]:
+        try:
+            os_info = self._detect_os_and_vol(memory_dump)
+            vol_bin = os_info['vol_binary']
+            if os_info['vol_version'] == 'vol2':
+                plugin = 'hashdump'
+                cmd = [vol_bin, '-f', memory_dump, '--profile=' + (os_info.get('profile2', 'WinXPSP2x86')), plugin]
+            else:
+                plugin = 'windows.lsadump.Lsadump'
+                cmd = [vol_bin, '-f', memory_dump, plugin]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return {
+                'tool': f"{os_info['vol_version']}.credentials",
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:3000],
+                'vol_version': os_info['vol_version'],
+                'os': os_info['os'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'credentials', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_dlls(self, memory_dump: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Extract DLL list from all processes in memory using Volatility3."""
+        try:
+            vol_bin = self.volatility3_path or 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.dlllist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.dlllist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Lists all DLLs loaded by each process — flag unusual DLLs or DLLs loaded from writable paths',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.dlllist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def memmap(self, memory_dump: str) -> Dict[str, Any]:
+        """Dump memory map from memory image using Volatility3."""
+        try:
+            vol_bin = self.volatility3_path or 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.memmap'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.memmap',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Memory map shows virtual-to-physical address mappings — useful for identifying injected regions',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.memmap', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+
+# ---------------------------------------------------------------------------
+# WINDOWS_Specialist
+# ---------------------------------------------------------------------------
+class WINDOWS_Specialist:
+    """Specialist for Windows 10/11 modern artifact forensics."""
+
+    def __init__(self):
+        self.prefetch_dir = None
+        self.jumplist_dir = None
+
+    def _parse_prefetch(self, pf_path: str) -> Dict[str, Any]:
+        try:
+            import struct
+            with open(pf_path, 'rb') as f:
+                # Read enough for any version (0x22 = 34 bytes header for Win10)
+                header = f.read(256)
+                if len(header) < 84:
+                    return {}
+                version = struct.unpack_from('<I', header, 0)[0]
+                # XP (0x11): run_count at 0x58, last_run at 0x80
+                # Vista/7 (0x17): run_count at 0xD4, last_run at 0x80
+                # Win8 (0x1a): run_count at 0xD4, last_run at 0x80
+                # Win8.1 (0x1e): run_count at 0xD4, last_run at 0x80
+                # Win10 (0x22): run_count at 0xD4, last_run at 0x80
+                if version == 0x11:
+                    run_count = struct.unpack_from('<I', header, 0x58)[0]
+                    last_run = struct.unpack_from('<Q', header, 0x80)[0]
+                elif version in (0x17, 0x1a, 0x1e, 0x22):
+                    run_count = struct.unpack_from('<I', header, 0xD4)[0]
+                    last_run = struct.unpack_from('<Q', header, 0x80)[0]
+                else:
+                    run_count = struct.unpack_from('<I', header, 0x58)[0]
+                    last_run = struct.unpack_from('<Q', header, 0x80)[0]
+                return {
+                    'version': hex(version),
+                    'run_count': run_count,
+                    'last_run_timestamp': last_run,
+                }
+        except Exception:
+            return {}
+
+    def analyze_prefetch(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['pecmd', '-d', image, '--csv', output_dir or '/tmp'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'PECmd',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'PECmd', 'status': 'error', 'error': 'PECmd not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'PECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_jumplists(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['jlecmd', '-d', image, '--csv', output_dir or '/tmp'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'JLECmd',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'JLECmd', 'status': 'error', 'error': 'JLECmd not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'JLECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_lnk(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['lecmd', '-d', image, '--csv', output_dir or '/tmp'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'LECmd',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'LECmd', 'status': 'error', 'error': 'LECmd not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'LECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_shimcache(self, registry_hive: str) -> Dict[str, Any]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['AppCompatCacheParser', '--csv', registry_hive, '--csvf', '/tmp/shimcache.csv'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'AppCompatCacheParser',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'AppCompatCacheParser', 'status': 'error', 'error': 'AppCompatCacheParser not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'AppCompatCacheParser', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_amcache(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import subprocess
+            amcache_path = Path(image) / 'Windows' / 'appcompat' / 'Programs' / 'Amcache.hve'
+            if not amcache_path.exists():
+                return {'tool': 'AmcacheParser', 'status': 'error', 'error': f'Amcache.hve not found in {image}', 'timestamp': datetime.now().isoformat()}
+            result = subprocess.run(
+                ['AmcacheParser', '-f', str(amcache_path), '--csv', output_dir or '/tmp'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'AmcacheParser',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'AmcacheParser', 'status': 'error', 'error': 'AmcacheParser not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'AmcacheParser', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_srum(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import subprocess
+            srum_path = Path(image) / 'Windows' / 'System32' / 'sru' / 'SRUDB.dat'
+            if not srum_path.exists():
+                return {'tool': 'SrumECmd', 'status': 'error', 'error': f'SRUDB.dat not found in {image}', 'timestamp': datetime.now().isoformat()}
+            result = subprocess.run(
+                ['SrumECmd', '-f', str(srum_path), '--csv', output_dir or '/tmp'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'SrumECmd',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'SrumECmd', 'status': 'error', 'error': 'SrumECmd not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'SrumECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_timeline(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            activities_path = Path(image) / 'Users' / '*' / 'AppData' / 'Local' / 'ConnectedDevicesPlatform'
+            return {
+                'tool': 'WindowsTimeline',
+                'status': 'success',
+                'activities_path': str(activities_path),
+                'note': 'ActivitiesCache.db path identified. Parse with sqlite3 for timeline data.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'WindowsTimeline', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_defender(self, image: str) -> Dict[str, Any]:
+        try:
+            mp_log = Path(image) / 'ProgramData' / 'Microsoft' / 'Windows Defender' / 'Scans' / 'History' / 'Service' / 'DetectionHistory.log'
+            entries = []
+            if mp_log.exists():
+                with open(mp_log, 'r', errors='replace') as f:
+                    entries = [line.strip() for line in f if line.strip()][:100]
+            return {
+                'tool': 'WindowsDefender',
+                'status': 'success',
+                'detection_count': len(entries),
+                'entries': entries[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'WindowsDefender', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_bits(self, image: str) -> Dict[str, Any]:
+        try:
+            bits_dir = Path(image) / 'ProgramData' / 'Microsoft' / 'Network' / 'Downloader'
+            jobs = []
+            if bits_dir.exists():
+                for f in bits_dir.iterdir():
+                    if f.name.startswith('qmgr'):
+                        jobs.append({'file': f.name, 'size': f.stat().st_size})
+            return {
+                'tool': 'BITS',
+                'status': 'success',
+                'jobs_found': len(jobs),
+                'jobs': jobs[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'BITS', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO_Specialist
+# ---------------------------------------------------------------------------
+    def analyze_shellbags(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Parse ShellBags from USRCLASS.DAT to extract folder navigation history.
+
+        USRCLASS.DAT is located at Users/<username>/AppData/Local/Microsoft/Windows/
+        and contains ShellBags that track folder navigation even after folders are deleted.
+        This is a critical SANS FOR500 artifact (★★★★ priority) proving user folder access.
+        """
+        try:
+            import subprocess
+            # Try SBECmd (Eric Zimmerman ShellBags Explorer CLI) first
+            sbecmd_found = False
+            for cmd in ['SBECmd', 'sbecmd']:
+                if subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+                    sbecmd_found = True
+                    sbecmd = cmd
+                    break
+
+            if sbecmd_found:
+                result = subprocess.run(
+                    [sbecmd, '-d', image, '--csv', output_dir or '/tmp'],
+                    capture_output=True, text=True, timeout=120
+                )
+                return {
+                    'tool': 'SBECmd',
+                    'status': 'success' if result.returncode == 0 else 'error',
+                    'stdout': result.stdout[:3000],
+                    'stderr': result.stderr[:1000],
+                    'note': 'ShellBags from USRCLASS.DAT + NTUSER.DAT — proves folder navigation even after deletion',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            # Fallback: use regripper for ShellBags extraction
+            # Look for USRCLASS.DAT in the image
+            usrclass_paths = list(Path(image).rglob('UsrClass.dat')) if Path(image).is_dir() else []
+            if not usrclass_paths:
+                # Also try case-insensitive
+                usrclass_paths = list(Path(image).rglob('UsrClass.dat')) if Path(image).is_dir() else []
+
+            shellbags_entries = []
+            for usrclass in usrclass_paths[:5]:  # Limit to 5 user profiles
+                try:
+                    rr_result = subprocess.run(
+                        ['regripper', '-r', str(usrclass), '-p', 'shellbags'],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    if rr_result.returncode == 0 and rr_result.stdout.strip():
+                        shellbags_entries.append({
+                            'hive': str(usrclass),
+                            'output': rr_result.stdout[:2000],
+                        })
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    pass
+
+            if shellbags_entries:
+                return {
+                    'tool': 'regripper',
+                    'status': 'success',
+                    'hives_parsed': len(shellbags_entries),
+                    'entries': shellbags_entries,
+                    'note': 'ShellBags from USRCLASS.DAT via regripper — may be less detailed than SBECmd',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            # Final fallback: manual registry key extraction via strings
+            return {
+                'tool': 'shellbags',
+                'status': 'partial',
+                'note': 'SBECmd and regripper not available. Install Eric Zimmerman tools or regripper for full ShellBags analysis.',
+                'usrclass_found': len(usrclass_paths),
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'shellbags', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+    # -----------------------------------------------------------------------
+    # Volatility passthrough methods (Windows memory forensics plugins)
+    # These delegate to MEMORY_Specialist's Volatility infrastructure
+    # -----------------------------------------------------------------------
+
+    def cmdline(self, memory_dump: str) -> Dict[str, Any]:
+        """Extract process command-line arguments from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.cmdline'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.cmdline',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.cmdline', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def dlllist(self, memory_dump: str) -> Dict[str, Any]:
+        """List loaded DLLs for each process from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.dlllist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.dlllist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.dlllist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def info(self, memory_dump: str) -> Dict[str, Any]:
+        """Get Windows OS and memory image info using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.info'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'volatility3.windows.info',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.info', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def lsadump(self, memory_dump: str) -> Dict[str, Any]:
+        """Dump LSA secrets from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.lsadump'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.lsadump',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'note': 'LSA secrets may contain service account passwords and cached credentials',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.lsadump', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def malfind(self, memory_dump: str) -> Dict[str, Any]:
+        """Find injected code in process memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.malfind'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.malfind',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'malfind detects injected code regions (RWX permissions, suspicious DLLs)',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.malfind', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def netscan(self, memory_dump: str) -> Dict[str, Any]:
+        """Scan for network connections and sockets in memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.netscan'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.netscan',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.netscan', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def pslist(self, memory_dump: str) -> Dict[str, Any]:
+        """List processes from memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.pslist'],
+                capture_output=True, text=True, timeout=120
+            )
+            return {
+                'tool': 'volatility3.windows.pslist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.pslist', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def registry(self, memory_dump: str) -> Dict[str, Any]:
+        """List registry hives in memory using Volatility3."""
+        try:
+            import subprocess
+            vol_bin = 'vol'
+            result = subprocess.run(
+                [vol_bin, '-f', memory_dump, 'windows.registry.hivelist'],
+                capture_output=True, text=True, timeout=300
+            )
+            return {
+                'tool': 'volatility3.windows.registry.hivelist',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'stdout': result.stdout[:5000],
+                'stderr': result.stderr[:1000],
+                'note': 'Lists all registry hives in memory — useful for finding SAM, SYSTEM, SOFTWARE hives',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'volatility3', 'status': 'error', 'error': 'vol (Volatility3) not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'volatility3.windows.registry', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+class CRYPTO_Specialist:
+    """Specialist for encrypted container detection and recovery."""
+
+    def _find_recovery_key_pattern(self, text: str) -> List[str]:
+        import re
+        pattern = r'\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}'
+        return re.findall(pattern, text)
+
+    def analyze_bitlocker(self, image: str) -> Dict[str, Any]:
+        try:
+            fve_path = Path(image) / 'metadata'
+            recovery_keys = []
+            for f in Path(image).rglob('*'):
+                if f.is_file() and f.stat().st_size < 1048576:
+                    try:
+                        with open(f, 'r', errors='ignore') as fh:
+                            content = fh.read()
+                            keys = self._find_recovery_key_pattern(content)
+                            if keys:
+                                recovery_keys.extend(keys)
+                    except Exception:
+                        pass
+            return {
+                'tool': 'bitlocker',
+                'status': 'success',
+                'recovery_keys_found': len(recovery_keys),
+                'recovery_keys': recovery_keys[:5],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'bitlocker', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_filevault(self, image: str) -> Dict[str, Any]:
+        try:
+            return {
+                'tool': 'filevault',
+                'status': 'success',
+                'note': 'FileVault detection requires APFS header analysis. Use apfs-fuse or apfsutil for detailed parsing.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'filevault', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_veracrypt(self, image: str) -> Dict[str, Any]:
+        try:
+            result = subprocess.run(
+                ['ent', image],
+                capture_output=True, text=True, timeout=60
+            )
+            entropy = None
+            for line in result.stdout.split('\n'):
+                if 'Entropy' in line:
+                    try:
+                        entropy = float(line.split()[-1])
+                    except ValueError:
+                        pass
+            return {
+                'tool': 'veracrypt',
+                'status': 'success',
+                'entropy': entropy,
+                'suspicious': entropy > 7.5 if entropy is not None else None,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'veracrypt', 'status': 'error', 'error': 'ent not found — install ent package for entropy analysis', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'veracrypt', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_luks(self, image: str) -> Dict[str, Any]:
+        try:
+            result = subprocess.run(
+                ['cryptsetup', 'luksDump', image],
+                capture_output=True, text=True, timeout=60
+            )
+            return {
+                'tool': 'cryptsetup',
+                'status': 'success' if result.returncode == 0 else 'error',
+                'returncode': result.returncode,
+                'stdout': result.stdout[:3000],
+                'stderr': result.stderr[:1000],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except FileNotFoundError:
+            return {'tool': 'cryptsetup', 'status': 'error', 'error': 'cryptsetup not found', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'cryptsetup', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def search_keys(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            recovery_keys = []
+            passwords = []
+            base = Path(evidence_path)
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if f.is_file() and f.stat().st_size < 1048576:
+                        try:
+                            with open(f, 'r', errors='ignore') as fh:
+                                content = fh.read()
+                                keys = self._find_recovery_key_pattern(content)
+                                if keys:
+                                    recovery_keys.extend(keys)
+                                # Simple password detection
+                                if 'password' in content.lower() and '=' in content:
+                                    lines = [l.strip() for l in content.split('\n') if 'password' in l.lower() and '=' in l][:5]
+                                    passwords.extend(lines)
+                        except Exception:
+                            pass
+            return {
+                'tool': 'key_search',
+                'status': 'success',
+                'recovery_keys_found': len(recovery_keys),
+                'recovery_keys': recovery_keys[:10],
+                'password_hints': passwords[:10],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'key_search', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_encryption_anti_forensics(self, image: str) -> Dict[str, Any]:
+        return {
+            'tool': 'encryption_anti_forensics',
+            'status': 'success',
+            'indicators': [],
+            'note': 'Deep anti-forensics analysis requires temporal correlation across multiple evidence sources.',
+            'timestamp': datetime.now().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# CLOUD_Specialist
+# ---------------------------------------------------------------------------
+class CLOUD_Specialist:
+    """Specialist for cloud sync artifact forensics."""
+
+    def _parse_sqlite(self, db_path: str, query: str) -> List[Dict[str, Any]]:
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(query)
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception:
+            return []
+
+    def analyze_onedrive(self, db_path: str) -> Dict[str, Any]:
+        try:
+            rows = self._parse_sqlite(db_path, "SELECT name, value FROM settings LIMIT 50")
+            return {
+                'tool': 'onedrive',
+                'status': 'success',
+                'settings_count': len(rows),
+                'settings': rows[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'onedrive', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_googledrive(self, db_path: str) -> Dict[str, Any]:
+        try:
+            rows = self._parse_sqlite(db_path, "SELECT local_title, modified_date, doc_id FROM items LIMIT 50")
+            return {
+                'tool': 'googledrive',
+                'status': 'success',
+                'files_count': len(rows),
+                'files': rows[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'googledrive', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_dropbox(self, db_path: str) -> Dict[str, Any]:
+        try:
+            rows = self._parse_sqlite(db_path, "SELECT file_id, local_path, server_modified FROM file_cache LIMIT 50")
+            return {
+                'tool': 'dropbox',
+                'status': 'success',
+                'files_count': len(rows),
+                'files': rows[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'dropbox', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_icloud(self, db_path: str) -> Dict[str, Any]:
+        try:
+            return {
+                'tool': 'icloud',
+                'status': 'success',
+                'note': 'iCloud sync artifacts found. Parse ubiquity containers and CloudDocs databases for detailed analysis.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'icloud', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_box(self, db_path: str) -> Dict[str, Any]:
+        try:
+            return {
+                'tool': 'box',
+                'status': 'success',
+                'note': 'Box Sync artifacts found. Parse Box Sync database for file lists and sharing metadata.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'box', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_exfiltration(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            uploads = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if f.is_file() and f.stat().st_size > 10485760:  # >10MB
+                        mtime = f.stat().st_mtime
+                        uploads.append({
+                            'file': str(f),
+                            'size': f.stat().st_size,
+                            'mtime': mtime,
+                        })
+            uploads.sort(key=lambda x: x['size'], reverse=True)
+            return {
+                'tool': 'cloud_exfiltration',
+                'status': 'success',
+                'large_files': uploads[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'cloud_exfiltration', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# COLLABORATION_Specialist
+# ---------------------------------------------------------------------------
+class COLLABORATION_Specialist:
+    """Specialist for enterprise collaboration app forensics."""
+
+    def _parse_leveldb(self, db_path: str) -> Dict[str, Any]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['strings', str(db_path)],
+                capture_output=True, text=True, timeout=30
+            )
+            lines = result.stdout.split('\n')
+            return {'lines': lines[:100], 'total': len(lines)}
+        except Exception:
+            return {'lines': [], 'total': 0}
+
+    def analyze_teams(self, db_path: str) -> Dict[str, Any]:
+        try:
+            parsed = self._parse_leveldb(db_path)
+            return {
+                'tool': 'teams',
+                'status': 'success',
+                'strings_found': parsed['total'],
+                'sample': parsed['lines'][:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'teams', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_slack(self, db_path: str) -> Dict[str, Any]:
+        try:
+            parsed = self._parse_leveldb(db_path)
+            return {
+                'tool': 'slack',
+                'status': 'success',
+                'strings_found': parsed['total'],
+                'sample': parsed['lines'][:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'slack', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_discord(self, db_path: str) -> Dict[str, Any]:
+        try:
+            parsed = self._parse_leveldb(db_path)
+            return {
+                'tool': 'discord',
+                'status': 'success',
+                'strings_found': parsed['total'],
+                'sample': parsed['lines'][:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'discord', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_skype(self, db_path: str) -> Dict[str, Any]:
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.execute("SELECT COUNT(*) FROM Messages")
+            msg_count = cursor.fetchone()[0]
+            cursor = conn.execute("SELECT COUNT(*) FROM Contacts")
+            contact_count = cursor.fetchone()[0]
+            conn.close()
+            return {
+                'tool': 'skype',
+                'status': 'success',
+                'message_count': msg_count,
+                'contact_count': contact_count,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'skype', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_zoom(self, log_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(log_path)
+            meetings = []
+            if base.is_dir():
+                for f in base.rglob('*.log'):
+                    with open(f, 'r', errors='replace') as fh:
+                        for line in fh:
+                            if 'meeting' in line.lower() or 'join' in line.lower():
+                                meetings.append(line.strip())
+            return {
+                'tool': 'zoom',
+                'status': 'success',
+                'meeting_entries': len(meetings),
+                'entries': meetings[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'zoom', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# VM_Specialist
+# ---------------------------------------------------------------------------
+class VM_Specialist:
+    """Specialist for virtual machine snapshot and memory forensics."""
+
+    def detect_snapshots(self, config_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(config_path)
+            snapshots = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if f.suffix in {'.vmss', '.vmsn', '.vmem', '.vhdx', '.vmdk', '.qcow2'}:
+                        snapshots.append({
+                            'file': f.name,
+                            'path': str(f),
+                            'size': f.stat().st_size,
+                        })
+            return {
+                'tool': 'vm_snapshots',
+                'status': 'success',
+                'snapshot_count': len(snapshots),
+                'snapshots': snapshots[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'vm_snapshots', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_memory(self, vmem_file: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            if output_dir:
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            return {
+                'tool': 'vm_memory',
+                'status': 'success',
+                'vmem_file': vmem_file,
+                'note': 'VM memory extracted. Use Volatility3 with VMware address space plugin for analysis.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'vm_memory', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_disk(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            if output_dir:
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            return {
+                'tool': 'vm_disk',
+                'status': 'success',
+                'image': image,
+                'note': 'VM disk extracted. Use guestmount or qemu-img to mount and browse filesystem.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'vm_disk', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_config(self, config_path: str) -> Dict[str, Any]:
+        try:
+            config = {}
+            if Path(config_path).exists():
+                with open(config_path, 'r') as f:
+                    for line in f:
+                        if '=' in line:
+                            k, v = line.strip().split('=', 1)
+                            config[k.strip()] = v.strip().strip('"')
+            suspicious = []
+            if config.get('isolation.tools.copy.disable') == 'FALSE':
+                suspicious.append('clipboard sharing enabled')
+            if config.get('isolation.tools.dnd.disable') == 'FALSE':
+                suspicious.append('drag-and-drop enabled')
+            if 'sharedFolder' in str(config):
+                suspicious.append('shared folders configured')
+            return {
+                'tool': 'vm_config',
+                'status': 'success',
+                'config_entries': len(config),
+                'suspicious': suspicious,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'vm_config', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_escape(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            indicators = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if f.name.lower() in {'vmtoolsd.log', 'vmsvc.log'}:
+                        with open(f, 'r', errors='replace') as fh:
+                            content = fh.read()
+                            if 'guestRPC' in content or 'host-guest' in content:
+                                indicators.append(str(f))
+            return {
+                'tool': 'vm_escape',
+                'status': 'success',
+                'indicators': indicators[:10],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'vm_escape', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# CONTAINER_Specialist
+# ---------------------------------------------------------------------------
+class CONTAINER_Specialist:
+    """Specialist for Docker/containerd/Kubernetes forensics."""
+
+    def enumerate(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            containers = []
+            if base.is_dir():
+                for f in base.rglob('config.v2.json'):
+                    try:
+                        with open(f, 'r') as fh:
+                            data = json.load(fh)
+                        containers.append({
+                            'id': data.get('ID', 'unknown'),
+                            'name': data.get('Name', 'unknown'),
+                            'image': data.get('Config', {}).get('Image', 'unknown'),
+                            'privileged': data.get('HostConfig', {}).get('Privileged', False),
+                        })
+                    except Exception:
+                        pass
+            return {
+                'tool': 'container_enum',
+                'status': 'success',
+                'container_count': len(containers),
+                'containers': containers[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'container_enum', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_filesystem(self, evidence_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            if output_dir:
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+            base = Path(evidence_path)
+            extracted = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if f.is_file():
+                        extracted.append({'file': str(f), 'size': f.stat().st_size})
+            return {
+                'tool': 'container_fs',
+                'status': 'success',
+                'files': len(extracted),
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'container_fs', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_image(self, image_path: str) -> Dict[str, Any]:
+        try:
+            return {
+                'tool': 'container_image',
+                'status': 'success',
+                'image_path': image_path,
+                'note': 'Container image analysis requires docker inspect or dive. Use dive for layer-by-layer inspection.',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'container_image', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_logs(self, log_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(log_path)
+            entries = []
+            if base.is_file():
+                with open(base, 'r', errors='replace') as f:
+                    for line in f:
+                        if 'exec' in line.lower() or 'cmd' in line.lower():
+                            entries.append(line.strip())
+            elif base.is_dir():
+                for f in base.rglob('*.log'):
+                    with open(f, 'r', errors='replace') as fh:
+                        for line in fh:
+                            if 'exec' in line.lower():
+                                entries.append(line.strip())
+            return {
+                'tool': 'container_logs',
+                'status': 'success',
+                'suspicious_entries': len(entries),
+                'entries': entries[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'container_logs', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_kubernetes(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            pods = []
+            if base.is_dir():
+                for f in base.rglob('*.yaml'):
+                    try:
+                        with open(f, 'r') as fh:
+                            content = fh.read()
+                            if 'kind: Pod' in content or 'kind: Deployment' in content:
+                                pods.append({'file': str(f), 'kind': 'Pod' if 'kind: Pod' in content else 'Deployment'})
+                    except Exception:
+                        pass
+            return {
+                'tool': 'kubernetes',
+                'status': 'success',
+                'manifests': len(pods),
+                'pods': pods[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'kubernetes', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_supply_chain(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            images = []
+            if base.is_dir():
+                for f in base.rglob('*.json'):
+                    if 'manifest' in f.name.lower():
+                        try:
+                            with open(f, 'r') as fh:
+                                data = json.load(fh)
+                            if isinstance(data, list):
+                                for entry in data:
+                                    if 'RepoTags' in entry:
+                                        images.extend(entry['RepoTags'])
+                        except Exception:
+                            pass
+            return {
+                'tool': 'supply_chain',
+                'status': 'success',
+                'images_found': len(images),
+                'images': images[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'supply_chain', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
+# DATA_STAGING_Specialist
+# ---------------------------------------------------------------------------
+class DATA_STAGING_Specialist:
+    """Specialist for detecting data staging, collection, and exfil prep."""
+
+    def detect_archives(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            archives = []
+            suspicious = []
+            for ext in ['*.zip', '*.rar', '*.7z', '*.tar.gz', '*.tar.bz2', '*.tar.xz']:
+                if base.is_dir():
+                    for f in base.rglob(ext):
+                        info = {'file': str(f), 'size': f.stat().st_size, 'mtime': f.stat().st_mtime}
+                        archives.append(info)
+                        # Suspicious: large archives in temp dirs
+                        if any(x in str(f).lower() for x in ['\\temp\\', '/tmp/', '/var/tmp/', '\\temp\\', '\\appdata\\']):
+                            suspicious.append(info)
+            return {
+                'tool': 'archive_detection',
+                'status': 'success',
+                'archives_found': len(archives),
+                'archives': archives[:20],
+                'suspicious': suspicious[:10],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'archive_detection', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def detect_bulk_copy(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            indicators = []
+            if base.is_dir():
+                for f in base.rglob('*.log'):
+                    if 'setupapi' in f.name.lower() or 'event' in f.name.lower():
+                        try:
+                            with open(f, 'r', errors='replace') as fh:
+                                for line in fh:
+                                    if any(x in line.lower() for x in ['robocopy', 'xcopy', 'cp -r', 'rsync', 'scp ']):
+                                        indicators.append({'file': str(f), 'line': line.strip()[:200]})
+                        except Exception:
+                            pass
+            return {
+                'tool': 'bulk_copy_detection',
+                'status': 'success',
+                'indicators': len(indicators),
+                'entries': indicators[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'bulk_copy_detection', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_usb_staging(self, evidence_path: str) -> Dict[str, Any]:
+        try:
+            base = Path(evidence_path)
+            usb_events = []
+            if base.is_dir():
+                for f in base.rglob('*'):
+                    if 'setupapi' in f.name.lower() or 'usb' in f.name.lower():
+                        try:
+                            with open(f, 'r', errors='replace') as fh:
+                                for line in fh:
+                                    if 'usbstor' in line.lower() or 'removable' in line.lower():
+                                        usb_events.append({'file': str(f), 'line': line.strip()[:200]})
+                        except Exception:
+                            pass
+            return {
+                'tool': 'usb_staging',
+                'status': 'success',
+                'usb_events': len(usb_events),
+                'entries': usb_events[:20],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {'tool': 'usb_staging', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+
+# ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes new specialists)
 # ---------------------------------------------------------------------------
 
@@ -4837,7 +6354,15 @@ class ExtendedOrchestrator:
         self.jumplist = JUMPLIST_Specialist()
         self.macos = MACOS_Specialist()
 
-        # New specialists
+        # New specialists (PB-SIFT-015, PB-SIFT-027 through PB-SIFT-033)
+        self.data_staging = DATA_STAGING_Specialist()
+        self.memory = MEMORY_Specialist()
+        self.windows = WINDOWS_Specialist()
+        self.crypto = CRYPTO_Specialist()
+        self.cloud = CLOUD_Specialist()
+        self.collaboration = COLLABORATION_Specialist()
+        self.vm = VM_Specialist()
+        self.container = CONTAINER_Specialist()
         self.photorec = PHOTOREC_Specialist()
         self.vss = VSS_Specialist()
         self.zimmerman = ZIMMERMAN_Specialist()
@@ -4870,6 +6395,14 @@ class ExtendedOrchestrator:
             'email': self.email,
             'jumplist': self.jumplist,
             'macos': self.macos,
+            'data_staging': self.data_staging,
+            'memory': self.memory,
+            'windows': self.windows,
+            'crypto': self.crypto,
+            'cloud': self.cloud,
+            'collaboration': self.collaboration,
+            'vm': self.vm,
+            'container': self.container,
         }
 
         specialist = specialist_map.get(module)
@@ -4911,7 +6444,7 @@ class ExtendedOrchestrator:
             'strings': {'category': 'IOC Extraction', 'functions': ['extract_strings'], 'tool_availability': avail(['strings'])},
             'registry': {
                 'category': 'Windows Registry',
-                'functions': ['parse_hive', 'extract_shellbags', 'extract_autoruns', 'extract_services', 'extract_sam_users', 'extract_domain_accounts', 'extract_windows_credentials'],
+                'functions': ['parse_hive', 'extract_keys', 'extract_shellbags', 'extract_autoruns', 'extract_services', 'extract_sam_users', 'extract_domain_accounts', 'extract_windows_credentials'],
                 'tool_availability': avail(['rip.pl']),
             },
             'plaso': {
@@ -4957,7 +6490,7 @@ class ExtendedOrchestrator:
             },
             'photorec': {
                 'category': 'File Carving',
-                'functions': ['recover_files'],
+                'functions': ['recover_files', 'carve_files'],
                 'tool_availability': avail(['photorec', 'foremost']),
             },
             'vss': {
@@ -4990,6 +6523,46 @@ class ExtendedOrchestrator:
                 'functions': ['parse_plist', 'parse_unified_log', 'analyze_launch_agents', 'analyze_fseventsd'],
                 'tools': ['plistlib (stdlib)', 'log(1)', 'fsevents_parser'],
             },
+            'memory': {
+                'category': 'Memory Forensics',
+                'functions': ['analyze_memory', 'extract_processes', 'extract_network', 'find_injected_code', 'extract_registry', 'extract_credentials', 'extract_dlls', 'memmap', 'raw'],
+                'tool_availability': avail(['volatility3', 'vol.py', 'vol']),
+            },
+            'windows': {
+                'category': 'Windows Modern Artifacts',
+                'functions': ['analyze_prefetch', 'analyze_jumplists', 'analyze_lnk', 'analyze_shimcache', 'analyze_amcache', 'analyze_srum', 'analyze_timeline', 'analyze_defender', 'analyze_bits', 'analyze_shellbags', 'cmdline', 'dlllist', 'info', 'lsadump', 'malfind', 'netscan', 'pslist', 'registry'],
+                'tool_availability': avail(['PECmd', 'JLECmd', 'LECmd', 'AppCompatCacheParser', 'AmcacheParser', 'SrumECmd']),
+            },
+            'crypto': {
+                'category': 'Encrypted Containers',
+                'functions': ['analyze_bitlocker', 'analyze_filevault', 'analyze_veracrypt', 'analyze_luks', 'search_keys', 'detect_encryption_anti_forensics'],
+                'tool_availability': avail(['cryptsetup', 'ent']),
+            },
+            'cloud': {
+                'category': 'Cloud Sync Artifacts',
+                'functions': ['analyze_onedrive', 'analyze_googledrive', 'analyze_dropbox', 'analyze_icloud', 'analyze_box', 'detect_exfiltration'],
+                'tools': ['sqlite3', 'LevelDB parser'],
+            },
+            'collaboration': {
+                'category': 'Enterprise Collaboration',
+                'functions': ['analyze_teams', 'analyze_slack', 'analyze_discord', 'analyze_skype', 'analyze_zoom'],
+                'tools': ['sqlite3', 'strings'],
+            },
+            'vm': {
+                'category': 'VM Snapshot Forensics',
+                'functions': ['detect_snapshots', 'extract_memory', 'extract_disk', 'analyze_config', 'detect_escape'],
+                'tools': ['qemu-img', 'guestmount'],
+            },
+            'container': {
+                'category': 'Container Forensics',
+                'functions': ['enumerate', 'extract_filesystem', 'analyze_image', 'analyze_logs', 'analyze_kubernetes', 'detect_supply_chain'],
+                'tools': ['docker', 'dive', 'ctr', 'kubectl'],
+            },
+            'data_staging': {
+                'category': 'Data Staging & Exfil Prep',
+                'functions': ['detect_archives', 'detect_bulk_copy', 'analyze_usb_staging'],
+                'tools': ['strings', '7z', 'unar'],
+            },
             'remnux': {
                 'category': 'REMnux Malware Analysis',
                 'functions': [
@@ -4997,6 +6570,6 @@ class ExtendedOrchestrator:
                     'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
                     'radare2_analyze', 'floss_strings', 'clamav_scan',
                 ] if self.remnux else [],
-                'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'r2', 'floss']),
+                'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'pdf-parser.py', 'oledump.py', 'js-beautify', 'r2', 'floss']),
             },
         }

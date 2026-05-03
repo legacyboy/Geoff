@@ -2,6 +2,7 @@
 ## Exfiltration Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of data exfiltration activity within a digital forensic image using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, memory, logs, cloud`
 
 ---
 

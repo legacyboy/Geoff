@@ -2,6 +2,7 @@
 ## Persistence Mechanism Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of persistence mechanisms used by attackers to maintain access to a system across reboots and user logoffs using the SIFT Workstation toolset.
+**Specialist:** `registry, memory, sleuthkit`
 
 ---
 
@@ -53,6 +54,18 @@
 - [ ] **Plugin/Extension Audit:** Check for malicious browser extensions or application plugins installed in user profiles.
 
 ---
+
+
+- [ ] **WMI Event Subscription Deep Analysis:** Extract and parse `OBJECTS.DATA` from `%SystemRoot%\System32\wbem\Repository\`
+    - **Specialist Method:** `sleuthkit.extract_file(image, '%SystemRoot%\System32\wbem\Repository\OBJECTS.DATA')` then `strings.extract_strings(extracted_file)`
+    - Parse `__EventFilter` entries: extract query (WQL), event namespace, and filter name
+    - Parse `__EventConsumer` entries: extract consumer type (CommandLineEventConsumer, ActiveScriptEventConsumer, SMTPEventConsumer)
+    - Parse `__FilterToConsumerBinding` entries: link filters to consumers — this is the **active persistence link**
+    - **Flag as CRITICAL:** `CommandLineEventConsumer` with encoded PowerShell or cmd.exe — most common WMI persistence
+    - **Flag as CRITICAL:** `ActiveScriptEventConsumer` with VBScript/JScript — fileless persistence
+    - **Flag as HIGH:** `SMTPEventConsumer` — can exfiltrate data via email on trigger
+    - Cross-reference WMI query triggers with Event Log (EID 5857-5861)
+- **SANS FOR508 Alignment:** WMI event subscriptions are **★★★★★** persistence (MITRE T1546.003) — one of the most stealthy fileless persistence mechanisms. SANS FOR508 covers this extensively as a primary APT technique
 
 ### Phase 5 — Event Log Analysis
 - [ ] **Service Installation:** Flag new service installation (EID 7045) — especially services with no description or random names.

@@ -49,6 +49,47 @@ class NarrativeReportGenerator:
         """
         self.call_llm = call_llm_func
 
+    # Ollama error patterns — text that should NEVER appear in narrative output
+    _OLLAMA_ERROR_PATTERNS = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+
+    def _call_llm_with_retry(self, prompt: str, context: str = "", agent_type: str = "manager",
+                              max_retries: int = 3, backoff: list = None) -> str | None:
+        """Call LLM with retry and error detection.
+
+        Returns the LLM response text, or None if all retries fail or the
+        response contains Ollama error messages. On failure, the caller
+        should use template fallback and mark the section needs_review.
+        """
+        if not self.call_llm:
+            return None
+
+        if backoff is None:
+            backoff = [30, 60, 120]
+
+        import time as _time
+        for attempt in range(max_retries + 1):
+            try:
+                result = self.call_llm(prompt, context, agent_type=agent_type)
+                # Detect leaked error messages
+                if result is None or any(pat in str(result) for pat in self._OLLAMA_ERROR_PATTERNS):
+                    if attempt < max_retries:
+                        print(f"[NARRATIVE] Ollama error in response, retrying ({attempt+1}/{max_retries})...")
+                        _time.sleep(backoff[attempt] if attempt < len(backoff) else backoff[-1])
+                        continue
+                    return None  # All retries exhausted
+                return result
+            except Exception as e:
+                print(f"[NARRATIVE] LLM call failed (attempt {attempt+1}): {e}")
+                if attempt < max_retries:
+                    _time.sleep(backoff[attempt] if attempt < len(backoff) else backoff[-1])
+                    continue
+                return None
+        return None
+
     def generate(self, report_json: dict, device_map: dict,
                  user_map: dict, super_timeline_path: str,
                  correlated_users: dict, behavioral_flags: dict,
@@ -73,10 +114,15 @@ class NarrativeReportGenerator:
         json_path = report_dir / "narrative_report.json"
 
         sections = {}
+        needs_review_sections = []  # Track sections where LLM failed
 
         # 1. Executive Summary
-        sections["executive_summary"] = self._generate_executive_summary(
+        exec_result = self._generate_executive_summary(
             report_json, device_map, user_map, behavioral_flags)
+        sections["executive_summary"] = exec_result
+        # Template fallbacks contain specific phrasing — check for it
+        if exec_result and self._is_template_fallback(exec_result):
+            needs_review_sections.append("executive_summary")
 
         # 2. Devices & Users Overview
         sections["devices_and_users"] = self._generate_devices_overview(
@@ -87,10 +133,12 @@ class NarrativeReportGenerator:
         users = user_map.get("users", user_map)
         for username, udata in users.items():
             if isinstance(udata, dict):
-                sections["user_narratives"][username] = \
-                    self._generate_user_narrative(
-                        username, udata, correlated_users.get(username, {}),
-                        device_map, behavioral_flags)
+                narrative = self._generate_user_narrative(
+                    username, udata, correlated_users.get(username, {}),
+                    device_map, behavioral_flags)
+                sections["user_narratives"][username] = narrative
+                if narrative and self._is_template_fallback(narrative):
+                    needs_review_sections.append(f"user_narratives.{username}")
 
         # 4. Timeline of Significant Events
         sections["significant_events"] = \
@@ -109,13 +157,27 @@ class NarrativeReportGenerator:
         sections["attack_chain"] = self._synthesize_attack_chain(
             report_json, behavioral_flags, correlated_users, iocs,
             step_evidence_anchors=step_evidence_anchors or [])
+        if sections["attack_chain"] and self._is_template_fallback(sections["attack_chain"]):
+            needs_review_sections.append("attack_chain")
 
         # 8. Conclusion & Recommendations
         sections["conclusion"] = self._generate_conclusion(
             report_json, behavioral_flags, correlated_users)
+        if sections["conclusion"] and self._is_template_fallback(sections["conclusion"]):
+            needs_review_sections.append("conclusion")
 
-        # Write markdown report
+        # Track needs_review flag in output
+        if needs_review_sections:
+            sections["needs_review"] = True
+            sections["needs_review_sections"] = needs_review_sections
+            sections["needs_review_reason"] = "Ollama timeout - narrative generation failed, template fallback used"
+
+        # Write markdown report — include needs_review banner if applicable
         md_content = self._render_markdown(sections, report_json)
+        if needs_review_sections:
+            banner = ("\n> ⚠️ **Needs Review**: The following sections used template fallback "
+                      "due to Ollama timeout: " + ", ".join(needs_review_sections) + "\n\n")
+            md_content = banner + md_content
         with open(md_path, "w") as f:
             f.write(md_content)
 
@@ -124,6 +186,28 @@ class NarrativeReportGenerator:
             json.dump(sections, f, indent=2, default=str)
 
         return md_path
+
+    def _is_template_fallback(self, text: str) -> bool:
+        """Detect if text was generated by template fallback rather than LLM.
+
+        Template fallbacks start with predictable patterns like
+        'This investigation analyzed evidence from' or
+        '{username} was observed on'.
+        """
+        if not text:
+            return False
+        # Common template fallback prefixes
+        template_prefixes = (
+            "This investigation analyzed evidence from",
+            "was observed on",
+            "## Attack Chain",
+            "# Conclusion",
+        )
+        # Only flag as template if we see multiple template markers
+        marker_count = sum(1 for pfx in template_prefixes if pfx in (text[:200] if text else ""))
+        # Single marker is fine (LLM might start similarly), but if the text
+        # is very short for an LLM-quality section, it's likely template
+        return len(text) < 150 and marker_count >= 1
 
     # ----------------------------------------------------------------
     # Section generators
@@ -187,7 +271,10 @@ class NarrativeReportGenerator:
             )
 
             try:
-                return self.call_llm(prompt, "", agent_type="manager")
+                result = self._call_llm_with_retry(prompt, "", agent_type="manager")
+                if result is not None:
+                    return result
+                # LLM failed — mark section for review and fall through to template
             except Exception:
                 pass  # Fall through to template
 
@@ -311,7 +398,9 @@ class NarrativeReportGenerator:
             )
 
             try:
-                return self.call_llm(prompt, "", agent_type="manager")
+                result = self._call_llm_with_retry(prompt, "", agent_type="manager")
+                if result is not None:
+                    return result
             except Exception:
                 pass
 
@@ -506,7 +595,9 @@ class NarrativeReportGenerator:
             )
 
             try:
-                return self.call_llm(prompt, "", agent_type="manager")
+                result = self._call_llm_with_retry(prompt, "", agent_type="manager")
+                if result is not None:
+                    return result
             except Exception:
                 pass
 
@@ -784,7 +875,9 @@ Write the following sections. ACCURACY RULES:
 [5-7 specific, prioritised containment and remediation steps for THIS investigation based on the evidence above]"""
 
             try:
-                return self.call_llm(prompt, "", agent_type="manager")
+                result = self._call_llm_with_retry(prompt, "", agent_type="manager")
+                if result is not None:
+                    return result
             except Exception:
                 pass  # fall through to template
 

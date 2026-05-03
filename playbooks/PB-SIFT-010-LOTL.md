@@ -2,6 +2,7 @@
 ## Living-off-the-Land (LOTL) Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection of "Living-off-the-Land" (LotL) techniques, where attackers use legitimate, pre-installed system binaries (LOLBins) to conduct malicious activity while avoiding detection by traditional antivirus/EDR.
+**Specialist:** `memory, sleuthkit, registry, logs`
 
 ---
 
@@ -59,6 +60,17 @@
 - [ ] **Script Analysis:** Check for scripts dropped on disk — flag `.ps1`, `.vbs`, `.js`, `.hta`, `.bat` in user-writable locations.
 - [ ] **Obfuscation Search:** Check for encoded or obfuscated script content in temp or staging directories.
 - [ ] **Decoded Output:** Check for `certutil` decoded output files — flag any binary output adjacent to encoded input files.
+- [ ] **Base64 Decode Workflow:** When `-enc` or `-encodedCommand` arguments are found in EID 4688 or Prefetch:
+    - **Command:** `echo '<base64_string>' | base64 -d | strings` — decode and extract readable strings
+    - **Command:** `echo '<base64_string>' | base64 -d | iconv -f UTF-16LE -t UTF-8` — PowerShell `-enc` uses UTF-16LE encoding; pipe through iconv to get readable output
+    - Flag URLs, IPs, file paths, and cmdlets in decoded output
+    - **Command (multi-layer):** `python3 -c "import base64,sys; d=base64.b64decode(sys.argv[1]); print(d.decode('utf-16-le','ignore'))" '<base64>'`
+- [ ] **PowerShell Obfuscation Pattern Detection:**
+    - Flag `[char]` casting chains: `[char]73 + [char]69 + [char]88` = `IEX`
+    - Flag `$env:` variable string concatenation: `$env:ComSpec[4,15,25] -join ''` = obfuscated `cmd`
+    - Flag `-f` format operator: `'{0}{1}' -f 'Invoke-','Expression'`
+    - Flag `[Convert]::FromBase64String` + `[Text.Encoding]::Unicode.GetString` — in-memory decode pattern
+    - **Tool:** `floss` — extract obfuscated strings from binaries: `floss --no-static-strings <binary>`
 
 ---
 

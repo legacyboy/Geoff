@@ -2,6 +2,7 @@
 ## Ransomware Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and analysis of ransomware activity within a digital forensic image using the SIFT Workstation toolset.
+**Specialist:** `sleuthkit, memory, logs, registry`
 
 ---
 
@@ -17,6 +18,7 @@
 - [ ] **Injection Detection:** Check for injected code regions — ransomware commonly injects into legitimate processes.
 - [ ] **Network State:** Enumerate network connections — flag outbound to TOR exit nodes or unknown C2 infrastructure.
 - [ ] **String Search:** Look for ransom note strings in memory regions.
+    > **Specialist Method:** `sleuthkit.extract_strings`
 
 ---
 
@@ -98,21 +100,23 @@
 
 ### A.3 — Encryption Key Recovery
 - [ ] **Key Material Hunt:** Search memory and temp directories for encryption keys:
-    - `vol.py windows.filescan.FileScan` to find temporary files
+    - memory file scan (specialist) to find temporary files
     - Check `C:\Users\<user>\AppData\Local\Temp\` for key files
     - Search for files with high entropy (potential key material)
 - [ ] **AES Key Extraction:** If key found in temp file, extract and convert to hex for decryption.
-- [ ] **Memory Key Recovery:** Search process memory for 32-byte random values (AES-256 keys) using `vol.py windows.memmap.Memmap`.
+- [ ] **Memory Key Recovery:** Search process memory for 32-byte random values (AES-256 keys) using memory.memmap analysis.
 - [ ] **Decryption Testing:** Attempt decryption of sample encrypted file with recovered key before full recovery.
 
 ### A.4 — USB HID Keylog Analysis
 - [ ] **PCAP Review:** Analyze `keylog.pcapng` or similar USB keyboard traffic captures.
 - [ ] **HID Data Extraction:** Export USB HID data from packets (tshark: `usb.data_flag == 0` and `usb.capdata`).
+    > **Specialist Method:** `network.analyze_pcap`
 - [ ] **Keystroke Decoding:** Use PUK tool or custom scripts to decode HID keystroke scancodes to ASCII.
 - [ ] **Password Recovery:** Reconstruct typed passwords, credentials, or secret messages from keystroke sequences.
 
 ### A.5 — Steganography Detection
 - [ ] **SpamMimic Detection:** Flag suspicious "spam-like" text in documents or emails that may be steganographic.
+    > **Specialist Method:** `sleuthkit.list_inodes`
 - [ ] **Text Decoding:** Use SpamMimic decoder or similar tools to reveal hidden messages in seemingly random text.
 - [ ] **Email Attachment Analysis:** Check email attachments for embedded data using steganographic techniques.
 

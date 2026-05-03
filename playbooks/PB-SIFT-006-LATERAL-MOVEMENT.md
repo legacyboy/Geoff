@@ -2,6 +2,7 @@
 ## Lateral Movement Indicators — Static Image Analysis
 
 **Objective:** High-fidelity detection and mapping of lateral movement within a network using digital forensic images and the SIFT Workstation toolset.
+**Specialist:** `memory, network, registry, logs`
 
 ---
 
@@ -52,6 +53,19 @@
 ---
 
 ---
+
+
+
+### Phase 5b — ARP Cache & Local Network Analysis
+- [ ] **ARP Cache Extraction:** Extract ARP table from memory (`memory.extract_network`) — maps IP addresses to MAC addresses
+    - **Specialist Method:** `memory.extract_network(image_path, include_arp=True)`
+    - Flag duplicate MAC addresses (indicates ARP spoofing — attacker intercepting traffic)
+    - Flag MAC addresses not belonging to any known network interface (rogue device)
+    - Identify gateway MAC address and flag any changes (man-in-the-middle)
+- [ ] **ARP Spoofing Detection:** Correlate ARP entries with DHCP server logs — flag IP-to-MAC mappings that don't match DHCP assignments
+- [ ] **Network Segment Mapping:** Use ARP cache to map reachable network segments — identify lateral movement paths
+- [ ] **DHCP Lease Analysis:** Extract DHCP lease information from registry (`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces`) — correlate with ARP for device identification
+- **SANS FOR508 Alignment:** ARP cache analysis is **★★★** for lateral movement — primarily useful for detecting ARP spoofing (MITM) and mapping network segments for lateral movement path identification
 
 ### Phase 6 — Network IOC Extraction
 - [ ] **Internal Mapping:** Extract internal IPs and hostnames referenced in disk and memory artifacts.

@@ -2,6 +2,7 @@
 ## C2 Infrastructure — Static Image Analysis
 
 **Objective:** High-fidelity detection of command-and-control infrastructure, beaconing behavior, DNS tunneling, and persistent C2 channels within a forensic image. This playbook runs when C2 indicators are identified during triage (PB-SIFT-000) or when network artifacts suggest active C2 communication.
+**Specialist:** `memory, network, registry, logs`
 
 ---
 
@@ -12,8 +13,8 @@
 ---
 
 ### Phase 2 — Network State Extraction
-- [ ] **Established Connections:** Extract all established and listening network connections from memory (`vol.py windows.netscan.NetScan`).
-- [ ] **DNS Cache:** Extract DNS resolver cache (`vol.py windows.dnscache.DnsCache`).
+- [ ] **Established Connections:** Extract all established and listening network connections from memory (`memory.extract_network`).
+- [ ] **DNS Cache:** Extract DNS resolver cache (network DNS cache analysis).
 - [ ] **Connection Timeline:** Map network connection timestamps to timeline.
 - [ ] **Beacon Detection:** Identify periodic outbound connections — flag connections with regular intervals (beacon behavior).
 - [ ] **Uncommon Ports:** Flag connections to non-standard ports (not 80, 443, 53, 25, 22).
@@ -43,10 +44,27 @@
 ### Phase 5 — PCAP & Log Correlation (if available)
 - [ ] **Traffic Volume Analysis:** Identify hosts with outbound traffic volume spikes during off-hours.
 - [ ] **TLS Fingerprinting:** Extract TLS SNI values and JA3 hashes from PCAP for C2 server identification.
-- [ ] **DNS Pattern Analysis:** Identify domains with algorithmic naming patterns (DGA), high query frequency, or new fast-flux domains.
+    - **Command:** `tshark -r <file.pcap> -T fields -e frame.time -e ip.src -e ip.dst -e tls.handshake.ja3 -e tls.handshake.ja3s -e tls.handshake.extensions_server_name -Y "tls.handshake.type == 1 or tls.handshake.type == 2" 2>/dev/null`
+    - Known C2 JA3 hashes to flag: Cobalt Strike default `72a589da586844d7f0818ce684948eea`, Metasploit `d0ec4b50a944b182f739f6e4113fa7eb`
+    - Flag: SNI mismatch with certificate CN/SAN — C2 traffic hiding under legitimate SNI
+    - Flag: TLS to IP address (no SNI / IP in SNI field) — direct-IP C2 without domain fronting
+- [ ] **DNS Tunneling Detection:**
+    - **Command:** `tshark -r <file.pcap> -T fields -e frame.time -e ip.src -e dns.qry.name -e dns.resp.type -Y dns | awk 'length($3) > 50'` — flag subdomains >50 chars
+    - **Command:** `tshark -r <file.pcap> -T fields -e dns.qry.name -Y "dns.qry.type == 16"` — DNS TXT record queries (tunneling exfil channel)
+    - Flag: high unique subdomain count under same domain — DGA or DNS C2 beaconing
+    - Flag: Shannon entropy of subdomain >3.5 — encoded data in DNS labels
+    - Flag: query volume >1000/hour to a single domain — C2 polling
+- [ ] **DGA Detection:**
+    - Flag domains with 12+ character random-looking second-level domain (SLD) with no WHOIS history
+    - **Command:** `tshark -r <file.pcap> -T fields -e dns.qry.name -Y "dns.flags.rcode == 3"` — NXDOMAIN storm from DGA enumeration
+    - Clusters of NXDOMAIN responses from a single source = DGA enumeration in progress
+- [ ] **Beacon Timing Analysis:**
+    - **Command:** `tshark -r <file.pcap> -T fields -e frame.time_epoch -e ip.dst -Y "tcp.flags.syn==1 and not tcp.flags.ack==1" | sort -k2 | awk '...'` — extract SYN timestamps per destination
+    - Low jitter (stddev < 10% of interval) on connections to same external IP = C2 beacon
 - [ ] **Proxy Log Review:** Check proxy logs for CONNECT method to suspicious destinations.
 - [ ] **Firewall Log Review:** Check firewall logs for outbound connections to known C2 IP ranges.
 - [ ] **Event Correlation:** Correlate EID 4624 (logon) with EID 3 (network connection in Sysmon) for C2 callback timing.
+- **SANS FOR572 Alignment:** TLS JA3 fingerprinting and DNS tunneling detection are **★★★★★** — the primary techniques for identifying encrypted C2 in PCAPs. SANS FOR572 (Advanced Network Forensics) emphasises these as core skills.
 
 ---
 

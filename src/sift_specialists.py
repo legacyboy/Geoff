@@ -571,6 +571,167 @@ class SLEUTHKIT_Specialist:
             'raw_output': result.get('raw_output', ''),
         }
 
+    def extract_browser_artifacts(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
+        """Find and extract browser-related files from inside a disk image.
+
+        Scans the fls listing for browser history, cookies, and cache databases,
+        then extracts them via icat to a temp directory for analysis by the
+        browser specialist.
+        """
+        listing = self.list_files(image, offset, recursive=True)
+        if listing.get('status') not in ('success', 'success_with_partial'):
+            return {'tool': 'extract_browser_artifacts', 'status': 'error',
+                    'error': f'fls failed: {listing.get("status")}',
+                    'timestamp': datetime.now().isoformat()}
+
+        browser_files = (
+            'history', 'places.sqlite', 'cookies.sqlite', 'cookies.db',
+            'login data', 'web data', 'favicons.db', 'bookmarks.html',
+            'sessionstore.js', 'formhistory.sqlite',
+            'downloads.sqlite', 'signons.sqlite', 'key4.db', 'key3.db',
+            'cert9.db', 'permissions.sqlite',
+        )
+        browser_dirs = (
+            'google/chrome', 'mozilla/firefox', 'microsoft/edge',
+            'appdata/local/google/chrome', 'appdata/roaming/mozilla/firefox',
+            'appdata/local/microsoft/edge',
+            'local settings/application data/google/chrome',
+            'local settings/application data/mozilla/firefox',
+        )
+
+        candidates = []
+        all_files = listing.get('files', [])
+        for f in all_files:
+            name = f.get('name', '').lower()
+            full_path = f.get('full_path', '').lower()
+            inode = f.get('inode')
+            if inode is None:
+                continue
+            # Match by filename
+            if name in browser_files or name.endswith(('.sqlite', '.db')):
+                if any(d in full_path for d in browser_dirs):
+                    candidates.append(f)
+                    continue
+            # Match by directory
+            if any(d in full_path for d in browser_dirs):
+                if name in browser_files:
+                    candidates.append(f)
+
+        if not candidates:
+            return {
+                'tool': 'extract_browser_artifacts',
+                'image': image,
+                'offset': offset,
+                'status': 'success',
+                'extracted_files': [],
+                'message': 'No browser artifacts found inside disk image',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        import tempfile
+        output_dir = Path(tempfile.mkdtemp(prefix='geoff_browser_'))
+        extracted = []
+        for f in candidates[:50]:
+            name = f.get('name', f'inode_{f["inode"]}')
+            inode = f['inode']
+            out_path = output_dir / name.replace('\\', '_').replace('/', '_').replace(' ', '_')
+            result = self.extract_file(image, inode, str(out_path), offset)
+            if result.get('status') == 'success':
+                extracted.append({
+                    'path': result['output_file'],
+                    'original_path': f.get('full_path', name),
+                    'inode': inode,
+                    'size': result.get('bytes_extracted', 0),
+                })
+
+        return {
+            'tool': 'extract_browser_artifacts',
+            'image': image,
+            'offset': offset,
+            'status': 'success',
+            'extracted_files': extracted,
+            'candidates_found': len(candidates),
+            'candidates_extracted': len(extracted),
+            'output_dir': str(output_dir),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_email_artifacts(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
+        """Find and extract email-related files from inside a disk image.
+
+        Scans the fls listing for PST, OST, DBX, EML, MSG, and mbox files,
+        then extracts them via icat to a temp directory for analysis by the
+        email specialist.
+        """
+        # Get full file listing first
+        listing = self.list_files(image, offset, recursive=True)
+        if listing.get('status') not in ('success', 'success_with_partial'):
+            return {'tool': 'extract_email_artifacts', 'status': 'error',
+                    'error': f'fls failed: {listing.get("status")}',
+                    'timestamp': datetime.now().isoformat()}
+
+        email_extensions = {'.pst', '.ost', '.dbx', '.mbox', '.eml', '.msg', '.nk2'}
+        email_dirs = ('outlook', 'thunderbird', 'windows mail', 'outlook express',
+                      'windows live mail', 'identities', 'local settings/application data/microsoft/outlook',
+                      'appdata/local/microsoft/outlook', 'appdata/roaming/microsoft/outlook')
+
+        candidates = []
+        all_files = listing.get('files', [])
+        for f in all_files:
+            name = f.get('name', '').lower()
+            full_path = f.get('full_path', '').lower()
+            inode = f.get('inode')
+            if inode is None:
+                continue
+            # Match by extension
+            if any(name.endswith(ext) for ext in email_extensions):
+                candidates.append(f)
+                continue
+            # Match by directory path
+            if any(d in full_path for d in email_dirs):
+                if any(name.endswith(ext) for ext in ('.pst', '.ost', '.dbx', '.eml', '.msg', '.msf', '.nk2')):
+                    candidates.append(f)
+
+        if not candidates:
+            return {
+                'tool': 'extract_email_artifacts',
+                'image': image,
+                'offset': offset,
+                'status': 'success',
+                'extracted_files': [],
+                'message': 'No email artifacts found inside disk image',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        # Extract each candidate via icat
+        import tempfile
+        output_dir = Path(tempfile.mkdtemp(prefix='geoff_email_'))
+        extracted = []
+        for f in candidates[:50]:  # Limit to 50 files max
+            name = f.get('name', f'inode_{f["inode"]}')
+            inode = f['inode']
+            out_path = output_dir / name.replace('\\', '_').replace('/', '_').replace(' ', '_')
+            result = self.extract_file(image, inode, str(out_path), offset)
+            if result.get('status') == 'success':
+                extracted.append({
+                    'path': result['output_file'],
+                    'original_path': f.get('full_path', name),
+                    'inode': inode,
+                    'size': result.get('bytes_extracted', 0),
+                })
+
+        return {
+            'tool': 'extract_email_artifacts',
+            'image': image,
+            'offset': offset,
+            'status': 'success',
+            'extracted_files': extracted,
+            'candidates_found': len(candidates),
+            'candidates_extracted': len(extracted),
+            'output_dir': str(output_dir),
+            'timestamp': datetime.now().isoformat(),
+        }
+
     def list_files_mactime(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
         """fls -m — List files in mactime body format with MACB timestamps."""
         args = ['-m', '/']  # mactime body format, root hostname prefix

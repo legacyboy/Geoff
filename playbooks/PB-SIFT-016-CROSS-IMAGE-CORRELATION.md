@@ -2,6 +2,7 @@
 ## Multi-Host Analysis & Attack Path Reconstruction
 
 **Objective:** Correlate findings across multiple forensic images to reconstruct the full kill chain, identify the "Patient Zero" host, calculate total dwell time, and determine the overall blast radius of a campaign.
+**Specialist:** `multiple (correlation)`
 
 ---
 

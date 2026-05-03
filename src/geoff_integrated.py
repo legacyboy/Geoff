@@ -116,7 +116,12 @@ def _hash_file(path):
 
 
 def _atomic_write(path, data, mode='w'):
-    """Atomically write data to path using temp file + replace."""
+    """Atomically write data to path using temp file + replace.
+
+    Parent directory is created on demand: callers shouldn't have to
+    pre-mkdir each subdirectory of the case work dir before writing.
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = str(path) + '.tmp'
     try:
         with open(tmp, mode) as f:
@@ -356,7 +361,11 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
     if job_id:
         _fe_log(job_id, log_msg)
     else:
-        print(f"[GEOFF] error: {log_msg}")
+        try:
+            print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
+        except BrokenPipeError:
+            pass
+        print(f"[GEOFF] error: {log_msg}", file=sys.stderr)
     if STRICT_MODE:
         if e:
             raise e
@@ -366,7 +375,126 @@ def _log_error(msg: str, e: Exception = None, job_id: str = None):
 
 def _log_info(msg: str):
     """Info-level logger — not an error."""
-    print(f"[GEOFF] {msg}")
+    try:
+        print(f"[GEOFF] {msg}", file=sys.stderr)
+    except BrokenPipeError:
+        pass
+
+
+
+def _re_evaluate_playbooks(completed_playbook, pb_findings, execution_plan, skipped_playbooks,
+                              inventory, os_type, has_disk_images, disk_artifacts,
+                              indicator_hits, job_id):
+    """After each playbook completes, check if new artifacts were discovered
+    that warrant additional playbooks. Pull every thread.
+
+    Returns list of newly-queued playbook IDs (empty if nothing new).
+    """
+    newly_queued = []
+    already_queued = set(execution_plan)
+
+    _new_artifacts = {
+        "email": False, "browser": False, "registry": False, "evtx": False,
+        "memory": False, "pcap": False, "mobile": False, "encrypted": False,
+        "cloud_sync": False, "collaboration": False, "vm": False, "container": False,
+    }
+
+    _sigs = {
+        "email":       [".pst", ".ost", ".dbx", ".eml", ".mbox", "outlook",
+                        "thunderbird", "evolution", "mailbox", "maildir", "sent items"],
+        "browser":     ["places.sqlite", "history", "cookies.db", "chrome/user data",
+                        "firefox/profiles", "sessionstore"],
+        "registry":    ["ntuser.dat", "software", "system", "sam", "security",
+                        "system32/config"],
+        "evtx":        [".evtx", "winevt/logs"],
+        "memory":      ["hiberfil", "pagefile", ".dmp", "memory dump", "vmem"],
+        "pcap":        [".pcap", ".pcapng", "packet capture", "network capture"],
+        "mobile":      ["backup/", "iphone", "android", "manifest.plist", "info.plist",
+                        "build.prop"],
+        "encrypted":   ["bitlocker", "filevault", "veracrypt", "truecrypt", "luks",
+                        "encrypted"],
+        "cloud_sync":  ["onedrive", "skydrive", "dropbox", "filecache.db", "googledrive"],
+        "collaboration":["teams", "slack", "discord", "skype", "zoom"],
+        "vm":          [".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", "vmware"],
+        "container":   ["docker", "containerd", "overlay2", "kubernetes"],
+    }
+
+    for step in pb_findings:
+        result = step.get("result", {})
+        if not isinstance(result, dict):
+            continue
+        result_str = json.dumps(result, default=str).lower()
+        for artifact_type, patterns in _sigs.items():
+            if not _new_artifacts[artifact_type]:
+                for pat in patterns:
+                    if pat in result_str:
+                        _new_artifacts[artifact_type] = True
+                        break
+
+    for hit in indicator_hits:
+        if isinstance(hit, dict):
+            cat = hit.get("category", "").lower()
+            if cat in ("phishing", "email", "credential_theft"):
+                _new_artifacts["email"] = True
+            if cat in ("c2", "beaconing"):
+                _new_artifacts["browser"] = True
+
+    _artifact_to_playbook = {
+        "email":         ["PB-SIFT-023"],
+        "browser":       ["PB-SIFT-022"],
+        "registry":      ["PB-SIFT-009"] + (["PB-SIFT-028"] if os_type == "windows" else []),
+        "evtx":          ["PB-SIFT-028"] if os_type == "windows" else [],
+        "memory":        ["PB-SIFT-027"],
+        "pcap":          ["PB-SIFT-011"],
+        "mobile":        ["PB-SIFT-021"],
+        "encrypted":     ["PB-SIFT-029"],
+        "cloud_sync":    ["PB-SIFT-030"],
+        "collaboration": ["PB-SIFT-031"],
+        "vm":            ["PB-SIFT-032"],
+        "container":     ["PB-SIFT-033"],
+    }
+
+    for artifact_type, is_new in _new_artifacts.items():
+        if is_new:
+            if artifact_type in disk_artifacts:
+                disk_artifacts[artifact_type] = True
+            playbooks = _artifact_to_playbook.get(artifact_type, [])
+            for pb in playbooks:
+                if pb not in already_queued:
+                    execution_plan.append(pb)
+                    already_queued.add(pb)
+                    newly_queued.append(pb)
+                    _fe_log(job_id, f"  ↳ {pb} queued after {completed_playbook} discovered {artifact_type} artifacts")
+                    skipped_playbooks[:] = [s for s in skipped_playbooks if s.get("id") != pb]
+
+    return newly_queued
+    print(f"[GEOFF] {msg}", file=sys.stderr)
+
+
+def _apply_anti_forensics_cascade(findings_writer) -> int:
+    """Idempotently downgrade confidence on every finding and tag it as compromised.
+
+    Safe to call repeatedly: a finding already tagged with "anti-forensics" in
+    its compromised_by list is skipped, so the CONFIRMED → POSSIBLE → UNVERIFIED
+    chain isn't applied twice. Returns the number of newly cascaded findings.
+    """
+    cascaded = 0
+    for f in findings_writer.all_records():
+        result = f.get("result")
+        if not isinstance(result, dict):
+            continue
+        already = result.get("compromised_by") or []
+        if "anti-forensics" in already:
+            continue
+        confidence = result.get("confidence", "")
+        if confidence == "CONFIRMED":
+            result["confidence"] = "POSSIBLE"
+        elif confidence == "POSSIBLE":
+            result["confidence"] = "UNVERIFIED"
+        result.setdefault("compromised_by", []).append("anti-forensics")
+        result["confidence_modifier"] = "downgraded-by-anti-forensics"
+        cascaded += 1
+    return cascaded
 
 
 def _apply_anti_forensics_cascade(findings_writer) -> int:
@@ -467,7 +595,7 @@ def _resolve_dir(env_var, default_path, fallback_subdir):
     except (PermissionError, OSError):
         fallback = os.path.join(tempfile.gettempdir(), fallback_subdir)
         Path(fallback).mkdir(parents=True, exist_ok=True)
-        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}")
+        print(f"[GEOFF] {env_var}: {path} not writable, using fallback: {fallback}", file=sys.stderr)
         return fallback
 
 EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
@@ -684,7 +812,7 @@ class _StepTimeout(Exception):
     """Raised when a step exceeds its watchdog timeout."""
     pass
 
-def _run_step_with_watchdog(func, args, step_timeout=600):
+def _run_step_with_watchdog(func, args, step_timeout=1800):
     """Run a step function with a watchdog timer. Raises _StepTimeout if exceeded."""
     if not hasattr(signal, 'SIGALRM'):
         # Windows or environments without SIGALRM — just run without watchdog
@@ -890,47 +1018,103 @@ def call_llm(user_message, context="", agent_type="manager"):
 
     agent_type: "manager", "forensicator", or "critic" - determines which model to use
     """
-    try:
-        model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
+    # Retry with exponential backoff on Ollama timeouts/connection errors
+    _ollama_error_patterns = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+    _max_retries = 3
+    _backoff_times = [30, 60, 120]  # seconds
 
-        full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
-        response = requests.post(
-            f"{ollama_base_url()}/generate",
-            headers=ollama_headers(),
-            json={
-                "model": model,
-                "prompt": full_prompt,
-                "stream": False,
-                "options": {"temperature": 0.3}
-            },
-            timeout=120
-        )
-        if response.status_code == 200:
-            return response.json().get('response', 'Hmm, let me check that again.')
-        else:
-            return f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
-    except Exception as e:
-        print(f"[GEOFF] LLM Error: {e}")
-        if STRICT_MODE:
-            raise
-        return "Having trouble connecting to Ollama. Check OLLAMA_URL setting and ensure Ollama is running."
+    for attempt in range(_max_retries + 1):
+        try:
+            model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
+
+            full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+            response = requests.post(
+                f"{ollama_base_url()}/generate",
+                headers=ollama_headers(),
+                json={
+                    "model": model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3}
+                },
+                timeout=300  # 5 min — cloud models can be slow
+            )
+            if response.status_code == 200:
+                result_text = response.json().get('response', 'Hmm, let me check that again.')
+                # Reject error messages that leaked into the response
+                if any(pat in result_text for pat in _ollama_error_patterns):
+                    if attempt < _max_retries:
+                        print(f"[GEOFF] Ollama error in response, retrying ({attempt+1}/{_max_retries})...", file=sys.stderr)
+                        import time; time.sleep(_backoff_times[attempt])
+                        continue
+                    # Final attempt still returned error — return marker
+                    return None
+                return result_text
+            else:
+                error_msg = f"[ERROR] Ollama returned {response.status_code}: {response.text[:200]}"
+                if attempt < _max_retries:
+                    print(f"[GEOFF] Ollama HTTP error, retrying ({attempt+1}/{_max_retries})...", file=sys.stderr)
+                    import time; time.sleep(_backoff_times[attempt])
+                    continue
+                return None
+        except Exception as e:
+            print(f"[GEOFF] LLM Error (attempt {attempt+1}): {e}", file=sys.stderr)
+            if attempt < _max_retries:
+                import time; time.sleep(_backoff_times[attempt])
+                continue
+            if STRICT_MODE:
+                raise
+            return None
+    return None  # All retries exhausted
 
 
-def _call_manager_llm(prompt: str, timeout: int = 90) -> str:
-    """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping."""
-    try:
-        model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
-        response = requests.post(
-            f"{ollama_base_url()}/generate",
-            headers=ollama_headers(),
-            json={"model": model, "prompt": prompt, "stream": False,
-                  "options": {"temperature": 0.1}},
-            timeout=timeout,
-        )
-        if response.status_code == 200:
-            return response.json().get("response", "")
-    except Exception as e:
-        print(f"[MANAGER] LLM error: {e}")
+def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
+    """Raw LLM call using Manager model — no GEOFF_PROMPT wrapping.
+
+    Returns empty string on failure. Caller should handle None/empty gracefully.
+    """
+    _max_retries = 3
+    _backoff = [30, 60, 120]
+    _error_patterns = (
+        "Having trouble connecting to Ollama",
+        "Check OLLAMA_URL",
+        "[ERROR] Ollama returned",
+    )
+
+    for attempt in range(_max_retries + 1):
+        try:
+            model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
+            response = requests.post(
+                f"{ollama_base_url()}/generate",
+                headers=ollama_headers(),
+                json={"model": model, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.1}},
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                result_text = response.json().get("response", "")
+                if any(pat in result_text for pat in _error_patterns):
+                    if attempt < _max_retries:
+                        print(f"[MANAGER] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
+                        import time; time.sleep(_backoff[attempt])
+                        continue
+                    return ""  # Final attempt still had error text
+                return result_text
+            else:
+                if attempt < _max_retries:
+                    print(f"[MANAGER] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
+                    import time; time.sleep(_backoff[attempt])
+                    continue
+                return ""
+        except Exception as e:
+            print(f"[MANAGER] LLM error (attempt {attempt+1}): {e}")
+            if attempt < _max_retries:
+                import time; time.sleep(_backoff[attempt])
+                continue
     return ""
 
 
@@ -1044,7 +1228,7 @@ Respond ONLY in valid JSON (no extra text):
 }}"""
 
     try:
-        response = _call_manager_llm(prompt, timeout=60)
+        response = _call_manager_llm(prompt, timeout=180)
         m = re.search(r'\{.*\}', response, re.DOTALL)
         if m:
             return json.loads(m.group())
@@ -1103,7 +1287,7 @@ or
             f"Provide a corrected response that only references evidence present in the context above. "
             f"If the context does not contain sufficient information, say so explicitly.\n\nGeoff:"
         )
-        corrected = _call_manager_llm(correction_prompt, timeout=90)
+        corrected = _call_manager_llm(correction_prompt, timeout=180)
         return corrected if corrected.strip() else response
     except Exception as corr_exc:
         _log_info(f"chat self-correction skipped: {corr_exc}")
@@ -1259,7 +1443,7 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     except (PermissionError, OSError):
         case_work_path = Path(tempfile.gettempdir()) / "geoff-cases" / case_work_dir
         case_work_path.mkdir(parents=True, exist_ok=True)
-        print(f"[GEOFF] Case work dir fallback: {case_work_path}")
+        print(f"[GEOFF] Case work dir fallback: {case_work_path}", file=sys.stderr)
 
     # Initialize git repo
     git_dir = case_work_path / ".git"
@@ -1327,7 +1511,7 @@ def get_evidence_recursive(path, prefix=""):
                 size = os.path.getsize(item_path)
                 items.append(f"{display_name} ({size} bytes)")
     except Exception as e:
-        print(f"[GEOFF] Error reading evidence directory: {e}")
+        print(f"[GEOFF] Error reading evidence directory: {e}", file=sys.stderr)
     return items
 
 
@@ -1383,6 +1567,14 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-023": "Email Forensics",
     "PB-SIFT-024": "macOS Forensics",
     "PB-SIFT-025": "Generic File Analysis",
+    "PB-SIFT-026": "File Carving & Recovery",
+    "PB-SIFT-027": "Memory Forensics",
+    "PB-SIFT-028": "Windows Modern Artifacts",
+    "PB-SIFT-029": "Encrypted Containers",
+    "PB-SIFT-030": "Cloud Sync Artifacts",
+    "PB-SIFT-031": "Enterprise Collaboration",
+    "PB-SIFT-032": "VM Snapshot Forensics",
+    "PB-SIFT-033": "Container Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1431,6 +1623,14 @@ TRIAGE_PATTERNS = {
     "ot_attack": ["modbus", "scada", "plc_attack", "safety_bypass", "sis_bypass",
                   "setpoint_override", "industroyer", "ot_sabotage",
                   "scada_exploit", "industrial_control", "dnp3", "iec-61850"],
+    "phishing": ["phishing", "credential_harvesting", "spoofed_sender", "urgent_action_required",
+                 "verify_your_account", "suspended_account", "click_here_to_verify",
+                 "password_expire", "unauthorized_access", "secure_your_account",
+                 "bit.ly/", "tinyurl.com/", "goo.gl/", "t.co/",
+                 ".scr", ".pif", ".vbs",
+                 "verify_identity", "account_compromised", "bank_notification",
+                 "invoice_attachment", "shipping_notification", "fedex_tracking",
+                 "ups_delivery", "dhl_shipment", "password_reset_required"],
 }
 
 SEVERITY_MAP = {
@@ -1446,6 +1646,7 @@ SEVERITY_MAP = {
     "cryptominer": "HIGH",
     "rootkit": "CRITICAL",
     "ot_attack": "CRITICAL",
+    "phishing": "HIGH",
 }
 
 # MITRE ATT&CK technique IDs per indicator category (Enterprise ATT&CK v14).
@@ -1462,6 +1663,7 @@ MITRE_TAGS = {
     "cryptominer":       ["T1496"],
     "rootkit":           ["T1014", "T1543.003"],
     "ot_attack":         ["T0855", "T0816", "T0879"],
+    "phishing":          ["T1566", "T1534"],
 }
 
 # Map each playbook to its specialist steps.
@@ -1796,6 +1998,7 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-022": {  # Browser Forensics
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "extract_browser_artifacts", {"image": "{image}", "offset": "{offset}"}),
         ],
         "other_files": [
             ("browser", "extract_history", {"db_path": "{file}"}),
@@ -1805,6 +2008,10 @@ PLAYBOOK_STEPS = {
         ],
     },
     "PB-SIFT-023": {  # Email Forensics
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "extract_email_artifacts", {"image": "{image}", "offset": "{offset}"}),
+        ],
         "other_files": [
             ("email", "analyze_pst", {"pst_path": "{file}"}),
             ("email", "analyze_mbox", {"mbox_path": "{file}"}),
@@ -1834,6 +2041,90 @@ PLAYBOOK_STEPS = {
             ("remnux", "floss_strings",  {"target_file": "{file}"}),
             ("remnux", "radare2_analyze",{"target_file": "{file}"}),
             ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
+        ],
+    },
+    "PB-SIFT-026": {  # File Carving & Recovery — triggered automatically when needed
+        "disk_images": [
+            ("photorec", "recover_files", {"image": "{image}", "output_dir": "{output_dir}/carved"}),
+        ],
+    },
+    "PB-SIFT-027": {  # Memory Forensics — triggered by .raw/.dmp/.lime/.mem files
+        "memory_dumps": [
+            ("memory", "analyze_memory", {"memory_dump": "{mem}", "output_dir": "{output_dir}/memory"}),
+            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
+            ("memory", "extract_network", {"memory_dump": "{mem}"}),
+            ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
+            ("memory", "extract_registry", {"memory_dump": "{mem}"}),
+            ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
+        ],
+    },
+    "PB-SIFT-028": {  # Windows Modern Artifacts — triggered by Windows 10/11 OS
+        "disk_images": [
+            ("windows", "analyze_prefetch", {"image": "{image}"}),
+            ("windows", "analyze_jumplists", {"image": "{image}"}),
+            ("windows", "analyze_lnk", {"image": "{image}"}),
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
+            ("windows", "analyze_amcache", {"image": "{image}"}),
+            ("windows", "analyze_srum", {"image": "{image}"}),
+            ("windows", "analyze_timeline", {"image": "{image}"}),
+            ("windows", "analyze_defender", {"image": "{image}"}),
+            ("windows", "analyze_bits", {"image": "{image}"}),
+        ],
+        "registry_hives": [
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
+        ],
+    },
+    "PB-SIFT-029": {  # Encrypted Containers — triggered by encrypted volume detection
+        "disk_images": [
+            ("crypto", "analyze_bitlocker", {"image": "{image}"}),
+            ("crypto", "analyze_filevault", {"image": "{image}"}),
+            ("crypto", "analyze_veracrypt", {"image": "{image}"}),
+            ("crypto", "analyze_luks", {"image": "{image}"}),
+            ("crypto", "search_keys", {"evidence_path": "{image}"}),
+            ("crypto", "detect_encryption_anti_forensics", {"image": "{image}"}),
+        ],
+        "other_files": [
+            ("crypto", "search_keys", {"evidence_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-030": {  # Cloud Sync Artifacts — triggered by cloud sync DBs
+        "other_files": [
+            ("cloud", "analyze_onedrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_googledrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_dropbox", {"db_path": "{file}"}),
+            ("cloud", "analyze_icloud", {"db_path": "{file}"}),
+            ("cloud", "analyze_box", {"db_path": "{file}"}),
+            ("cloud", "detect_exfiltration", {"evidence_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-031": {  # Enterprise Collaboration — triggered by Teams/Slack/Discord/Skype/Zoom artifacts
+        "other_files": [
+            ("collaboration", "analyze_teams", {"db_path": "{file}"}),
+            ("collaboration", "analyze_slack", {"db_path": "{file}"}),
+            ("collaboration", "analyze_discord", {"db_path": "{file}"}),
+            ("collaboration", "analyze_skype", {"db_path": "{file}"}),
+            ("collaboration", "analyze_zoom", {"log_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-032": {  # VM Snapshot Forensics — triggered by .vmss/.vmsn/.vmem files
+        "memory_dumps": [
+            ("vm", "extract_memory", {"vmem_file": "{mem}"}),
+            ("vm", "detect_snapshots", {"config_path": "{file}"}),
+        ],
+        "disk_images": [
+            ("vm", "extract_disk", {"image": "{image}"}),
+            ("vm", "analyze_config", {"config_path": "{file}"}),
+            ("vm", "detect_escape", {"evidence_path": "{image}"}),
+        ],
+    },
+    "PB-SIFT-033": {  # Container Forensics — triggered by Docker/container artifacts
+        "other_files": [
+            ("container", "enumerate", {"evidence_path": "{file}"}),
+            ("container", "extract_filesystem", {"evidence_path": "{file}"}),
+            ("container", "analyze_image", {"image_path": "{file}"}),
+            ("container", "analyze_logs", {"log_path": "{file}"}),
+            ("container", "analyze_kubernetes", {"evidence_path": "{file}"}),
+            ("container", "detect_supply_chain", {"evidence_path": "{file}"}),
         ],
     },
 }
@@ -1879,8 +2170,14 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
 
     # Files to re-check: everything currently in 'other_files'
     to_check = list(inventory.get("other_files", []))
-    still_other = []
 
+    # Guard against runaway validation on huge extractions (e.g. 500K+ iOS files)
+    VALIDATION_LIMIT = 5000
+    if len(to_check) > VALIDATION_LIMIT:
+        _fe_log(job_id, f"  ⚠ {len(to_check)} files in other_files — validating first {VALIDATION_LIMIT} (rest to PB-SIFT-025)")
+        to_check = to_check[:VALIDATION_LIMIT]
+
+    still_other = []
     for fpath in to_check:
         # Skip directories, symlinks, etc.
         p = Path(fpath)
@@ -1909,7 +2206,12 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
                 _fe_log(job_id, f"  ✓ {p.name}: detected as {header_type} -> other_files (generic analysis)")
 
     # Update other_files to only contain unclassified files
-    inventory["other_files"] = still_other
+    # Include files we didn't validate (truncated) + files that stayed in other_files
+    if len(inventory.get("other_files", [])) > VALIDATION_LIMIT:
+        unvalidated = inventory["other_files"][VALIDATION_LIMIT:]
+        inventory["other_files"] = still_other + unvalidated
+    else:
+        inventory["other_files"] = still_other
 
     # Log summary
     total_moved = sum(len(v) for v in moved.values())
@@ -1951,7 +2253,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
 
     # If already extracted, return existing
     if extract_path.exists() and any(extract_path.iterdir()):
-        existing_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+        existing_files = _list_extracted_files(extract_dir)
         return {
             "status": "already_extracted",
             "extracted_dir": str(extract_path),
@@ -1974,7 +2276,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
             # ZIP archive
             with zipfile.ZipFile(archive_path, 'r') as zf:
                 zf.extractall(extract_dir)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[:2] == b'\x1f\x8b':
             # GZIP compressed (tar.gz or single .gz file)
@@ -1987,13 +2289,13 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
                 with gzip.open(archive_path, 'rb') as gz:
                     with open(out_path, 'wb') as out:
                         shutil.copyfileobj(gz, out)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[257:262] == b'ustar':
             # Plain TAR
             with tarfile.open(archive_path, 'r') as tf:
                 tf.extractall(extract_dir)
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         elif header[:6] == b'7z\xbc\xaf\x27\x1c':
             # 7-Zip — requires p7zip-full
@@ -2003,7 +2305,7 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
             )
             if result["code"] != 0:
                 return {"status": "error", "error": f"7z extraction failed: {result['stderr'][:200]}"}
-            extracted_files = [str(f) for f in extract_path.rglob("*") if f.is_file()]
+            extracted_files = _list_extracted_files(extract_dir)
 
         else:
             return {"status": "error", "error": f"Unknown archive format: {archive.name}"}
@@ -2024,6 +2326,16 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None, job_id: 
         return {"status": "error", "error": str(e)}
 
 
+
+
+def _list_extracted_files(extract_dir: str, max_files: int = 100000):
+    files = []
+    for root, dirs, fnames in os.walk(extract_dir):
+        for fname in fnames:
+            files.append(os.path.join(root, fname))
+        if len(files) > max_files:
+            break
+    return files
 
 def _detect_file_type_from_header(path: str) -> str | None:
     """Detect file type from magic bytes (fast, no external tools needed)."""
@@ -2142,7 +2454,7 @@ def _inventory_evidence(evidence_path: Path) -> dict:
         try:
             size = item.stat().st_size
         except OSError as e:
-            print(f"[GEOFF] Cannot stat {item}: {e}")
+            print(f"[GEOFF] Cannot stat {item}: {e}", file=sys.stderr)
             size = 0
         inventory["total_size_bytes"] += size
 
@@ -2609,17 +2921,26 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     "files": extracted_files,
                 })
                 # Add extracted files to inventory for processing
-                for fpath in extracted_files:
+                # CAP: Limit to first 1000 files to prevent runaway loops on massive extractions
+                # DeviceDiscovery will handle the directory contents directly
+                _file_cap = 1000
+                _added = 0
+                for fpath in extracted_files[:_file_cap]:
                     fheader = _detect_file_type_from_header(fpath)
                     if fheader == "sqlite_db":
                         if fpath not in inventory["mobile_backups"]:
                             inventory["mobile_backups"].append(fpath)
+                            _added += 1
                     elif fheader in ("elf_binary", "pe_binary", "macho_binary"):
                         if fpath not in inventory["other_files"]:
                             inventory["other_files"].append(fpath)
+                            _added += 1
                     else:
                         if fpath not in inventory["other_files"]:
                             inventory["other_files"].append(fpath)
+                            _added += 1
+                if len(extracted_files) > _file_cap:
+                    _fe_log(job_id, f"  ⚠ Only added first {_file_cap}/{len(extracted_files)} files to inventory (rest via DeviceDiscovery)")
                 # Remove the archive from inventory so device discovery uses extracted dir
                 if archive_path in inventory.get("mobile_backups", []):
                     inventory["mobile_backups"].remove(archive_path)
@@ -2767,6 +3088,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         case_work_dir.mkdir(parents=True, exist_ok=True)
     # Create evidence separation directories
     (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
+    (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
     
     # Write evidence manifest to evidence/raw/ (references, not copies/links)
     # Raw evidence stays in its original location — only derived artifacts go here
@@ -2938,10 +3260,145 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     #   1. Evidence types available
     #   2. Indicator hits from triage scans
     #   3. OS detection
+    #   4. Artifact detection inside disk images (fls output)
     execution_plan = []
     skipped_playbooks = []
     confidence_modifiers = []
     anti_forensics_detected = False
+
+    # --- Scan triage_findings for artifacts INSIDE disk images ---
+    # The fls/list_files results from PB-SIFT-001 are in triage_findings.
+    # When we have disk images, key artifacts (email, browser, registry, etc.)
+    # are INSIDE the image — they won't appear in inventory's top-level files.
+    # We must detect them from the fls file listing.
+    _disk_artifacts = {
+        "email": False,       # PST/OST/DBX/EML inside image
+        "browser": False,    # Browser history/cookies inside image
+        "registry": False,   # Registry hives inside image
+        "evtx": False,       # Event logs inside image
+        "memory_dumps_in_image": False,  # hiberfil/pagefile inside image
+    }
+    _email_paths_inside = []   # Collect paths for icat extraction
+    _browser_paths_inside = []
+
+    # Patterns for detecting artifacts inside fls output
+    _email_patterns = [
+        ".pst", ".ost", ".dbx", ".eml", ".mbox", ".msf",
+        "outlook", "thunderbird", "evolution", "kmail", "mutt", "maildir",
+        "application data/microsoft/outlook",
+        "local settings/application data/microsoft/outlook",
+        "local settings/application data/identities",
+        "application data/thunderbird",
+        "windows mail",
+        ".local/share/evolution", ".thunderbird/",
+        ".mozilla/thunderbird", "library/mail/",
+        "library/mail/v2", "library/mail/v3",
+    ]
+    _browser_patterns = [
+        "places.sqlite", "history", "cookies.db", "cookies.sqlite",
+        "chrome/user data", "firefox/profiles",
+        "application data/google/chrome",
+        "application data/mozilla/firefox",
+        "local settings/application data/google/chrome",
+        "local settings/application data/mozilla/firefox",
+        "appdata/roaming/mozilla/firefox",
+        "appdata/local/google/chrome",
+        "appdata/roaming/microsoft/edge",
+        "microsoftedge",
+        # Linux
+        ".config/google-chrome", ".config/chromium", ".mozilla/firefox",
+        ".config/brave", ".local/share/flatpak",
+        # macOS
+        "library/application support/google/chrome",
+        "library/application support/firefox",
+        "library/application support/brave",
+        "library/safari",
+    ]
+    _registry_patterns = [
+        "software", "system", "ntuser.dat", "sam", "security", "default",
+        "system32/config/software", "system32/config/system",
+        "system32/config/sam", "system32/config/security",
+    ]
+    _evtx_patterns = [
+        ".evlx", ".evtx", "system32/winevt/logs/",
+    ]
+    _memory_patterns = [
+        "hiberfil.sys", "pagefile.sys", ".dmp",
+    ]
+
+    for tf in triage_findings:
+        # Look for sleuthkit list_files results (fls output)
+        if tf.get("module") == "sleuthkit" and tf.get("function") in ("list_files", "analyze_filesystem"):
+            result = tf.get("result", {})
+            # fls results may be in various formats depending on orchestrator
+            # Try common result structures
+            file_list = None
+            if isinstance(result, dict):
+                # Could be {"files": [...]} or {"output": "..."} or {"file_list": [...]}
+                file_list = result.get("files") or result.get("file_list")
+                if file_list is None and isinstance(result.get("output"), str):
+                    # fls output is a text blob — scan it directly
+                    file_list = None  # will scan output string below
+                    output_str = result["output"].lower()
+                    for pat in _email_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["email"] = True
+                    for pat in _browser_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["browser"] = True
+                    for pat in _registry_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["registry"] = True
+                    for pat in _evtx_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["evtx"] = True
+                    for pat in _memory_patterns:
+                        if pat in output_str:
+                            _disk_artifacts["memory_dumps_in_image"] = True
+            if isinstance(file_list, list):
+                for fentry in file_list:
+                    f_str = str(fentry).lower() if isinstance(fentry, (str, dict)) else ""
+                    if isinstance(fentry, dict):
+                        f_str = (fentry.get("name", "") + " " + fentry.get("path", "")).lower()
+                    for pat in _email_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["email"] = True
+                    for pat in _browser_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["browser"] = True
+                    for pat in _registry_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["registry"] = True
+                    for pat in _evtx_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["evtx"] = True
+                    for pat in _memory_patterns:
+                        if pat in f_str:
+                            _disk_artifacts["memory_dumps_in_image"] = True
+        # Also scan string results from triage
+        elif tf.get("module") == "strings" or tf.get("function") == "extract_strings":
+            result_str = json.dumps(tf.get("result", {}), default=str).lower()
+            for pat in _email_patterns[:6]:  # Only check top patterns for strings
+                if pat in result_str:
+                    _disk_artifacts["email"] = True
+
+    # Also check indicator_hits for phishing/email categories
+    for hit in indicator_hits:
+        if isinstance(hit, dict) and hit.get("category") in ("phishing", "email", "credential_theft"):
+            _disk_artifacts["email"] = True
+
+    # For disk images with Windows OS, assume common artifacts exist even if
+    # fls output hasn't been parsed yet (PB-SIFT-001 may not have completed
+    # its full recursive scan at triage time)
+    has_disk_images = bool(inventory.get("disk_images"))
+    if has_disk_images and os_type == "windows":
+        # Windows images almost always have registry + evtx + email potential
+        _disk_artifacts["registry"] = True
+        _disk_artifacts["evtx"] = True
+        # Don't assume email unless detected — but enable browser (common)
+        _disk_artifacts["browser"] = True
+
+    _fe_log(job_id, f"  Disk artifact detection: {_disk_artifacts}")
 
     # Always include core playbooks
     core_playbooks = ["PB-SIFT-001", "PB-SIFT-002", "PB-SIFT-003", "PB-SIFT-004", "PB-SIFT-005"]
@@ -2965,13 +3422,245 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # OS-agnostic playbooks
     execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
 
-    # Browser forensics — always run (relevant for insider threat, credential theft, etc.)
-    execution_plan.append("PB-SIFT-022")
+    # Browser forensics — run when browser artifacts detected
+    # (Inside disk images OR as standalone files, plus always relevant)
+    if _disk_artifacts.get("browser") or inventory["disk_images"]:
+        execution_plan.append("PB-SIFT-022")
+    else:
+        # Still add browser forensics for non-disk-image cases with browser files
+        execution_plan.append("PB-SIFT-022")
 
-    # Email forensics — run when email-like files are present
+    # Email forensics — run when email-like files are present as standalone
+    # OR when email artifacts are detected inside disk images
     email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
-    if any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"]):
+    _standalone_email = any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"])
+    _image_email = _disk_artifacts.get("email", False)
+    if _standalone_email or _image_email:
         execution_plan.append("PB-SIFT-023")
+        if _image_email:
+            _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (email artifacts detected inside disk image)")
+    elif has_disk_images and os_type == "windows":
+        # Windows disk images: schedule email forensics proactively —
+        # Outlook/Outlook Express data is common and critical for phishing cases
+        execution_plan.append("PB-SIFT-023")
+        _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (Windows disk image — email likely present)")
+    else:
+        skipped_playbooks.append({"id": "PB-SIFT-023", "reason": "No email files or email artifacts inside images"})
+
+    # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
+
+    # Memory forensics — triggered by memory dump files
+    if inventory["memory_dumps"]:
+        execution_plan.append("PB-SIFT-027")
+        _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
+
+    # Windows Modern Artifacts — triggered by Windows OS + registry hives
+    # (standalone OR detected inside disk images)
+    if os_type == "windows" and (inventory["registry_hives"] or _disk_artifacts.get("registry")):
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
+    elif has_disk_images and os_type == "windows":
+        # Windows image without explicit registry detection — still queue it
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued (Windows disk image)")
+
+    # Encrypted Containers — detect encrypted volume indicators
+    encrypted_indicators = {
+        "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
+        "filevault": ["apfs encrypted", "filevault", "corestorage"],
+        "veracrypt": ["veracrypt", "truecrypt", r"\.tc$"],
+        "luks": ["luks", "cryptsetup", "dm-crypt"],
+    }
+    encrypted_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for etype, indicators in encrypted_indicators.items():
+            if any(ind in f_lower for ind in indicators):
+                encrypted_detected = True
+                break
+    # Also check disk images for high-entropy (potential encrypted containers)
+    if not encrypted_detected:
+        for f in inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            if any(ind in f_lower for ind in [".tc", "veracrypt", "luks", "bitlocker"]):
+                encrypted_detected = True
+                break
+    if encrypted_detected:
+        execution_plan.append("PB-SIFT-029")
+        _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
+
+    # Cloud Sync Artifacts — detect cloud storage sync databases
+    cloud_sync_patterns = {
+        "onedrive": ["onedrive", "skydrive"],
+        "googledrive": ["snapshot.db", "drivefs", "google drive"],
+        "dropbox": ["filecache.db", "dropbox"],
+        "icloud": ["ubiquity", "clouddocs", "icloud"],
+        "box": ["box sync"],
+    }
+    cloud_sync_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for service, patterns in cloud_sync_patterns.items():
+            if any(p in f_lower for p in patterns):
+                cloud_sync_detected = True
+                break
+    if cloud_sync_detected:
+        execution_plan.append("PB-SIFT-030")
+        _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
+
+    # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
+    collab_patterns = {
+        "teams": ["teams", "microsoft teams"],
+        "slack": ["slack"],
+        "discord": ["discord"],
+        "skype": ["skype", "main.db"],
+        "zoom": ["zoom", "zoom.us"],
+    }
+    collab_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for app, patterns in collab_patterns.items():
+            if any(p in f_lower for p in patterns):
+                collab_detected = True
+                break
+    if collab_detected:
+        execution_plan.append("PB-SIFT-031")
+        _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
+
+    # VM Snapshot Forensics — detect VM snapshot/memory files
+    vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
+    vm_detected = False
+    for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
+        if Path(f).suffix.lower() in vm_exts or Path(f).name.lower().endswith(".vmx"):
+            vm_detected = True
+            break
+    if vm_detected:
+        execution_plan.append("PB-SIFT-032")
+        _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
+
+    # Container Forensics — detect Docker/container artifacts
+    container_patterns = {
+        "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
+        "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
+        "podman": ["podman", "containers"],
+    }
+    container_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for runtime, patterns in container_patterns.items():
+            if any(p in f_lower for p in patterns):
+                container_detected = True
+                break
+    if container_detected:
+        execution_plan.append("PB-SIFT-033")
+        _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
+
+    # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
+
+    # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
+
+    # Memory forensics — triggered by memory dump files
+    if inventory["memory_dumps"]:
+        execution_plan.append("PB-SIFT-027")
+        _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
+
+    # Windows Modern Artifacts — triggered by Windows OS + registry hives
+    if os_type == "windows" and inventory["registry_hives"]:
+        execution_plan.append("PB-SIFT-028")
+        _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
+
+    # Encrypted Containers — detect encrypted volume indicators
+    encrypted_indicators = {
+        "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
+        "filevault": ["apfs encrypted", "filevault", "corestorage"],
+        "veracrypt": ["veracrypt", "truecrypt", r"\.tc$"],
+        "luks": ["luks", "cryptsetup", "dm-crypt"],
+    }
+    encrypted_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for etype, indicators in encrypted_indicators.items():
+            if any(ind in f_lower for ind in indicators):
+                encrypted_detected = True
+                break
+    # Also check disk images for high-entropy (potential encrypted containers)
+    if not encrypted_detected:
+        for f in inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            if any(ind in f_lower for ind in [".tc", "veracrypt", "luks", "bitlocker"]):
+                encrypted_detected = True
+                break
+    if encrypted_detected:
+        execution_plan.append("PB-SIFT-029")
+        _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
+
+    # Cloud Sync Artifacts — detect cloud storage sync databases
+    cloud_sync_patterns = {
+        "onedrive": ["onedrive", "skydrive"],
+        "googledrive": ["snapshot.db", "drivefs", "google drive"],
+        "dropbox": ["filecache.db", "dropbox"],
+        "icloud": ["ubiquity", "clouddocs", "icloud"],
+        "box": ["box sync"],
+    }
+    cloud_sync_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for service, patterns in cloud_sync_patterns.items():
+            if any(p in f_lower for p in patterns):
+                cloud_sync_detected = True
+                break
+    if cloud_sync_detected:
+        execution_plan.append("PB-SIFT-030")
+        _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
+
+    # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
+    collab_patterns = {
+        "teams": ["teams", "microsoft teams"],
+        "slack": ["slack"],
+        "discord": ["discord"],
+        "skype": ["skype", "main.db"],
+        "zoom": ["zoom", "zoom.us"],
+    }
+    collab_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for app, patterns in collab_patterns.items():
+            if any(p in f_lower for p in patterns):
+                collab_detected = True
+                break
+    if collab_detected:
+        execution_plan.append("PB-SIFT-031")
+        _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
+
+    # VM Snapshot Forensics — detect VM snapshot/memory files
+    vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
+    vm_detected = False
+    for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
+        if Path(f).suffix.lower() in vm_exts or Path(f).name.lower().endswith(".vmx"):
+            vm_detected = True
+            break
+    if vm_detected:
+        execution_plan.append("PB-SIFT-032")
+        _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
+
+    # Container Forensics — detect Docker/container artifacts
+    container_patterns = {
+        "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
+        "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
+        "podman": ["podman", "containers"],
+    }
+    container_detected = False
+    for f in inventory.get("other_files", []):
+        f_lower = str(f).lower()
+        for runtime, patterns in container_patterns.items():
+            if any(p in f_lower for p in patterns):
+                container_detected = True
+                break
+    if container_detected:
+        execution_plan.append("PB-SIFT-033")
+        _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
+
+    # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
 
     # Add malware playbooks when:
     #   a) triage output flagged a suspicious binary keyword, OR
@@ -3018,6 +3707,44 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     else:
         skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
 
+    # --- Nuclear option: when disk images are present, run ALL applicable
+    # playbooks. Disk images contain everything inside them — we cannot skip
+    # playbooks just because artifacts aren't visible as standalone files.
+    # The specialist steps will gracefully handle missing artifacts.
+    if has_disk_images:
+        # Always run for ANY disk image (phishing/insider threat cross all platforms)
+        _force_for_disk_images = {
+            "PB-SIFT-009",   # Registry Forensics
+            "PB-SIFT-017",   # REMnux Malware Analysis
+            "PB-SIFT-018",   # Malware Analysis
+            "PB-SIFT-020",   # Super Timeline (Plaso)
+            "PB-SIFT-022",   # Browser Forensics
+            "PB-SIFT-023",   # Email Forensics
+        }
+        # OS-specific
+        if os_type == "windows":
+            _force_for_disk_images.update({
+                "PB-SIFT-028",   # Windows Modern Artifacts
+            })
+        elif os_type == "linux":
+            _force_for_disk_images.update({
+                "PB-SIFT-014",   # Linux Forensics
+            })
+        elif os_type == "macos":
+            _force_for_disk_images.update({
+                "PB-SIFT-024",   # macOS Forensics
+            })
+        # Memory dumps inside images (hiberfil, pagefile)
+        if _disk_artifacts.get("memory_dumps_in_image"):
+            _force_for_disk_images.add("PB-SIFT-027")  # Memory Forensics
+        # Also check disk artifact detection for encrypted, cloud, collab, VM, container
+        if _disk_artifacts.get("evtx"):
+            pass  # Already covered by Windows playbooks
+        for pb in _force_for_disk_images:
+            if pb not in execution_plan:
+                execution_plan.append(pb)
+                _fe_log(job_id, f"  {pb}: Force-queued (disk image — nuclear option)")
+
     # Classification based on indicator hits — must be computed before manager review
     hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
     classification = "Unknown"
@@ -3060,6 +3787,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         severity = "HIGH"
     elif "anti_forensics" in hit_categories:
         classification = "Destructive/Anti-Forensics"
+        severity = "HIGH"
+    elif "phishing" in hit_categories:
+        classification = "Phishing"
         severity = "HIGH"
     elif malware_analysis_warranted:
         classification = "Malware"
@@ -3113,6 +3843,66 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         if any(kw in result_str for kw in ["log cleared", "event log cleared", "timestomp", "anti-forensic"]):
             confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
             break
+
+    # --- Automatic Carving Decision ---
+    # Geoff decides when to carve data from images based on evidence state
+    carving_needed = False
+    carving_reasons = []
+    
+    # 1. Disk images present but filesystem appears empty/unusual
+    for img in inventory.get("disk_images", []):
+        img_path = Path(str(img))
+        if img_path.exists():
+            size_mb = img_path.stat().st_size / (1024*1024)
+            # Large image but few files = likely wiped or raw
+            if size_mb > 100:
+                # Check if we got meaningful filesystem data
+                has_meaningful_data = False
+                for dev_id, dev in device_map.items():
+                    dev_files = dev.get("evidence_files", [])
+                    dev_img_files = [f for f in dev_files if str(f) == str(img)]
+                    if len(dev_files) > 5:  # Arbitrary threshold
+                        has_meaningful_data = True
+                        break
+                if not has_meaningful_data:
+                    carving_needed = True
+                    carving_reasons.append(f"Large disk image {img_path.name} ({size_mb:.0f}MB) with minimal filesystem recovery")
+    
+    # 2. Raw binary dumps (NAND, mobile chip-off) that need carving
+    raw_extensions = {".bin", ".img", ".raw", ".dd", ".nand"}
+    for f in inventory.get("other_files", []) + inventory.get("disk_images", []):
+        if Path(str(f)).suffix.lower() in raw_extensions:
+            carving_needed = True
+            carving_reasons.append(f"Raw binary dump detected: {Path(str(f)).name}")
+    
+    # 3. Anti-forensics detected → carve for deleted files
+    if "ANTI-FORENSICS-CONFIRMED" in confidence_modifiers:
+        carving_needed = True
+        carving_reasons.append("Anti-forensics detected — carving for deleted/wiped files")
+    
+    # 4. Mobile backups that are raw dumps (not structured backups)
+    for mb in inventory.get("mobile_backups", []):
+        mb_path = Path(str(mb))
+        if mb_path.is_file() and mb_path.suffix.lower() in {".bin", ".img", ".raw"}:
+            carving_needed = True
+            carving_reasons.append(f"Raw mobile dump: {mb_path.name}")
+    
+    if carving_needed:
+        _fe_log(job_id, f"🔪 Carving triggered: {len(carving_reasons)} reason(s)")
+        for reason in carving_reasons[:3]:
+            _fe_log(job_id, f"  - {reason}")
+        # Add carving playbook if not already in plan
+        carving_pb = "PB-SIFT-026"  # File Carving & Recovery
+        if carving_pb not in execution_plan and carving_pb in PLAYBOOK_STEPS:
+            execution_plan.append(carving_pb)
+            _fe_log(job_id, f"  Added {carving_pb} to execution plan")
+        elif carving_pb not in PLAYBOOK_STEPS:
+            # Fallback: use anti-forensics playbook's carving steps
+            if "PB-SIFT-012" not in execution_plan:
+                execution_plan.append("PB-SIFT-012")
+                _fe_log(job_id, f"  Added PB-SIFT-012 (Anti-Forensics) for carving fallback")
+    else:
+        _fe_log(job_id, "🔪 Carving: not needed (filesystem data recovered)")
 
     # Emit the Phase 12 execution plan
     execution_plan_output = {
@@ -3513,6 +4303,11 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                         device_context={"device_id": dev_id, "os_type": os_type},
                                     )
                                     step_record["forensicator"] = forensicator_notes
+                                    # Handle Ollama timeout — forensicator marks needs_review
+                                    if forensicator_notes.get("needs_review") and forensicator_notes.get("error") == "ollama_timeout":
+                                        step_record["needs_review"] = True
+                                        step_record["unverified_reason"] = forensicator_notes.get("unverified_reason", "Ollama timeout")
+                                        _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} — marked needs_review")
                                     sig = forensicator_notes.get("significance", "UNKNOWN")
                                     note = forensicator_notes.get("analyst_note") or ""
                                     if sig in ("CRITICAL", "HIGH"):
@@ -3569,8 +4364,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                                 if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
                                     step_record["invalid_iocs"] = critic_val["invalid_iocs"]
 
-                                # Enforce Critic verdict with self-correction
-                                if isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
+                                # Handle Ollama timeout — critic marks needs_review
+                                if isinstance(critic_val, dict) and critic_val.get("needs_review") and critic_val.get("unverified_reason"):
+                                    step_record["needs_review"] = True
+                                    step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
+                                    _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
+                                    # Skip further critic processing for this step
+                                elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
                                     issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
                                     short = "; ".join(str(i) for i in issues[:2]) if issues else "sanity check failed"
                                     _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
@@ -3764,6 +4564,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 if STRICT_MODE:
                     raise
 
+            # --- Adaptive re-evaluation after each playbook ---
+            # Check what new artifacts were discovered and add playbooks
+            # that are now applicable. Pull every thread.
+            _newly_queued = _re_evaluate_playbooks(
+                playbook_id, pb_findings, execution_plan, skipped_playbooks,
+                inventory, os_type, has_disk_images, _disk_artifacts,
+                indicator_hits, job_id)
+            if _newly_queued:
+                _fe_log(job_id, f"  \u27f3 Re-evaluation queued: {', '.join(_newly_queued)}")
+
     # End of per-device playbook loop
     # Process unattributed evidence (PCAPs, logs not tied to a device)
     if any(unattributed_ev.values()):
@@ -3860,6 +4670,18 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         _fe_log(job_id, f"Behavioral analysis failed: {e}")
         all_behavioral_flags = {}
 
+    # Flag if no behavioral data recovered from any device
+    if not all_behavioral_flags or all(len(flags) == 0 for flags in all_behavioral_flags.values()):
+        _fe_log(job_id, "⚠️  No behavioral data recovered from any device — potential anti-forensics")
+        if not all_behavioral_flags:
+            all_behavioral_flags = {}
+        all_behavioral_flags["_no_recovery"] = [{
+            "flag_type": "no_recovery",
+            "severity": "MEDIUM",
+            "description": "No behavioral data recovered from evidence — potential anti-forensics (wiped, encrypted, or corrupted)",
+            "device_id": "all"
+        }]
+
     # ------------------------------------------------------------------
     # Phase 3d-new: Cross-Host Correlation
     # ------------------------------------------------------------------
@@ -3910,6 +4732,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                 # Timeline anomalies with off-hours activity = potential data exfil
                 if flag.get("flag_type") == "timeline_anomaly":
                     severity_counts["MEDIUM"] += 1  # Boost severity
+                    evil_found = True
+                # No recovery = potential anti-forensics
+                if flag.get("flag_type") == "no_recovery":
                     evil_found = True
 
     # From specialist results
@@ -6362,10 +7187,17 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
                    'extract_whatsapp', 'extract_telegram',
                    'extract_mobile_photo_exif', 'recover_deleted_sqlite_messages',
                    'run_aleapp'},
-    'browser':    {'extract_downloads', 'extract_cookies', 'extract_history'},
-    'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml'},
+    'browser':    {'extract_downloads', 'extract_cookies', 'extract_history',
+                   'extract_login_data', 'extract_web_data', 'extract_session_restore',
+                   'extract_firefox_key4', 'extract_firefox_formhistory', 'analyze_leveldb',
+                   'extract_saved_passwords'},
+    'email':      {'analyze_mbox', 'analyze_pst', 'analyze_eml',
+                   'extract_attachments', 'extract_ios_envelope', 'extract_android_gmail',
+                   'extract_email_provider', 'detect_auto_forward', 'analyze_received_chain'},
     'jumplist':   {'parse_jump_lists', 'parse_lnk_files', 'parse_recent_apps'},
-    'macos':      {'analyze_launch_agents', 'parse_unified_log', 'analyze_fseventsd', 'parse_plist'},
+    'macos':      {'analyze_launch_agents', 'parse_unified_log', 'analyze_fseventsd', 'parse_plist',
+                   'analyze_apfs_snapshot', 'parse_spotlight', 'analyze_t2_secureboot',
+                   'parse_asl_logs', 'analyze_app_bundles', 'check_gatekeeper'},
     'photorec':   {'recover_files'},
     'vss':        {'list_vss', 'extract_vss_files', 'analyze_vss_timeline', 'mount_vss'},
     'zimmerman':  {'parse_evtx_zimmerman', 'parse_mft', 'srum_parse', 'amcache_parse',
@@ -6373,6 +7205,21 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
     'remnux':     {'die_scan', 'exiftool_scan', 'peframe_scan', 'ssdeep_hash', 'hashdeep_audit',
                    'upx_unpack', 'pdfid_scan', 'pdf_parser', 'oledump_scan', 'js_beautify',
                    'radare2_analyze', 'floss_strings', 'clamav_scan'},
+    'memory':     {'analyze_memory', 'extract_processes', 'extract_network',
+                   'find_injected_code', 'extract_registry', 'extract_credentials'},
+    'windows':    {'analyze_prefetch', 'analyze_jumplists', 'analyze_lnk',
+                   'analyze_shimcache', 'analyze_amcache', 'analyze_srum',
+                   'analyze_timeline', 'analyze_defender', 'analyze_bits'},
+    'crypto':     {'analyze_bitlocker', 'analyze_filevault', 'analyze_veracrypt',
+                   'analyze_luks', 'search_keys', 'detect_encryption_anti_forensics'},
+    'cloud':      {'analyze_onedrive', 'analyze_googledrive', 'analyze_dropbox',
+                   'analyze_icloud', 'analyze_box', 'detect_exfiltration'},
+    'collaboration': {'analyze_teams', 'analyze_slack', 'analyze_discord',
+                      'analyze_skype', 'analyze_zoom'},
+    'vm':         {'detect_snapshots', 'extract_memory', 'extract_disk',
+                   'analyze_config', 'detect_escape'},
+    'container':  {'enumerate', 'extract_filesystem', 'analyze_image',
+                   'analyze_logs', 'analyze_kubernetes', 'detect_supply_chain'},
 }
 
 
@@ -6513,8 +7360,19 @@ def find_evil_route():
         { "job_id": "...", "status": "running" }
     """
     try:
-        data = request.json or {}
+        # Tolerate missing/malformed JSON body — bare POST returns 400, not 500.
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"status": "error", "error": "Request body must be a JSON object"}), 400
         evidence_dir = data.get('evidence_dir', '').strip() or data.get('evidence_path', '').strip() or EVIDENCE_BASE_DIR
+
+        # Reject shell-metacharacter input up front — before any path massaging
+        # below silently rewrites it to something benign and hides the attempt.
+        if _UNSAFE_PATH_CHARS.search(evidence_dir):
+            return jsonify({
+                "status": "error",
+                "error": f"Evidence path contains unsafe characters and will not be processed: {evidence_dir!r}",
+            }), 400
 
         # If not an absolute path or doesn't exist as-is, try joining with EVIDENCE_BASE_DIR
         # so the user can paste just a folder name from the evidence tab (e.g. "IR-016-CloudJack")
@@ -6525,7 +7383,7 @@ def find_evil_route():
             if Path(candidate).exists():
                 evidence_dir = candidate
 
-        # Reject paths containing shell metacharacters
+        # Reject paths that resolve outside allowed directories
         try:
             _validate_evidence_path(evidence_dir)
         except ValueError as e:
