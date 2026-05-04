@@ -38,6 +38,11 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 # AI_EVIDENCE_CLASSIFICATION - when True, use AI-based evidence classification with self-healing
 AI_EVIDENCE_CLASSIFICATION = os.environ.get("GEOFF_AI_CLASSIFICATION", "true").lower() == "true"
 
+# ENABLE_BATCH_MODE - when True, execute all playbooks autonomously, commit each step with
+# chain-of-custody metadata, then run a single batch Critic review followed by a Manager
+# decision on replay and report generation.  Adds ~10s per step for git commits.
+ENABLE_BATCH_MODE = os.environ.get("GEOFF_BATCH_MODE", "false").lower() == "true"
+
 # Threading locks
 _log_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -2822,6 +2827,324 @@ def _tool_available(module: str, function: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Batch Mode Helpers
+# ---------------------------------------------------------------------------
+
+def _preflight_validation(evidence_path: Path, case_work_dir: Path, job_id: str) -> list:
+    """
+    Preflight checks before starting a Find Evil run.
+    Returns a list of warning strings (empty list = all clear).
+    Raises ValueError for fatal conditions (missing evidence dir is handled by
+    the caller; this function focuses on softer warnings).
+    """
+    warnings = []
+
+    # Evidence directory must contain at least one file
+    evidence_files = [f for f in evidence_path.rglob("*") if f.is_file()]
+    if not evidence_files:
+        warnings.append(f"Evidence directory {evidence_path} contains no files — inventory will be empty")
+
+    # Verify git is available (needed for custody commits)
+    git_check = safe_run(['git', '--version'], timeout=5)
+    if git_check["code"] != 0:
+        warnings.append("git not found in PATH — per-step custody commits will be skipped")
+
+    # Verify case_work_dir parent is writable
+    try:
+        case_work_dir.parent.mkdir(parents=True, exist_ok=True)
+        test_file = case_work_dir.parent / f".geoff_preflight_{uuid.uuid4().hex[:8]}"
+        test_file.touch()
+        test_file.unlink()
+    except OSError as e:
+        warnings.append(f"Case work dir parent not writable: {e}")
+
+    if warnings:
+        for w in warnings:
+            _fe_log(job_id, f"  ⚠ Preflight: {w}")
+    else:
+        _fe_log(job_id, "  ✓ Preflight: all checks passed")
+    return warnings
+
+
+def _commit_step_with_custody(
+    step_record: dict,
+    evidence_file: str,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Commit a single completed step result to git with chain-of-custody metadata.
+
+    Writes a custody record alongside the step output, then commits.
+    Returns the git commit result dict (same shape as safe_git_commit).
+    Only called when ENABLE_BATCH_MODE is True (~10s overhead per step).
+    """
+    step_key = step_record.get("step_key", "unknown")
+    module = step_record.get("module", "unknown")
+    function = step_record.get("function", "unknown")
+    playbook_id = step_record.get("playbook", "unknown")
+
+    # Chain-of-custody: hash evidence file + hash params
+    evidence_sha256 = (
+        _hash_file(evidence_file)
+        if evidence_file and os.path.isfile(evidence_file)
+        else "N/A"
+    )
+    params_hash = hashlib.sha256(
+        json.dumps(step_record.get("params", {}), sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+    custody = {
+        "step_key": step_key,
+        "playbook": playbook_id,
+        "module": module,
+        "function": function,
+        "evidence_file": evidence_file,
+        "evidence_sha256": evidence_sha256,
+        "params_hash": params_hash,
+        "status": step_record.get("status", "unknown"),
+        "committed_at": datetime.now().isoformat(),
+        "execution_hash": step_record.get("execution_hash", ""),
+    }
+
+    # Write custody sidecar to disk
+    custody_dir = case_work_dir / "custody"
+    custody_dir.mkdir(exist_ok=True)
+    safe_key = step_key.replace(":", "_").replace("/", "_")[:120]
+    custody_file = custody_dir / f"{safe_key}.json"
+    try:
+        _atomic_write(custody_file, json.dumps(custody, indent=2, default=str))
+    except Exception as e:
+        _fe_log(job_id, f"  ⚠ Custody write failed for {step_key}: {e}")
+
+    ev_name = Path(evidence_file).name if evidence_file else "N/A"
+    commit_msg = (
+        f"step: {playbook_id}:{module}.{function} "
+        f"[{step_record.get('status', 'unknown')}] "
+        f"ev={ev_name} sha256={evidence_sha256[:12]}"
+    )
+    return safe_git_commit(commit_msg, base_path=str(case_work_dir))
+
+
+def _run_forensicator_batch(
+    execution_plan: list,
+    device_map: dict,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Batch mode orchestrator: logs the start of autonomous execution and returns
+    metadata used by _manager_post_critic_decision.
+
+    Actual step execution runs inside find_evil's existing per-device/playbook
+    loop — ENABLE_BATCH_MODE gates per-step custody commits inside that loop.
+    """
+    total_templates = sum(
+        sum(len(steps) for steps in PLAYBOOK_STEPS.get(pb, {}).values())
+        for pb in execution_plan
+        if pb in PLAYBOOK_STEPS
+    )
+    _fe_log(job_id, (
+        f"  [BATCH] Autonomous execution: {len(execution_plan)} playbooks, "
+        f"~{total_templates} step templates, {len(device_map)} device(s)"
+    ))
+    return {
+        "mode": "batch",
+        "playbooks_queued": len(execution_plan),
+        "devices": list(device_map.keys()),
+        "started_at": datetime.now().isoformat(),
+    }
+
+
+def _batch_critic_review_all_playbooks(
+    findings: list,
+    playbooks_run: list,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Post-execution batch Critic review: assess ALL collected findings in one pass.
+
+    Groups findings by status and significance, asks the Critic LLM for a holistic
+    assessment, and returns a structured summary that the Manager uses to decide
+    whether to approve, flag, or trigger incremental replay.
+    """
+    completed   = [f for f in findings if f.get("status") == "completed"]
+    unverified  = [f for f in findings if f.get("status") == "completed_unverified"]
+    failed      = [f for f in findings if f.get("status") == "failed"]
+    needs_review = [f for f in findings if f.get("needs_review")]
+    high_critical = [
+        f for f in completed
+        if f.get("forensicator", {}).get("significance") in ("CRITICAL", "HIGH")
+    ]
+
+    summary = {
+        "total_findings": len(findings),
+        "completed": len(completed),
+        "unverified": len(unverified),
+        "failed": len(failed),
+        "needs_review": len(needs_review),
+        "high_critical_findings": len(high_critical),
+        "playbooks_run": len(playbooks_run),
+    }
+
+    _fe_log(job_id, (
+        f"  [BATCH-CRITIC] {summary['completed']} ok | "
+        f"{summary['unverified']} unverified | "
+        f"{summary['failed']} failed | "
+        f"{summary['high_critical_findings']} HIGH/CRITICAL"
+    ))
+
+    # Build concise finding snippets for the LLM (cap at 50)
+    finding_snippets = []
+    for f in (high_critical + unverified)[:50]:
+        finding_snippets.append({
+            "step_key": f.get("step_key", ""),
+            "status": f.get("status", ""),
+            "significance": f.get("forensicator", {}).get("significance", "UNKNOWN"),
+            "analyst_note": f.get("forensicator", {}).get("analyst_note", ""),
+            "needs_review": f.get("needs_review", False),
+            "unverified_reason": f.get("unverified_reason"),
+        })
+
+    prompt = f"""You are the Critic agent in a DFIR batch investigation. All playbooks have completed.
+Review the batch findings summary and provide a holistic assessment.
+
+BATCH SUMMARY:
+{json.dumps(summary, indent=2)}
+
+HIGH/CRITICAL AND UNVERIFIED FINDINGS (up to 50):
+{json.dumps(finding_snippets, indent=2, default=str)}
+
+Assess the batch:
+1. Are there findings that are clearly unsupported by evidence (hallucinations)?
+2. Are there HIGH/CRITICAL findings that need replay with different params?
+3. Are findings sufficient to generate a report, or is the evidence too sparse?
+
+Respond ONLY in valid JSON (no extra text):
+{{
+    "overall_quality": "GOOD|ACCEPTABLE|POOR",
+    "hallucination_flags": ["step_key or description of suspect finding"],
+    "replay_candidates": ["step_key"],
+    "sufficient_for_report": true,
+    "assessment_summary": "one sentence"
+}}"""
+
+    geoff_critic_instance = GeoffCritic()
+    raw = geoff_critic_instance._call_critic_llm(prompt)
+    batch_assessment = {}
+    try:
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            batch_assessment = json.loads(m.group())
+    except Exception as e:
+        _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} — using defaults")
+
+    # Write batch assessment to disk
+    _atomic_write(
+        case_work_dir / "batch_critic_assessment.json",
+        json.dumps({**summary, "llm_assessment": batch_assessment}, indent=2, default=str),
+    )
+    _fe_log(job_id, (
+        f"  [BATCH-CRITIC] Quality: {batch_assessment.get('overall_quality', 'N/A')} | "
+        f"Report: {batch_assessment.get('sufficient_for_report', True)}"
+    ))
+    return {**summary, "llm_assessment": batch_assessment}
+
+
+def _manager_post_critic_decision(
+    batch_assessment: dict,
+    findings: list,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Manager reviews the batch Critic assessment and decides on next action.
+
+    Returns a decision dict with keys:
+    - action:             "approve" | "flag" | "replay"
+    - replay_adjustments: {step_key: {param_key: new_value}}  (populated on "replay")
+    - generate_report:    bool — whether to generate the narrative report
+    - reasoning:          str
+    """
+    llm_assessment    = batch_assessment.get("llm_assessment", {})
+    overall_quality   = llm_assessment.get("overall_quality", "ACCEPTABLE")
+    replay_candidates = llm_assessment.get("replay_candidates", [])
+    sufficient        = llm_assessment.get("sufficient_for_report", True)
+
+    # Fast-path: quality GOOD and nothing to replay → approve immediately
+    if overall_quality == "GOOD" and not replay_candidates:
+        decision = {
+            "action": "approve",
+            "replay_adjustments": {},
+            "generate_report": sufficient,
+            "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
+        }
+        _fe_log(job_id, f"  [MANAGER] Decision: APPROVE | Report: {decision['generate_report']}")
+        _atomic_write(case_work_dir / "manager_decision.json", json.dumps(decision, indent=2))
+        return decision
+
+    # Build context for replay candidates
+    replay_snippets = {}
+    for sk in replay_candidates[:10]:
+        rec = next((f for f in findings if f.get("step_key") == sk), {})
+        replay_snippets[sk] = {
+            "params": rec.get("params", {}),
+            "error": rec.get("error"),
+            "status": rec.get("status"),
+        }
+
+    prompt = f"""You are the Manager agent in a DFIR batch investigation. The Critic has assessed all findings.
+
+CRITIC ASSESSMENT:
+- Overall quality: {overall_quality}
+- Hallucination flags: {llm_assessment.get('hallucination_flags', [])}
+- Replay candidates: {replay_candidates}
+- Sufficient for report: {sufficient}
+- Summary: {llm_assessment.get('assessment_summary', '')}
+
+REPLAY CANDIDATE DETAILS:
+{json.dumps(replay_snippets, indent=2, default=str)}
+
+Decide on the next action. For replay candidates provide adjusted params that may produce better results.
+
+Respond ONLY in valid JSON (no extra text):
+{{
+    "action": "approve",
+    "replay_adjustments": {{"step_key": {{"param_key": "new_value"}}}},
+    "generate_report": true,
+    "reasoning": "one sentence"
+}}"""
+
+    _fe_log(job_id, (
+        f"  [MANAGER] Reviewing batch assessment "
+        f"(quality={overall_quality}, {len(replay_candidates)} replay candidates)..."
+    ))
+    raw = _call_manager_llm(prompt, timeout=180)
+    decision = {
+        "action": "approve",
+        "replay_adjustments": {},
+        "generate_report": sufficient,
+        "reasoning": "Manager LLM unavailable — defaulting to approve",
+    }
+    try:
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            parsed = json.loads(m.group())
+            decision["action"]             = parsed.get("action", "approve")
+            decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
+            decision["generate_report"]    = parsed.get("generate_report", sufficient)
+            decision["reasoning"]          = parsed.get("reasoning", "")
+    except Exception as e:
+        _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} — defaulting to approve")
+
+    _fe_log(job_id, (
+        f"  [MANAGER] Decision: {decision['action'].upper()} | "
+        f"Report: {decision['generate_report']} | {decision['reasoning']}"
+    ))
+    _atomic_write(case_work_dir / "manager_decision.json", json.dumps(decision, indent=2))
+    return decision
 
 
 
@@ -2862,6 +3185,18 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             "error": f"Evidence directory not found: {evidence_dir}",
             "evidence_dir": evidence_dir,
         }
+
+    # Preflight validation (non-fatal — warnings logged but execution continues)
+    _case_work_dir_preview = Path(CASES_WORK_DIR) / f"{evidence_path.name}_findevil_preflight"
+    try:
+        _preflight_validation(evidence_path, _case_work_dir_preview, job_id)
+    except Exception as _pf_err:
+        _fe_log(job_id, f"  ⚠ Preflight error (non-fatal): {_pf_err}")
+
+    # Batch mode: log intent and validate execution context
+    _batch_meta = {}
+    if ENABLE_BATCH_MODE:
+        _fe_log(job_id, "  [BATCH] GEOFF_BATCH_MODE=true — per-step custody commits enabled")
 
     def _update_job(progress_pct: float, current_pb: str, current_step: str = "", log_msg: str = ""):
         """Push progress to the in-memory job tracker."""
@@ -3957,6 +4292,16 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             unattributed_ev[ev_type] = unattr
 
     total_pb = len(execution_plan)
+
+    # Batch mode: log orchestration intent before the main loop
+    if ENABLE_BATCH_MODE:
+        _batch_meta = _run_forensicator_batch(
+            execution_plan=execution_plan,
+            device_map=device_map,
+            case_work_dir=case_work_dir,
+            job_id=job_id,
+        )
+
     for dev_id, dev in device_map.items():
         dev_ev = device_evidence[dev_id]
         _fe_log(job_id, f"\n{'='*60}")
@@ -4471,6 +4816,19 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         findings_writer.append(step_record)
                         pb_findings.append(step_record)
 
+                        # Per-step git commit with chain-of-custody metadata (batch mode only)
+                        if ENABLE_BATCH_MODE and step_record.get("status") in (
+                            "completed", "completed_unverified"
+                        ):
+                            _cust = _commit_step_with_custody(
+                                step_record, item, case_work_dir, job_id
+                            )
+                            if _cust.get("status") == "failed":
+                                _fe_log(job_id, (
+                                    f"  ⚠ Custody commit failed for {step_key}: "
+                                    f"{_cust.get('error', 'unknown')}"
+                                ))
+
                         # CONTINUE_ON_FAILURE enforcement
                         if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
                             _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
@@ -4621,6 +4979,72 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         if late:
             _fe_log(job_id, f"⚠ Anti-forensics cascade (final pass): downgraded {late} additional findings produced after PB-SIFT-012")
             _audit_append(case_work_dir, "anti_forensics_cascade_final", late_findings=late)
+
+    # ------------------------------------------------------------------
+    # Phase 3b-batch: Batch Critic Review + Manager Decision (batch mode only)
+    # ------------------------------------------------------------------
+    manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
+    if ENABLE_BATCH_MODE:
+        _update_job(88, "batch-critic", "Batch Critic reviewing all findings")
+        try:
+            _batch_assess = _batch_critic_review_all_playbooks(
+                findings=findings_writer.all_records(),
+                playbooks_run=playbooks_run,
+                case_work_dir=case_work_dir,
+                job_id=job_id,
+            )
+            manager_decision = _manager_post_critic_decision(
+                batch_assessment=_batch_assess,
+                findings=findings_writer.all_records(),
+                case_work_dir=case_work_dir,
+                job_id=job_id,
+            )
+        except Exception as _batch_err:
+            _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} — defaulting to approve")
+
+        # --- Incremental Replay: re-run steps with Manager-patched params ---
+        replay_adjustments = manager_decision.get("replay_adjustments", {})
+        if manager_decision.get("action") == "replay" and replay_adjustments:
+            _update_job(89, "replay", f"Replaying {len(replay_adjustments)} step(s) with adjusted params")
+            _fe_log(job_id, f"  [REPLAY] Manager flagged {len(replay_adjustments)} step(s) for incremental replay")
+            for _rk, _rparams in replay_adjustments.items():
+                # Find the original step record
+                _orig = next((f for f in findings_writer.all_records() if f.get("step_key") == _rk), None)
+                if _orig is None:
+                    _fe_log(job_id, f"  ⚠ Replay: step_key {_rk!r} not found in findings — skipping")
+                    continue
+                _module   = _orig.get("module", "")
+                _function = _orig.get("function", "")
+                _ev_file  = _orig.get("evidence_file", "")
+                # Merge original params with Manager adjustments
+                _merged_params = {**_orig.get("params", {}), **_rparams}
+                _fe_log(job_id, f"  [REPLAY] {_module}.{_function} | adjusted params: {list(_rparams.keys())}")
+                try:
+                    _replay_result = _run_step_via_orchestrator(_module, _function, _merged_params)
+                    _replay_status = "completed" if _replay_result.get("status") == "success" else "failed"
+                    _replay_record = {
+                        **_orig,
+                        "params": _merged_params,
+                        "result": _replay_result,
+                        "status": _replay_status,
+                        "replayed": True,
+                        "replay_adjustments": _rparams,
+                        "started_at": _orig.get("started_at"),
+                        "completed_at": datetime.now().isoformat(),
+                    }
+                    findings_writer.append(_replay_record)
+                    if _replay_status == "completed":
+                        steps_completed += 1
+                        _fe_log(job_id, f"  ✓ Replay succeeded: {_module}.{_function}")
+                        # Commit replayed step with custody
+                        _cust = _commit_step_with_custody(_replay_record, _ev_file, case_work_dir, job_id)
+                        if _cust.get("status") == "failed":
+                            _fe_log(job_id, f"  ⚠ Replay custody commit failed: {_cust.get('error')}")
+                    else:
+                        steps_failed += 1
+                        _fe_log(job_id, f"  ✗ Replay failed: {_module}.{_function}")
+                except Exception as _re:
+                    _fe_log(job_id, f"  ✗ Replay error for {_rk}: {_re}")
 
     # ------------------------------------------------------------------
     # Phase 3b-new: Super-Timeline Build
@@ -4893,31 +5317,41 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # ------------------------------------------------------------------
     # Phase 5b: Narrative Report
+    # Gated on manager_decision['generate_report'] in batch mode.
+    # In normal mode (ENABLE_BATCH_MODE=False), always generated.
     # ------------------------------------------------------------------
     _update_job(98, "narrative", "Generating human-readable report")
-    try:
-        narrator = NarrativeReportGenerator(call_llm_func=call_llm)
-        # Collect CRITICAL/HIGH evidence anchors for traceable narrative citations
-        step_evidence_anchors = [
-            f["evidence_chain"]
-            for f in findings_writer.all_records()
-            if isinstance(f.get("evidence_chain"), dict)
-            and f["evidence_chain"].get("significance") in ("CRITICAL", "HIGH")
-        ][:30]
-        narrative_path = narrator.generate(
-            report_json=report,
-            device_map=device_map if device_map is not None else {},
-            user_map=user_map if user_map is not None else {},
-            super_timeline_path=str(super_timeline_path) if super_timeline_path is not None and super_timeline_path else "",
-            correlated_users=correlated_users if correlated_users is not None else {},
-            behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
-            case_work_dir=case_work_dir,
-            step_evidence_anchors=step_evidence_anchors,
-        )
-        report["narrative_report_path"] = str(narrative_path)
-        _fe_log(job_id, f"Narrative report: {narrative_path}")
-    except Exception as e:
-        _fe_log(job_id, f"Narrative report generation failed: {e}")
+    _generate_narrative = True
+    if ENABLE_BATCH_MODE:
+        _generate_narrative = manager_decision.get("generate_report", True)
+        if not _generate_narrative:
+            _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
+    if _generate_narrative:
+        try:
+            narrator = NarrativeReportGenerator(call_llm_func=call_llm)
+            # Collect CRITICAL/HIGH evidence anchors for traceable narrative citations
+            step_evidence_anchors = [
+                f["evidence_chain"]
+                for f in findings_writer.all_records()
+                if isinstance(f.get("evidence_chain"), dict)
+                and f["evidence_chain"].get("significance") in ("CRITICAL", "HIGH")
+            ][:30]
+            narrative_path = narrator.generate(
+                report_json=report,
+                device_map=device_map if device_map is not None else {},
+                user_map=user_map if user_map is not None else {},
+                super_timeline_path=str(super_timeline_path) if super_timeline_path is not None and super_timeline_path else "",
+                correlated_users=correlated_users if correlated_users is not None else {},
+                behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
+                case_work_dir=case_work_dir,
+                step_evidence_anchors=step_evidence_anchors,
+            )
+            report["narrative_report_path"] = str(narrative_path)
+            _fe_log(job_id, f"Narrative report: {narrative_path}")
+        except Exception as e:
+            _fe_log(job_id, f"Narrative report generation failed: {e}")
+            report["narrative_report_path"] = None
+    else:
         report["narrative_report_path"] = None
 
     # Write report
