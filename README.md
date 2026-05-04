@@ -32,16 +32,21 @@ GEOFF is a **multi-agent conversational DFIR platform** with three specialized A
 
 **Workflow:**
 ```
-User → Manager → Forensicator → Tools → Critic ──────────────── Git → Report
-                                              ↓                       ↑
-                                    Self-Correction Loop  ────────────┘
-                                    (Manager revises if Critic rejects)
-                                              ↓
-                                    Behavioral Analyzer
-                                              ↓
-                                    Super Timeline + Correlation
-                                              ↓
-                                    Narrative Report (LLM-written, artifact-cited)
+User → Manager → Preflight Validation
+                      ↓
+               Forensicator runs ALL steps autonomously
+               (per-step custody commits to git)
+                      ↓
+               Batch Critic reviews ALL findings at once
+               (holistic cross-step correlation)
+                      ↓
+               Manager decision: approve / flag / replay
+                      ↓ (if replay)
+               Incremental Replay (patched params, affected steps only)
+                      ↓
+               Behavioral Analyzer + Super Timeline + Correlation
+                      ↓
+               Narrative Report (gated by Manager approval)
 ```
 
 ---
@@ -166,17 +171,18 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 
 ### Pipeline
 
-1. **Inventory** — catalog every artifact (disk images, memory dumps, pcaps, logs, registry hives, mobile backups)
-2. **Device Discovery** — group evidence by device, extract hostnames, identify owners, build device_map and user_map
-3. **Triage** — PB-SIFT-000 rapid indicator scan; Manager LLM reviews and approves execution plan
-4. **Playbook Execution** (per-device) — run each selected playbook against each device's evidence
-5. **Forensicator Interpretation** — for each completed step, Forensicator LLM assesses significance and builds `evidence_chain` with specific artifact, tool, and finding
-6. **Critic Validation + Self-Correction** — every step validated; on failure, Manager generates a corrected analysis and Critic re-validates; only demotes to `completed_unverified` if correction also fails
-7. **Super Timeline** — unified timeline across all devices and evidence types
-8. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
-9. **Host Correlation** — cross-device user activity, lateral movement detection
-10. **Narrative Report** — LLM-written investigative narrative with explicit artifact citations from evidence anchors
-11. **Git Commit** — every step committed for full reproducibility
+1. **Preflight** — validate evidence directory, git availability, writable paths
+2. **Inventory** — catalog every artifact (disk images, memory dumps, pcaps, logs, registry hives, mobile backups)
+3. **Device Discovery** — group evidence by device, extract hostnames, identify owners, build device_map and user_map
+4. **Triage** — PB-SIFT-000 rapid indicator scan; Manager LLM reviews and approves execution plan
+5. **Autonomous Batch Execution** — Forensicator runs ALL selected playbooks end-to-end without per-step Manager gates; each completed step is committed to git with a chain-of-custody sidecar (`custody/<step_key>.json`)
+6. **Batch Critic Review** — after all playbooks complete, Critic reviews all findings in one pass, grouped by significance; finds cross-step correlations and flags hallucinations or replay candidates
+7. **Manager Decision** — Manager reviews Critic assessment and chooses `approve`, `flag`, or `replay`; saves `manager_decision.json`
+8. **Incremental Replay** (if requested) — only affected steps re-run with Manager-patched params; new outputs committed with custody metadata
+9. **Super Timeline** — unified timeline across all devices and evidence types
+10. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
+11. **Host Correlation** — cross-device user activity, lateral movement detection
+12. **Narrative Report** — gated on Manager approval; LLM-written investigative narrative with explicit artifact citations
 
 ### What Triggers Each Playbook
 
@@ -372,8 +378,8 @@ GEOFF is a new autonomous DFIR platform built on top of the SANS SIFT Workstatio
 **1. Three-agent autonomous pipeline**
 A Manager / Forensicator / Critic architecture where no human is in the loop. The Manager plans and reviews the execution plan. The Forensicator interprets each tool result and assesses threat significance. The Critic validates every output for hallucinations and accuracy. All three agents communicate via structured JSON and are wired into a single deterministic pipeline — none of this exists in SIFT or any of the upstream tools.
 
-**2. Self-correction loop**
-When the Critic rejects a Forensicator interpretation, the Manager automatically generates a corrected analysis grounded only in what the raw tool output actually shows. The Critic re-validates. The step is only demoted to `completed_unverified` if the correction also fails. Chat responses go through an independent grounding check and are regenerated if ungrounded claims are detected. This is novel — SIFT tools have no self-validation capability.
+**2. Batch self-correction loop**
+The Forensicator runs all playbooks autonomously without per-step gates. After execution, the Batch Critic reviews all findings in one pass — enabling cross-step correlation that per-step validation misses — and flags hallucinations or replay candidates. The Manager then decides: approve, flag for review, or trigger incremental replay with adjusted parameters (only affected steps re-run). Chat responses go through an independent grounding check. This is novel — SIFT tools have no self-validation capability.
 
 **3. Evidence chain (per-finding traceability)**
 Every completed step record carries an `evidence_chain` dict linking the finding to a specific artifact, evidence file, specialist tool, and Forensicator observation. The narrative report receives these anchors and is required to cite them explicitly. No SIFT tool or prior DFIR framework produces this structured traceability automatically.
@@ -390,8 +396,8 @@ Ten deterministic behavioral checks (process path/parent validation, spawn chain
 **7. LLM-generated investigative narrative with artifact citations**
 The `NarrativeReportGenerator` produces an 8-section human-readable investigation report driven by the Manager LLM, including an attack chain synthesis that maps findings to MITRE techniques, assesses attribution, and requires every factual claim to cite a specific evidence anchor from the pipeline. No SIFT tool produces narrative output of this kind.
 
-**8. Git-backed reproducibility**
-Every step execution, Critic validation, and state transition is committed to a per-case git repository. The case directory structure, findings.jsonl stream, validations/ directory, and audit_trail.jsonl collectively form a full forensic chain of custody that can be independently verified or re-run.
+**8. Git-backed reproducibility with per-step chain of custody**
+Every step execution is committed to a per-case git repository immediately on completion (not at the end of the run). Each commit includes a `custody/<step_key>.json` sidecar with the SHA-256 hash of the evidence file, a SHA-256 hash of the step parameters, a timestamp, and the tool version. The findings.jsonl stream, validations/ directory, batch_critic_assessment.json, manager_decision.json, and audit_trail.jsonl collectively form a full forensic audit trail that can be independently verified or re-run.
 
 ---
 
@@ -403,7 +409,7 @@ GEOFF is designed to meet three core requirements for autonomous forensic invest
 
 The agent detects and resolves errors or inconsistencies in its own output **without human intervention**:
 
-**In `find_evil()`:** When the Critic rejects a step (`passes_sanity=False`), the Manager LLM is called to generate a corrected analysis grounded only in what the tool output actually shows. The Critic re-validates the corrected analysis. If it passes, the step is accepted and marked `self_corrected: true`. Only if the correction also fails is the step demoted to `completed_unverified`. The original and corrected analyses are both stored in the step record.
+**In `find_evil()`:** After all playbooks complete, the Batch Critic reviews every finding holistically. If quality is below `GOOD` or replay candidates are identified, the Manager LLM generates adjusted parameters and triggers incremental replay — re-running only the affected steps without repeating the full investigation. Steps flagged by the Critic as unverified are marked `needs_review: true` and the final report includes `steps_needs_review` and `steps_unverified` counts.
 
 **In chat:** After each LLM response, a lightweight grounding check verifies the response does not assert claims absent from the available case context. If unsupported claims are detected, the response is regenerated once with an explicit correction prompt before being returned to the user.
 
@@ -438,30 +444,37 @@ Output is structured as an investigative narrative, not a raw execution log:
 
 ## The Critic Pipeline
 
-Every tool execution is validated:
+Geoff uses a **batch Critic model** — all playbooks run first, then the Critic reviews everything at once:
 
 ```
-Forensicator Output → Critic Validation ─── pass ──→ Git Commit
-       ↓                    ↓
-  Raw output              fail
-  interpreted               ↓
-                    Manager Self-Correction
-                    (revised analysis)
-                            ↓
-                    Critic Re-Validation ─── pass ──→ completed_corrected
-                            ↓ fail
-                    completed_unverified (needs_review: true)
+Forensicator runs ALL steps autonomously
+  (each step committed to git with custody sidecar)
+          ↓
+Batch Critic reviews ALL findings in one pass
+  • Groups by status: completed / unverified / failed
+  • Focuses on HIGH/CRITICAL + unverified findings (up to 50)
+  • Checks for hallucinations, cross-step inconsistencies, replay needs
+  • Outputs: batch_critic_assessment.json
+          ↓
+Manager reviews Critic assessment
+  • GOOD quality + no replay → APPROVE immediately
+  • Otherwise → LLM decides: approve / flag / replay
+  • Outputs: manager_decision.json
+          ↓ (if replay)
+Incremental replay — patch params, re-run affected steps only
+  (idempotency via findings_writer.is_completed(); new custody commits)
+          ↓
+Narrative report generated only if Manager approves
 ```
 
-**Critic checks for:**
-- Hallucinations (claims not in raw output)
-- Obvious nonsense (impossible values, contradictions)
-- Invalid IOC formats (malformed IPs, hashes, timestamps)
-- False positives (benign flagged as suspicious)
+**Batch Critic checks for:**
+- Hallucinations (step claims not supported by tool output)
+- HIGH/CRITICAL findings that need replay with different params
+- Whether findings are sufficient to generate a report
 
-**IOC Format Validation:** The critic validates extracted IOCs against expected formats — IP addresses, MD5/SHA1/SHA256 hashes, URLs, and email addresses.
+**Performance:** ~20 LLM calls per 12-playbook run vs. 60+ in per-step mode (~3x speedup). The Critic sees the full picture, enabling cross-step correlation that per-step validation misses.
 
-**Mandatory validation:** If the Critic is unavailable or errors, the step is flagged `needs_review: true` rather than silently accepted. The final report includes a `steps_needs_review` count and `steps_unverified` count. Steps are never silently passed without validation.
+**If Critic LLM is unavailable:** defaults to `overall_quality: ACCEPTABLE`, `sufficient_for_report: true`, and Manager approves — execution continues rather than blocking. Steps remain tagged `needs_review: true` in the findings.
 
 ---
 
@@ -519,12 +532,15 @@ Output: `device_map.json` + `user_map.json` in the case directory.
 
 Every investigation is fully reproducible:
 
-1. **Git History** — Every action, validation, and finding committed per-playbook
-2. **Validation Files** — Stored in `validations/` with full critic results
-3. **Command Logging** — Every command executed logged to `commands/` subdirectory
-4. **Evidence Manifest** — `evidence/raw/manifest.json` references source evidence (no copies)
-5. **Audit Trail** — `audit_trail.jsonl` records all state transitions
-6. **Behavioral Flags** — All anomaly detections stored with evidence and explanation
+1. **Per-step git commits** — Each step is committed immediately on completion with a chain-of-custody sidecar (`custody/<step_key>.json`)
+2. **Custody sidecars** — SHA-256 hash of evidence file + SHA-256 hash of step parameters + timestamp for every step
+3. **Batch Critic record** — `batch_critic_assessment.json` documents the post-execution quality assessment
+4. **Manager decision record** — `manager_decision.json` documents the Manager's approve/replay decision and reasoning
+5. **Validation Files** — Per-step critic results in `validations/`
+6. **Command Logging** — Every command executed logged to `commands/`
+7. **Evidence Manifest** — `evidence/raw/manifest.json` references source evidence (no copies)
+8. **Audit Trail** — `audit_trail.jsonl` records all state transitions
+9. **Behavioral Flags** — All anomaly detections stored with evidence and explanation
 
 ---
 
@@ -887,28 +903,32 @@ Findings are streamed to `findings.jsonl` on disk as each step completes rather 
 
 ```
 case_work_dir/
-├── device_map.json          # Device grouping + metadata
-├── user_map.json            # User-to-device mapping
-├── execution_plan.json      # Triage-generated plan
-├── findings.jsonl           # All step records, streamed to disk as they complete
+├── device_map.json               # Device grouping + metadata
+├── user_map.json                 # User-to-device mapping
+├── execution_plan.json           # Triage-generated plan
+├── findings.jsonl                # All step records, streamed to disk as they complete
+├── batch_critic_assessment.json  # Post-execution Critic review (quality, hallucination flags)
+├── manager_decision.json         # Manager action: approve / flag / replay + reasoning
+├── custody/
+│   └── <step_key>.json           # Per-step chain-of-custody: evidence SHA-256, params hash, timestamp
 ├── output/
-│   ├── PB-SIFT-008.json     # Per-playbook findings (best-effort snapshot)
+│   ├── PB-SIFT-008.json          # Per-playbook findings (best-effort snapshot)
 │   └── PB-SIFT-012.json
 ├── validations/
-│   └── step_key.json        # Per-step critic results
+│   └── step_key.json             # Per-step critic results
 ├── commands/
-│   └── timestamp_cmd.json   # Command audit log
+│   └── timestamp_cmd.json        # Command audit log
 ├── evidence/
 │   ├── raw/
-│   │   └── manifest.json   # References to source evidence
-│   └── derived/             # Symlinks to output/timeline
+│   │   └── manifest.json        # References to source evidence
+│   └── derived/                  # Symlinks to output/timeline
 ├── timeline/
-│   └── super_timeline.jsonl # Unified timeline
+│   └── super_timeline.jsonl      # Unified timeline
 ├── reports/
 │   ├── find_evil_report.json
-│   └── narrative_report.md  # LLM-written summary
-├── spill/                    # Oversized step results
-└── audit_trail.jsonl         # State transition log
+│   └── narrative_report.md       # LLM-written summary (only if Manager approves)
+├── spill/                         # Oversized step results
+└── audit_trail.jsonl              # State transition log
 ```
 
 ---
