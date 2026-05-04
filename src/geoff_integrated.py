@@ -38,11 +38,6 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 # AI_EVIDENCE_CLASSIFICATION - when True, use AI-based evidence classification with self-healing
 AI_EVIDENCE_CLASSIFICATION = os.environ.get("GEOFF_AI_CLASSIFICATION", "true").lower() == "true"
 
-# ENABLE_BATCH_MODE - when True, execute all playbooks autonomously, commit each step with
-# chain-of-custody metadata, then run a single batch Critic review followed by a Manager
-# decision on replay and report generation.  Adds ~10s per step for git commits.
-ENABLE_BATCH_MODE = os.environ.get("GEOFF_BATCH_MODE", "false").lower() == "true"
-
 # Threading locks
 _log_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -2878,7 +2873,7 @@ def _commit_step_with_custody(
 
     Writes a custody record alongside the step output, then commits.
     Returns the git commit result dict (same shape as safe_git_commit).
-    Only called when ENABLE_BATCH_MODE is True (~10s overhead per step).
+    Called for each completed step (~10s overhead per step for git commit).
     """
     step_key = step_record.get("step_key", "unknown")
     module = step_record.get("module", "unknown")
@@ -2938,7 +2933,7 @@ def _run_forensicator_batch(
     metadata used by _manager_post_critic_decision.
 
     Actual step execution runs inside find_evil's existing per-device/playbook
-    loop — ENABLE_BATCH_MODE gates per-step custody commits inside that loop.
+    loop — per-step custody commits happen inside that loop.
     """
     total_templates = sum(
         sum(len(steps) for steps in PLAYBOOK_STEPS.get(pb, {}).values())
@@ -3193,10 +3188,9 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     except Exception as _pf_err:
         _fe_log(job_id, f"  ⚠ Preflight error (non-fatal): {_pf_err}")
 
-    # Batch mode: log intent and validate execution context
+    # Per-step custody commits enabled
     _batch_meta = {}
-    if ENABLE_BATCH_MODE:
-        _fe_log(job_id, "  [BATCH] GEOFF_BATCH_MODE=true — per-step custody commits enabled")
+    _fe_log(job_id, "  [BATCH] Per-step custody commits enabled")
 
     def _update_job(progress_pct: float, current_pb: str, current_step: str = "", log_msg: str = ""):
         """Push progress to the in-memory job tracker."""
@@ -4293,14 +4287,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     total_pb = len(execution_plan)
 
-    # Batch mode: log orchestration intent before the main loop
-    if ENABLE_BATCH_MODE:
-        _batch_meta = _run_forensicator_batch(
-            execution_plan=execution_plan,
-            device_map=device_map,
-            case_work_dir=case_work_dir,
-            job_id=job_id,
-        )
+    # Log orchestration intent before the main loop
+    _batch_meta = _run_forensicator_batch(
+        execution_plan=execution_plan,
+        device_map=device_map,
+        case_work_dir=case_work_dir,
+        job_id=job_id,
+    )
 
     for dev_id, dev in device_map.items():
         dev_ev = device_evidence[dev_id]
@@ -4816,8 +4809,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                         findings_writer.append(step_record)
                         pb_findings.append(step_record)
 
-                        # Per-step git commit with chain-of-custody metadata (batch mode only)
-                        if ENABLE_BATCH_MODE and step_record.get("status") in (
+                        # Per-step git commit with chain-of-custody metadata
+                        if step_record.get("status") in (
                             "completed", "completed_unverified"
                         ):
                             _cust = _commit_step_with_custody(
@@ -4981,70 +4974,69 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             _audit_append(case_work_dir, "anti_forensics_cascade_final", late_findings=late)
 
     # ------------------------------------------------------------------
-    # Phase 3b-batch: Batch Critic Review + Manager Decision (batch mode only)
+    # Phase 3b: Batch Critic Review + Manager Decision
     # ------------------------------------------------------------------
     manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
-    if ENABLE_BATCH_MODE:
-        _update_job(88, "batch-critic", "Batch Critic reviewing all findings")
-        try:
-            _batch_assess = _batch_critic_review_all_playbooks(
-                findings=findings_writer.all_records(),
-                playbooks_run=playbooks_run,
-                case_work_dir=case_work_dir,
-                job_id=job_id,
-            )
-            manager_decision = _manager_post_critic_decision(
-                batch_assessment=_batch_assess,
-                findings=findings_writer.all_records(),
-                case_work_dir=case_work_dir,
-                job_id=job_id,
-            )
-        except Exception as _batch_err:
-            _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} — defaulting to approve")
+    _update_job(88, "batch-critic", "Batch Critic reviewing all findings")
+    try:
+        _batch_assess = _batch_critic_review_all_playbooks(
+            findings=findings_writer.all_records(),
+            playbooks_run=playbooks_run,
+            case_work_dir=case_work_dir,
+            job_id=job_id,
+        )
+        manager_decision = _manager_post_critic_decision(
+            batch_assessment=_batch_assess,
+            findings=findings_writer.all_records(),
+            case_work_dir=case_work_dir,
+            job_id=job_id,
+        )
+    except Exception as _batch_err:
+        _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} — defaulting to approve")
 
-        # --- Incremental Replay: re-run steps with Manager-patched params ---
-        replay_adjustments = manager_decision.get("replay_adjustments", {})
-        if manager_decision.get("action") == "replay" and replay_adjustments:
-            _update_job(89, "replay", f"Replaying {len(replay_adjustments)} step(s) with adjusted params")
-            _fe_log(job_id, f"  [REPLAY] Manager flagged {len(replay_adjustments)} step(s) for incremental replay")
-            for _rk, _rparams in replay_adjustments.items():
-                # Find the original step record
-                _orig = next((f for f in findings_writer.all_records() if f.get("step_key") == _rk), None)
-                if _orig is None:
-                    _fe_log(job_id, f"  ⚠ Replay: step_key {_rk!r} not found in findings — skipping")
-                    continue
-                _module   = _orig.get("module", "")
-                _function = _orig.get("function", "")
-                _ev_file  = _orig.get("evidence_file", "")
-                # Merge original params with Manager adjustments
-                _merged_params = {**_orig.get("params", {}), **_rparams}
-                _fe_log(job_id, f"  [REPLAY] {_module}.{_function} | adjusted params: {list(_rparams.keys())}")
-                try:
-                    _replay_result = _run_step_via_orchestrator(_module, _function, _merged_params)
-                    _replay_status = "completed" if _replay_result.get("status") == "success" else "failed"
-                    _replay_record = {
-                        **_orig,
-                        "params": _merged_params,
-                        "result": _replay_result,
-                        "status": _replay_status,
-                        "replayed": True,
-                        "replay_adjustments": _rparams,
-                        "started_at": _orig.get("started_at"),
-                        "completed_at": datetime.now().isoformat(),
-                    }
-                    findings_writer.append(_replay_record)
-                    if _replay_status == "completed":
-                        steps_completed += 1
-                        _fe_log(job_id, f"  ✓ Replay succeeded: {_module}.{_function}")
-                        # Commit replayed step with custody
-                        _cust = _commit_step_with_custody(_replay_record, _ev_file, case_work_dir, job_id)
-                        if _cust.get("status") == "failed":
-                            _fe_log(job_id, f"  ⚠ Replay custody commit failed: {_cust.get('error')}")
-                    else:
-                        steps_failed += 1
-                        _fe_log(job_id, f"  ✗ Replay failed: {_module}.{_function}")
-                except Exception as _re:
-                    _fe_log(job_id, f"  ✗ Replay error for {_rk}: {_re}")
+    # --- Incremental Replay: re-run steps with Manager-patched params ---
+    replay_adjustments = manager_decision.get("replay_adjustments", {})
+    if manager_decision.get("action") == "replay" and replay_adjustments:
+        _update_job(89, "replay", f"Replaying {len(replay_adjustments)} step(s) with adjusted params")
+        _fe_log(job_id, f"  [REPLAY] Manager flagged {len(replay_adjustments)} step(s) for incremental replay")
+        for _rk, _rparams in replay_adjustments.items():
+            # Find the original step record
+            _orig = next((f for f in findings_writer.all_records() if f.get("step_key") == _rk), None)
+            if _orig is None:
+                _fe_log(job_id, f"  ⚠ Replay: step_key {_rk!r} not found in findings — skipping")
+                continue
+            _module   = _orig.get("module", "")
+            _function = _orig.get("function", "")
+            _ev_file  = _orig.get("evidence_file", "")
+            # Merge original params with Manager adjustments
+            _merged_params = {**_orig.get("params", {}), **_rparams}
+            _fe_log(job_id, f"  [REPLAY] {_module}.{_function} | adjusted params: {list(_rparams.keys())}")
+            try:
+                _replay_result = _run_step_via_orchestrator(_module, _function, _merged_params)
+                _replay_status = "completed" if _replay_result.get("status") == "success" else "failed"
+                _replay_record = {
+                    **_orig,
+                    "params": _merged_params,
+                    "result": _replay_result,
+                    "status": _replay_status,
+                    "replayed": True,
+                    "replay_adjustments": _rparams,
+                    "started_at": _orig.get("started_at"),
+                    "completed_at": datetime.now().isoformat(),
+                }
+                findings_writer.append(_replay_record)
+                if _replay_status == "completed":
+                    steps_completed += 1
+                    _fe_log(job_id, f"  ✓ Replay succeeded: {_module}.{_function}")
+                    # Commit replayed step with custody
+                    _cust = _commit_step_with_custody(_replay_record, _ev_file, case_work_dir, job_id)
+                    if _cust.get("status") == "failed":
+                        _fe_log(job_id, f"  ⚠ Replay custody commit failed: {_cust.get('error')}")
+                else:
+                    steps_failed += 1
+                    _fe_log(job_id, f"  ✗ Replay failed: {_module}.{_function}")
+            except Exception as _re:
+                _fe_log(job_id, f"  ✗ Replay error for {_rk}: {_re}")
 
     # ------------------------------------------------------------------
     # Phase 3b-new: Super-Timeline Build
@@ -5317,15 +5309,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
 
     # ------------------------------------------------------------------
     # Phase 5b: Narrative Report
-    # Gated on manager_decision['generate_report'] in batch mode.
-    # In normal mode (ENABLE_BATCH_MODE=False), always generated.
+    # Gated on manager_decision['generate_report'].
     # ------------------------------------------------------------------
     _update_job(98, "narrative", "Generating human-readable report")
-    _generate_narrative = True
-    if ENABLE_BATCH_MODE:
-        _generate_narrative = manager_decision.get("generate_report", True)
-        if not _generate_narrative:
-            _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
+    _generate_narrative = manager_decision.get("generate_report", True)
+    if not _generate_narrative:
+        _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
     if _generate_narrative:
         try:
             narrator = NarrativeReportGenerator(call_llm_func=call_llm)
