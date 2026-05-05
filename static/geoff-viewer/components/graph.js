@@ -1,39 +1,66 @@
-// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Indicators | Findings)
+"use strict";
+
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
+function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _iterableToArrayLimit(r, l) { var t = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (null != t) { var e, n, i, u, a = [], f = !0, o = !1; try { if (i = (t = t.call(r)).next, 0 === l) { if (Object(t) !== t) return; f = !1; } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0); } catch (r) { o = !0, n = r; } finally { try { if (!f && null != t["return"] && (u = t["return"](), Object(u) !== u)) return; } finally { if (o) throw n; } } return a; } }
+function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
+function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+// Relationship graph — columnar layout (Accounts | Workstations | Servers | Mobile | Network | Services | Findings | MITRE | Indicators)
 // with edges for ownership, lateral-movement, and device→IOC connections.
 
-const {
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} = React;
+var _React = React,
+  useEffect = _React.useEffect,
+  useMemo = _React.useMemo,
+  useRef = _React.useRef,
+  useState = _React.useState;
 
 // Column layout constants
-const HEADER_Y = 70;
-const FOOTER_Y = 40;
-const MIN_ROW_H = 64;
-const NODE_H = 44;
-const USER_R = 26;
+var HEADER_Y = 70;
+var FOOTER_Y = 40;
+var MIN_ROW_H = 64;
+var NODE_H = 44;
+var USER_R = 26;
 function classifyDevice(d) {
-  const t = (d.device_type || "").toLowerCase();
-  const h = (d.hostname || "").toLowerCase();
-  // Check for server indicators in both device_type and hostname
-  if (t.includes("server") || h.includes("server") || h.includes("srv") || h.includes("dc")) return "server";
+  var t = (d.device_type || "").toLowerCase();
+  var h = (d.hostname || "").toLowerCase();
+  // Check for server indicators - use word boundaries to avoid false matches
+  if (t.includes("server") || h.includes("server") || /\bsrv\b/.test(h) || /\bdc\b/.test(h)) return "server";
   if (t.includes("mobile") || t.includes("ios") || t.includes("android")) return "mobile";
   if (t.includes("network") || t.includes("pcap")) return "network";
   return "pc";
 }
 function countFlags(flags) {
-  const out = {
+  var out = {
     total: 0,
     CRITICAL: 0,
     HIGH: 0,
     MEDIUM: 0,
     LOW: 0
   };
-  for (const f of flags || []) {
-    out.total++;
-    if (out[f.severity] != null) out[f.severity]++;
+  var _iterator = _createForOfIteratorHelper(flags || []),
+    _step;
+  try {
+    for (_iterator.s(); !(_step = _iterator.n()).done;) {
+      var f = _step.value;
+      out.total++;
+      if (out[f.severity] != null) out[f.severity]++;
+    }
+  } catch (err) {
+    _iterator.e(err);
+  } finally {
+    _iterator.f();
   }
   return out;
 }
@@ -46,11 +73,13 @@ function maxSev(counts) {
 }
 function formatEvidenceType(t) {
   if (!t) return "Evidence";
-  return t.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return t.replace(/_/g, " ").replace(/\b\w/g, function (c) {
+    return c.toUpperCase();
+  });
 }
 function guessEvidenceTypeFromPath(p) {
-  const fname = (p || "").split("/").pop().toLowerCase();
-  const ext = fname.includes(".") ? fname.split(".").pop() : "";
+  var fname = (p || "").split("/").pop().toLowerCase();
+  var ext = fname.includes(".") ? fname.split(".").pop() : "";
   if (["e01", "ex01", "aff", "aff4", "dd", "img", "raw", "vmdk", "vhdx"].includes(ext)) return "disk_images";
   if (ext === "evtx") return "evtx_logs";
   if (["mem", "lime", "vmem", "dmp"].includes(ext)) return "memory_dumps";
@@ -64,7 +93,7 @@ function guessEvidenceTypeFromPath(p) {
   return null;
 }
 function classifyExfilService(host) {
-  const h = (host || "").toLowerCase();
+  var h = (host || "").toLowerCase();
   if (h.includes("mega.")) return "Mega.nz";
   if (h.includes("gmail") || h.includes("google")) return "Google";
   if (h.includes("onedrive") || h.includes("microsoft")) return "OneDrive";
@@ -78,42 +107,63 @@ function classifyExfilService(host) {
 }
 function extractUsernameFromPath(filePath) {
   if (!filePath) return null;
+  // Skip analysis machine paths - these are not evidence
+  if (filePath.startsWith("/home/sansforensics/") || filePath.startsWith("/home/claw/") || filePath.startsWith("/mnt/") || filePath.startsWith("/tmp/")) return null;
   // Windows paths: /Users/username/ or C:\Users\username\
-  const winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
-  if (winMatch) return winMatch[1];
-  // Linux paths: /home/username/
-  const linuxMatch = filePath.match(/[/\\]home[/\\]([^/\\]+)/i);
-  if (linuxMatch) return linuxMatch[1];
+  // These are evidence paths from the imaged system
+  var winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
+  if (winMatch) {
+    var u = winMatch[1];
+    // Filter common system accounts
+    if (["All Users", "Default", "Default User", "Public", "Administrator", "Guest"].includes(u)) return null;
+    return u;
+  }
+  // Linux paths: /home/username/ - only from evidence, not analysis machine
+  var linuxMatch = filePath.match(/[/\\]home[/\\]([^/\\]+)/i);
+  if (linuxMatch) {
+    var _u = linuxMatch[1];
+    if (["sansforensics", "claw", "root", "nobody", "daemon", "ubuntu", "pi", "vagrant"].includes(_u.toLowerCase())) return null;
+    return _u;
+  }
   return null;
 }
 function buildIocItems(report) {
-  const iocs = report.iocs || {};
-  const items = [];
-  const addIoc = (val, subkind) => {
-    const id = "i:" + val;
+  var iocs = report.iocs || {};
+  var items = [];
+  var addIoc = function addIoc(val, subkind) {
+    var id = "i:" + val;
     items.push({
-      id,
+      id: id,
       kind: "ioc",
-      subkind,
+      subkind: subkind,
       raw: val,
       key: val
     });
   };
-  (iocs.ip_addresses || []).slice(0, 6).forEach(v => addIoc(v, "ip"));
-  (iocs.urls || []).slice(0, 5).forEach(v => addIoc(v, "url"));
-  (iocs.email_addresses || []).slice(0, 4).forEach(v => addIoc(v, "email"));
+  (iocs.ip_addresses || []).slice(0, 6).forEach(function (v) {
+    return addIoc(v, "ip");
+  });
+  (iocs.urls || []).slice(0, 5).forEach(function (v) {
+    return addIoc(v, "url");
+  });
+  (iocs.email_addresses || []).slice(0, 4).forEach(function (v) {
+    return addIoc(v, "email");
+  });
   return items;
 }
 
 // Build findings nodes from behavioral flags and threat indicators
 function buildFindingsItems(report) {
-  const findings = [];
-  const flagsByDevice = report.behavioral_flags || {};
-  const seenFindings = new Set();
-  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
-    (flags || []).forEach(flag => {
+  var findings = [];
+  var flagsByDevice = report.behavioral_flags || {};
+  var seenFindings = new Set();
+  Object.entries(flagsByDevice).forEach(function (_ref) {
+    var _ref2 = _slicedToArray(_ref, 2),
+      devId = _ref2[0],
+      flags = _ref2[1];
+    (flags || []).forEach(function (flag) {
       // Create node for each unique behavioral flag
-      const flagId = "f:" + flag.flag_type + ":" + devId;
+      var flagId = "f:" + flag.flag_type + ":" + devId;
       if (!seenFindings.has(flagId)) {
         seenFindings.add(flagId);
         findings.push({
@@ -130,8 +180,8 @@ function buildFindingsItems(report) {
 
       // Extract MITRE ATT&CK techniques if present
       if (flag.mitre_techniques) {
-        (flag.mitre_techniques || []).forEach(tech => {
-          const techId = "m:" + tech.id;
+        (flag.mitre_techniques || []).forEach(function (tech) {
+          var techId = "m:" + tech.id;
           if (!seenFindings.has(techId)) {
             seenFindings.add(techId);
             findings.push({
@@ -146,10 +196,20 @@ function buildFindingsItems(report) {
         });
       }
 
-      // Extract IOCs from flag evidence
-      const evidence = flag.evidence || {};
-      if (evidence.dst_ip) {
-        const iocId = "i:" + evidence.dst_ip;
+      // Extract IOCs from flag evidence (with limits to avoid graph clutter)
+      var evidence = flag.evidence || {};
+      var iocCounts = {
+        ip: 0,
+        domain: 0,
+        hash: 0,
+        file_path: 0
+      };
+      // Count existing IOCs by type
+      findings.forEach(function (f) {
+        if (f.kind === "ioc") iocCounts[f.subkind] = (iocCounts[f.subkind] || 0) + 1;
+      });
+      if (evidence.dst_ip && iocCounts.ip < 50) {
+        var iocId = "i:" + evidence.dst_ip;
         if (!seenFindings.has(iocId)) {
           seenFindings.add(iocId);
           findings.push({
@@ -161,12 +221,12 @@ function buildFindingsItems(report) {
           });
         }
       }
-      if (evidence.dst_host) {
-        const iocId = "i:" + evidence.dst_host;
-        if (!seenFindings.has(iocId)) {
-          seenFindings.add(iocId);
+      if (evidence.dst_host && iocCounts.domain < 50) {
+        var _iocId = "i:" + evidence.dst_host;
+        if (!seenFindings.has(_iocId)) {
+          seenFindings.add(_iocId);
           findings.push({
-            id: iocId,
+            id: _iocId,
             kind: "ioc",
             subkind: "domain",
             raw: evidence.dst_host,
@@ -174,12 +234,12 @@ function buildFindingsItems(report) {
           });
         }
       }
-      if (evidence.hash) {
-        const iocId = "i:" + evidence.hash;
-        if (!seenFindings.has(iocId)) {
-          seenFindings.add(iocId);
+      if (evidence.hash && iocCounts.hash < 50) {
+        var _iocId2 = "i:" + evidence.hash;
+        if (!seenFindings.has(_iocId2)) {
+          seenFindings.add(_iocId2);
           findings.push({
-            id: iocId,
+            id: _iocId2,
             kind: "ioc",
             subkind: "hash",
             raw: evidence.hash,
@@ -187,17 +247,20 @@ function buildFindingsItems(report) {
           });
         }
       }
-      if (evidence.file_path) {
-        const iocId = "i:" + evidence.file_path;
-        if (!seenFindings.has(iocId)) {
-          seenFindings.add(iocId);
-          findings.push({
-            id: iocId,
-            kind: "ioc",
-            subkind: "file_path",
-            raw: evidence.file_path,
-            key: evidence.file_path
-          });
+      if (evidence.file_path && iocCounts.file_path < 30) {
+        // Skip analysis machine paths
+        if (!evidence.file_path.startsWith("/home/sansforensics/") && !evidence.file_path.startsWith("/home/claw/") && !evidence.file_path.startsWith("/mnt/") && !evidence.file_path.startsWith("/tmp/")) {
+          var _iocId3 = "i:" + evidence.file_path;
+          if (!seenFindings.has(_iocId3)) {
+            seenFindings.add(_iocId3);
+            findings.push({
+              id: _iocId3,
+              kind: "ioc",
+              subkind: "file_path",
+              raw: evidence.file_path,
+              key: evidence.file_path
+            });
+          }
         }
       }
     });
@@ -205,7 +268,7 @@ function buildFindingsItems(report) {
   return findings;
 }
 function aggregateUserFlags(report, username) {
-  const user = (report.user_map || {})[username];
+  var user = (report.user_map || {})[username];
   if (!user) return {
     total: 0,
     CRITICAL: 0,
@@ -213,25 +276,34 @@ function aggregateUserFlags(report, username) {
     MEDIUM: 0,
     LOW: 0
   };
-  const agg = {
+  var agg = {
     total: 0,
     CRITICAL: 0,
     HIGH: 0,
     MEDIUM: 0,
     LOW: 0
   };
-  for (const devId of user.devices || []) {
-    const c = countFlags((report.behavioral_flags || {})[devId] || []);
-    agg.total += c.total;
-    agg.CRITICAL += c.CRITICAL;
-    agg.HIGH += c.HIGH;
-    agg.MEDIUM += c.MEDIUM;
-    agg.LOW += c.LOW;
+  var _iterator2 = _createForOfIteratorHelper(user.devices || []),
+    _step2;
+  try {
+    for (_iterator2.s(); !(_step2 = _iterator2.n()).done;) {
+      var devId = _step2.value;
+      var c = countFlags((report.behavioral_flags || {})[devId] || []);
+      agg.total += c.total;
+      agg.CRITICAL += c.CRITICAL;
+      agg.HIGH += c.HIGH;
+      agg.MEDIUM += c.MEDIUM;
+      agg.LOW += c.LOW;
+    }
+  } catch (err) {
+    _iterator2.e(err);
+  } finally {
+    _iterator2.f();
   }
   return agg;
 }
 function osLabel(d) {
-  const t = (d.device_type || "").toLowerCase();
+  var t = (d.device_type || "").toLowerCase();
   if (t.includes("ios")) return "iOS " + (d.os_version || "");
   if (t.includes("android")) return "Android " + (d.os_version || "");
   if (t.includes("server")) return d.os_version || d.os_type || "server";
@@ -245,96 +317,114 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 function describeNode(n, report) {
-  const lines = [];
+  var lines = [];
   if (n.kind === "user") {
-    const u = (report.user_map || {})[n.key] || {};
-    lines.push(`Account: ${u.display_name || n.key}`);
-    if (u.role) lines.push(`Role: ${u.role}`);
-    if ((u.aliases || []).length) lines.push(`Aliases: ${u.aliases.join(", ")}`);
-    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+    var u = (report.user_map || {})[n.key] || {};
+    lines.push("Account: ".concat(u.display_name || n.key));
+    if (u.role) lines.push("Role: ".concat(u.role));
+    if ((u.aliases || []).length) lines.push("Aliases: ".concat(u.aliases.join(", ")));
+    if (n.badge) lines.push("Findings: ".concat(n.badge.count).concat(n.badge.sev ? " (max ".concat(n.badge.sev, ")") : ""));
   } else if (n.kind === "finding") {
-    lines.push(`Finding: ${n.flagType || n.subkind}`);
-    lines.push(`Severity: ${n.severity || "N/A"}`);
-    if (n.summary) lines.push(`Summary: ${n.summary}`);
+    lines.push("Finding: ".concat(n.flagType || n.subkind));
+    lines.push("Severity: ".concat(n.severity || "N/A"));
+    if (n.summary) lines.push("Summary: ".concat(n.summary));
   } else if (n.kind === "mitre") {
-    lines.push(`MITRE ATT&CK: ${n.techniqueId}`);
-    if (n.name) lines.push(`Name: ${n.name}`);
+    lines.push("MITRE ATT&CK: ".concat(n.techniqueId));
+    if (n.name) lines.push("Name: ".concat(n.name));
+  } else if (n.kind === "service") {
+    lines.push("Service: ".concat(n.name || "External"));
+    if (n.hosts) lines.push("Hosts: ".concat(n.hosts.length));
   } else if (n.kind === "ioc") {
-    lines.push(`IOC: ${n.subkind.toUpperCase()}`);
-    lines.push(`Value: ${n.raw}`);
+    lines.push("IOC: ".concat(n.subkind.toUpperCase()));
+    lines.push("Value: ".concat(n.raw));
   } else {
-    const d = (report.device_map || {})[n.key] || {};
-    lines.push(`Device: ${d.hostname || n.key}`);
-    lines.push(`OS: ${osLabel(d)}`);
-    if (d.owner) lines.push(`Owner: ${d.owner}`);else if (d.metadata && d.metadata.user_profiles_found && d.metadata.user_profiles_found.length > 0) {
-      lines.push(`Users: ${d.metadata.user_profiles_found.join(", ")}`);
+    var d = (report.device_map || {})[n.key] || {};
+    lines.push("Device: ".concat(d.hostname || n.key));
+    lines.push("OS: ".concat(osLabel(d)));
+    if (d.owner) lines.push("Owner: ".concat(d.owner));else if (d.metadata && d.metadata.user_profiles_found && d.metadata.user_profiles_found.length > 0) {
+      lines.push("Users: ".concat(d.metadata.user_profiles_found.join(", ")));
     }
-    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+    if (n.badge) lines.push("Findings: ".concat(n.badge.count).concat(n.badge.sev ? " (max ".concat(n.badge.sev, ")") : ""));
   }
   return lines.join("\n");
 }
 function describeEdge(e, n1, n2) {
-  const a = n1.label || n1.key;
-  const b = n2.label || n2.key;
+  var a = n1.label || n1.key;
+  var b = n2.label || n2.key;
   switch (e.kind) {
     case "owns":
-      return `${a} owns ${b}`;
+      return "".concat(a, " owns ").concat(b);
     case "seen_on":
-      return `${a} seen on ${b} (not owner)`;
+      return "".concat(a, " seen on ").concat(b, " (not owner)");
     case "lateral":
-      return `Lateral movement: ${a} → ${b}${e.method ? `\nMethod: ${e.method}` : ""}${e.via ? `\nUser: ${e.via}` : ""}`;
+      return "Lateral movement: ".concat(a, " \u2192 ").concat(b).concat(e.method ? "\nMethod: ".concat(e.method) : "").concat(e.via ? "\nUser: ".concat(e.via) : "");
     case "exfiltrated_to":
       {
-        const parts = [`Exfil/C2: ${a} → ${b}`];
-        if (e.host) parts.push(`Host: ${e.host}`);
-        if (e.bytes) parts.push(`Bytes: ${e.bytes.toLocaleString()}`);
-        if (e.flag) parts.push(`Flag: ${e.flag}`);
+        var parts = ["Exfil/C2: ".concat(a, " \u2192 ").concat(b)];
+        if (e.host) parts.push("Host: ".concat(e.host));
+        if (e.bytes) parts.push("Bytes: ".concat(e.bytes.toLocaleString()));
+        if (e.flag) parts.push("Flag: ".concat(e.flag));
         return parts.join("\n");
       }
     case "has_finding":
-      return `Finding on ${b}: ${e.flagType}`;
+      return "Finding on ".concat(b, ": ").concat(e.flagType);
     case "mitre_technique":
-      return `${b} uses technique ${e.techniqueId}`;
+      return "".concat(b, " uses technique ").concat(e.techniqueId);
     case "ioc":
-      return `${a} contains IOC ${b}`;
+      return "".concat(a, " contains IOC ").concat(b);
     default:
-      return `${a} ↔ ${b}`;
+      return "".concat(a, " \u2194 ").concat(b);
   }
 }
 function edgePath(a, b) {
-  const isCircular = n => n.kind === "user" || n.kind === "ioc" || n.kind === "finding" || n.kind === "mitre";
-  const [from, to] = a.x < b.x ? [a, b] : [b, a];
-  const sx = from.x + (isCircular(from) ? from.r : from.w / 2);
-  const ex = to.x - (isCircular(to) ? to.r : to.w / 2);
-  const sy = from.y,
+  var isCircular = function isCircular(n) {
+    return n.kind === "user" || n.kind === "ioc" || n.kind === "finding" || n.kind === "mitre";
+  };
+  var _ref3 = a.x < b.x ? [a, b] : [b, a],
+    _ref4 = _slicedToArray(_ref3, 2),
+    from = _ref4[0],
+    to = _ref4[1];
+  var sx = from.x + (isCircular(from) ? from.r : from.w / 2);
+  var ex = to.x - (isCircular(to) ? to.r : to.w / 2);
+  var sy = from.y,
     ey = to.y;
-  const mx = (sx + ex) / 2;
-  return `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`;
+  var mx = (sx + ex) / 2;
+  return "M ".concat(sx, " ").concat(sy, " C ").concat(mx, " ").concat(sy, ", ").concat(mx, " ").concat(ey, ", ").concat(ex, " ").concat(ey);
 }
 function buildGraph(report, size) {
-  const userMap = report.user_map || {};
-  const deviceMap = report.device_map || {};
-  const flagsByDevice = report.behavioral_flags || {};
+  var userMap = report.user_map || {};
+  var deviceMap = report.device_map || {};
+  var flagsByDevice = report.behavioral_flags || {};
 
   // Build user list - extract usernames from device evidence files if owner is null
-  const users = Object.entries(userMap).map(([k, u]) => ({
-    id: "u:" + k,
-    kind: "user",
-    raw: u || {},
-    key: k
-  }));
+  var users = Object.entries(userMap).map(function (_ref5) {
+    var _ref6 = _slicedToArray(_ref5, 2),
+      k = _ref6[0],
+      u = _ref6[1];
+    return {
+      id: "u:" + k,
+      kind: "user",
+      raw: u || {},
+      key: k
+    };
+  });
 
   // Extract additional users from device evidence file paths
-  Object.entries(deviceMap).forEach(([devId, dev]) => {
-    const files = dev && dev.evidence_files || [];
-    files.forEach(fp => {
-      const username = extractUsernameFromPath(fp);
-      if (username && !userMap[username]) {
+  var extractedUsernames = new Set();
+  Object.entries(deviceMap).forEach(function (_ref7) {
+    var _ref8 = _slicedToArray(_ref7, 2),
+      devId = _ref8[0],
+      dev = _ref8[1];
+    var files = dev && dev.evidence_files || [];
+    files.forEach(function (fp) {
+      var username = extractUsernameFromPath(fp);
+      if (username && !userMap[username] && !extractedUsernames.has(username)) {
+        extractedUsernames.add(username);
         users.push({
           id: "u:" + username,
           kind: "user",
           raw: {
-            username,
+            username: username,
             display_name: username,
             devices: [devId]
           },
@@ -343,25 +433,33 @@ function buildGraph(report, size) {
       }
     });
   });
-  const devs = Object.entries(deviceMap).map(([k, d]) => ({
-    id: "d:" + k,
-    kind: classifyDevice(d || {}),
-    raw: d || {},
-    key: k
-  }));
+  var devs = Object.entries(deviceMap).map(function (_ref9) {
+    var _ref0 = _slicedToArray(_ref9, 2),
+      k = _ref0[0],
+      d = _ref0[1];
+    return {
+      id: "d:" + k,
+      kind: classifyDevice(d || {}),
+      raw: d || {},
+      key: k
+    };
+  });
 
   // Build findings items (behavioral flags, MITRE techniques, IOCs)
-  const findingsItems = buildFindingsItems(report);
+  var findingsItems = buildFindingsItems(report);
 
   // Aggregate exfiltration services
-  const exfilServices = new Map();
-  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
-    (flags || []).forEach(flag => {
+  var exfilServices = new Map();
+  Object.entries(flagsByDevice).forEach(function (_ref1) {
+    var _ref10 = _slicedToArray(_ref1, 2),
+      devId = _ref10[0],
+      flags = _ref10[1];
+    (flags || []).forEach(function (flag) {
       if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
-      const evidence = flag.evidence || {};
-      const dstHost = evidence.dst_host || evidence.dst_ip || "";
+      var evidence = flag.evidence || {};
+      var dstHost = evidence.dst_host || evidence.dst_ip || "";
       if (!dstHost) return;
-      const serviceType = classifyExfilService(dstHost) || "External";
+      var serviceType = classifyExfilService(dstHost) || "External";
       if (!exfilServices.has(serviceType)) {
         exfilServices.set(serviceType, {
           id: "s:" + serviceType,
@@ -372,59 +470,82 @@ function buildGraph(report, size) {
       }
       exfilServices.get(serviceType).hosts.push({
         host: dstHost,
-        devId,
-        flag
+        devId: devId,
+        flag: flag
       });
     });
   });
-  const columns = [{
+  var columns = [{
     key: "user",
     label: "Accounts",
     items: users
   }, {
     key: "pc",
     label: "Workstations",
-    items: devs.filter(d => d.kind === "pc")
+    items: devs.filter(function (d) {
+      return d.kind === "pc";
+    })
   }, {
     key: "server",
     label: "Servers",
-    items: devs.filter(d => d.kind === "server")
+    items: devs.filter(function (d) {
+      return d.kind === "server";
+    })
   }, {
     key: "mobile",
     label: "Mobile",
-    items: devs.filter(d => d.kind === "mobile")
+    items: devs.filter(function (d) {
+      return d.kind === "mobile";
+    })
   }, {
     key: "network",
     label: "Network",
-    items: devs.filter(d => d.kind === "network")
+    items: devs.filter(function (d) {
+      return d.kind === "network";
+    })
+  }, {
+    key: "service",
+    label: "Services",
+    items: Array.from(exfilServices.values())
   }, {
     key: "finding",
     label: "Findings",
-    items: findingsItems.filter(f => f.kind === "finding")
+    items: findingsItems.filter(function (f) {
+      return f.kind === "finding";
+    })
   }, {
     key: "mitre",
     label: "MITRE",
-    items: findingsItems.filter(f => f.kind === "mitre")
+    items: findingsItems.filter(function (f) {
+      return f.kind === "mitre";
+    })
   }, {
     key: "ioc",
     label: "Indicators",
-    items: findingsItems.filter(f => f.kind === "ioc")
-  }].filter(c => c.items.length > 0).map(c => ({
-    ...c,
-    count: c.items.length
-  }));
+    items: findingsItems.filter(function (f) {
+      return f.kind === "ioc";
+    })
+  }].filter(function (c) {
+    return c.items.length > 0;
+  }).map(function (c) {
+    return _objectSpread(_objectSpread({}, c), {}, {
+      count: c.items.length
+    });
+  });
 
   // Layout sizing
-  const maxItems = Math.max(1, ...columns.map(c => c.items.length));
-  const computedH = HEADER_Y + FOOTER_Y + maxItems * MIN_ROW_H;
-  const totalH = Math.max(size.h, computedH);
-  const colCount = columns.length;
-  const padX = 40;
-  const innerW = size.w - padX * 2;
-  const colGap = innerW / colCount;
-  const nodeW = Math.max(96, Math.min(150, colGap * 0.84));
-  const labelChars = Math.max(10, Math.floor(nodeW / 8));
-  const accentMap = {
+  var maxItems = Math.max.apply(Math, [1].concat(_toConsumableArray(columns.map(function (c) {
+    return c.items.length;
+  }))));
+  var computedH = HEADER_Y + FOOTER_Y + maxItems * MIN_ROW_H;
+  var totalH = Math.max(size.h, computedH);
+  var colCount = columns.length;
+  var padX = 40;
+  var innerW = size.w - padX * 2;
+  var colGap = innerW / colCount;
+  var nodeW = Math.max(96, Math.min(150, colGap * 0.84));
+  var labelChars = Math.max(10, Math.floor(nodeW / 8));
+  var accentMap = {
     user: "#10B981",
     pc: "#3B82F6",
     server: "#A78BFA",
@@ -441,29 +562,29 @@ function buildGraph(report, size) {
     hash: "#10B981",
     file_path: "#6B7280"
   };
-  const nodeById = {};
-  const nodes = [];
-  columns.forEach((col, ci) => {
+  var nodeById = {};
+  var nodes = [];
+  columns.forEach(function (col, ci) {
     col.x = padX + colGap * ci + colGap / 2;
-    const topY = HEADER_Y;
-    const bottomY = totalH - FOOTER_Y;
-    const gapY = (bottomY - topY) / Math.max(col.items.length, 1);
-    col.items.forEach((item, ri) => {
-      const y = topY + gapY * ri + gapY / 2;
-      const kind = item.kind;
-      const isIoc = kind === "ioc";
-      const isUser = kind === "user";
-      const isFinding = kind === "finding";
-      const isMitre = kind === "mitre";
-      const flags = isIoc ? {
+    var topY = HEADER_Y;
+    var bottomY = totalH - FOOTER_Y;
+    var gapY = (bottomY - topY) / Math.max(col.items.length, 1);
+    col.items.forEach(function (item, ri) {
+      var y = topY + gapY * ri + gapY / 2;
+      var kind = item.kind;
+      var isIoc = kind === "ioc";
+      var isUser = kind === "user";
+      var isFinding = kind === "finding";
+      var isMitre = kind === "mitre";
+      var flags = isIoc ? {
         total: 0,
         CRITICAL: 0,
         HIGH: 0,
         MEDIUM: 0,
         LOW: 0
       } : isUser ? aggregateUserFlags(report, item.key) : countFlags((report.behavioral_flags || {})[item.deviceId] || []);
-      const sev = maxSev(flags);
-      let label, sublabel;
+      var sev = maxSev(flags);
+      var label, sublabel;
       if (isIoc) {
         label = truncate(item.raw, 18);
         sublabel = item.subkind.toUpperCase();
@@ -480,8 +601,8 @@ function buildGraph(report, size) {
         label = truncate(item.raw.hostname || item.key, 18);
         sublabel = truncate(osLabel(item.raw), 22);
       }
-      const accentKey = isIoc ? item.subkind : kind;
-      const node = {
+      var accentKey = isIoc ? item.subkind : kind;
+      var node = {
         id: item.id,
         kind: kind,
         subkind: item.subkind,
@@ -489,14 +610,14 @@ function buildGraph(report, size) {
         label: label,
         sublabel: sublabel,
         x: col.x,
-        y,
+        y: y,
         r: isIoc || isFinding || isMitre ? 22 : isUser ? USER_R : 28,
         w: isIoc || isFinding || isMitre ? 44 : nodeW,
         h: isIoc || isFinding || isMitre ? 44 : NODE_H,
         accent: accentMap[accentKey] || "#64748B",
         badge: !isIoc && !isFinding && !isMitre && flags.total > 0 ? {
           count: flags.total,
-          sev
+          sev: sev
         } : null,
         raw: item.raw,
         deviceId: item.deviceId,
@@ -510,32 +631,46 @@ function buildGraph(report, size) {
   });
 
   // Build edges
-  const edges = [];
-  const seenEdge = new Set();
-  const addEdge = e => {
-    const k = `${e.from}|${e.to}|${e.kind}`;
+  var edges = [];
+  var seenEdge = new Set();
+  var addEdge = function addEdge(e) {
+    var k = "".concat(e.from, "|").concat(e.to, "|").concat(e.kind);
     if (seenEdge.has(k)) return;
     seenEdge.add(k);
     edges.push(e);
   };
 
   // User <-> Device ownership
-  for (const [uname, u] of Object.entries(userMap)) {
-    for (const devId of u.devices || []) {
-      if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
-      const dev = deviceMap[devId] || {};
-      const isOwner = dev.owner === uname;
-      addEdge({
-        from: "u:" + uname,
-        to: "d:" + devId,
-        kind: isOwner ? "owns" : "seen_on"
-      });
+  for (var _i = 0, _Object$entries = Object.entries(userMap); _i < _Object$entries.length; _i++) {
+    var _Object$entries$_i = _slicedToArray(_Object$entries[_i], 2),
+      uname = _Object$entries$_i[0],
+      u = _Object$entries$_i[1];
+    var _iterator3 = _createForOfIteratorHelper(u.devices || []),
+      _step3;
+    try {
+      for (_iterator3.s(); !(_step3 = _iterator3.n()).done;) {
+        var devId = _step3.value;
+        if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
+        var dev = deviceMap[devId] || {};
+        var isOwner = dev.owner === uname;
+        addEdge({
+          from: "u:" + uname,
+          to: "d:" + devId,
+          kind: isOwner ? "owns" : "seen_on"
+        });
+      }
+    } catch (err) {
+      _iterator3.e(err);
+    } finally {
+      _iterator3.f();
     }
   }
 
   // Extracted users from file paths -> devices
-  users.filter(u => !userMap[u.key]).forEach(u => {
-    const devId = (u.raw.devices || [])[0];
+  users.filter(function (u) {
+    return !userMap[u.key];
+  }).forEach(function (u) {
+    var devId = (u.raw.devices || [])[0];
     if (devId && nodeById["d:" + devId]) {
       addEdge({
         from: u.id,
@@ -546,31 +681,46 @@ function buildGraph(report, size) {
   });
 
   // Lateral movement
-  for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
-    for (const ind of cu && cu.lateral_movement_indicators || []) {
-      const a = "d:" + ind.from_device;
-      const b = "d:" + ind.to_device;
-      if (nodeById[a] && nodeById[b]) {
-        addEdge({
-          from: a,
-          to: b,
-          kind: "lateral",
-          via: uname,
-          method: ind.method
-        });
+  for (var _i2 = 0, _Object$entries2 = Object.entries(report.correlated_users || {}); _i2 < _Object$entries2.length; _i2++) {
+    var _Object$entries2$_i = _slicedToArray(_Object$entries2[_i2], 2),
+      _uname = _Object$entries2$_i[0],
+      cu = _Object$entries2$_i[1];
+    var _iterator4 = _createForOfIteratorHelper(cu && cu.lateral_movement_indicators || []),
+      _step4;
+    try {
+      for (_iterator4.s(); !(_step4 = _iterator4.n()).done;) {
+        var ind = _step4.value;
+        var a = "d:" + ind.from_device;
+        var b = "d:" + ind.to_device;
+        if (nodeById[a] && nodeById[b]) {
+          addEdge({
+            from: a,
+            to: b,
+            kind: "lateral",
+            via: _uname,
+            method: ind.method
+          });
+        }
       }
+    } catch (err) {
+      _iterator4.e(err);
+    } finally {
+      _iterator4.f();
     }
   }
 
   // Exfiltration: device -> service
-  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
-    (flags || []).forEach(flag => {
+  Object.entries(flagsByDevice).forEach(function (_ref11) {
+    var _ref12 = _slicedToArray(_ref11, 2),
+      devId = _ref12[0],
+      flags = _ref12[1];
+    (flags || []).forEach(function (flag) {
       if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
-      const evidence = flag.evidence || {};
-      const dstHost = evidence.dst_host || evidence.dst_ip || "";
+      var evidence = flag.evidence || {};
+      var dstHost = evidence.dst_host || evidence.dst_ip || "";
       if (!dstHost) return;
-      const serviceType = classifyExfilService(dstHost) || "External";
-      const serviceNodeId = "s:" + serviceType;
+      var serviceType = classifyExfilService(dstHost) || "External";
+      var serviceNodeId = "s:" + serviceType;
       if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
         addEdge({
           from: "d:" + devId,
@@ -585,7 +735,7 @@ function buildGraph(report, size) {
   });
 
   // Findings -> Device edges
-  findingsItems.forEach(f => {
+  findingsItems.forEach(function (f) {
     if (f.kind === "finding" && f.deviceId && nodeById["d:" + f.deviceId]) {
       addEdge({
         from: f.id,
@@ -596,9 +746,14 @@ function buildGraph(report, size) {
     }
     if (f.kind === "mitre") {
       // Connect MITRE techniques to devices with related flags
-      Object.entries(flagsByDevice).forEach(([devId, flags]) => {
-        (flags || []).forEach(flag => {
-          if (flag.mitre_techniques && flag.mitre_techniques.some(t => t.id === f.techniqueId)) {
+      Object.entries(flagsByDevice).forEach(function (_ref13) {
+        var _ref14 = _slicedToArray(_ref13, 2),
+          devId = _ref14[0],
+          flags = _ref14[1];
+        (flags || []).forEach(function (flag) {
+          if (flag.mitre_techniques && flag.mitre_techniques.some(function (t) {
+            return t.id === f.techniqueId;
+          })) {
             addEdge({
               from: f.id,
               to: "d:" + devId,
@@ -611,10 +766,13 @@ function buildGraph(report, size) {
     }
     if (f.kind === "ioc") {
       // Connect IOCs to devices
-      Object.entries(flagsByDevice).forEach(([devId, flags]) => {
-        (flags || []).forEach(flag => {
-          const evidence = flag.evidence || {};
-          const iocMatch = evidence.dst_ip === f.raw || evidence.dst_host === f.raw || evidence.hash === f.raw || evidence.file_path === f.raw;
+      Object.entries(flagsByDevice).forEach(function (_ref15) {
+        var _ref16 = _slicedToArray(_ref15, 2),
+          devId = _ref16[0],
+          flags = _ref16[1];
+        (flags || []).forEach(function (flag) {
+          var evidence = flag.evidence || {};
+          var iocMatch = evidence.dst_ip === f.raw || evidence.dst_host === f.raw || evidence.hash === f.raw || evidence.file_path === f.raw;
           if (iocMatch && nodeById["d:" + devId]) {
             addEdge({
               from: "d:" + devId,
@@ -627,70 +785,101 @@ function buildGraph(report, size) {
     }
   });
   return {
-    nodes,
-    edges,
-    nodeById,
-    columns,
-    totalH
+    nodes: nodes,
+    edges: edges,
+    nodeById: nodeById,
+    columns: columns,
+    totalH: totalH
   };
 }
-function RelationshipGraph({
-  report,
-  selected,
-  onSelect,
-  hoverId,
-  onHover,
-  sevFilter
-}) {
-  const wrapRef = useRef(null);
-  const [size, setSize] = useState({
-    w: 900,
-    h: 600
-  });
-  const svgRef = useRef(null);
-  useEffect(() => {
+function RelationshipGraph(_ref17) {
+  var report = _ref17.report,
+    selected = _ref17.selected,
+    onSelect = _ref17.onSelect,
+    hoverId = _ref17.hoverId,
+    onHover = _ref17.onHover,
+    sevFilter = _ref17.sevFilter;
+  var wrapRef = useRef(null);
+  var _useState = useState({
+      w: 900,
+      h: 600
+    }),
+    _useState2 = _slicedToArray(_useState, 2),
+    size = _useState2[0],
+    setSize = _useState2[1];
+  var svgRef = useRef(null);
+  useEffect(function () {
     if (!wrapRef.current) return;
-    const ro = new ResizeObserver(([e]) => {
-      const r = e.contentRect;
+    var ro = new ResizeObserver(function (_ref18) {
+      var _ref19 = _slicedToArray(_ref18, 1),
+        e = _ref19[0];
+      var r = e.contentRect;
       setSize({
         w: Math.max(600, r.width),
         h: Math.max(400, r.height)
       });
     });
     ro.observe(wrapRef.current);
-    return () => ro.disconnect();
+    return function () {
+      return ro.disconnect();
+    };
   }, []);
-  const graph = useMemo(() => buildGraph(report, size), [report, size]);
-  const neighbors = useMemo(() => {
+  var graph = useMemo(function () {
+    return buildGraph(report, size);
+  }, [report, size]);
+  var neighbors = useMemo(function () {
     if (!selected) return null;
-    const set = new Set([selected]);
-    for (const e of graph.edges) {
-      if (e.from === selected) set.add(e.to);
-      if (e.to === selected) set.add(e.from);
+    var set = new Set([selected]);
+    var _iterator5 = _createForOfIteratorHelper(graph.edges),
+      _step5;
+    try {
+      for (_iterator5.s(); !(_step5 = _iterator5.n()).done;) {
+        var e = _step5.value;
+        if (e.from === selected) set.add(e.to);
+        if (e.to === selected) set.add(e.from);
+      }
+    } catch (err) {
+      _iterator5.e(err);
+    } finally {
+      _iterator5.f();
     }
     return set;
   }, [selected, graph]);
-  const sevMatch = useMemo(() => {
+  var sevMatch = useMemo(function () {
     if (!sevFilter) return null;
-    const set = new Set();
-    const flagsByDev = report.behavioral_flags || {};
-    Object.entries(flagsByDev).forEach(([devId, flags]) => {
-      if ((flags || []).some(f => f.severity === sevFilter)) set.add("d:" + devId);
+    var set = new Set();
+    var flagsByDev = report.behavioral_flags || {};
+    Object.entries(flagsByDev).forEach(function (_ref20) {
+      var _ref21 = _slicedToArray(_ref20, 2),
+        devId = _ref21[0],
+        flags = _ref21[1];
+      if ((flags || []).some(function (f) {
+        return f.severity === sevFilter;
+      })) set.add("d:" + devId);
     });
-    Object.entries(report.user_map || {}).forEach(([uname, u]) => {
-      if ((u.devices || []).some(d => set.has("d:" + d))) set.add("u:" + uname);
+    Object.entries(report.user_map || {}).forEach(function (_ref22) {
+      var _ref23 = _slicedToArray(_ref22, 2),
+        uname = _ref23[0],
+        u = _ref23[1];
+      if ((u.devices || []).some(function (d) {
+        return set.has("d:" + d);
+      })) set.add("u:" + uname);
     });
     return set;
   }, [sevFilter, report]);
 
   // Initialize D3 zoom after render
-  useEffect(() => {
+  useEffect(function () {
     if (!svgRef.current || !window.d3) return;
-    const svg = window.d3.select(svgRef.current);
-    const zoom = window.d3.zoom().scaleExtent([0.1, 4]).on("zoom", event => {
+    var svg = window.d3.select(svgRef.current);
+    var zoom = window.d3.zoom().scaleExtent([0.1, 4]).on("zoom", function (event) {
       svg.selectAll("g.graph-content").attr("transform", event.transform);
     });
     svg.call(zoom);
+    // Double-click to reset zoom
+    svg.on("dblclick.zoom", function () {
+      svg.transition().duration(500).call(zoom.transform, window.d3.zoomIdentity);
+    });
   }, [graph]);
   return /*#__PURE__*/React.createElement("div", {
     ref: wrapRef,
@@ -700,31 +889,33 @@ function RelationshipGraph({
     className: "graph-svg",
     width: "100%",
     height: graph.totalH,
-    viewBox: `0 0 ${size.w} ${graph.totalH}`,
+    viewBox: "0 0 ".concat(size.w, " ").concat(graph.totalH),
     preserveAspectRatio: "xMidYMin meet"
   }, /*#__PURE__*/React.createElement("g", {
     className: "graph-content"
-  }, graph.columns.map(col => /*#__PURE__*/React.createElement("g", {
-    key: col.key
-  }, /*#__PURE__*/React.createElement("text", {
-    className: "col-header",
-    x: col.x,
-    y: 28,
-    textAnchor: "middle"
-  }, col.label.toUpperCase(), " \xB7 ", col.count), /*#__PURE__*/React.createElement("line", {
-    className: "col-rule",
-    x1: col.x,
-    y1: 44,
-    x2: col.x,
-    y2: graph.totalH - 16
-  }))), /*#__PURE__*/React.createElement("g", null, graph.edges.map((e, i) => {
-    const n1 = graph.nodeById[e.from];
-    const n2 = graph.nodeById[e.to];
+  }, graph.columns.map(function (col) {
+    return /*#__PURE__*/React.createElement("g", {
+      key: col.key
+    }, /*#__PURE__*/React.createElement("text", {
+      className: "col-header",
+      x: col.x,
+      y: 28,
+      textAnchor: "middle"
+    }, col.label.toUpperCase(), " \xB7 ", col.count), /*#__PURE__*/React.createElement("line", {
+      className: "col-rule",
+      x1: col.x,
+      y1: 44,
+      x2: col.x,
+      y2: graph.totalH - 16
+    }));
+  }), /*#__PURE__*/React.createElement("g", null, graph.edges.map(function (e, i) {
+    var n1 = graph.nodeById[e.from];
+    var n2 = graph.nodeById[e.to];
     if (!n1 || !n2) return null;
-    const d = edgePath(n1, n2);
-    const hl = neighbors && neighbors.has(e.from) && neighbors.has(e.to);
-    const dim = neighbors && !hl;
-    let cls = "edge";
+    var d = edgePath(n1, n2);
+    var hl = neighbors && neighbors.has(e.from) && neighbors.has(e.to);
+    var dim = neighbors && !hl;
+    var cls = "edge";
     if (e.kind === "owns") cls += " owns";else if (e.kind === "seen_on") cls += " seen-on";else if (e.kind === "lateral") cls += " lateral";else if (e.kind === "exfiltrated_to") cls += " exfil";else if (e.kind === "has_finding") cls += " finding-link";else if (e.kind === "mitre_technique") cls += " mitre-link";else if (e.kind === "ioc") cls += " ioc";
     if (hl) cls += " highlighted";
     if (dim) cls += " dimmed";
@@ -733,22 +924,28 @@ function RelationshipGraph({
       className: cls,
       d: d
     }, /*#__PURE__*/React.createElement("title", null, describeEdge(e, n1, n2)));
-  })), /*#__PURE__*/React.createElement("g", null, graph.nodes.map(n => {
-    const isSel = selected === n.id;
-    const isHover = hoverId === n.id;
-    const inNbhd = neighbors && neighbors.has(n.id);
-    const sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
-    const dim = neighbors && !inNbhd || sevDim;
-    let cls = "node node-" + n.kind;
+  })), /*#__PURE__*/React.createElement("g", null, graph.nodes.map(function (n) {
+    var isSel = selected === n.id;
+    var isHover = hoverId === n.id;
+    var inNbhd = neighbors && neighbors.has(n.id);
+    var sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
+    var dim = neighbors && !inNbhd || sevDim;
+    var cls = "node node-" + n.kind;
     if (isSel || isHover) cls += " highlighted";
     if (dim) cls += " dimmed";
     return /*#__PURE__*/React.createElement("g", {
       key: n.id,
       className: cls,
-      transform: `translate(${n.x}, ${n.y})`,
-      onClick: () => onSelect(n.id),
-      onMouseEnter: () => onHover(n.id),
-      onMouseLeave: () => onHover(null),
+      transform: "translate(".concat(n.x, ", ").concat(n.y, ")"),
+      onClick: function onClick() {
+        return onSelect(n.id);
+      },
+      onMouseEnter: function onMouseEnter() {
+        return onHover(n.id);
+      },
+      onMouseLeave: function onMouseLeave() {
+        return onHover(null);
+      },
       style: {
         color: n.accent
       }
@@ -760,7 +957,7 @@ function RelationshipGraph({
       stroke: n.accent,
       strokeWidth: isSel ? 2 : 1
     }) : n.kind === "ioc" ? /*#__PURE__*/React.createElement("polygon", {
-      points: `0,${-n.r} ${n.r},0 0,${n.r} ${-n.r},0`,
+      points: "0,".concat(-n.r, " ").concat(n.r, ",0 0,").concat(n.r, " ").concat(-n.r, ",0"),
       fill: "rgba(239,68,68,0.06)",
       stroke: n.accent,
       strokeWidth: isSel ? 2 : 1
@@ -774,6 +971,15 @@ function RelationshipGraph({
       stroke: n.accent,
       strokeWidth: isSel ? 2 : 1,
       strokeDasharray: "4 2"
+    }) : n.kind === "service" ? /*#__PURE__*/React.createElement("rect", {
+      x: -n.w / 2,
+      y: -n.h / 2,
+      width: n.w,
+      height: n.h,
+      rx: 12,
+      fill: "rgba(236,72,153,0.1)",
+      stroke: n.accent,
+      strokeWidth: isSel ? 2 : 1
     }) : n.kind === "mitre" ? /*#__PURE__*/React.createElement("rect", {
       x: -n.w / 2,
       y: -n.h / 2,
@@ -802,10 +1008,10 @@ function RelationshipGraph({
       textAnchor: "middle",
       className: "sublabel"
     }, n.sublabel), n.badge && /*#__PURE__*/React.createElement("g", {
-      transform: `translate(${n.kind === "user" ? n.r - 4 : n.w / 2 - 6}, ${n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6})`
+      transform: "translate(".concat(n.kind === "user" ? n.r - 4 : n.w / 2 - 6, ", ").concat(n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6, ")")
     }, /*#__PURE__*/React.createElement("circle", {
       r: 8,
-      className: `flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : ""}`
+      className: "flag-badge ".concat(n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : "")
     }), /*#__PURE__*/React.createElement("text", {
       className: "flag-badge-text"
     }, n.badge.count)));
