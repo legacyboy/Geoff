@@ -296,6 +296,9 @@ class NarrativeReportGenerator:
             "elapsed_minutes": round(elapsed / 60, 1),
             "steps_completed": report_json.get("steps_completed", 0),
             "steps_failed": report_json.get("steps_failed", 0),
+            "classification": report_json.get("classification", ""),
+            "kill_chain_phases": (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []),
+            "mitre_techniques_observed": (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", []),
         }
 
         if self.call_llm:
@@ -335,45 +338,185 @@ class NarrativeReportGenerator:
 
     def _template_executive_summary(self, context: dict,
                                      behavioral_flags: dict) -> str:
-        """Template-based executive summary when LLM is unavailable."""
-        evil = "Indicators of compromise were identified" if \
-            context["evil_found"] else \
-            "No confirmed indicators of compromise were found"
+        """Template-based executive summary when LLM is unavailable.
 
-        summary = (
-            f"This investigation analyzed evidence from "
-            f"{context['num_devices']} device(s) involving "
-            f"{context['num_users']} user account(s). "
-            f"Device types examined: {', '.join(context['device_types'])}. "
-            f"The investigation completed {context['steps_completed']} "
-            f"analysis steps in {context['elapsed_minutes']} minutes"
+        Produces a narrative story, not a data dump. Weaves together the
+        investigation timeline, key findings, and overall impact.
+        """
+        evil = context["evil_found"]
+        severity = context["overall_severity"]
+
+        # Build a narrative opening paragraph
+        lines = []
+        lines.append(
+            f"A comprehensive digital forensic investigation was conducted across "
+            f"{context['num_devices']} devices, analyzing {context['num_users']} "
+            f"user account(s). The investigation spanned "
+            f"{context['elapsed_minutes']} minutes, executing "
+            f"{context['steps_completed']} analysis steps with "
+            f"{context['steps_failed']} steps encountering errors."
         )
 
-        if context["steps_failed"]:
-            summary += f" ({context['steps_failed']} steps failed)"
-        summary += ".\n\n"
+        if evil:
+            lines.append("")
+            lines.append(
+                f"**The investigation confirmed a security compromise of "
+                f"{severity} severity.** Multiple indicators of malicious "
+                f"activity were identified across the examined evidence, "
+                f"consistent with a coordinated intrusion."
+            )
 
-        summary += (
-            f"{evil}. Overall severity assessment: "
-            f"{context['overall_severity']}. "
-            f"Behavioral analysis identified {context['total_behavioral_flags']}"
-            f" anomalies, of which {context['high_severity_flags']} were "
-            f"rated HIGH or CRITICAL severity."
-        )
-
-        if context["high_severity_flags"] > 0:
-            summary += "\n\nKey findings requiring immediate attention:\n"
+            # Collect all flags for the narrative
             all_flags = []
             for flags in behavioral_flags.values():
                 all_flags.extend(flags)
             all_flags.sort(
                 key=lambda f: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2,
                                "LOW": 3}.get(f.get("severity", "LOW"), 4))
-            for flag in all_flags[:5]:
-                if flag.get("severity") in ("CRITICAL", "HIGH"):
-                    summary += f"- {flag.get('summary', 'Unknown flag')}\n"
 
-        return summary
+            high_flags = [f for f in all_flags
+                        if f.get("severity") in ("CRITICAL", "HIGH")]
+            mid_flags = [f for f in all_flags
+                        if f.get("severity") == "MEDIUM"]
+
+            # Build the "what happened" narrative from flag types
+            flag_types_seen = set()
+            for f in all_flags:
+                ft = f.get("flag_type", "")
+                if ft:
+                    flag_types_seen.add(ft)
+
+            # Narrative arc based on evidence - combine flag types with classification
+            # Also derive narrative from kill_chain_phases and classification when behavioral flags sparse
+            categories_seen = set()
+            # Check kill_chain_phases from attack_chain
+            for phase in context.get("kill_chain_phases", []):
+                categories_seen.add(phase.lower())
+            # Also check classification string
+            cls_lower = context.get("classification", "").lower()
+            cat_map = {
+                "phishing": ["phishing", "initial access"],
+                "credential_theft": ["credential theft", "credential access", "credential_theft"],
+                "persistence": ["persistence"],
+                "lateral_movement": ["lateral movement", "lateral_movement"],
+                "cryptominer": ["cryptominer"],
+                "exfiltration": ["exfiltration"],
+                "c2": ["c2", "command and control", "command & control"],
+                "web_shell": ["web shell", "web_shell"],
+                "lolbin": ["lolbin", "living off the land"],
+                "privilege_escalation": ["privilege escalation", "privilege_escalation"],
+                "defense_evasion": ["defense evasion", "defense_evasion"],
+            }
+            for cat, keywords in cat_map.items():
+                for kw in keywords:
+                    if kw in cls_lower:
+                        categories_seen.add(cat)
+            # Merge with flag_types
+            all_cats = flag_types_seen | categories_seen
+
+            lines.append("")
+            lines.append("### Incident Narrative")
+            lines.append("")
+
+            narrative_parts = []
+            if "phishing" in all_cats or "initial_access" in all_cats:
+                narrative_parts.append(
+                    "The attacker gained **initial access** through phishing (T1566), "
+                    "delivering malicious content that compromised user credentials."
+                )
+            if "credential_theft" in all_cats or "credential_access" in all_cats:
+                narrative_parts.append(
+                    "**Credential theft** (T1003) was detected - the attacker harvested "
+                    "passwords and authentication tokens from compromised systems, "
+                    "enabling further access."
+                )
+            if "persistence" in all_cats:
+                narrative_parts.append(
+                    "The attacker established **persistence** (T1053) through mechanisms "
+                    "such as scheduled tasks and registry modifications, ensuring "
+                    "continued access after reboots."
+                )
+            if "lateral_movement" in all_cats:
+                narrative_parts.append(
+                    "**Lateral movement** was observed - the attacker pivoted to "
+                    "internal systems using stolen credentials."
+                )
+            if "cryptominer" in all_cats:
+                narrative_parts.append(
+                    "A **cryptocurrency miner** (T1496) was deployed on compromised "
+                    "systems, consuming computational resources for illicit mining."
+                )
+            if "exfiltration" in all_cats:
+                narrative_parts.append(
+                    "**Data exfiltration** (T1048) was detected - sensitive data was "
+                    "transferred to external infrastructure, including cloud storage "
+                    "services."
+                )
+            if "c2" in all_cats or "command_and_control" in all_cats:
+                narrative_parts.append(
+                    "**Command and control** (C2) communications were identified, "
+                    "indicating ongoing remote control of compromised hosts."
+                )
+            if "web_shell" in all_cats:
+                narrative_parts.append(
+                    "A **web shell** was discovered, providing the attacker "
+                    "HTTP-based remote access to internal systems."
+                )
+            if "lolbin" in all_cats:
+                narrative_parts.append(
+                    "The attacker used **living-off-the-land binaries** (LOLBins) "
+                    "such as PowerShell and certutil to evade detection during "
+                    "execution and data staging."
+                )
+            if "privilege_escalation" in all_cats:
+                narrative_parts.append(
+                    "**Privilege escalation** was detected - the attacker elevated "
+                    "from standard user to administrator or SYSTEM level access."
+                )
+            if "defense_evasion" in all_cats:
+                narrative_parts.append(
+                    "**Defense evasion** techniques were employed - the attacker "
+                    "took steps to avoid detection, such as disabling security tools "
+                    "or clearing event logs."
+                )
+
+            if narrative_parts:
+                for i, part in enumerate(narrative_parts, 1):
+                    lines.append(f"{i}. {part}")
+            elif high_flags:
+                lines.append("The following high-severity findings trace the attack path:")
+                for flag in high_flags[:8]:
+                    lines.append(f"- **[{flag.get('severity')}]** {flag.get('summary', 'Unknown flag')}")
+
+            lines.append("")
+            lines.append(
+                f"Behavioral analysis identified **{context['total_behavioral_flags']}** "
+                f"anomalies across the evidence set, with **{context['high_severity_flags']}** "
+                f"rated HIGH or CRITICAL. These findings collectively paint a picture of "
+                f"a deliberate, multi-stage intrusion requiring immediate containment "
+                f"and remediation."
+            )
+
+            if mid_flags:
+                lines.append("")
+                lines.append(
+                    f"Additionally, {len(mid_flags)} MEDIUM-severity observations were "
+                    f"noted that may represent secondary indicators or benign anomalies "
+                    f"requiring analyst review."
+                )
+        else:
+            # Clean investigation
+            lines.append("")
+            lines.append(
+                f"No confirmed indicators of compromise were identified. "
+                f"Overall severity assessment: {severity}. "
+                f"Behavioral analysis identified {context['total_behavioral_flags']} "
+                f"anomalies, of which {context['high_severity_flags']} were rated "
+                f"HIGH or CRITICAL - these should be reviewed manually to rule out "
+                f"false positives."
+            )
+
+        return "\n".join(lines)
 
     def _render_playbook_summary(self, report_json: dict) -> str:
         """Render condensed playbook execution summary."""
@@ -602,7 +745,7 @@ class NarrativeReportGenerator:
 
     def _generate_findings_section(self, behavioral_flags: dict,
                                     report_json: dict) -> str:
-        """Generate findings grouped by severity."""
+        """Generate findings grouped by severity, with behavioral explanations."""
         all_flags = []
         for dev_id, flags in behavioral_flags.items():
             for flag in flags:
@@ -624,19 +767,36 @@ class NarrativeReportGenerator:
             flags = by_severity[severity]
             if not flags:
                 continue
-            lines.append(f"\n### {severity} ({len(flags)})")
+            lines.append(f"\n### {severity} Severity ({len(flags)} findings)")
             for flag in flags[:20]:
+                ft = flag.get("flag_type", flag.get("summary", "Unknown"))
+                dev = flag.get("device_id", "")
+                summary = flag.get("summary", "")
+
+                # Get MITRE techniques if available
+                mitres = flag.get("mitre_att_ck", [])
+                mitre_links = ""
+                if mitres:
+                    mitre_links = " (" + ", ".join(
+                        f"[{t}](https://attack.mitre.org/techniques/{t}/)"
+                        for t in mitres[:5]
+                    ) + ")"
+
                 lines.append(
-                    f"- **{flag.get('flag_type', '')}** "
-                    f"[{flag.get('device_id', '')}]: "
-                    f"{flag.get('summary', '')}")
-                if flag.get("explanation"):
-                    lines.append(
-                        f"  *{flag['explanation'][:200]}*")
+                    f"- **{ft}** [{dev}]: {summary}{mitre_links}")
+
+                # Use _FLAG_EXPLANATIONS for contextual explanation
+                if ft in _FLAG_EXPLANATIONS:
+                    lines.append(f"  > {_FLAG_EXPLANATIONS[ft]}")
+                elif flag.get("explanation"):
+                    expl = flag.get("explanation", "")
+                    lines.append(f"  *{expl[:200]}*")
 
         if not any(by_severity.values()):
             lines.append(
-                "No behavioral anomalies were detected across any device.")
+                "No behavioral anomalies were detected across any device. "
+                "This may indicate a clean environment or that investigative "
+                "tooling did not trigger behavioral rules.")
 
         return "\n".join(lines)
 

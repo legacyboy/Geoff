@@ -6409,6 +6409,15 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             });
             h += '</div>';
 
+            // ========== EXECUTIVE SUMMARY (from narrative report) ==========
+            const execSummary = report.executive_summary;
+            if (execSummary && execSummary.length > 20) {
+                h += '<div class="report-section" style="background:rgba(96,165,250,0.08);border:1px solid #60A5FA;border-radius:8px;padding:16px;margin:16px 0;">';
+                h += '<h3 style="color:#60A5FA;margin:0 0 12px 0;">\ud83d\udcdd Executive Summary</h3>';
+                h += '<div style="font-size:0.88rem;line-height:1.6;color:#E2E8F0;">' + _md2html(execSummary) + '</div>';
+                h += '</div>';
+            }
+
             // Severity distribution
             const hasSev = Object.values(sevDist).some(v => v > 0);
             if (hasSev) {
@@ -6431,28 +6440,47 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     h += '<p><strong>Kill Chain:</strong> ' + chain.kill_chain_phases.map(_escHtml).join(', ') + '</p>';
                 if (mitreObs.length) {
                     h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#64748B;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
-                    h += mitreObs.map(t => '<span class="mitre-tag">' + _escHtml(t) + '</span>').join('');
+                    h += mitreObs.map(t => '<a href="https://attack.mitre.org/techniques/' + _escHtml(t) + '/" target="_blank" class="mitre-tag" style="text-decoration:none;" title="View on MITRE ATT&CK">' + _escHtml(t) + '</a>').join('');
                     h += '</div></div>';
                 }
                 h += '</div></div>';
             }
 
-            // Playbooks
+            // ========== CONDENSED PLAYBOOK SUMMARY ==========
             if (pbs.length > 0) {
-                h += '<div class="report-section"><h3>Playbooks</h3>';
-                h += '<table class="fe-pb-table"><tr><th>Playbook</th><th>Completed</th><th>Skipped</th><th>Failed</th></tr>';
+                // Group by playbook_id
+                const condensed = {};
                 pbs.forEach(pb => {
-                    h += '<tr><td>' + _escHtml(pb.playbook_id) + '</td>'
-                       + '<td class="' + (pb.steps_completed > 0 ? 'completed' : '') + '">' + (pb.steps_completed||0) + '</td>'
-                       + '<td class="' + (pb.steps_skipped  > 0 ? 'skipped'   : '') + '">' + (pb.steps_skipped ||0) + '</td>'
-                       + '<td class="' + (pb.steps_failed   > 0 ? 'failed'    : '') + '">' + (pb.steps_failed  ||0) + '</td></tr>';
+                    const pid = pb.playbook_id || 'Unknown';
+                    if (!condensed[pid]) {
+                        condensed[pid] = { runs: 0, completed: 0, failed: 0, skipped: 0, unverified: 0 };
+                    }
+                    condensed[pid].runs += 1;
+                    condensed[pid].completed += (pb.steps_completed || 0);
+                    condensed[pid].failed += (pb.steps_failed || 0);
+                    condensed[pid].skipped += (pb.steps_skipped || 0);
+                    condensed[pid].unverified += (pb.steps_unverified || 0);
+                });
+
+                h += '<div class="report-section"><h3>\u2699\ufe0f Playbook Summary</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Playbook</th><th>Runs</th><th>Completed</th><th>Failed</th><th>Skipped</th><th>Total</th></tr>';
+                const sortedPbs = Object.entries(condensed).sort((a, b) => a[0].localeCompare(b[0]));
+                sortedPbs.forEach(([pid, c]) => {
+                    const total = c.completed + c.failed + c.skipped + c.unverified;
+                    h += '<tr>'
+                       + '<td><strong>' + _escHtml(pid) + '</strong></td>'
+                       + '<td>' + c.runs + 'x</td>'
+                       + '<td class="' + (c.completed > 0 ? 'completed' : '') + '">' + c.completed + '</td>'
+                       + '<td class="' + (c.failed > 0 ? 'failed' : '') + '">' + c.failed + '</td>'
+                       + '<td class="' + (c.skipped > 0 ? 'skipped' : '') + '">' + c.skipped + '</td>'
+                       + '<td>' + total + '</td></tr>';
                 });
                 h += '</table></div>';
             }
 
-            // Devices
+            // ========== DEVICES ==========
             if (Object.keys(devMap).length > 0) {
-                h += '<div class="report-section"><h3>Devices Discovered</h3>';
+                h += '<div class="report-section"><h3>\ud83d\udda5\ufe0f Devices Discovered</h3>';
                 h += '<table class="fe-pb-table"><tr><th>Device</th><th>Type</th><th>Owner</th><th>OS</th><th>Files</th></tr>';
                 for (const [devId, dev] of Object.entries(devMap)) {
                     h += '<tr><td>' + _escHtml(devId) + '</td>'
@@ -6464,27 +6492,50 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</table></div>';
             }
 
-            // Narrative report (full markdown report)
+            // ========== NARRATIVE REPORT ==========
             const narrativeMd = report.narrative_report;
             if (narrativeMd && narrativeMd.length > 200) {
-                h += '<div class="report-section"><h3 style="color:#60A5FA;">📝 Narrative Report</h3>';
-                h += '<div style="max-height:500px;overflow-y:auto;background:#0B1220;border:1px solid #334155;border-radius:6px;padding:16px;font-size:0.82rem;line-height:1.5;">';
+                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udcdd Narrative Report</h3>';
+                h += '<div style="max-height:600px;overflow-y:auto;background:#0B1220;border:1px solid #334155;border-radius:6px;padding:16px;font-size:0.82rem;line-height:1.5;">';
                 h += _md2html(narrativeMd);
                 h += '</div></div>';
             }
 
-            // Users/Accounts
-            const userMap = report.user_map || {};
-            const userEntries = Object.entries(userMap).filter(([k, v]) => k !== 'users' && typeof v === 'object');
+            // ========== USERS / ACCOUNTS ==========
+            let userMap = report.user_map || {};
+            let userEntries = Object.entries(userMap).filter(([k, v]) => k !== 'users' && typeof v === 'object');
+
+            // If user_map is empty, extract users from device_map owners
+            if (userEntries.length === 0) {
+                const ownersFound = new Set();
+                const ownerDevices = {};
+                for (const [devId, dev] of Object.entries(devMap)) {
+                    const owner = dev.owner;
+                    if (owner && owner !== 'None' && owner !== 'unknown') {
+                        ownersFound.add(owner);
+                        if (!ownerDevices[owner]) ownerDevices[owner] = [];
+                        ownerDevices[owner].push(devId);
+                    }
+                }
+                if (ownersFound.size > 0) {
+                    const syntheticUserMap = {};
+                    ownersFound.forEach(o => {
+                        syntheticUserMap[o] = { devices: ownerDevices[o] || [], owner: o };
+                    });
+                    userEntries = Object.entries(syntheticUserMap);
+                }
+            }
+
             if (userEntries.length > 0) {
-                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udc64 Accounts Discovered</h3>';
-                h += '<table class="fe-pb-table"><tr><th>Username</th><th>SID</th><th>Last Login</th><th>Profile Path</th></tr>';
+                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udc64 Accounts Discovered (' + userEntries.length + ')</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Username</th><th>SID</th><th>Devices</th><th>Last Login</th></tr>';
                 for (const [uname, udata] of userEntries) {
                     if (typeof udata !== 'object') continue;
+                    const devices = udata.devices || [];
                     h += '<tr><td><strong>' + _escHtml(uname) + '</strong></td>'
                        + '<td><code style="font-size:0.75rem;">' + _escHtml(udata.sid || udata.SID || '\u2014') + '</code></td>'
-                       + '<td>' + _escHtml(udata.last_login || udata.lastLogon || '\u2014') + '</td>'
-                       + '<td style="font-size:0.78rem;color:#64748B;">' + _escHtml(udata.profile_path || udata.homeDir || '\u2014') + '</td></tr>';
+                       + '<td style="font-size:0.78rem;">' + (devices.length > 0 ? devices.map(_escHtml).join(', ') : '\u2014') + '</td>'
+                       + '<td>' + _escHtml(udata.last_login || udata.lastLogon || '\u2014') + '</td></tr>';
                 }
                 h += '</table></div>';
             }
@@ -6533,31 +6584,33 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</div></div>';
             }
 
-            // Indicator hits
+            // ========== INDICATOR HITS (IOCs) ==========
             if (hits.length > 0) {
-                h += '<div class="report-section"><h3>Indicator Hits (' + hits.length + ')</h3>';
-                h += '<div style="max-height:280px;overflow-y:auto;border:1px solid #1F2A3F;border-radius:6px;">';
-                h += '<table class="fe-pb-table" style="margin-top:0;"><tr><th>Category</th><th>Pattern</th><th>Severity</th><th>File</th></tr>';
+                h += '<div class="report-section"><h3 style="color:#F59E0B;">\ud83c\udfaf Indicator Hits (' + hits.length + ')</h3>';
+                h += '<div style="max-height:350px;overflow-y:auto;border:1px solid #1F2A3F;border-radius:6px;">';
+                h += '<table class="fe-pb-table" style="margin-top:0;"><tr><th>Category</th><th>Pattern</th><th>Severity</th><th>MITRE</th><th>File</th></tr>';
                 const shown = hits.slice(0, 100);
                 shown.forEach(hit => {
                     const sc = hit.severity || 'INFO';
                     const fileParts = (hit.file || '').replace(/\\/g,'/').split('/');
                     const shortFile = fileParts.slice(-2).join('/');
+                    const mitres = hit.mitre_techniques || [];
                     h += '<tr>'
-                       + '<td>' + _escHtml(hit.category||'') + '</td>'
+                       + '<td><strong>' + _escHtml(hit.category||'') + '</strong></td>'
                        + '<td><code style="font-size:0.8rem;">' + _escHtml(hit.pattern||'') + '</code></td>'
                        + '<td><span class="fe-severity ' + sc + '" style="font-size:0.7rem;padding:1px 5px;">' + sc + '</span></td>'
+                       + '<td style="font-size:0.75rem;">' + mitres.map(t => '<a href="https://attack.mitre.org/techniques/' + _escHtml(t) + '/" target="_blank" class="mitre-tag" style="text-decoration:none;">' + _escHtml(t) + '</a>').join(' ') + '</td>'
                        + '<td style="font-size:0.78rem;color:#64748B;" title="' + _escHtml(hit.file||'') + '">' + _escHtml(shortFile) + '</td>'
                        + '</tr>';
                 });
-                if (hits.length > 100) h += '<tr><td colspan="4" style="color:#64748B;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
+                if (hits.length > 100) h += '<tr><td colspan="5" style="color:#64748B;text-align:center;padding:8px;">\u2026 ' + (hits.length-100) + ' more hits not shown</td></tr>';
                 h += '</table></div></div>';
             }
 
             // Evidence inventory
             const hasInv = Object.values(inv).some(v => Array.isArray(v) && v.length > 0);
             if (hasInv) {
-                h += '<div class="report-section"><h3>Evidence Inventory</h3><div class="inv-grid">';
+                h += '<div class="report-section"><h3>\ud83d\udcc1 Evidence Inventory</h3><div class="inv-grid">';
                 for (const [type, items] of Object.entries(inv)) {
                     if (Array.isArray(items) && items.length > 0) {
                         h += '<div class="inv-card">'
@@ -6569,16 +6622,31 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</div></div>';
             }
 
-            // Failures
+            // ========== FAILED STEPS ==========
             if (failures.length > 0) {
-                h += '<div class="report-section"><h3 style="color:#EF4444;">Failed Steps (' + failures.length + ')</h3>';
-                failures.slice(0, 15).forEach(f => {
-                    h += '<div style="background:#0F172A;border:1px solid #334155;border-radius:4px;padding:6px 10px;margin-bottom:4px;font-size:0.82rem;">'
-                       + '<span style="color:#EF4444;">' + _escHtml((f.playbook||'') + ' / ' + (f.step||'')) + '</span>'
-                       + (f.error ? '<span style="color:#64748B;"> \u2014 ' + _escHtml(f.error) + '</span>' : '')
-                       + '</div>';
+                h += '<div class="report-section"><h3 style="color:#EF4444;">\u26A0 Failed Steps (' + failures.length + ')</h3>';
+                h += '<table class="fe-pb-table"><tr><th>#</th><th>Playbook</th><th>Module</th><th>Function</th><th>Reason</th></tr>';
+                failures.slice(0, 25).forEach((f, i) => {
+                    const pb = f.playbook || '?';
+                    const mod = f.module || '?';
+                    const func = f.function || '?';
+                    let reason = 'Unknown';
+                    const result = f.result || {};
+                    if (result.error) reason = String(result.error);
+                    else if (result.stderr) reason = String(result.stderr);
+                    else if (f.status === 'skipped') reason = 'Skipped (tool/dependency missing)';
+                    else reason = f.status || 'Failed';
+                    reason = reason.replace(/\|/g, '/').replace(/\n/g, ' ').substring(0, 150);
+                    h += '<tr>'
+                       + '<td>' + (i + 1) + '</td>'
+                       + '<td>' + _escHtml(pb) + '</td>'
+                       + '<td style="color:#64748B;">' + _escHtml(mod) + '</td>'
+                       + '<td style="font-size:0.78rem;">' + _escHtml(func) + '</td>'
+                       + '<td style="color:#EF4444;font-size:0.78rem;">' + _escHtml(reason) + '</td>'
+                       + '</tr>';
                 });
-                h += '</div>';
+                if (failures.length > 25) h += '<tr><td colspan="5" style="color:#64748B;text-align:center;padding:8px;">\u2026 ' + (failures.length - 25) + ' more failures not shown</td></tr>';
+                h += '</table></div>';
             }
 
             // Raw JSON toggle
@@ -7544,6 +7612,15 @@ def get_report_json(case_dir):
             data['narrative_report'] = narrative_md.read_text(encoding='utf-8')
         else:
             data['narrative_report'] = None
+        # Enrich with executive summary from narrative report JSON
+        narrative_json = case_path / "reports" / "narrative_report.json"
+        if narrative_json.exists():
+            try:
+                nr_data = json.loads(narrative_json.read_text(encoding='utf-8'))
+                if nr_data.get('executive_summary'):
+                    data['executive_summary'] = nr_data['executive_summary']
+            except (json.JSONDecodeError, OSError):
+                pass
         return json.dumps(data, indent=2), 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         _log_error("Failed to read report JSON", e)
