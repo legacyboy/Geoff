@@ -1,4 +1,4 @@
-// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Indicators | Findings)
+// Relationship graph — columnar layout (Accounts | Workstations | Servers | Mobile | Network | Services | Findings | MITRE | Indicators)
 // with edges for ownership, lateral-movement, and device→IOC connections.
 
 const { useEffect, useMemo, useRef, useState } = React;
@@ -182,7 +182,8 @@ function buildFindingsItems(report) {
       }
       if (evidence.file_path && iocCounts.file_path < 30) {
         // Skip analysis machine paths
-        if (!evidence.file_path.startsWith("/home/sansforensics") &&
+        if (!evidence.file_path.startsWith("/home/sansforensics/") &&
+            !evidence.file_path.startsWith("/home/claw/") &&
             !evidence.file_path.startsWith("/mnt/") &&
             !evidence.file_path.startsWith("/tmp/")) {
           const iocId = "i:" + evidence.file_path;
@@ -241,6 +242,9 @@ function describeNode(n, report) {
   } else if (n.kind === "mitre") {
     lines.push(`MITRE ATT&CK: ${n.techniqueId}`);
     if (n.name) lines.push(`Name: ${n.name}`);
+  } else if (n.kind === "service") {
+    lines.push(`Service: ${n.name || "External"}`);
+    if (n.hosts) lines.push(`Hosts: ${n.hosts.length}`);
   } else if (n.kind === "ioc") {
     lines.push(`IOC: ${n.subkind.toUpperCase()}`);
     lines.push(`Value: ${n.raw}`);
@@ -345,6 +349,7 @@ function buildGraph(report, size) {
     { key: "server", label: "Servers", items: devs.filter(d => d.kind === "server") },
     { key: "mobile", label: "Mobile", items: devs.filter(d => d.kind === "mobile") },
     { key: "network", label: "Network", items: devs.filter(d => d.kind === "network") },
+    { key: "service", label: "Services", items: Array.from(exfilServices.values()) },
     { key: "finding", label: "Findings", items: findingsItems.filter(f => f.kind === "finding") },
     { key: "mitre", label: "MITRE", items: findingsItems.filter(f => f.kind === "mitre") },
     { key: "ioc", label: "Indicators", items: findingsItems.filter(f => f.kind === "ioc") },
@@ -694,6 +699,14 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                       stroke={n.accent}
                       strokeWidth={isSel ? 2 : 1}
                       strokeDasharray="4 2"
+                    />
+                  ) : n.kind === "service" ? (
+                    <rect
+                      x={-n.w / 2} y={-n.h / 2}
+                      width={n.w} height={n.h} rx={12}
+                      fill="rgba(236,72,153,0.1)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
                     />
                   ) : n.kind === "mitre" ? (
                     <rect
