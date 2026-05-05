@@ -6631,11 +6631,14 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     const mod = f.module || '?';
                     const func = f.function || '?';
                     let reason = 'Unknown';
-                    const result = f.result || {};
-                    if (result.error) reason = String(result.error);
-                    else if (result.stderr) reason = String(result.stderr);
-                    else if (f.status === 'skipped') reason = 'Skipped (tool/dependency missing)';
-                    else reason = f.status || 'Failed';
+                    if (f.reason) reason = String(f.reason);
+                    else {
+                        const result = f.result || {};
+                        if (result.error) reason = String(result.error);
+                        else if (result.stderr) reason = String(result.stderr);
+                        else if (f.status === 'skipped') reason = 'Skipped (tool/dependency missing)';
+                        else reason = f.status || 'Failed';
+                    }
                     reason = reason.replace(/\|/g, '/').replace(/\n/g, ' ').substring(0, 150);
                     h += '<tr>'
                        + '<td>' + (i + 1) + '</td>'
