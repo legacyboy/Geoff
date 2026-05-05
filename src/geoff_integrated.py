@@ -6464,6 +6464,15 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</table></div>';
             }
 
+            // Narrative report (full markdown report)
+            const narrativeMd = report.narrative_report;
+            if (narrativeMd && narrativeMd.length > 200) {
+                h += '<div class="report-section"><h3 style="color:#60A5FA;">📝 Narrative Report</h3>';
+                h += '<div style="max-height:500px;overflow-y:auto;background:#0B1220;border:1px solid #334155;border-radius:6px;padding:16px;font-size:0.82rem;line-height:1.5;">';
+                h += _md2html(narrativeMd);
+                h += '</div></div>';
+            }
+
             // Users/Accounts
             const userMap = report.user_map || {};
             const userEntries = Object.entries(userMap).filter(([k, v]) => k !== 'users' && typeof v === 'object');
@@ -7510,7 +7519,8 @@ def list_reports():
 @app.route('/reports/<case_dir>/json', methods=['GET'])
 @_require_auth
 def get_report_json(case_dir):
-    """Serve the find_evil_report.json for a specific case directory."""
+    """Serve the find_evil_report.json for a specific case directory,
+    enriched with narrative report content if available."""
     safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
@@ -7527,7 +7537,14 @@ def get_report_json(case_dir):
         return jsonify({'error': 'Report not found'}), 404
     try:
         content = report_file.read_text(encoding='utf-8')
-        return content, 200, {'Content-Type': 'application/json; charset=utf-8'}
+        data = json.loads(content)
+        # Enrich with narrative report content
+        narrative_md = case_path / "reports" / "narrative_report.md"
+        if narrative_md.exists():
+            data['narrative_report'] = narrative_md.read_text(encoding='utf-8')
+        else:
+            data['narrative_report'] = None
+        return json.dumps(data, indent=2), 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         _log_error("Failed to read report JSON", e)
         return jsonify({'error': 'Unable to read report'}), 500
