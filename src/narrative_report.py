@@ -27,6 +27,39 @@ def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
     return s[:max_len]
 
 
+def osLabel(d):
+    """Generate OS label for a device from device_type and os_type fields."""
+    # Collect ALL OS indicators from device_type and os_type fields
+    indicators = set()
+    # Support both object attribute access and dict access
+    if isinstance(d, dict):
+        t = (d.get('device_type') or "").lower()
+        os_t = (d.get('os_type') or "").lower()
+        os_v = d.get('os_version') or ''
+    else:
+        t = (getattr(d, 'device_type', None) or "").lower()
+        os_t = (getattr(d, 'os_type', None) or "").lower()
+        os_v = getattr(d, 'os_version', None) or ''
+    
+    if "ios" in t: indicators.add(f"iOS {os_v}".strip())
+    if "android" in t: indicators.add(f"Android {os_v}".strip())
+    if "server" in t or "server" in os_t: indicators.add(f"Server {os_v}".strip())
+    if os_t == "windows": indicators.add(f"Windows {os_v}".strip())
+    if os_t == "linux": indicators.add(f"Linux {os_v}".strip())
+    if os_t == "macos": indicators.add(f"macOS {os_v}".strip())
+    
+    return ", ".join(sorted(indicators)) if indicators else "unknown"
+
+
+# Behavior flag explanations mapping
+_FLAG_EXPLANATIONS = {
+    "no_recovery": "No user accounts recovered from registry hives - may indicate account deletion, use of non-standard authentication, or corrupted registry data",
+    "lateral_movement": "Evidence of lateral movement detected - attacker moved between systems using stolen credentials or remote access tools",
+    "credential_theft": "Credential harvesting detected - passwords, hashes, or tokens were extracted from memory or registry",
+    # Add more as needed
+}
+
+
 class NarrativeReportGenerator:
     """
     Generates human-readable investigation reports from structured findings.
@@ -329,9 +362,10 @@ class NarrativeReportGenerator:
         lines = []
         for dev_id, dev in device_map.items():
             owner = dev.get("owner", "unattributed")
+            os_label = osLabel(dev) if hasattr(dev, 'device_type') or isinstance(dev, dict) else dev.get('os_type', 'unknown')
             lines.append(
                 f"- **{dev_id}** ({dev.get('device_type', 'unknown')}): "
-                f"{dev.get('os_type', 'unknown')}, "
+                f"{os_label}, "
                 f"owner: {owner}, "
                 f"{len(dev.get('evidence_files', []))} evidence file(s)")
 
@@ -981,6 +1015,43 @@ Write the following sections. ACCURACY RULES:
             lines.append("4. Ensure endpoint security tooling is current on all devices")
 
         return "\n".join(lines)
+
+    def _condense_playbook_runs(self, audit_trail_path: str) -> dict:
+        """Group duplicate playbook runs into single entries."""
+        pb_runs = {}  # pb_id -> {count, total_steps}
+        try:
+            with open(audit_trail_path, "r") as f:
+                for line in f:
+                    event = json.loads(line)
+                    if event.get("event") == "playbook_complete":
+                        pb_id = event.get("playbook_id", "Unknown")
+                        completed = event.get("steps_completed", 0)
+                        if pb_id not in pb_runs:
+                            pb_runs[pb_id] = {"count": 0, "total_steps": 0}
+                        pb_runs[pb_id]["count"] += 1
+                        pb_runs[pb_id]["total_steps"] += completed
+        except (FileNotFoundError, IOError):
+            pass
+        return pb_runs
+
+    def _parse_failed_steps(self, audit_trail_path: str) -> list:
+        """Extract failure reasons from audit trail."""
+        failed = []
+        try:
+            with open(audit_trail_path, "r") as f:
+                for line in f:
+                    event = json.loads(line)
+                    if event.get("event") == "unverified" or event.get("status") == "failed":
+                        failed.append({
+                            "playbook": event.get("playbook_id", "Unknown"),
+                            "module": event.get("module", ""),
+                            "function": event.get("function", ""),
+                            "device": event.get("device_id", ""),
+                            "reason": event.get("reason", event.get("error", "Unknown error"))
+                        })
+        except (FileNotFoundError, IOError):
+            pass
+        return failed
 
     # ----------------------------------------------------------------
     # Markdown rendering

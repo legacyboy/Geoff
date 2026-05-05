@@ -1,11 +1,9 @@
-// Relationship graph — columnar layout (Accounts | Workstations | Servers | Mobile | Network | Services | Evidence)
-// with edges for ownership, presence, lateral-movement, evidence sources, and exfiltration.
-// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Indicators)
+// Relationship graph — columnar layout (Users | Machines | Mobile | Network | Indicators | Findings)
 // with edges for ownership, lateral-movement, and device→IOC connections.
 
 const { useEffect, useMemo, useRef, useState } = React;
 
-// Column layout constants — one source of truth so render and layout stay in sync.
+// Column layout constants
 const HEADER_Y = 70;
 const FOOTER_Y = 40;
 const MIN_ROW_H = 64;
@@ -14,7 +12,9 @@ const USER_R = 26;
 
 function classifyDevice(d) {
   const t = (d.device_type || "").toLowerCase();
-  if (t.includes("server")) return "server";
+  const h = (d.hostname || "").toLowerCase();
+  // Check for server indicators in both device_type and hostname
+  if (t.includes("server") || h.includes("server") || h.includes("srv") || h.includes("dc")) return "server";
   if (t.includes("mobile") || t.includes("ios") || t.includes("android")) return "mobile";
   if (t.includes("network") || t.includes("pcap")) return "network";
   return "pc";
@@ -69,11 +69,20 @@ function classifyExfilService(host) {
   if (h.includes("protonmail")) return "ProtonMail";
   if (h.includes("sharepoint")) return "SharePoint";
   if (h.includes("icloud")) return "iCloud";
-  return null; // unknown — caller decides whether to bucket as "External"
+  return null;
 }
 
-function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFilter }) {
-// Build deduplicated IOC items from report.iocs
+function extractUsernameFromPath(filePath) {
+  if (!filePath) return null;
+  // Windows paths: /Users/username/ or C:\Users\username\
+  const winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
+  if (winMatch) return winMatch[1];
+  // Linux paths: /home/username/
+  const linuxMatch = filePath.match(/[/\\]home[/\\]([^/\\]+)/i);
+  if (linuxMatch) return linuxMatch[1];
+  return null;
+}
+
 function buildIocItems(report) {
   const iocs = report.iocs || {};
   const items = [];
@@ -87,196 +96,166 @@ function buildIocItems(report) {
   return items;
 }
 
-function RelationshipGraph({ report, selected, onSelect, hoverId, onHover }) {
-  const wrapRef = useRef(null);
-  const [size, setSize] = useState({ w: 900, h: 600 });
+// Build findings nodes from behavioral flags and threat indicators
+function buildFindingsItems(report) {
+  const findings = [];
+  const flagsByDevice = report.behavioral_flags || {};
+  const seenFindings = new Set();
 
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const ro = new ResizeObserver(([e]) => {
-      const r = e.contentRect;
-      setSize({ w: Math.max(600, r.width), h: Math.max(400, r.height) });
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      // Create node for each unique behavioral flag
+      const flagId = "f:" + flag.flag_type + ":" + devId;
+      if (!seenFindings.has(flagId)) {
+        seenFindings.add(flagId);
+        findings.push({
+          id: flagId,
+          kind: "finding",
+          subkind: flag.flag_type || "behavioral",
+          flagType: flag.flag_type,
+          severity: flag.severity,
+          summary: flag.summary,
+          deviceId: devId,
+          evidence: flag.evidence,
+        });
+      }
+
+      // Extract MITRE ATT&CK techniques if present
+      if (flag.mitre_techniques) {
+        (flag.mitre_techniques || []).forEach(tech => {
+          const techId = "m:" + tech.id;
+          if (!seenFindings.has(techId)) {
+            seenFindings.add(techId);
+            findings.push({
+              id: techId,
+              kind: "mitre",
+              subkind: "mitre",
+              techniqueId: tech.id,
+              name: tech.name || tech.id,
+              severity: flag.severity,
+            });
+          }
+        });
+      }
+
+      // Extract IOCs from flag evidence
+      const evidence = flag.evidence || {};
+      if (evidence.dst_ip) {
+        const iocId = "i:" + evidence.dst_ip;
+        if (!seenFindings.has(iocId)) {
+          seenFindings.add(iocId);
+          findings.push({ id: iocId, kind: "ioc", subkind: "ip", raw: evidence.dst_ip, key: evidence.dst_ip });
+        }
+      }
+      if (evidence.dst_host) {
+        const iocId = "i:" + evidence.dst_host;
+        if (!seenFindings.has(iocId)) {
+          seenFindings.add(iocId);
+          findings.push({ id: iocId, kind: "ioc", subkind: "domain", raw: evidence.dst_host, key: evidence.dst_host });
+        }
+      }
+      if (evidence.hash) {
+        const iocId = "i:" + evidence.hash;
+        if (!seenFindings.has(iocId)) {
+          seenFindings.add(iocId);
+          findings.push({ id: iocId, kind: "ioc", subkind: "hash", raw: evidence.hash, key: evidence.hash });
+        }
+      }
+      if (evidence.file_path) {
+        const iocId = "i:" + evidence.file_path;
+        if (!seenFindings.has(iocId)) {
+          seenFindings.add(iocId);
+          findings.push({ id: iocId, kind: "ioc", subkind: "file_path", raw: evidence.file_path, key: evidence.file_path });
+        }
+      }
     });
-    ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, []);
+  });
 
-  const graph = useMemo(() => buildGraph(report, size), [report, size]);
+  return findings;
+}
 
-  const neighbors = useMemo(() => {
-    if (!selected) return null;
-    const set = new Set([selected]);
-    for (const e of graph.edges) {
-      if (e.from === selected) set.add(e.to);
-      if (e.to === selected) set.add(e.from);
+function aggregateUserFlags(report, username) {
+  const user = (report.user_map || {})[username];
+  if (!user) return { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+  const agg = { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+  for (const devId of user.devices || []) {
+    const c = countFlags((report.behavioral_flags || {})[devId] || []);
+    agg.total += c.total;
+    agg.CRITICAL += c.CRITICAL;
+    agg.HIGH += c.HIGH;
+    agg.MEDIUM += c.MEDIUM;
+    agg.LOW += c.LOW;
+  }
+  return agg;
+}
+
+function osLabel(d) {
+  const t = (d.device_type || "").toLowerCase();
+  if (t.includes("ios"))     return "iOS "     + (d.os_version || "");
+  if (t.includes("android")) return "Android " + (d.os_version || "");
+  if (t.includes("server")) return d.os_version || d.os_type || "server";
+  if (d.os_type === "windows") return d.os_version || "Windows";
+  if (d.os_type === "linux") return d.os_version || "Linux";
+  if (d.os_type === "macos") return d.os_version || "macOS";
+  return d.os_type || "device";
+}
+
+function truncate(s, n) { s = s == null ? "" : String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+function describeNode(n, report) {
+  const lines = [];
+  if (n.kind === "user") {
+    const u = (report.user_map || {})[n.key] || {};
+    lines.push(`Account: ${u.display_name || n.key}`);
+    if (u.role) lines.push(`Role: ${u.role}`);
+    if ((u.aliases || []).length) lines.push(`Aliases: ${u.aliases.join(", ")}`);
+    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+  } else if (n.kind === "finding") {
+    lines.push(`Finding: ${n.flagType || n.subkind}`);
+    lines.push(`Severity: ${n.severity || "N/A"}`);
+    if (n.summary) lines.push(`Summary: ${n.summary}`);
+  } else if (n.kind === "mitre") {
+    lines.push(`MITRE ATT&CK: ${n.techniqueId}`);
+    if (n.name) lines.push(`Name: ${n.name}`);
+  } else if (n.kind === "ioc") {
+    lines.push(`IOC: ${n.subkind.toUpperCase()}`);
+    lines.push(`Value: ${n.raw}`);
+  } else {
+    const d = (report.device_map || {})[n.key] || {};
+    lines.push(`Device: ${d.hostname || n.key}`);
+    lines.push(`OS: ${osLabel(d)}`);
+    if (d.owner) lines.push(`Owner: ${d.owner}`);
+    else if (d.metadata && d.metadata.user_profiles_found && d.metadata.user_profiles_found.length > 0) {
+      lines.push(`Users: ${d.metadata.user_profiles_found.join(", ")}`);
     }
-    return set;
-  }, [selected, graph]);
+    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
+  }
+  return lines.join("\n");
+}
 
-  // Set of node ids that carry (or transitively touch) a flag of the filtered severity.
-  const sevMatch = useMemo(() => {
-    if (!sevFilter) return null;
-    const set = new Set();
-    const flagsByDev = report.behavioral_flags || {};
-    Object.entries(flagsByDev).forEach(([devId, flags]) => {
-      if ((flags || []).some(f => f.severity === sevFilter)) set.add("d:" + devId);
-    });
-    Object.entries(report.user_map || {}).forEach(([uname, u]) => {
-      if ((u.devices || []).some(d => set.has("d:" + d))) set.add("u:" + uname);
-    });
-    return set;
-  }, [sevFilter, report]);
-
-  return (
-    <div ref={wrapRef} className="graph-stage">
-      <svg
-        className="graph-svg"
-        width="100%"
-        height={graph.totalH}
-        viewBox={`0 0 ${size.w} ${graph.totalH}`}
-        preserveAspectRatio="xMidYMin meet"
-      >
-        {/* Column headers + rules */}
-        {graph.columns.map((col) => (
-          <g key={col.key}>
-            <text className="col-header" x={col.x} y={28} textAnchor="middle">
-              {col.label.toUpperCase()} · {col.count}
-            </text>
-            <line className="col-rule" x1={col.x} y1={44} x2={col.x} y2={graph.totalH - 16} />
-          </g>
-        ))}
-
-        {/* Edges — IOC edges drawn first (behind) */}
-        <g>
-          {graph.edges.map((e, i) => {
-            const n1 = graph.nodeById[e.from];
-            const n2 = graph.nodeById[e.to];
-            if (!n1 || !n2) return null;
-            const d = edgePath(n1, n2);
-            const hl = neighbors && neighbors.has(e.from) && neighbors.has(e.to);
-            const dim = neighbors && !hl;
-            let cls = "edge";
-            if (e.kind === "owns") cls += " owns";
-            else if (e.kind === "seen_on") cls += " seen-on";
-            else if (e.kind === "lateral") cls += " lateral";
-            else if (e.kind === "exfiltrated_to") cls += " exfil";
-            else if (e.kind === "evidence_source") cls += " evidence-link";
-            if (hl) cls += " highlighted";
-            if (e.kind === "lateral") cls += " lateral";
-            if (e.kind === "ioc")     cls += " ioc";
-            if (hl)  cls += " highlighted";
-            if (dim) cls += " dimmed";
-            return (
-              <path key={i} className={cls} d={d}>
-                <title>{describeEdge(e, n1, n2)}</title>
-              </path>
-            );
-          })}
-        </g>
-
-        {/* Nodes */}
-        <g>
-          {graph.nodes.map((n) => {
-            const isSel = selected === n.id;
-            const isHover = hoverId === n.id;
-            const inNeighborhood = neighbors && neighbors.has(n.id);
-            const sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
-            const dim = (neighbors && !inNeighborhood) || sevDim;
-            let cls = "node node-" + n.kind;
-            const isSel    = selected === n.id;
-            const isHover  = hoverId === n.id;
-            const inNbhd   = neighbors && neighbors.has(n.id);
-            const dim      = neighbors && !inNbhd;
-            let cls = "node";
-            if (isSel || isHover) cls += " highlighted";
-            if (dim) cls += " dimmed";
-            return (
-              <g
-                key={n.id}
-                className={cls}
-                transform={`translate(${n.x}, ${n.y})`}
-                onClick={() => onSelect(n.id)}
-                onMouseEnter={() => onHover(n.id)}
-                onMouseLeave={() => onHover(null)}
-                style={{ color: n.accent }}
-              >
-                <title>{describeNode(n, report)}</title>
-                {n.kind === "user" ? (
-                  <circle
-                    cx={0} cy={0} r={n.r}
-                    fill="rgba(16,185,129,0.08)"
-                    stroke={n.accent}
-                    strokeWidth={isSel ? 2 : 1}
-                  />
-                ) : n.kind === "evidence" ? (
-                  <rect
-                    x={-n.w / 2} y={-n.h / 2}
-                    width={n.w} height={n.h} rx={4}
-                    fill="rgba(6,182,212,0.15)"
-                    stroke={n.accent}
-                    strokeWidth={isSel ? 2 : 1}
-                    strokeDasharray="4 2"
-                  />
-                ) : n.kind === "service" ? (
-                  <rect
-                    x={-n.w / 2} y={-n.h / 2}
-                    width={n.w} height={n.h} rx={20}
-                    fill="rgba(236,72,153,0.15)"
-                ) : n.kind === "ioc" ? (
-                  <polygon
-                    points={`0,${-n.r} ${n.r},0 0,${n.r} ${-n.r},0`}
-                    fill="rgba(239,68,68,0.06)"
-                    stroke={n.accent}
-                    strokeWidth={isSel ? 2 : 1}
-                  />
-                ) : (
-                  <rect
-                    x={-n.w / 2} y={-n.h / 2}
-                    width={n.w} height={n.h} rx={6}
-                    fill="rgba(30,41,59,0.9)"
-                    stroke={n.accent}
-                    strokeWidth={isSel ? 2 : 1}
-                  />
-                )}
-                <text x={0} y={n.kind === "user" ? 4 : -3} textAnchor="middle">
-                  {n.label || ""}
-                <text
-                  x={0}
-                  y={n.kind === "user" || n.kind === "ioc" ? 4 : -3}
-                  textAnchor="middle"
-                >
-                  {n.label}
-                </text>
-                {n.sublabel && (
-                  <text
-                    x={0}
-                    y={n.kind === "user" || n.kind === "ioc" ? 18 : 12}
-                    textAnchor="middle"
-                    className="sublabel"
-                  >
-                    {n.sublabel}
-                  </text>
-                )}
-                {/* Severity / count badge */}
-                {/* Severity badge — not shown on IOC nodes */}
-                {n.badge && (
-                  <g transform={`translate(${n.kind === "user" ? n.r - 4 : n.w / 2 - 6}, ${n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6})`}>
-                    <circle r={8} className={`flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : ""}`} />
-                    <text className="flag-badge-text">{n.badge.count}</text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-    </div>
-  );
+function describeEdge(e, n1, n2) {
+  const a = n1.label || n1.key;
+  const b = n2.label || n2.key;
+  switch (e.kind) {
+    case "owns": return `${a} owns ${b}`;
+    case "seen_on": return `${a} seen on ${b} (not owner)`;
+    case "lateral": return `Lateral movement: ${a} → ${b}${e.method ? `\nMethod: ${e.method}` : ""}${e.via ? `\nUser: ${e.via}` : ""}`;
+    case "exfiltrated_to": {
+      const parts = [`Exfil/C2: ${a} → ${b}`];
+      if (e.host) parts.push(`Host: ${e.host}`);
+      if (e.bytes) parts.push(`Bytes: ${e.bytes.toLocaleString()}`);
+      if (e.flag) parts.push(`Flag: ${e.flag}`);
+      return parts.join("\n");
+    }
+    case "has_finding": return `Finding on ${b}: ${e.flagType}`;
+    case "mitre_technique": return `${b} uses technique ${e.techniqueId}`;
+    case "ioc": return `${a} contains IOC ${b}`;
+    default: return `${a} ↔ ${b}`;
+  }
 }
 
 function edgePath(a, b) {
-  // Curved connector between two nodes (horizontal S)
-  const isCircular = n => n.kind === "user" || n.kind === "ioc";
+  const isCircular = n => n.kind === "user" || n.kind === "ioc" || n.kind === "finding" || n.kind === "mitre";
   const [from, to] = a.x < b.x ? [a, b] : [b, a];
   const sx = from.x + (isCircular(from) ? from.r : from.w / 2);
   const ex = to.x   - (isCircular(to)   ? to.r   : to.w   / 2);
@@ -290,14 +269,35 @@ function buildGraph(report, size) {
   const deviceMap = report.device_map || {};
   const flagsByDevice = report.behavioral_flags || {};
 
+  // Build user list - extract usernames from device evidence files if owner is null
   const users = Object.entries(userMap).map(([k, u]) => ({
     id: "u:" + k, kind: "user", raw: u || {}, key: k,
   }));
+
+  // Extract additional users from device evidence file paths
+  Object.entries(deviceMap).forEach(([devId, dev]) => {
+    const files = (dev && dev.evidence_files) || [];
+    files.forEach(fp => {
+      const username = extractUsernameFromPath(fp);
+      if (username && !userMap[username]) {
+        users.push({
+          id: "u:" + username,
+          kind: "user",
+          raw: { username, display_name: username, devices: [devId] },
+          key: username,
+        });
+      }
+    });
+  });
+
   const devs = Object.entries(deviceMap).map(([k, d]) => ({
     id: "d:" + k, kind: classifyDevice(d || {}), raw: d || {}, key: k,
   }));
 
-  // Aggregate exfiltration services (one node per known service brand)
+  // Build findings items (behavioral flags, MITRE techniques, IOCs)
+  const findingsItems = buildFindingsItems(report);
+
+  // Aggregate exfiltration services
   const exfilServices = new Map();
   Object.entries(flagsByDevice).forEach(([devId, flags]) => {
     (flags || []).forEach(flag => {
@@ -313,181 +313,107 @@ function buildGraph(report, size) {
     });
   });
 
-  // Aggregate evidence by TYPE (one bucket per evidence_type — not per file).
-  // This keeps the graph readable when devices have lots of evidence.
-  const evidenceBuckets = new Map(); // type -> { type, devIds:Set, files:[{path,devId}] }
-  const getBucket = (t) => {
-    if (!evidenceBuckets.has(t)) {
-      evidenceBuckets.set(t, { type: t, devIds: new Set(), files: [] });
-    }
-    return evidenceBuckets.get(t);
-  };
-  Object.entries(deviceMap).forEach(([devId, dev]) => {
-    const declared = (dev && dev.evidence_types) || [];
-    const files = (dev && dev.evidence_files) || [];
-    // Ensure each declared type has an edge to the device, even if no files match it
-    declared.forEach(t => { getBucket(t).devIds.add(devId); });
-    // Bucket each file by guessed type (fall back to first declared, then "other")
-    files.forEach(fp => {
-      const guessed = guessEvidenceTypeFromPath(fp);
-      const t = guessed || declared[0] || "other";
-      const b = getBucket(t);
-      b.devIds.add(devId);
-      b.files.push({ path: fp, devId });
-    });
-  });
-
-  const evidenceItems = Array.from(evidenceBuckets.values()).map(b => ({
-    id: "e:" + b.type,
-    kind: "evidence",
-    type: b.type,
-    devIds: Array.from(b.devIds),
-    files: b.files,
-  }));
-
   const columns = [
     { key: "user", label: "Accounts", items: users },
     { key: "pc", label: "Workstations", items: devs.filter(d => d.kind === "pc") },
     { key: "server", label: "Servers", items: devs.filter(d => d.kind === "server") },
     { key: "mobile", label: "Mobile", items: devs.filter(d => d.kind === "mobile") },
     { key: "network", label: "Network", items: devs.filter(d => d.kind === "network") },
-    { key: "service", label: "Services", items: Array.from(exfilServices.values()) },
-    { key: "evidence", label: "Evidence", items: evidenceItems },
+    { key: "finding", label: "Findings", items: findingsItems.filter(f => f.kind === "finding") },
+    { key: "mitre", label: "MITRE", items: findingsItems.filter(f => f.kind === "mitre") },
+    { key: "ioc", label: "Indicators", items: findingsItems.filter(f => f.kind === "ioc") },
   ].filter(c => c.items.length > 0).map(c => ({ ...c, count: c.items.length }));
 
-  // Layout sizing — let the graph grow taller when a column has many items, so
-  // the surrounding container scrolls instead of nodes being squashed on top of each other.
+  // Layout sizing
   const maxItems = Math.max(1, ...columns.map(c => c.items.length));
   const computedH = HEADER_Y + FOOTER_Y + maxItems * MIN_ROW_H;
   const totalH = Math.max(size.h, computedH);
 
   const colCount = columns.length;
-  const padX = 32;
+  const padX = 40;
   const innerW = size.w - padX * 2;
   const colGap = innerW / colCount;
-  // Node width adapts so columns don't visually overlap when there are 6–7 of them.
   const nodeW = Math.max(96, Math.min(150, colGap * 0.84));
   const labelChars = Math.max(10, Math.floor(nodeW / 8));
-  const users    = Object.entries(report.user_map   || {}).map(([k, u]) => ({ id: "u:" + k, kind: "user", raw: u, key: k }));
-  const devs     = Object.entries(report.device_map || {}).map(([k, d]) => ({ id: "d:" + k, kind: classifyDevice(d), raw: d, key: k }));
-  const iocItems = buildIocItems(report);
-
-  const columns = [
-    { key: "user",    label: "Accounts",    items: users },
-    { key: "pc",      label: "Workstations",items: devs.filter((d) => d.kind === "pc") },
-    { key: "server",  label: "Servers",     items: devs.filter((d) => d.kind === "server") },
-    { key: "mobile",  label: "Mobile",      items: devs.filter((d) => d.kind === "mobile") },
-    { key: "network", label: "Network",     items: devs.filter((d) => d.kind === "network") },
-    { key: "ioc",     label: "Indicators",  items: iocItems },
-  ].filter((c) => c.items.length > 0).map((c) => ({ ...c, count: c.items.length }));
-
-  const colCount = columns.length;
-  const padX     = 40;
-  const innerW   = size.w - padX * 2;
-  const colGap   = innerW / colCount;
 
   const accentMap = {
-    user:    "#10B981",
-    pc:      "#3B82F6",
-    server:  "#A78BFA",
-    mobile:  "#F59E0B",
+    user: "#10B981",
+    pc: "#3B82F6",
+    server: "#A78BFA",
+    mobile: "#F59E0B",
     network: "#64748B",
+    finding: "#F59E0B",
+    mitre: "#EF4444",
+    ioc: "#EF4444",
     service: "#EC4899",
-    evidence: "#06B6D4",
-    // IOC subkinds
-    ip:      "#EF4444",
-    url:     "#F97316",
-    email:   "#EC4899",
+    ip: "#EF4444",
+    url: "#F97316",
+    email: "#EC4899",
+    domain: "#8B5CF6",
+    hash: "#10B981",
+    file_path: "#6B7280",
   };
 
   const nodeById = {};
-  const nodes    = [];
+  const nodes = [];
 
   columns.forEach((col, ci) => {
     col.x = padX + colGap * ci + colGap / 2;
     const topY = HEADER_Y;
     const bottomY = totalH - FOOTER_Y;
     const gapY = (bottomY - topY) / Math.max(col.items.length, 1);
+
     col.items.forEach((item, ri) => {
       const y = topY + gapY * ri + gapY / 2;
-      let label = "", sublabel = "", badge = null;
       const kind = item.kind;
+      const isIoc = kind === "ioc";
+      const isUser = kind === "user";
+      const isFinding = kind === "finding";
+      const isMitre = kind === "mitre";
 
-      if (kind === "user") {
-        const flags = aggregateUserFlags(report, item.key);
-        const sev = maxSev(flags);
-        label = (item.raw && (item.raw.display_name || item.raw.username)) || item.key;
-        sublabel = (item.raw && item.raw.role) || "user";
-        badge = flags.total > 0 ? { count: flags.total, sev } : null;
-      } else if (kind === "evidence") {
-        const fileCount = (item.files || []).length;
-        const devCount = (item.devIds || []).length;
-        label = formatEvidenceType(item.type);
-        sublabel = `${fileCount} file${fileCount === 1 ? "" : "s"} · ${devCount} dev${devCount === 1 ? "" : "s"}`;
-        badge = fileCount > 0 ? { count: fileCount, sev: null } : null;
-      } else if (kind === "service") {
-        label = item.name;
-        sublabel = `${item.hosts.length} connection${item.hosts.length === 1 ? "" : "s"}`;
-        badge = { count: item.hosts.length, sev: "HIGH" };
-      } else {
-        // device kinds: pc, server, mobile, network
-        const flags = countFlags(flagsByDevice[item.key] || []);
-        const sev = maxSev(flags);
-        label = (item.raw && item.raw.hostname) || item.key;
-        sublabel = osLabel(item.raw || {});
-        badge = flags.total > 0 ? { count: flags.total, sev } : null;
-      }
-
-      const node = {
-        id: item.id,
-        kind,
-        key: item.key || item.type || item.name,
-        label: truncate(label, labelChars + 4),
-        sublabel: truncate(sublabel, labelChars + 8),
-        x: col.x,
-        y,
-        r: USER_R,
-        w: nodeW,
-        h: NODE_H,
-        accent: accentMap[kind] || "#64748B",
-        badge,
-        raw: item.raw || item,
-    const topY    = 70;
-    const bottomY = size.h - 40;
-    const gapY    = (bottomY - topY) / Math.max(col.items.length, 1);
-
-    col.items.forEach((item, ri) => {
-      const y      = topY + gapY * ri + gapY / 2;
-      const isIoc  = item.kind === "ioc";
-      const isUser = item.kind === "user";
-
-      const flags = isIoc  ? { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
+      const flags = isIoc ? { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
                   : isUser ? aggregateUserFlags(report, item.key)
-                  :          countFlags((report.behavioral_flags || {})[item.key] || []);
+                  :          countFlags((report.behavioral_flags || {})[item.deviceId] || []);
       const sev = maxSev(flags);
 
-      const label    = isIoc  ? item.raw
-                     : isUser ? (item.raw.display_name || item.raw.username || item.key)
-                     :          (item.raw.hostname || item.key);
-      const sublabel = isIoc  ? item.subkind.toUpperCase()
-                     : isUser ? (item.raw.role || "user")
-                     :          osLabel(item.raw);
+      let label, sublabel;
+      if (isIoc) {
+        label = truncate(item.raw, 18);
+        sublabel = item.subkind.toUpperCase();
+      } else if (isUser) {
+        label = truncate((item.raw.display_name || item.raw.username || item.key), 18);
+        sublabel = truncate((item.raw.role || "user"), 22);
+      } else if (isFinding) {
+        label = truncate(item.flagType || item.subkind, 18);
+        sublabel = truncate(sev || "N/A", 22);
+      } else if (isMitre) {
+        label = truncate(item.techniqueId, 18);
+        sublabel = truncate(item.name || "MITRE", 22);
+      } else {
+        label = truncate((item.raw.hostname || item.key), 18);
+        sublabel = truncate(osLabel(item.raw), 22);
+      }
 
-      const accentKey = isIoc ? item.subkind : item.kind;
+      const accentKey = isIoc ? item.subkind : kind;
       const node = {
-        id:       item.id,
-        kind:     item.kind,
-        subkind:  item.subkind,
-        key:      item.key,
-        label:    truncate(label, 18),
-        sublabel: truncate(sublabel, 22),
+        id: item.id,
+        kind: kind,
+        subkind: item.subkind,
+        key: item.key,
+        label: label,
+        sublabel: sublabel,
         x: col.x,
         y,
-        r: isIoc ? 22 : 28,     // diamond/circle radius
-        w: 150, h: 44,          // rectangle dimensions (unused for user/ioc)
+        r: isIoc || isFinding || isMitre ? 22 : (isUser ? USER_R : 28),
+        w: isIoc || isFinding || isMitre ? 44 : nodeW,
+        h: isIoc || isFinding || isMitre ? 44 : NODE_H,
         accent: accentMap[accentKey] || "#64748B",
-        badge:  (!isIoc && flags.total > 0) ? { count: flags.total, sev } : null,
-        raw:    item.raw,
+        badge: (!isIoc && !isFinding && !isMitre && flags.total > 0) ? { count: flags.total, sev } : null,
+        raw: item.raw,
+        deviceId: item.deviceId,
+        flagType: item.flagType,
+        severity: item.severity,
+        techniqueId: item.techniqueId,
       };
       nodes.push(node);
       nodeById[node.id] = node;
@@ -504,46 +430,25 @@ function buildGraph(report, size) {
     edges.push(e);
   };
 
-  // User <-> Device: distinguish ownership from presence.
-  // Source 1: user_map[*].devices
+  // User <-> Device ownership
   for (const [uname, u] of Object.entries(userMap)) {
-    for (const devId of (u && u.devices) || []) {
+    for (const devId of (u.devices || [])) {
       if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
       const dev = deviceMap[devId] || {};
       const isOwner = dev.owner === uname;
       addEdge({ from: "u:" + uname, to: "d:" + devId, kind: isOwner ? "owns" : "seen_on" });
     }
   }
-  // Source 2: device_map[*].metadata.user_profiles_found — catches users who
-  // appear on a device but aren't listed in their own user_map.devices entry.
-  for (const [devId, dev] of Object.entries(deviceMap)) {
-    const profiles = (dev && dev.metadata && dev.metadata.user_profiles_found) || [];
-    for (const uname of profiles) {
-      if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
-      const isOwner = dev.owner === uname;
-      addEdge({ from: "u:" + uname, to: "d:" + devId, kind: isOwner ? "owns" : "seen_on" });
-    }
-  }
-  // Source 3: also accept the device's declared owner, even if user_map.devices missed it.
-  for (const [devId, dev] of Object.entries(deviceMap)) {
-    const owner = dev && dev.owner;
-    if (owner && nodeById["u:" + owner] && nodeById["d:" + devId]) {
-      addEdge({ from: "u:" + owner, to: "d:" + devId, kind: "owns" });
-    }
-  }
 
-  // Lateral movement: device <-> device
-
-  // Ownership: user → device
-  for (const [uname, u] of Object.entries(report.user_map || {})) {
-    for (const devId of (u.devices || [])) {
-      if (nodeById["u:" + uname] && nodeById["d:" + devId]) {
-        edges.push({ from: "u:" + uname, to: "d:" + devId, kind: "owns" });
-      }
+  // Extracted users from file paths -> devices
+  users.filter(u => !userMap[u.key]).forEach(u => {
+    const devId = (u.raw.devices || [])[0];
+    if (devId && nodeById["d:" + devId]) {
+      addEdge({ from: u.id, to: "d:" + devId, kind: "seen_on" });
     }
-  }
+  });
 
-  // Lateral movement: device → device (dashed amber)
+  // Lateral movement
   for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
     for (const ind of (cu && cu.lateral_movement_indicators) || []) {
       const a = "d:" + ind.from_device;
@@ -576,113 +481,237 @@ function buildGraph(report, size) {
     });
   });
 
-  // Evidence: device -> type bucket
-  evidenceBuckets.forEach((b, t) => {
-    const eId = "e:" + t;
-    if (!nodeById[eId]) return;
-    b.devIds.forEach(devId => {
-      if (nodeById["d:" + devId]) {
-        addEdge({ from: "d:" + devId, to: eId, kind: "evidence_source", evidence_type: t });
-      }
-    });
+  // Findings -> Device edges
+  findingsItems.forEach(f => {
+    if (f.kind === "finding" && f.deviceId && nodeById["d:" + f.deviceId]) {
+      addEdge({ from: f.id, to: "d:" + f.deviceId, kind: "has_finding", flagType: f.flagType });
+    }
+    if (f.kind === "mitre") {
+      // Connect MITRE techniques to devices with related flags
+      Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+        (flags || []).forEach(flag => {
+          if (flag.mitre_techniques && flag.mitre_techniques.some(t => t.id === f.techniqueId)) {
+            addEdge({ from: f.id, to: "d:" + devId, kind: "mitre_technique", techniqueId: f.techniqueId });
+          }
+        });
+      });
+    }
+    if (f.kind === "ioc") {
+      // Connect IOCs to devices
+      Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+        (flags || []).forEach(flag => {
+          const evidence = flag.evidence || {};
+          const iocMatch = (
+            evidence.dst_ip === f.raw ||
+            evidence.dst_host === f.raw ||
+            evidence.hash === f.raw ||
+            evidence.file_path === f.raw
+          );
+          if (iocMatch && nodeById["d:" + devId]) {
+            addEdge({ from: "d:" + devId, to: f.id, kind: "ioc" });
+          }
+        });
+      });
+    }
   });
 
   return { nodes, edges, nodeById, columns, totalH };
-  // Device → IOC: scan behavioral_flags evidence for matching IOC values
-  if (iocItems.length > 0) {
-    for (const [devId, flags] of Object.entries(report.behavioral_flags || {})) {
-      const devKey  = "d:" + devId;
-      if (!nodeById[devKey]) continue;
-      const evText  = JSON.stringify(flags);
-      for (const item of iocItems) {
-        if (evText.includes(item.raw) && nodeById[item.id]) {
-          if (!edges.some(e => e.from === devKey && e.to === item.id)) {
-            edges.push({ from: devKey, to: item.id, kind: "ioc" });
-          }
-        }
-      }
+}
+
+function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFilter }) {
+  const wrapRef = useRef(null);
+  const [size, setSize] = useState({ w: 900, h: 600 });
+  const svgRef = useRef(null);
+
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver(([e]) => {
+      const r = e.contentRect;
+      setSize({ w: Math.max(600, r.width), h: Math.max(400, r.height) });
+    });
+    ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const graph = useMemo(() => buildGraph(report, size), [report, size]);
+
+  const neighbors = useMemo(() => {
+    if (!selected) return null;
+    const set = new Set([selected]);
+    for (const e of graph.edges) {
+      if (e.from === selected) set.add(e.to);
+      if (e.to === selected) set.add(e.from);
     }
-  }
+    return set;
+  }, [selected, graph]);
 
-  return { nodes, edges, nodeById, columns };
-}
+  const sevMatch = useMemo(() => {
+    if (!sevFilter) return null;
+    const set = new Set();
+    const flagsByDev = report.behavioral_flags || {};
+    Object.entries(flagsByDev).forEach(([devId, flags]) => {
+      if ((flags || []).some(f => f.severity === sevFilter)) set.add("d:" + devId);
+    });
+    Object.entries(report.user_map || {}).forEach(([uname, u]) => {
+      if ((u.devices || []).some(d => set.has("d:" + d))) set.add("u:" + uname);
+    });
+    return set;
+  }, [sevFilter, report]);
 
-function aggregateUserFlags(report, username) {
-  const user = (report.user_map || {})[username];
-  if (!user) return { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-  const agg = { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-  for (const devId of user.devices || []) {
-    const c = countFlags((report.behavioral_flags || {})[devId] || []);
-    agg.total += c.total;
-    agg.CRITICAL += c.CRITICAL;
-    agg.HIGH += c.HIGH;
-    agg.MEDIUM += c.MEDIUM;
-    agg.LOW += c.LOW;
-    agg.total += c.total; agg.CRITICAL += c.CRITICAL;
-    agg.HIGH  += c.HIGH;  agg.MEDIUM   += c.MEDIUM; agg.LOW += c.LOW;
-  }
-  return agg;
-}
+  // Initialize D3 zoom after render
+  useEffect(() => {
+    if (!svgRef.current || !window.d3) return;
+    const svg = window.d3.select(svgRef.current);
+    const zoom = window.d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on("zoom", (event) => {
+        svg.selectAll("g.graph-content").attr("transform", event.transform);
+      });
+    svg.call(zoom);
+  }, [graph]);
 
-function osLabel(d) {
-  const t = (d.device_type || "").toLowerCase();
-  if (t.includes("ios"))     return "iOS "     + (d.os_version || "");
-  if (t.includes("android")) return "Android " + (d.os_version || "");
-  if (t.includes("server")) return d.os_version || d.os_type || "server";
-  if (d.os_type === "windows") return d.os_version || "Windows";
-  if (d.os_type === "linux") return d.os_version || "Linux";
-  if (d.os_type === "macos") return d.os_version || "macOS";
-  if (t.includes("server"))  return d.os_version || d.os_type;
-  if (d.os_type === "windows") return d.os_version || "Windows";
-  if (d.os_type === "linux")   return d.os_version || "Linux";
-  return d.os_type || "device";
-}
+  return (
+    <div ref={wrapRef} className="graph-stage">
+      <svg
+        ref={svgRef}
+        className="graph-svg"
+        width="100%"
+        height={graph.totalH}
+        viewBox={`0 0 ${size.w} ${graph.totalH}`}
+        preserveAspectRatio="xMidYMin meet"
+      >
+        <g className="graph-content">
+          {/* Column headers + rules */}
+          {graph.columns.map((col) => (
+            <g key={col.key}>
+              <text className="col-header" x={col.x} y={28} textAnchor="middle">
+                {col.label.toUpperCase()} · {col.count}
+              </text>
+              <line className="col-rule" x1={col.x} y1={44} x2={col.x} y2={graph.totalH - 16} />
+            </g>
+          ))}
 
-function truncate(s, n) { s = s == null ? "" : String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+          {/* Edges */}
+          <g>
+            {graph.edges.map((e, i) => {
+              const n1 = graph.nodeById[e.from];
+              const n2 = graph.nodeById[e.to];
+              if (!n1 || !n2) return null;
+              const d = edgePath(n1, n2);
+              const hl = neighbors && neighbors.has(e.from) && neighbors.has(e.to);
+              const dim = neighbors && !hl;
+              let cls = "edge";
+              if (e.kind === "owns") cls += " owns";
+              else if (e.kind === "seen_on") cls += " seen-on";
+              else if (e.kind === "lateral") cls += " lateral";
+              else if (e.kind === "exfiltrated_to") cls += " exfil";
+              else if (e.kind === "has_finding") cls += " finding-link";
+              else if (e.kind === "mitre_technique") cls += " mitre-link";
+              else if (e.kind === "ioc") cls += " ioc";
+              if (hl) cls += " highlighted";
+              if (dim) cls += " dimmed";
+              return (
+                <path key={i} className={cls} d={d}>
+                  <title>{describeEdge(e, n1, n2)}</title>
+                </path>
+              );
+            })}
+          </g>
 
-function describeNode(n, report) {
-  const lines = [];
-  if (n.kind === "user") {
-    const u = (report.user_map || {})[n.key] || {};
-    lines.push(`Account: ${u.display_name || n.key}`);
-    if (u.role) lines.push(`Role: ${u.role}`);
-    if ((u.aliases || []).length) lines.push(`Aliases: ${u.aliases.join(", ")}`);
-    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
-  } else if (n.kind === "evidence") {
-    const item = n.raw || {};
-    lines.push(`Evidence type: ${formatEvidenceType(item.type || n.key)}`);
-    lines.push(`${(item.files || []).length} file(s) across ${(item.devIds || []).length} device(s)`);
-  } else if (n.kind === "service") {
-    const item = n.raw || {};
-    lines.push(`External service: ${item.name || n.key}`);
-    lines.push(`${(item.hosts || []).length} flagged connection(s)`);
-  } else {
-    const d = (report.device_map || {})[n.key] || {};
-    lines.push(`Device: ${d.hostname || n.key}`);
-    lines.push(`OS: ${osLabel(d)}`);
-    if (d.owner) lines.push(`Owner: ${d.owner}${d.owner_confidence ? ` (${d.owner_confidence})` : ""}`);
-    if (n.badge) lines.push(`Findings: ${n.badge.count}${n.badge.sev ? ` (max ${n.badge.sev})` : ""}`);
-  }
-  return lines.join("\n");
-}
+          {/* Nodes */}
+          <g>
+            {graph.nodes.map((n) => {
+              const isSel = selected === n.id;
+              const isHover = hoverId === n.id;
+              const inNbhd = neighbors && neighbors.has(n.id);
+              const sevDim = sevMatch && (n.kind === "user" || n.kind === "pc" || n.kind === "server" || n.kind === "mobile" || n.kind === "network") && !sevMatch.has(n.id);
+              const dim = (neighbors && !inNbhd) || sevDim;
+              let cls = "node node-" + n.kind;
+              if (isSel || isHover) cls += " highlighted";
+              if (dim) cls += " dimmed";
 
-function describeEdge(e, n1, n2) {
-  const a = n1.label || n1.key;
-  const b = n2.label || n2.key;
-  switch (e.kind) {
-    case "owns": return `${a} owns ${b}`;
-    case "seen_on": return `${a} seen on ${b} (not owner)`;
-    case "lateral": return `Lateral movement: ${a} → ${b}${e.method ? `\nMethod: ${e.method}` : ""}${e.via ? `\nUser: ${e.via}` : ""}`;
-    case "exfiltrated_to": {
-      const parts = [`Exfil/C2: ${a} → ${b}`];
-      if (e.host) parts.push(`Host: ${e.host}`);
-      if (e.bytes) parts.push(`Bytes: ${e.bytes.toLocaleString()}`);
-      if (e.flag) parts.push(`Flag: ${e.flag}`);
-      return parts.join("\n");
-    }
-    case "evidence_source": return `Evidence source: ${a} → ${formatEvidenceType(e.evidence_type || "")}`;
-    default: return `${a} ↔ ${b}`;
-  }
+              return (
+                <g
+                  key={n.id}
+                  className={cls}
+                  transform={`translate(${n.x}, ${n.y})`}
+                  onClick={() => onSelect(n.id)}
+                  onMouseEnter={() => onHover(n.id)}
+                  onMouseLeave={() => onHover(null)}
+                  style={{ color: n.accent }}
+                >
+                  <title>{describeNode(n, report)}</title>
+                  {n.kind === "user" ? (
+                    <circle
+                      cx={0} cy={0} r={n.r}
+                      fill="rgba(16,185,129,0.08)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
+                    />
+                  ) : n.kind === "ioc" ? (
+                    <polygon
+                      points={`0,${-n.r} ${n.r},0 0,${n.r} ${-n.r},0`}
+                      fill="rgba(239,68,68,0.06)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
+                    />
+                  ) : n.kind === "finding" ? (
+                    <rect
+                      x={-n.w / 2} y={-n.h / 2}
+                      width={n.w} height={n.h} rx={8}
+                      fill="rgba(245,158,11,0.15)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
+                      strokeDasharray="4 2"
+                    />
+                  ) : n.kind === "mitre" ? (
+                    <rect
+                      x={-n.w / 2} y={-n.h / 2}
+                      width={n.w} height={n.h} rx={4}
+                      fill="rgba(239,68,68,0.15)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
+                    />
+                  ) : (
+                    <rect
+                      x={-n.w / 2} y={-n.h / 2}
+                      width={n.w} height={n.h} rx={6}
+                      fill="rgba(30,41,59,0.9)"
+                      stroke={n.accent}
+                      strokeWidth={isSel ? 2 : 1}
+                    />
+                  )}
+                  <text
+                    x={0}
+                    y={n.kind === "user" || n.kind === "ioc" ? 4 : -3}
+                    textAnchor="middle"
+                  >
+                    {n.label}
+                  </text>
+                  {n.sublabel && (
+                    <text
+                      x={0}
+                      y={n.kind === "user" || n.kind === "ioc" ? 18 : 12}
+                      textAnchor="middle"
+                      className="sublabel"
+                    >
+                      {n.sublabel}
+                    </text>
+                  )}
+                  {n.badge && (
+                    <g transform={`translate(${n.kind === "user" ? n.r - 4 : n.w / 2 - 6}, ${n.kind === "user" ? -n.r + 4 : -n.h / 2 + 6})`}>
+                      <circle r={8} className={`flag-badge ${n.badge.sev === "CRITICAL" ? "crit" : n.badge.sev === "HIGH" ? "high" : ""}`} />
+                      <text className="flag-badge-text">{n.badge.count}</text>
+                    </g>
+                  )}
+                </g>
+              );
+            })}
+          </g>
+        </g>
+      </svg>
+    </div>
+  );
 }
 
 window.RelationshipGraph = RelationshipGraph;
@@ -691,12 +720,5 @@ window.countFlags = countFlags;
 window.maxSev = maxSev;
 window.aggregateUserFlags = aggregateUserFlags;
 window.osLabel = osLabel;
-window.formatEvidenceType = formatEvidenceType;
-window.classifyExfilService = classifyExfilService;
-window.guessEvidenceTypeFromPath = guessEvidenceTypeFromPath;
-window.RelationshipGraph   = RelationshipGraph;
-window.classifyDevice      = classifyDevice;
-window.countFlags          = countFlags;
-window.maxSev              = maxSev;
-window.aggregateUserFlags  = aggregateUserFlags;
-window.osLabel             = osLabel;
+window.extractUsernameFromPath = extractUsernameFromPath;
+window.buildFindingsItems = buildFindingsItems;
