@@ -13,8 +13,9 @@ const USER_R = 26;
 function classifyDevice(d) {
   const t = (d.device_type || "").toLowerCase();
   const h = (d.hostname || "").toLowerCase();
-  // Check for server indicators in both device_type and hostname
-  if (t.includes("server") || h.includes("server") || h.includes("srv") || h.includes("dc")) return "server";
+  // Check for server indicators - use word boundaries to avoid false matches
+  if (t.includes("server") || h.includes("server") ||
+      /\bsrv\b/.test(h) || /\bdc\b/.test(h)) return "server";
   if (t.includes("mobile") || t.includes("ios") || t.includes("android")) return "mobile";
   if (t.includes("network") || t.includes("pcap")) return "network";
   return "pc";
@@ -74,12 +75,27 @@ function classifyExfilService(host) {
 
 function extractUsernameFromPath(filePath) {
   if (!filePath) return null;
+  // Skip analysis machine paths - these are not evidence
+  if (filePath.startsWith("/home/sansforensics/") ||
+      filePath.startsWith("/home/claw/") ||
+      filePath.startsWith("/mnt/") ||
+      filePath.startsWith("/tmp/")) return null;
   // Windows paths: /Users/username/ or C:\Users\username\
+  // These are evidence paths from the imaged system
   const winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
-  if (winMatch) return winMatch[1];
-  // Linux paths: /home/username/
+  if (winMatch) {
+    const u = winMatch[1];
+    // Filter common system accounts
+    if (["All Users", "Default", "Default User", "Public", "Administrator", "Guest"].includes(u)) return null;
+    return u;
+  }
+  // Linux paths: /home/username/ - only from evidence, not analysis machine
   const linuxMatch = filePath.match(/[/\\]home[/\\]([^/\\]+)/i);
-  if (linuxMatch) return linuxMatch[1];
+  if (linuxMatch) {
+    const u = linuxMatch[1];
+    if (["sansforensics", "claw", "root", "nobody", "daemon", "ubuntu", "pi", "vagrant"].includes(u.toLowerCase())) return null;
+    return u;
+  }
   return null;
 }
 
@@ -138,34 +154,42 @@ function buildFindingsItems(report) {
         });
       }
 
-      // Extract IOCs from flag evidence
+      // Extract IOCs from flag evidence (with limits to avoid graph clutter)
       const evidence = flag.evidence || {};
-      if (evidence.dst_ip) {
+      const iocCounts = { ip: 0, domain: 0, hash: 0, file_path: 0 };
+      // Count existing IOCs by type
+      findings.forEach(f => { if (f.kind === "ioc") iocCounts[f.subkind] = (iocCounts[f.subkind] || 0) + 1; });
+      if (evidence.dst_ip && iocCounts.ip < 50) {
         const iocId = "i:" + evidence.dst_ip;
         if (!seenFindings.has(iocId)) {
           seenFindings.add(iocId);
           findings.push({ id: iocId, kind: "ioc", subkind: "ip", raw: evidence.dst_ip, key: evidence.dst_ip });
         }
       }
-      if (evidence.dst_host) {
+      if (evidence.dst_host && iocCounts.domain < 50) {
         const iocId = "i:" + evidence.dst_host;
         if (!seenFindings.has(iocId)) {
           seenFindings.add(iocId);
           findings.push({ id: iocId, kind: "ioc", subkind: "domain", raw: evidence.dst_host, key: evidence.dst_host });
         }
       }
-      if (evidence.hash) {
+      if (evidence.hash && iocCounts.hash < 50) {
         const iocId = "i:" + evidence.hash;
         if (!seenFindings.has(iocId)) {
           seenFindings.add(iocId);
           findings.push({ id: iocId, kind: "ioc", subkind: "hash", raw: evidence.hash, key: evidence.hash });
         }
       }
-      if (evidence.file_path) {
-        const iocId = "i:" + evidence.file_path;
-        if (!seenFindings.has(iocId)) {
-          seenFindings.add(iocId);
-          findings.push({ id: iocId, kind: "ioc", subkind: "file_path", raw: evidence.file_path, key: evidence.file_path });
+      if (evidence.file_path && iocCounts.file_path < 30) {
+        // Skip analysis machine paths
+        if (!evidence.file_path.startsWith("/home/sansforensics") &&
+            !evidence.file_path.startsWith("/mnt/") &&
+            !evidence.file_path.startsWith("/tmp/")) {
+          const iocId = "i:" + evidence.file_path;
+          if (!seenFindings.has(iocId)) {
+            seenFindings.add(iocId);
+            findings.push({ id: iocId, kind: "ioc", subkind: "file_path", raw: evidence.file_path, key: evidence.file_path });
+          }
         }
       }
     });
@@ -275,11 +299,13 @@ function buildGraph(report, size) {
   }));
 
   // Extract additional users from device evidence file paths
+  const extractedUsernames = new Set();
   Object.entries(deviceMap).forEach(([devId, dev]) => {
     const files = (dev && dev.evidence_files) || [];
     files.forEach(fp => {
       const username = extractUsernameFromPath(fp);
-      if (username && !userMap[username]) {
+      if (username && !userMap[username] && !extractedUsernames.has(username)) {
+        extractedUsernames.add(username);
         users.push({
           id: "u:" + username,
           kind: "user",
@@ -568,6 +594,11 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
         svg.selectAll("g.graph-content").attr("transform", event.transform);
       });
     svg.call(zoom);
+    // Double-click to reset zoom
+    svg.on("dblclick.zoom", () => {
+      svg.transition().duration(500).call(zoom.transform, window.d3.zoomIdentity);
+    });
+    
   }, [graph]);
 
   return (
