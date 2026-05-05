@@ -43,10 +43,14 @@ def osLabel(d):
     
     if "ios" in t: indicators.add(f"iOS {os_v}".strip())
     if "android" in t: indicators.add(f"Android {os_v}".strip())
+    if "mobile" in t: indicators.add(f"Mobile/Portable {os_v}".strip())
     if "server" in t or "server" in os_t: indicators.add(f"Server {os_v}".strip())
+    if "network" in t or "network" in os_t: indicators.add(f"Network Capture {os_v}".strip())
+    if "pcap" in t: indicators.add(f"PCAP {os_v}".strip())
     if os_t == "windows": indicators.add(f"Windows {os_v}".strip())
     if os_t == "linux": indicators.add(f"Linux {os_v}".strip())
     if os_t == "macos": indicators.add(f"macOS {os_v}".strip())
+    if not indicators and os_t and os_t != "unknown": indicators.add(os_t.title())
     
     return ", ".join(sorted(indicators)) if indicators else "unknown"
 
@@ -54,9 +58,20 @@ def osLabel(d):
 # Behavior flag explanations mapping
 _FLAG_EXPLANATIONS = {
     "no_recovery": "No user accounts recovered from registry hives - may indicate account deletion, use of non-standard authentication, or corrupted registry data",
-    "lateral_movement": "Evidence of lateral movement detected - attacker moved between systems using stolen credentials or remote access tools",
-    "credential_theft": "Credential harvesting detected - passwords, hashes, or tokens were extracted from memory or registry",
-    # Add more as needed
+    "lateral_movement": "Evidence of lateral movement detected - attacker moved between systems using stolen credentials or remote access tools. Check for Remote Desktop, PsExec, WMI, or SMB-based movement artifacts.",
+    "credential_theft": "Credential harvesting detected - passwords, hashes, or tokens were extracted from memory or registry. Tools like Mimikatz, Lazagne, or ProcDump may have been used.",
+    "exfiltration": "Data exfiltration detected - large outbound data transfers to external hosts. Check for FTP, HTTP POST, DNS tunneling, or cloud storage uploads.",
+    "c2_traffic": "Command & Control communications detected - regular beaconing to external infrastructure. Common C2 channels include HTTPS, DNS, and custom protocols.",
+    "persistence": "Persistence mechanism detected - the attacker has established a way to maintain access. Common methods: scheduled tasks, registry Run keys, services, or WMI event subscriptions.",
+    "lolbin": "Living-off-the-land binary (LOLBin) usage detected - legitimate system tools used maliciously. Examples: PowerShell, certutil, mshta, regsvr32, or wmic used for code execution or download.",
+    "web_shell": "Web shell detected - attacker-placed script providing remote access via HTTP/HTTPS. Often found as .asp, .aspx, .php, or .jsp files in web directories.",
+    "cryptominer": "Cryptocurrency mining activity detected - unauthorized use of system resources. Look for high CPU usage, mining pool connections, and coin miner executables.",
+    "phishing": "Phishing indicators detected - suspicious emails, attachments, or links. Check email headers, attachment hashes, and URL reputation.",
+    "privilege_escalation": "Privilege escalation activity detected - user obtained higher-level permissions. Check for UAC bypass, token manipulation, or exploitation of vulnerable services.",
+    "defense_evasion": "Defense evasion techniques detected - attacker avoiding detection. Common methods: disabling security tools, clearing logs, timestomping, or process injection.",
+    "discovery": "System discovery activity detected - attacker mapping the environment. Look for net commands, network scanning, and directory enumeration.",
+    "collection": "Data collection activity detected - attacker gathering sensitive information. Check for file access patterns, clipboard capture, and screen captures.",
+    "network_traffic": "Suspicious network traffic detected - unusual connections. Check for unusual ports, protocols, or connection patterns.",
 }
 
 
@@ -179,6 +194,10 @@ class NarrativeReportGenerator:
                 super_timeline_path, behavioral_flags)
 
         # 5. Behavioral Findings
+                # 5b. Failed steps analysis
+        sections["failed_steps"] = self._render_failed_steps(report_json)
+
+        # 5c. Behavioral Findings
         sections["findings"] = self._generate_findings_section(
             behavioral_flags, report_json)
 
@@ -356,13 +375,40 @@ class NarrativeReportGenerator:
 
         return summary
 
+    def _render_playbook_summary(self, report_json: dict) -> str:
+        """Render condensed playbook execution summary."""
+        pbs = report_json.get("playbooks_run", [])
+        if not pbs:
+            return "No playbook execution data available."
+
+        condensed = {}
+        for pr in pbs:
+            pid = pr.get("playbook_id", "Unknown")
+            name = pr.get("name", pid)
+            if pid not in condensed:
+                condensed[pid] = {"name": name, "runs": 0, "completed": 0, "failed": 0, "skipped": 0}
+            condensed[pid]["runs"] += 1
+            condensed[pid]["completed"] += pr.get("steps_completed", 0)
+            condensed[pid]["failed"] += pr.get("steps_failed", 0)
+            condensed[pid]["skipped"] += pr.get("steps_skipped", 0)
+
+        lines = []
+        lines.append("| Playbook | Runs | Completed | Failed | Skipped | Total Steps |")
+        lines.append("|----------|------|-----------|--------|---------|-------------|")
+        for pid in sorted(condensed.keys()):
+            c = condensed[pid]
+            total = c["completed"] + c["failed"] + c["skipped"]
+            lines.append(f"| {c['name']} ({pid}) | {c['runs']} | {c['completed']} | {c['failed']} | {c['skipped']} | {total} |")
+
+        return "\n".join(lines)
+
     def _generate_devices_overview(self, device_map: dict,
                                     user_map: dict) -> str:
         """Generate devices and users overview section."""
         lines = []
         for dev_id, dev in device_map.items():
             owner = dev.get("owner", "unattributed")
-            os_label = osLabel(dev) if hasattr(dev, 'device_type') or isinstance(dev, dict) else dev.get('os_type', 'unknown')
+            os_label = osLabel(dev)
             lines.append(
                 f"- **{dev_id}** ({dev.get('device_type', 'unknown')}): "
                 f"{os_label}, "
@@ -916,16 +962,18 @@ Write the following sections. ACCURACY RULES:
                 pass  # fall through to template
 
         # ---- Template fallback ----
+        mitres_observed = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
         return self._template_attack_chain(
             evil, severity, all_flags, lateral_indicators,
-            hit_categories, devices, users)
+            hit_categories, devices, users, mitres_observed=mitres_observed)
 
     def _template_attack_chain(self, evil: bool, severity: str,
                                 all_flags: List[dict],
                                 lateral_indicators: List[dict],
                                 hit_categories: List[str],
                                 devices: List[str],
-                                users: List[str]) -> str:
+                                users: List[str],
+                                mitres_observed: list = None) -> str:
         """Template-based attack chain when LLM is unavailable."""
         lines = []
 
@@ -951,17 +999,29 @@ Write the following sections. ACCURACY RULES:
                     f"\nLateral movement was detected: "
                     f"{len(lateral_indicators)} cross-device event(s) observed.")
 
-        # MITRE phases observed from flag technique tags
+        # MITRE phases observed from behavioral flags AND attack_chain
         lines.append("\n## MITRE ATT&CK Techniques Observed\n")
+
+        # First, try behavioral flags for technique mappings
         phase_map: Dict[str, List[str]] = {}
         for flag in all_flags:
             for tid in flag.get("mitre_att_ck", []):
-                # Strip sub-technique suffix for phase lookup
                 phase = self._MITRE_PHASES.get(tid.split('.')[0], "Other")
                 phase_map.setdefault(phase, [])
-                entry = f"{tid} — {flag.get('summary', '')[:80]}"
+                entry = f"[{tid}](https://attack.mitre.org/techniques/{tid}/) — {flag.get('summary', '')[:80]}"
                 if entry not in phase_map[phase]:
                     phase_map[phase].append(entry)
+
+        # If no techniques from flags, use attack_chain MITRE techniques
+        if not phase_map:
+            ac_mitres = mitres_observed if mitres_observed else []
+            for tid in (ac_mitres or []):
+                phase = self._MITRE_PHASES.get(tid.split('.')[0], "Other")
+                phase_map.setdefault(phase, [])
+                link = f"[{tid}](https://attack.mitre.org/techniques/{tid}/)"
+                if link not in phase_map[phase]:
+                    phase_map[phase].append(link)
+
         if phase_map:
             for phase in ["Initial Access", "Execution", "Persistence",
                           "Defense Evasion", "Credential Access", "Discovery",
@@ -973,7 +1033,7 @@ Write the following sections. ACCURACY RULES:
                     for entry in phase_map[phase][:5]:
                         lines.append(f"- {entry}")
         else:
-            lines.append("No MITRE ATT&CK techniques mapped from behavioral flags.")
+            lines.append("No MITRE ATT&CK techniques were identified by behavioral analysis. See the MITRE ATT&CK Matrix above for techniques identified from the attack chain analysis.")
 
         # Attribution
         lines.append("\n## Attribution Assessment\n")
@@ -1057,18 +1117,87 @@ Write the following sections. ACCURACY RULES:
     # Markdown rendering
     # ----------------------------------------------------------------
 
+    def _render_mitre_matrix(self, mitres: list, kill_phases: list) -> str:
+        """Generate a text-based MITRE ATT&CK matrix showing lit-up cells."""
+        if not mitres and not kill_phases:
+            return "No MITRE ATT&CK techniques were identified."
+
+        tactic_order = [
+            "Initial Access", "Execution", "Persistence", "Privilege Escalation",
+            "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
+            "Collection", "Exfiltration", "Command & Control"
+        ]
+
+        phase_map = {
+            "initial_access": "Initial Access", "execution": "Execution",
+            "persistence": "Persistence", "privilege_escalation": "Privilege Escalation",
+            "defense_evasion": "Defense Evasion", "credential_access": "Credential Access",
+            "credential_theft": "Credential Access", "discovery": "Discovery",
+            "lateral_movement": "Lateral Movement", "collection": "Collection",
+            "exfiltration": "Exfiltration", "command_and_control": "Command & Control",
+            "c2": "Command & Control", "phishing": "Initial Access",
+            "lolbin": "Execution", "web_shell": "Persistence", "cryptominer": "Command & Control",
+        }
+
+        active_tactics = set()
+        for phase in kill_phases:
+            mapped = phase_map.get(phase.lower(), None)
+            if mapped:
+                active_tactics.add(mapped)
+
+        lines = []
+        lines.append("| Tactic | Active | Techniques |")
+        lines.append("|--------|--------|------------|")
+        for tactic in tactic_order:
+            active = tactic in active_tactics
+            status = "YES" if active else "no"
+            techniques_for_tactic = []
+            for tid in mitres:
+                phase = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
+                if phase == tactic or (phase == "Execution/Persistence" and tactic in ("Execution", "Persistence")):
+                    techniques_for_tactic.append(f"[{tid}](https://attack.mitre.org/techniques/{tid}/)")
+
+            tech_str = ", ".join(techniques_for_tactic) if techniques_for_tactic else "-"
+            lines.append(f"| {tactic} | {status} | {tech_str} |")
+
+        return "\n".join(lines)
+
     def _render_markdown(self, sections: dict,
                           report_json: dict) -> str:
         """Render all sections into a Markdown document."""
         title = report_json.get("title", "Forensic Investigation Report")
         generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
+            # Build classification from attack_chain
+        ac = report_json.get("attack_chain", {})
+        kill_phases = ac.get("kill_chain_phases", [])
+        mitres = ac.get("mitre_techniques_observed", [])
+        class_str = ", ".join(kp.replace("_", " ").title() for kp in kill_phases[:6]) if kill_phases else report_json.get("classification", "Unknown")
+
         md = f"""# {title}
 
 **Generated:** {generated}
-**Evidence Directory:** {report_json.get('evidence_dir', 'N/A')}
-**Overall Severity:** {report_json.get('severity', 'INFO')}
-**Evil Found:** {'YES' if report_json.get('evil_found') else 'NO'}
+**Evidence Directory:** {report_json.get("evidence_dir", "N/A")}
+**Analysis:** {report_json.get("steps_completed", 0)} steps completed, {report_json.get("steps_failed", 0)} failed, {report_json.get("steps_skipped", 0)} skipped
+**Playbooks:** {report_json.get("playbooks_total", 0)} unique, {report_json.get("specialist_steps_executed", 0)} specialist steps
+
+---
+
+## Playbook Execution Summary
+
+{self._render_playbook_summary(report_json)}
+
+---
+**Overall Severity:** {report_json.get("severity", "INFO")}
+**Classification:** {class_str}
+**MITRE Techniques Observed:** {", ".join(mitres[:20]) if mitres else "None"}
+**Evil Found:** {"YES" if report_json.get("evil_found") else "NO"}
+
+---
+
+## MITRE ATT&CK Matrix
+
+{self._render_mitre_matrix(mitres, kill_phases)}
 
 ---
 
@@ -1104,6 +1233,12 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+## Failed Steps
+
+{sections.get("failed_steps", "No failed steps data.")}
+
+---
+
 ## Indicators of Compromise
 
 {self._render_ioc_table(sections.get('iocs', {}))}
@@ -1127,6 +1262,40 @@ Write the following sections. ACCURACY RULES:
 """
 
         return md
+
+    def _render_failed_steps(self, report_json: dict) -> str:
+        """Render failed steps with explanations."""
+        failures = report_json.get("failures", [])
+        if not failures:
+            return "No steps failed during this investigation."
+
+        lines = []
+        lines.append(f"| # | Playbook | Module | Function | Reason |")
+        lines.append(f"|---|----------|--------|----------|--------|")
+        for i, f_info in enumerate(failures[:50], 1):
+            pb = f_info.get("playbook", "?")
+            module = f_info.get("module", "?")
+            func = f_info.get("function", "?")
+            error = f_info.get("result", {}).get("error", "")
+            stderr = f_info.get("result", {}).get("stderr", "")
+            status = f_info.get("status", "")
+            if error:
+                reason = error[:100]
+            elif stderr:
+                reason = stderr[:100]
+            elif status == "skipped":
+                reason = "Skipped (tool not available or dependency missing)"
+            elif status == "failed":
+                reason = "Failed (tool execution error or invalid parameters)"
+            else:
+                reason = f"Status: {status}"
+            reason = str(reason).replace("|", "/").replace("\n", " ")
+            lines.append(f"| {i} | {pb} | {module} | {func} | {reason} |")
+
+        if len(failures) > 50:
+            lines.append(f"| | | | | *(+{len(failures)-50} more)* |")
+
+        return "\n".join(lines)
 
     def _render_ioc_table(self, iocs: dict) -> str:
         """Render extracted IOCs as markdown tables grouped by type."""

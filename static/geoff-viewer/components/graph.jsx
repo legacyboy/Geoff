@@ -10,12 +10,24 @@ const MIN_ROW_H = 64;
 const NODE_H = 44;
 const USER_R = 26;
 
-function classifyDevice(d) {
+function classifyDevice(d, deviceId) {
   const t = (d.device_type || "").toLowerCase();
   const h = (d.hostname || "").toLowerCase();
-  // Check for server indicators - use word boundaries to avoid false matches
+  const did = (deviceId || "").toLowerCase();
+
+  // Server detection: check device_type, hostname, AND device ID key
+  // Device IDs like "citadeldc01", "DC01-E01_5825", "DC01-ProtectedFiles" contain server clues
+  const serverPatterns = /dc\d|citadel|server|srv|domain.?controller/i;
   if (t.includes("server") || h.includes("server") ||
-      /\bsrv\b/.test(h) || /\bdc\b/.test(h)) return "server";
+      /\bsrv\b/.test(h) || /\bdc\b/.test(h) ||
+      serverPatterns.test(did) || serverPatterns.test(h)) {
+    return "server";
+  }
+  // Check evidence file paths for server indicators (e.g., DC01, citadel-dc01)
+  const efiles = d.evidence_files || [];
+  if (efiles.some(fp => serverPatterns.test(fp.toLowerCase()))) {
+    return "server";
+  }
   if (t.includes("mobile") || t.includes("ios") || t.includes("android")) return "mobile";
   if (t.includes("network") || t.includes("pcap")) return "network";
   return "pc";
@@ -75,25 +87,37 @@ function classifyExfilService(host) {
 
 function extractUsernameFromPath(filePath) {
   if (!filePath) return null;
-  // Skip analysis machine paths - these are not evidence
-  if (filePath.startsWith("/home/sansforensics/") ||
-      filePath.startsWith("/home/claw/") ||
-      filePath.startsWith("/mnt/") ||
-      filePath.startsWith("/tmp/")) return null;
-  // Windows paths: /Users/username/ or C:\Users\username\
-  // These are evidence paths from the imaged system
+  // Scan the ENTIRE path for embedded user directories (even within
+  // extraction machine paths like /home/sansforensics/cases/extractions/...).
+  // Evidence paths look like: .../Protected Files/Users/mortysmith/NTUSER.DAT
+  // or .../Users/ricksanchez/Crypto/Keys/...
+
+  // Windows user paths: .../Users/username/ (embedded anywhere in path)
   const winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
   if (winMatch) {
     const u = winMatch[1];
-    // Filter common system accounts
+    // Filter common system accounts that are not real users
     if (["All Users", "Default", "Default User", "Public", "Administrator", "Guest"].includes(u)) return null;
     return u;
   }
-  // Linux paths: /home/username/ - only from evidence, not analysis machine
-  const linuxMatch = filePath.match(/[/\\]home[/\\]([^/\\]+)/i);
-  if (linuxMatch) {
-    const u = linuxMatch[1];
-    if (["sansforensics", "claw", "root", "nobody", "daemon", "ubuntu", "pi", "vagrant"].includes(u.toLowerCase())) return null;
+
+  // Linux home paths: /home/username/ (use LAST match to avoid analysis machine prefix)
+  const linuxMatches = filePath.match(/[/\\]home[/\\]([^/\\]+)/gi);
+  if (linuxMatches) {
+    const lastMatch = linuxMatches[linuxMatches.length - 1];
+    const m = lastMatch.match(/[/\\]home[/\\]([^/\\]+)/i);
+    if (m) {
+      const u = m[1];
+      if (["sansforensics", "claw", "root", "nobody", "daemon", "ubuntu", "pi", "vagrant"].includes(u.toLowerCase())) return null;
+      return u;
+    }
+  }
+
+  // Protected Files pattern: .../Protected Files/Users/username/
+  const protMatch = filePath.match(/[/\\]Protected(?:\s+Files)?[/\\]Users[/\\]([^/\\]+)/i);
+  if (protMatch) {
+    const u = protMatch[1];
+    if (["All Users", "Default", "Default User", "Public", "Administrator", "Guest"].includes(u)) return null;
     return u;
   }
   return null;
@@ -215,14 +239,23 @@ function aggregateUserFlags(report, username) {
 }
 
 function osLabel(d) {
+  // Collect ALL OS indicators from device_type and os_type fields
+  const indicators = [];
   const t = (d.device_type || "").toLowerCase();
-  if (t.includes("ios"))     return "iOS "     + (d.os_version || "");
-  if (t.includes("android")) return "Android " + (d.os_version || "");
-  if (t.includes("server")) return d.os_version || d.os_type || "server";
-  if (d.os_type === "windows") return d.os_version || "Windows";
-  if (d.os_type === "linux") return d.os_version || "Linux";
-  if (d.os_type === "macos") return d.os_version || "macOS";
-  return d.os_type || "device";
+  const os_t = (d.os_type || "").toLowerCase();
+  const os_v = d.os_version || "";
+
+  if (t.includes("ios"))     indicators.push("iOS " + os_v);
+  if (t.includes("android")) indicators.push("Android " + os_v);
+  if (t.includes("mobile"))  indicators.push("Mobile/Portable");
+  if (os_t === "windows")    indicators.push("Windows " + os_v);
+  if (os_t === "linux")      indicators.push("Linux " + os_v);
+  if (os_t === "macos")      indicators.push("macOS " + os_v);
+  if (t.includes("server") || os_t.includes("server")) indicators.push("Server");
+  if (t.includes("network") || t.includes("pcap") || os_t.includes("network")) indicators.push("Network");
+  if (indicators.length === 0 && os_t && os_t !== "unknown") indicators.push(os_t.charAt(0).toUpperCase() + os_t.slice(1));
+
+  return indicators.length > 0 ? indicators.join(", ") : (d.os_type || "device");
 }
 
 function truncate(s, n) { s = s == null ? "" : String(s); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
@@ -321,17 +354,20 @@ function buildGraph(report, size) {
   });
 
   const devs = Object.entries(deviceMap).map(([k, d]) => ({
-    id: "d:" + k, kind: classifyDevice(d || {}), raw: d || {}, key: k,
+    id: "d:" + k, kind: classifyDevice(d || {}, k), raw: d || {}, key: k,
   }));
 
   // Build findings items (behavioral flags, MITRE techniques, IOCs)
   const findingsItems = buildFindingsItems(report);
 
-  // Aggregate exfiltration services
+  // Aggregate exfiltration services from behavioral flags AND findings_detail
   const exfilServices = new Map();
   Object.entries(flagsByDevice).forEach(([devId, flags]) => {
     (flags || []).forEach(flag => {
-      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      // Broader detection: any flag_type containing "exfil", "c2", "network", "beacon"
+      const ft = (flag.flag_type || "").toLowerCase();
+      const isExfil = ft.includes("exfil") || ft.includes("c2") || ft.includes("beacon") || ft.includes("network_traffic");
+      if (!isExfil) return;
       const evidence = flag.evidence || {};
       const dstHost = evidence.dst_host || evidence.dst_ip || "";
       if (!dstHost) return;
@@ -340,6 +376,22 @@ function buildGraph(report, size) {
         exfilServices.set(serviceType, { id: "s:" + serviceType, kind: "service", name: serviceType, hosts: [] });
       }
       exfilServices.get(serviceType).hosts.push({ host: dstHost, devId, flag });
+    });
+  });
+
+  // Also extract exfiltration from findings_detail (evidence_chain threat_indicators)
+  (report.findings_detail || []).forEach(fd => {
+    const ec = fd.evidence_chain || {};
+    const indicators = ec.threat_indicators || [];
+    indicators.forEach(ind => {
+      const dstHost = (typeof ind === "string") ? ind : (ind.host || ind.ip || ind.url || "");
+      if (!dstHost || typeof dstHost !== "string") return;
+      const serviceType = classifyExfilService(dstHost);
+      if (!serviceType) return;
+      if (!exfilServices.has(serviceType)) {
+        exfilServices.set(serviceType, { id: "s:" + serviceType, kind: "service", name: serviceType, hosts: [] });
+      }
+      exfilServices.get(serviceType).hosts.push({ host: dstHost, devId: fd.device_id || "unknown", flag: null });
     });
   });
 
@@ -479,7 +531,7 @@ function buildGraph(report, size) {
     }
   });
 
-  // Lateral movement
+  // Lateral movement from correlated_users
   for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
     for (const ind of (cu && cu.lateral_movement_indicators) || []) {
       const a = "d:" + ind.from_device;
@@ -490,10 +542,22 @@ function buildGraph(report, size) {
     }
   }
 
-  // Exfiltration: device -> service
+  // Lateral movement from attack_chain.lateral_movement_path
+  const latPath = (report.attack_chain || {}).lateral_movement_path || [];
+  for (let i = 0; i < latPath.length - 1; i++) {
+    const a = "d:" + latPath[i];
+    const b = "d:" + latPath[i + 1];
+    if (nodeById[a] && nodeById[b]) {
+      addEdge({ from: a, to: b, kind: "lateral", via: "attack_chain", method: "sequential_access" });
+    }
+  }
+
+  // Exfiltration: device -> service (from behavioral flags)
   Object.entries(flagsByDevice).forEach(([devId, flags]) => {
     (flags || []).forEach(flag => {
-      if (flag.flag_type !== "exfiltration" && flag.flag_type !== "c2_traffic") return;
+      const ft = (flag.flag_type || "").toLowerCase();
+      const isExfil = ft.includes("exfil") || ft.includes("c2") || ft.includes("beacon") || ft.includes("network_traffic");
+      if (!isExfil) return;
       const evidence = flag.evidence || {};
       const dstHost = evidence.dst_host || evidence.dst_ip || "";
       if (!dstHost) return;
@@ -507,6 +571,30 @@ function buildGraph(report, size) {
           host: dstHost,
           bytes: evidence.bytes_sent,
           flag: flag.summary,
+        });
+      }
+    });
+  });
+
+  // Also add exfiltration edges from findings_detail
+  (report.findings_detail || []).forEach(fd => {
+    const devId = fd.device_id;
+    const ec = fd.evidence_chain || {};
+    const indicators = ec.threat_indicators || [];
+    indicators.forEach(ind => {
+      const dstHost = (typeof ind === "string") ? ind : (ind.host || ind.ip || ind.url || "");
+      if (!dstHost || typeof dstHost !== "string") return;
+      const serviceType = classifyExfilService(dstHost);
+      if (!serviceType) return;
+      const serviceNodeId = "s:" + serviceType;
+      if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
+        addEdge({
+          from: "d:" + devId,
+          to: serviceNodeId,
+          kind: "exfiltrated_to",
+          host: dstHost,
+          bytes: null,
+          flag: ec.analyst_note || "finding_detail",
         });
       }
     });
@@ -545,6 +633,42 @@ function buildGraph(report, size) {
       });
     }
   });
+
+  // If no MITRE techniques from behavioral flags, add from attack_chain
+  const acMitres = (report.attack_chain || {}).mitre_techniques_observed || [];
+  acMitres.forEach(tid => {
+    const mitreId = "m:" + tid;
+    if (!nodeById[mitreId]) {
+      // Only add if not already present from behavioral flags
+      const mitreCol = columns.find(c => c.key === "mitre");
+      const findingCol = columns.find(c => c.key === "finding");
+      if (mitreCol) {
+        mitreCol.items.push({
+          id: mitreId, kind: "mitre", subkind: "mitre",
+          techniqueId: tid, name: "", severity: "MEDIUM"
+        });
+        // Add node
+        const colX = mitreCol.x;
+        const numItems = mitreCol.items.length;
+        const gapY = (totalH - HEADER_Y - FOOTER_Y) / Math.max(numItems, 1);
+        const y = HEADER_Y + gapY * (numItems - 1) + gapY / 2;
+        const node = {
+          id: mitreId, kind: "mitre", subkind: "mitre",
+          key: tid, label: tid, sublabel: "MITRE",
+          x: colX, y, r: 22, w: 44, h: 44,
+          accent: "#EF4444",
+          badge: null, raw: {}, techniqueId: tid
+        };
+        nodes.push(node);
+        nodeById[mitreId] = node;
+        // Connect to all devices (they were all part of the same investigation)
+        Object.keys(deviceMap).forEach(did => {
+          addEdge({ from: mitreId, to: "d:" + did, kind: "mitre_technique", techniqueId: tid });
+        });
+      }
+    }
+  });
+  columns.forEach(c => c.count = c.items.length);
 
   return { nodes, edges, nodeById, columns, totalH };
 }
