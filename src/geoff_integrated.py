@@ -2129,6 +2129,196 @@ PLAYBOOK_STEPS = {
     },
 }
 
+# =====================================================================
+# Pass 2 Playbook Definitions — timeline-intelligence-driven investigations
+# =====================================================================
+# These playbooks fire AFTER the super timeline is built and cross-device
+# patterns are detected. They are THINNER than Pass 1 playbooks (4-8 steps
+# per playbook) because they operate on focused investigation questions
+# rather than comprehensive scans.
+PLAYBOOK_STEPS_PASS2 = {
+    "PB-SIFT-100": {  # Process Chain Investigation
+        "disk_images": [
+            # Reconstruct the full process chain across devices
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}",
+             "recursive": True,
+             "filter_path": "{target_paths}",
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}",
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+            # Extract process binaries for malware analysis
+            ("sleuthkit", "extract_file", {"image": "{image}", "offset": "{offset}",
+             "inode": "{target_inodes}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "dump_process", {"memory_dump": "{mem}",
+             "target_pids": "{target_pids}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}",
+             "time_filter": "{time_window}",
+             "filter_host": "{target_hosts}"}),
+        ],
+        "other_files": [
+            # Analyze extracted binaries with REMnux
+            ("remnux", "die_scan", {"target_file": "{file}"}),
+            ("remnux", "clamav_scan", {"target_file": "{file}"}),
+            ("remnux", "floss_strings", {"target_file": "{file}"}),
+        ],
+    },
+
+    "PB-SIFT-101": {  # USB Lateral Movement Investigation
+        "registry_hives": [
+            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
+            ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+        ],
+        "disk_images": [
+            # List files accessed during USB mount window
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}",
+             "recursive": True,
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+            # Recover deleted files from destination
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}",
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+            # Correlate file hashes between source and destination
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8,
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}",
+             "time_filter": "{time_window}",
+             "filter_host": "{target_hosts}"}),
+        ],
+    },
+
+    "PB-SIFT-102": {  # Temporal Anomaly Investigation
+        "disk_images": [
+            # Extract full Plaso timeline for the anomaly window
+            ("plaso", "sort_timeline", {
+                "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
+                "output_format": "json_line",
+                "filter_str": None,
+                "time_filter_start": "{time_window_start}",
+                "time_filter_end": "{time_window_end}",
+            }),
+            # Check for scheduled task creation in window
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}",
+             "recursive": True,
+             "filter_path": "Windows/System32/Tasks",
+             "time_window_start": "{time_window_start}",
+             "time_window_end": "{time_window_end}"}),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}",
+             "time_filter_start": "{time_window_start}",
+             "time_filter_end": "{time_window_end}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}",
+             "time_filter": "{time_window}"}),
+        ],
+    },
+
+    "PB-SIFT-103": {  # IOC Cross-Reference Investigation
+        "disk_images": [
+            # Extract all instances of shared IOCs
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8,
+             "filter_patterns": "{ioc_patterns}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}",
+             "recursive": True}),
+        ],
+        "memory_dumps": [
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+            ("volatility", "dump_process", {"memory_dump": "{mem}",
+             "target_pids": "{target_pids}"}),
+        ],
+        "other_files": [
+            # Analyse each IOC-bearing file with REMnux
+            ("remnux", "die_scan", {"target_file": "{file}"}),
+            ("remnux", "exiftool_scan", {"target_file": "{file}"}),
+            ("remnux", "clamav_scan", {"target_file": "{file}"}),
+            ("remnux", "ssdeep_hash", {"target_file": "{file}"}),
+            ("remnux", "floss_strings", {"target_file": "{file}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}",
+             "filter_host": "{ioc_ips}"}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
+        ],
+    },
+
+    "PB-SIFT-104": {  # Dwell Window Deep-Dive
+        "disk_images": [
+            # Filter Plaso queries to the dwell window
+            ("plaso", "sort_timeline", {
+                "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
+                "output_format": "json_line",
+                "filter_str": None,
+                "time_filter_start": "{dwell_start}",
+                "time_filter_end": "{dwell_end}",
+            }),
+            ("sleuthkit", "list_files_mactime", {
+                "image": "{image}", "offset": "{offset}",
+            }),
+        ],
+        "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}",
+             "time_filter_start": "{dwell_start}",
+             "time_filter_end": "{dwell_end}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}",
+             "time_filter": {"start": "{dwell_start}", "end": "{dwell_end}"}}),
+            ("network", "extract_flows", {"pcap_file": "{pcap}",
+             "output_dir": "{output_dir}/flows",
+             "time_filter": {"start": "{dwell_start}", "end": "{dwell_end}"}}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
+        ],
+    },
+}
+
+# Map Pass 2 trigger types to playbook IDs
+PASS2_TRIGGER_PLAYBOOK_MAP = {
+    "cross_device_process_chain": "PB-SIFT-100",
+    "usb_lateral_movement": "PB-SIFT-101",
+    "temporal_anomaly": "PB-SIFT-102",
+    "off_hours_cluster": "PB-SIFT-102",
+    "ioc_correlation": "PB-SIFT-103",
+    "file_beaconing": "PB-SIFT-103",
+    "dwell_window": "PB-SIFT-104",
+}
+
+# Pass 2 playbook names for reporting
+PLAYBOOK_NAMES_PASS2 = {
+    "PB-SIFT-100": "Process Chain Investigation",
+    "PB-SIFT-101": "USB Lateral Movement Investigation",
+    "PB-SIFT-102": "Temporal Anomaly Investigation",
+    "PB-SIFT-103": "IOC Cross-Reference Investigation",
+    "PB-SIFT-104": "Dwell Window Deep-Dive",
+}
+
 # Mapping of header-detected file types to inventory buckets for validation
 _HEADER_TYPE_MAP = {
     "ewf_disk_image": "disk_images",
@@ -2949,6 +3139,802 @@ def _run_forensicator_batch(
         "playbooks_queued": len(execution_plan),
         "devices": list(device_map.keys()),
         "started_at": datetime.now().isoformat(),
+    }
+
+
+
+# =====================================================================
+# Pass 2: Timeline Intelligence Analysis
+# =====================================================================
+
+def _timeline_intelligence_analysis(
+    super_timeline_events: list,
+    device_map: dict,
+    indicator_hits: list = None,
+    job_id: str = None,
+    fe_log_func=None,
+) -> dict:
+    """Analyse the super timeline for cross-device patterns that warrant
+    a second pass of targeted investigation.
+
+    Returns a TimelineIntelligence dict with:
+      - cross_device_process_chains
+      - usb_lateral_movement
+      - off_hours_clusters
+      - file_beaconing_patterns
+      - ioc_correlations
+      - dwell_time_window
+      - pass2_playbook_triggers
+    """
+
+    def _log(msg):
+        if fe_log_func and job_id:
+            fe_log_func(job_id, msg)
+
+    intelligence = {
+        "cross_device_process_chains": [],
+        "usb_lateral_movement": [],
+        "off_hours_clusters": [],
+        "file_beaconing_patterns": [],
+        "ioc_correlations": [],
+        "dwell_time_window": {"first_seen": None, "last_seen": None, "dwell_days": 0},
+        "pass2_playbook_triggers": [],
+    }
+
+    if not super_timeline_events or not device_map:
+        return intelligence
+
+    # Index events by device for fast lookup
+    dev_events = {}
+    for event in super_timeline_events:
+        did = event.get("device_id", "")
+        if did not in dev_events:
+            dev_events[did] = []
+        dev_events[did].append(event)
+
+    # ---------------------------------------------------------------
+    # 1. Cross-Device Process Chain Detection
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for cross-device process chains...")
+    all_process_events = []
+    for event in super_timeline_events:
+        if event.get("event_type") in ("process_execution", "process_creation"):
+            all_process_events.append(event)
+
+    all_process_events.sort(key=lambda e: e.get("timestamp", ""))
+
+    # Look for processes that have the same name appearing on different
+    # devices within a short time window (indicating lateral movement)
+    # or uncommon child-to-parent chains crossing device boundaries
+    chain_keywords = ["psexec", "cmd.exe", "powershell.exe", "wmic.exe",
+                      "winrm.exe", "schtasks.exe", "rundll32.exe",
+                      "mshta.exe", "regsvr32.exe", "ntdsutil.exe",
+                      "vssadmin.exe", "wscript.exe", "cscript.exe"]
+
+    for proc_ev in all_process_events:
+        detail = proc_ev.get("detail", {})
+        proc_name = detail.get("name", "").lower() or detail.get("process_name", "").lower()
+        if not proc_name:
+            continue
+        match_kw = None
+        for kw in chain_keywords:
+            if kw in proc_name:
+                match_kw = kw
+                break
+        if not match_kw:
+            continue
+
+        # Find same or related process on other devices within 30 minutes
+        ts = proc_ev.get("timestamp", "")
+        try:
+            from datetime import timedelta
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            window_end = dt + timedelta(minutes=30)
+        except (ValueError, TypeError):
+            continue
+
+        related = []
+        for other_ev in all_process_events:
+            if other_ev.get("device_id") == proc_ev.get("device_id"):
+                continue
+            other_ts = other_ev.get("timestamp", "")
+            try:
+                other_dt = datetime.fromisoformat(other_ts.replace("Z", "+00:00"))
+                if dt <= other_dt <= window_end:
+                    other_detail = other_ev.get("detail", {})
+                    other_name = other_detail.get("name", "").lower() or other_detail.get("process_name", "").lower()
+                    if other_name and match_kw in other_name:
+                        related.append(other_ev)
+            except (ValueError, TypeError):
+                continue
+
+        if related and len(related) >= 1:
+            devices_involved = list(set([proc_ev.get("device_id")] +
+                                        [r.get("device_id") for r in related]))
+            chain = {
+                "root_process": proc_name,
+                "source_device": proc_ev.get("device_id"),
+                "source_timestamp": ts,
+                "target_devices": list(set(r.get("device_id") for r in related)),
+                "related_events": len(related),
+                "devices_involved": devices_involved,
+                "time_window": {
+                    "start": ts,
+                    "end": max(r.get("timestamp", ts) for r in related),
+                },
+            }
+            intelligence["cross_device_process_chains"].append(chain)
+
+            # Generate Pass 2 trigger
+            trigger = {
+                "trigger_id": f"trigger-chain-{proc_name}-{hash(ts) % 10000:04d}",
+                "trigger_type": "cross_device_process_chain",
+                "playbook_id": "PB-SIFT-100",
+                "priority": "HIGH",
+                "devices_involved": devices_involved,
+                "time_window": chain["time_window"],
+                "context": {
+                    "root_process": proc_name,
+                    "source_device": proc_ev.get("device_id"),
+                    "chain_length": len(related),
+                },
+                "investigation_questions": [
+                    f"How did {proc_name} execute on {proc_ev.get('device_id')}?",
+                    f"What artifacts link {proc_name} across devices?",
+                ],
+            }
+            # Deduplicate — one trigger per matched process keyword
+            if not any(t["trigger_type"] == trigger["trigger_type"] and
+                       all(d in t["devices_involved"] for d in devices_involved)
+                       for t in intelligence["pass2_playbook_triggers"]):
+                intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["cross_device_process_chains"]:
+        _log(f"  ✓ Found {len(intelligence['cross_device_process_chains'])} cross-device process chains")
+
+    # ---------------------------------------------------------------
+    # 2. USB Lateral Movement Detection
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for USB serial number correlations...")
+    usb_events_by_serial = {}
+    for event in super_timeline_events:
+        detail = event.get("detail", {})
+        key = detail.get("key", "").lower()
+        value = detail.get("raw", "").lower() if isinstance(detail.get("raw"), str) else ""
+        # Look for USBSTOR or mounted devices entries
+        if ("usbstor" in key or "usb" in key or "mounteddevice" in key or
+            "usb" in str(detail).lower()):
+            # Extract serial numbers using common patterns
+            for match in re.finditer(
+                r'(?:VEN_[A-Fa-f0-9]{4}&PROD_[A-Fa-f0-9]{4}|[A-Fa-f0-9]{8}&[A-Fa-f0-9]{4}|[0-9A-Z]{10,})',
+                str(detail)
+            ):
+                serial = match.group(0).upper()
+                if serial not in usb_events_by_serial:
+                    usb_events_by_serial[serial] = []
+                usb_events_by_serial[serial].append(event)
+        # Also check summary for USB references
+        if "usb" in event.get("summary", "").lower():
+            summary = event.get("summary", "")
+            for match in re.finditer(
+                r'(?:VEN_[A-Fa-f0-9]{4}&PROD_[A-Fa-f0-9]{4}|[A-Fa-f0-9]{8}&[A-Fa-f0-9]{4}|[0-9A-Z]{10,})',
+                summary
+            ):
+                serial = match.group(0).upper()
+                if serial not in usb_events_by_serial:
+                    usb_events_by_serial[serial] = []
+                usb_events_by_serial[serial].append(event)
+
+    for serial, events in usb_events_by_serial.items():
+        # A USB device seen on multiple hosts = lateral movement candidate
+        devices_with_serial = set(e.get("device_id") for e in events)
+        if len(devices_with_serial) >= 2:
+            timestamps = sorted(e.get("timestamp", "") for e in events if e.get("timestamp"))
+            if len(timestamps) >= 2:
+                usb_movement = {
+                    "serial_number": serial,
+                    "devices_involved": sorted(devices_with_serial),
+                    "event_count": len(events),
+                    "time_window": {
+                        "start": timestamps[0],
+                        "end": timestamps[-1],
+                    },
+                }
+                intelligence["usb_lateral_movement"].append(usb_movement)
+
+                trigger = {
+                    "trigger_id": f"trigger-usb-{serial[:8]}",
+                    "trigger_type": "usb_lateral_movement",
+                    "playbook_id": "PB-SIFT-101",
+                    "priority": "HIGH",
+                    "devices_involved": sorted(devices_with_serial),
+                    "time_window": usb_movement["time_window"],
+                    "context": {"serial_number": serial},
+                    "investigation_questions": [
+                        f"What files were accessed on USB {serial}?",
+                        f"Which user performed the USB movement between {list(devices_with_serial)}?",
+                    ],
+                }
+                intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["usb_lateral_movement"]:
+        _log(f"  ✓ Found {len(intelligence['usb_lateral_movement'])} USB lateral movement patterns")
+
+    # ---------------------------------------------------------------
+    # 3. Off-Hours Activity Clusters
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for off-hours activity clusters...")
+    off_hours = []
+    significant_types = ("process_execution", "process_creation", "file_creation",
+                         "login", "network_connection", "service_change")
+    for event in super_timeline_events:
+        ts = event.get("timestamp", "")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            hour = dt.hour
+            if hour >= 22 or hour < 5:
+                if event.get("event_type") in significant_types:
+                    off_hours.append(event)
+        except (ValueError, TypeError):
+            continue
+
+    if len(off_hours) >= 3:
+        # Cluster by 15-minute windows across devices
+        clusters = {}
+        for event in off_hours:
+            try:
+                dt = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+                # Round to 15-min window
+                rounded = dt.replace(minute=(dt.minute // 15) * 15, second=0, microsecond=0)
+                window_key = rounded.isoformat()[:16]
+            except (ValueError, TypeError):
+                continue
+            if window_key not in clusters:
+                clusters[window_key] = []
+            clusters[window_key].append(event)
+
+        for window_key, cluster_events in clusters.items():
+            devices_in_window = set(e.get("device_id") for e in cluster_events)
+            if len(devices_in_window) >= 2:
+                timestamps = sorted(e.get("timestamp", "") for e in cluster_events if e.get("timestamp"))
+                off_hours_cluster = {
+                    "time_window": window_key,
+                    "devices_involved": sorted(devices_in_window),
+                    "event_count": len(cluster_events),
+                    "sample_events": cluster_events[:5],
+                    "time_range": {
+                        "start": timestamps[0] if timestamps else "",
+                        "end": timestamps[-1] if timestamps else "",
+                    },
+                }
+                intelligence["off_hours_clusters"].append(off_hours_cluster)
+
+                trigger = {
+                    "trigger_id": f"trigger-offhours-{window_key.replace(':', '').replace('-', '')}",
+                    "trigger_type": "off_hours_cluster",
+                    "playbook_id": "PB-SIFT-102",
+                    "priority": "MEDIUM",
+                    "devices_involved": sorted(devices_in_window),
+                    "time_window": {
+                        "start": timestamps[0] if timestamps else "",
+                        "end": timestamps[-1] if timestamps else "",
+                    },
+                    "context": {"cluster_window": window_key, "sample_events": len(cluster_events)},
+                    "investigation_questions": [
+                        f"What triggered activity at {window_key} across {len(devices_in_window)} devices?",
+                        "Were scheduled tasks or WMI subscriptions active?",
+                    ],
+                }
+                if not any(t["trigger_type"] == trigger["trigger_type"] and
+                           t.get("context", {}).get("cluster_window") == window_key
+                           for t in intelligence["pass2_playbook_triggers"]):
+                    intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["off_hours_clusters"]:
+        _log(f"  ✓ Found {len(intelligence['off_hours_clusters'])} off-hours clusters")
+
+    # ---------------------------------------------------------------
+    # 4. File Beaconing / Staging Patterns
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for file beaconing/staging patterns...")
+    temp_pattern = re.compile(r'(?:\\Temp\\|/tmp/|\.tmp$|\.dat$)', re.IGNORECASE)
+    file_events_by_device = {}
+    for event in super_timeline_events:
+        if event.get("event_type") not in ("file_creation", "file_modification",
+                                            "file_deletion"):
+            continue
+        detail = event.get("detail", {})
+        path = detail.get("path", "").lower() or event.get("summary", "").lower()
+        if not temp_pattern.search(path):
+            continue
+        did = event.get("device_id", "")
+        if did not in file_events_by_device:
+            file_events_by_device[did] = []
+        file_events_by_device[did].append(event)
+
+    for did, events in file_events_by_device.items():
+        if len(events) < 4:
+            continue
+        # Sort and look for regular intervals
+        try:
+            sorted_ts = []
+            for e in events:
+                ts = e.get("timestamp", "")
+                if ts:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    sorted_ts.append((dt, e))
+            sorted_ts.sort(key=lambda x: x[0])
+            if len(sorted_ts) < 4:
+                continue
+            intervals = []
+            for i in range(1, len(sorted_ts)):
+                intervals.append((sorted_ts[i][0] - sorted_ts[i-1][0]).total_seconds())
+            if not intervals:
+                continue
+            avg_interval = sum(intervals) / len(intervals)
+            variance = sum((x - avg_interval) ** 2 for x in intervals) / len(intervals)
+            if avg_interval > 0 and variance ** 0.5 / avg_interval < 0.3 and len(intervals) >= 3:
+                beacon = {
+                    "device_id": did,
+                    "file_count": len(sorted_ts),
+                    "avg_interval_seconds": round(avg_interval, 1),
+                    "time_window": {
+                        "start": sorted_ts[0][0].isoformat()[:19] + "Z",
+                        "end": sorted_ts[-1][0].isoformat()[:19] + "Z",
+                    },
+                }
+                intelligence["file_beaconing_patterns"].append(beacon)
+                # Link this to the time window trigger
+                if not any(t.get("context", {}).get("device_id") == did and
+                           "beacon" in t.get("trigger_id", "")
+                           for t in intelligence["pass2_playbook_triggers"]):
+                    trigger = {
+                        "trigger_id": f"trigger-beacon-{did}",
+                        "trigger_type": "file_beaconing",
+                        "playbook_id": "PB-SIFT-103",
+                        "priority": "HIGH",
+                        "devices_involved": [did],
+                        "time_window": beacon["time_window"],
+                        "context": beacon,
+                        "investigation_questions": [
+                            f"What process created the temp files on {did}?",
+                            f"Is the beacon interval {avg_interval:.0f}s associated with known malware families?",
+                        ],
+                    }
+                    intelligence["pass2_playbook_triggers"].append(trigger)
+        except (ValueError, TypeError):
+            continue
+
+    if intelligence["file_beaconing_patterns"]:
+        _log(f"  ✓ Found {len(intelligence['file_beaconing_patterns'])} file beaconing patterns")
+
+    # ---------------------------------------------------------------
+    # 5. Cross-Device IOC Correlation
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for cross-device IOC correlations...")
+    # Collect IOCs from indicator hits and findings
+    known_iocs = set()
+    if indicator_hits:
+        for hit in indicator_hits:
+            if isinstance(hit, dict):
+                pattern = hit.get("pattern", "")
+                if pattern and len(pattern) > 4:
+                    known_iocs.add(pattern.lower())
+
+    # Look for co-occurring suspicious patterns across devices
+    dev_ioc_sets = {}
+    for event in super_timeline_events:
+        if not event.get("suspicious"):
+            continue
+        did = event.get("device_id", "")
+        reason = (event.get("suspicion_reason") or "").lower()
+        summary = (event.get("summary") or "").lower()
+        detail = event.get("detail", {})
+        detail_str = str(detail).lower()
+
+        if did not in dev_ioc_sets:
+            dev_ioc_sets[did] = set()
+
+        for ioc in known_iocs:
+            if ioc in summary or ioc in detail_str or ioc in reason:
+                dev_ioc_sets[did].add(ioc)
+
+    # Find IOCs shared across multiple devices
+    for ioc in known_iocs:
+        devices_with_ioc = [did for did, iocs in dev_ioc_sets.items() if ioc in iocs]
+        if len(devices_with_ioc) >= 2:
+            ioc_corr = {
+                "ioc": ioc,
+                "devices_involved": sorted(devices_with_ioc),
+                "device_count": len(devices_with_ioc),
+            }
+            intelligence["ioc_correlations"].append(ioc_corr)
+
+            trigger = {
+                "trigger_id": f"trigger-ioc-{hash(ioc) % 10000:04d}",
+                "trigger_type": "ioc_correlation",
+                "playbook_id": "PB-SIFT-103",
+                "priority": "HIGH",
+                "devices_involved": sorted(devices_with_ioc),
+                "time_window": {"start": "", "end": ""},  # Full scope
+                "context": {"ioc": ioc, "device_count": len(devices_with_ioc)},
+                "investigation_questions": [
+                    f"How was IOC '{ioc}' deployed across {len(devices_with_ioc)} devices?",
+                    f"What is the deployment timeline for '{ioc}'?",
+                ],
+            }
+            intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["ioc_correlations"]:
+        _log(f"  ✓ Found {len(intelligence['ioc_correlations'])} cross-device IOC correlations")
+
+    # ---------------------------------------------------------------
+    # 6. Dwell Time Window Calculation
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: calculating dwell time window...")
+    all_timestamps = []
+    for event in super_timeline_events:
+        ts = event.get("timestamp", "")
+        if not ts:
+            continue
+        if event.get("suspicious") or "suspicious" not in event:
+            all_timestamps.append(ts)
+
+    if all_timestamps:
+        all_timestamps.sort()
+        first = all_timestamps[0]
+        last = all_timestamps[-1]
+        try:
+            t0 = datetime.fromisoformat(first.replace("Z", "+00:00")[:19])
+            t1 = datetime.fromisoformat(last.replace("Z", "+00:00")[:19])
+            dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
+        except (ValueError, TypeError):
+            dwell_days = 0
+        intelligence["dwell_time_window"] = {
+            "first_seen": first,
+            "last_seen": last,
+            "dwell_days": dwell_days,
+        }
+
+    # Auto-trigger dwell window deep-dive for multi-day dwells
+    if intelligence["dwell_time_window"]["dwell_days"] > 1:
+        dw = intelligence["dwell_time_window"]
+        trigger = {
+            "trigger_id": f"trigger-dwell-{dw['dwell_days']}d",
+            "trigger_type": "dwell_window",
+            "playbook_id": "PB-SIFT-104",
+            "priority": "MEDIUM",
+            "devices_involved": sorted(device_map.keys()),
+            "time_window": {"start": dw["first_seen"], "end": dw["last_seen"]},
+            "context": {"dwell_days": dw["dwell_days"]},
+            "investigation_questions": [
+                "What user activity occurred across the full dwell window?",
+                "Are there gaps or bursts that align with attacker behavior?",
+            ],
+        }
+        intelligence["pass2_playbook_triggers"].append(trigger)
+
+    _log(f"  Dwell time: {intelligence['dwell_time_window']['dwell_days']} days")
+    _log(f"  Pass 2 triggers generated: {len(intelligence['pass2_playbook_triggers'])}")
+
+    return intelligence
+
+
+def _manager_review_pass2_triggers(
+    triggers: list,
+    pass1_findings: list,
+    job_id: str = None,
+    fe_log_func=None,
+) -> list:
+    """Manager LLM reviews Pass 2 triggers and filters/approves them.
+
+    Calls the Manager LLM to review each trigger against Pass 1 findings.
+    Has a template fallback: if LLM is unavailable, approve up to 3
+    highest-priority triggers.
+
+    Returns a list of approved triggers.
+    """
+
+    def _log(msg):
+        if fe_log_func and job_id:
+            fe_log_func(job_id, msg)
+
+    if not triggers:
+        _log("  Manager Pass 2 Review: no triggers to review")
+        return []
+
+    _log(f"  Manager Pass 2 Review: {len(triggers)} candidate triggers")
+
+    # Try LLM review
+    try:
+        trigger_snippets = []
+        for t in triggers[:10]:  # Cap at 10 for context window
+            trigger_snippets.append({
+                "trigger_id": t.get("trigger_id", ""),
+                "trigger_type": t.get("trigger_type", ""),
+                "playbook_id": t.get("playbook_id", ""),
+                "priority": t.get("priority", ""),
+                "devices_involved": t.get("devices_involved", []),
+                "questions": t.get("investigation_questions", [])[:2],
+            })
+
+        pass1_summary = {
+            "total_findings": len(pass1_findings),
+            "high_critical": len([f for f in pass1_findings
+                                  if isinstance(f.get("forensicator"), dict)
+                                  and f["forensicator"].get("significance") in ("CRITICAL", "HIGH")]),
+        }
+
+        prompt = f"""You are the Manager. Review these Pass 2 investigation triggers.
+
+PASS 1 SUMMARY: {json.dumps(pass1_summary)}
+CANDIDATE TRIGGERS: {json.dumps(trigger_snippets, indent=2)}
+
+Decide which triggers to pursue. Consider:
+- Is the evidence strong enough to warrant a second pass?
+- Do multiple triggers overlap and can be combined?
+- Is the potential impact worth the additional analysis time?
+- Max 3 high-priority triggers for any single investigation.
+
+Respond ONLY in valid JSON:
+{{"approved_trigger_ids": ["id1", "id2"], "reasoning": "one sentence"}}"""
+
+        _log("  ▶ Manager: reviewing Pass 2 triggers...")
+        raw = _call_manager_llm(prompt, timeout=120)
+        if raw:
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group())
+                approved_ids = parsed.get("approved_trigger_ids", [])
+                if approved_ids:
+                    approved = [t for t in triggers if t.get("trigger_id") in approved_ids]
+                    _log(f"  ✓ Manager approved {len(approved)}/{len(triggers)} triggers: {parsed.get('reasoning', '')}")
+                    return approved[:3]  # Cap at 3
+    except Exception as e:
+        _log(f"  ⚠ Manager review LLM error: {e} — using template fallback")
+
+    # Template fallback: approve highest-priority up to 3
+    _log("  ↳ Falling back to template: approve up to 3 highest-priority triggers")
+    priority_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    sorted_triggers = sorted(triggers, key=lambda t: priority_order.get(t.get("priority", "LOW"), 4))
+
+    # Deduplicate by trigger_type (only one per type)
+    seen_types = set()
+    approved = []
+    for t in sorted_triggers:
+        ttype = t.get("trigger_type", "")
+        if ttype not in seen_types:
+            seen_types.add(ttype)
+            approved.append(t)
+            if len(approved) >= 3:
+                break
+
+    _log(f"  ✓ Template fallback approved {len(approved)} triggers")
+    return approved
+
+
+def _execute_pass2(
+    triggers: list,
+    device_map: dict,
+    case_work_dir: Path,
+    findings_writer,
+    image_offsets: dict,
+    inventory: dict,
+    job_id: str = None,
+    fe_log_func=None,
+) -> dict:
+    """Execute targeted Pass 2 playbooks driven by timeline intelligence.
+
+    Key differences from Pass 1:
+    - Only triggered playbooks run (not all 33)
+    - Playbooks receive time_window and device filter params
+    - Plaso queries are filtered to the investigation window
+    - Results feed into pass2_findings.jsonl separate from Pass 1 findings
+
+    Returns dict with pass2 summary.
+    """
+
+    def _log(msg):
+        if fe_log_func and job_id:
+            fe_log_func(job_id, msg)
+
+    if not triggers:
+        _log("  Pass 2: no approved triggers — skipping")
+        return {"triggers_processed": 0, "playbooks_run": [], "findings_count": 0}
+
+    _log(f"\n{'='*60}")
+    _log(f"PASS 2: Targeted Timeline-Driven Investigation")
+    _log(f"{'='*60}")
+    _log(f"  Approved triggers: {len(triggers)}")
+
+    output_dir = str(case_work_dir / "output")
+    pass2_findings_path = case_work_dir / "findings_pass2.jsonl"
+    pass2_writer = FindingsWriter(pass2_findings_path, job_id=job_id)
+
+    playbooks_run = []
+    steps_completed = 0
+    steps_failed = 0
+    steps_skipped = 0
+
+    # Build per-device evidence lookup
+    device_evidence = {}
+    for dev_id, dev in device_map.items():
+        device_evidence[dev_id] = {
+            "disk_images": [], "memory_dumps": [], "pcaps": [],
+            "evtx_logs": [], "syslogs": [], "registry_hives": [],
+            "mobile_backups": [], "other_files": [],
+        }
+        for fpath in dev.get("evidence_files", []):
+            for ev_type in inventory:
+                if isinstance(inventory[ev_type], list) and fpath in inventory[ev_type]:
+                    device_evidence[dev_id][ev_type].append(fpath)
+
+    for trigger_idx, trigger in enumerate(triggers):
+        playbook_id = trigger.get("playbook_id", "")
+        trigger_type = trigger.get("trigger_type", "")
+        pb_name = PLAYBOOK_NAMES_PASS2.get(playbook_id, playbook_id)
+
+        if playbook_id not in PLAYBOOK_STEPS_PASS2:
+            _log(f"  ✗ Pass 2: playbook {playbook_id} not defined — skipping")
+            continue
+
+        _log(f"\n  ▶ Pass 2 [{trigger_idx+1}/{len(triggers)}]: {playbook_id} ({pb_name})")
+        _log(f"    Trigger: {trigger_type} | Devices: {', '.join(trigger.get('devices_involved', []))}")
+
+        pb_steps_def = PLAYBOOK_STEPS_PASS2[playbook_id]
+        pb_findings = []
+        time_window = trigger.get("time_window", {})
+        trigger_context = trigger.get("context", {})
+
+        for dev_id in trigger.get("devices_involved", []):
+            dev = device_map.get(dev_id)
+            if not dev:
+                continue
+            dev_ev = device_evidence.get(dev_id, {})
+
+            for ev_type, step_templates in pb_steps_def.items():
+                evidence_items = dev_ev.get(ev_type, [])
+                if not evidence_items:
+                    continue
+
+                # Limit to first 2 items per evidence type for Pass 2
+                items = evidence_items[:2]
+
+                for item in items:
+                    try:
+                        _validate_evidence_path(item)
+                    except ValueError:
+                        continue
+
+                    item_stem = Path(item).stem
+
+                    for module, function, raw_params in step_templates:
+                        # Build params with time window and trigger context
+                        params = {}
+                        for k, v in raw_params.items():
+                            if isinstance(v, str):
+                                v = v.replace("{image}", item)
+                                v = v.replace("{mem}", item)
+                                v = v.replace("{pcap}", item)
+                                v = v.replace("{evtx}", item)
+                                v = v.replace("{syslog}", item)
+                                v = v.replace("{hive}", item)
+                                v = v.replace("{mobile}", str(Path(item).parent))
+                                v = v.replace("{file}", item)
+                                v = v.replace("{output_dir}", output_dir)
+                                v = v.replace("{image_stem}", item_stem)
+                                v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                # Time window params
+                                v = v.replace("{time_window_start}", str(time_window.get("start", "")))
+                                v = v.replace("{time_window_end}", str(time_window.get("end", "")))
+                                v = v.replace("{dwell_start}", str(time_window.get("start", "")))
+                                v = v.replace("{dwell_end}", str(time_window.get("end", "")))
+                            params[k] = v
+
+                        # Convert numeric string params
+                        for k, v_conv in list(params.items()):
+                            if isinstance(v_conv, str) and v_conv.isdigit():
+                                params[k] = int(v_conv)
+                            elif isinstance(v_conv, str) and v_conv.lower() in ('true', 'false'):
+                                params[k] = v_conv.lower() == 'true'
+
+                        step_key = f"pass2:{playbook_id}:{module}:{function}:{Path(item).name}"
+                        execution_hash = hashlib.md5(
+                            f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()
+                        ).hexdigest()[:12]
+
+                        # Idempotency
+                        if pass2_writer.is_completed(step_key):
+                            continue
+
+                        step_record = {
+                            "step_key": step_key,
+                            "execution_hash": execution_hash,
+                            "playbook": playbook_id,
+                            "module": module,
+                            "function": function,
+                            "params": params,
+                            "evidence_file": item,
+                            "device_id": dev_id,
+                            "owner": dev.get("owner"),
+                            "pass": 2,
+                            "trigger_type": trigger_type,
+                            "trigger_id": trigger.get("trigger_id", ""),
+                            "status": "running",
+                            "started_at": datetime.now().isoformat(),
+                        }
+
+                        try:
+                            result = _run_step_via_orchestrator(module, function, params)
+                            step_status = result.get("status", "error")
+                            if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                                step_record["status"] = "skipped"
+                                steps_skipped += 1
+                            elif step_status == "success":
+                                step_record["status"] = "completed"
+                                steps_completed += 1
+                                # Quick forensicator interpretation
+                                try:
+                                    if 'geoff_forensicator' in dir():
+                                        fn_notes = geoff_forensicator.interpret_step_result(
+                                            playbook_id=playbook_id,
+                                            module=module,
+                                            function=function,
+                                            params=params,
+                                            result=result,
+                                            device_context={"device_id": dev_id},
+                                        )
+                                        step_record["forensicator"] = fn_notes
+                                except Exception:
+                                    pass
+                            else:
+                                step_record["status"] = "failed"
+                                steps_failed += 1
+
+                            step_record["result"] = result
+                        except Exception as e:
+                            step_record["status"] = "failed"
+                            step_record["error"] = str(e)
+                            steps_failed += 1
+
+                        step_record["completed_at"] = datetime.now().isoformat()
+                        pass2_writer.append(step_record)
+                        pb_findings.append(step_record)
+
+            playbooks_run.append({
+                "playbook_id": playbook_id,
+                "pass": 2,
+                "trigger_type": trigger_type,
+                "steps_attempted": len(pb_findings),
+                "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+                "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+                "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+            })
+
+            # Write pass2 playbook output
+            try:
+                pb_output = case_work_dir / "output" / f"{playbook_id}_pass2.json"
+                _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
+            except Exception:
+                pass
+
+        _log(f"    ✓ {playbook_id}: {len(pb_findings)} steps")
+
+    pass2_findings = pass2_writer.all_records()
+    _log(f"\n  Pass 2 complete: {len(playbooks_run)} playbooks, {len(pass2_findings)} findings")
+    _log(f"    Completed: {steps_completed} | Failed: {steps_failed} | Skipped: {steps_skipped}")
+
+    return {
+        "triggers_processed": len(triggers),
+        "playbooks_run": playbooks_run,
+        "findings_count": len(pass2_findings),
+        "findings": pass2_findings,
+        "findings_path": str(pass2_findings_path),
+        "steps_completed": steps_completed,
+        "steps_failed": steps_failed,
+        "steps_skipped": steps_skipped,
     }
 
 
@@ -4974,10 +5960,101 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             _audit_append(case_work_dir, "anti_forensics_cascade_final", late_findings=late)
 
     # ------------------------------------------------------------------
-    # Phase 3b: Batch Critic Review + Manager Decision
+    # Phase 68%: Transition — prepare for timeline analysis
+    # ------------------------------------------------------------------
+    _update_job(68, "super-timeline", "Building unified timeline from Pass 1 findings")
+
+    # ------------------------------------------------------------------
+    # Phase 70%: Super Timeline Build (moved from 90%)
+    # This is now the PASS BOUNDARY — timeline intelligence drives Pass 2
+    # ------------------------------------------------------------------
+    _update_job(70, "super-timeline", "Building unified timeline")
+    try:
+        super_tl = SuperTimeline()
+        super_timeline_path, super_timeline_events = super_tl.build(
+            device_map=device_map,
+            findings=findings_writer.all_records(),
+            case_work_dir=case_work_dir,
+            plaso_specialist=orchestrator.plaso if hasattr(orchestrator, 'plaso') else None,
+            job_id=job_id,
+            fe_log_func=_fe_log,
+        )
+        _fe_log(job_id, f"Super-timeline: {len(super_timeline_events)} events across {len(device_map)} devices")
+    except Exception as e:
+        _fe_log(job_id, f"Super-timeline build failed: {e}")
+        super_timeline_path = None
+        super_timeline_events = []
+
+    # ------------------------------------------------------------------
+    # Phase 73%: Timeline Intelligence Analysis (NEW)
+    # Analyse cross-device patterns and generate Pass 2 triggers
+    # ------------------------------------------------------------------
+    _update_job(73, "timeline-intel", "Analysing cross-device patterns")
+    timeline_intelligence = {}
+    try:
+        timeline_intelligence = _timeline_intelligence_analysis(
+            super_timeline_events=super_timeline_events,
+            device_map=device_map,
+            indicator_hits=indicator_hits,
+            job_id=job_id,
+            fe_log_func=_fe_log,
+        )
+        # Persist timeline intelligence to disk
+        _atomic_write(
+            case_work_dir / "timeline_intelligence.json",
+            json.dumps(timeline_intelligence, indent=2, default=str),
+        )
+        _fe_log(job_id, f"Timeline intelligence: {len(timeline_intelligence.get('pass2_playbook_triggers', []))} Pass 2 triggers")
+    except Exception as e:
+        _fe_log(job_id, f"Timeline intelligence analysis failed: {e}")
+        timeline_intelligence = {"pass2_playbook_triggers": []}
+
+    # ------------------------------------------------------------------
+    # Phase 75%: Manager Review of Pass 2 Triggers (NEW)
+    # Manager decides which triggers are worth pursuing
+    # ------------------------------------------------------------------
+    _update_job(75, "manager-review", "Reviewing Pass 2 triggers")
+    pass2_triggers = timeline_intelligence.get("pass2_playbook_triggers", [])
+    approved_pass2_triggers = []
+    try:
+        approved_pass2_triggers = _manager_review_pass2_triggers(
+            triggers=pass2_triggers,
+            pass1_findings=findings_writer.all_records(),
+            job_id=job_id,
+            fe_log_func=_fe_log,
+        )
+        _fe_log(job_id, f"Manager approved {len(approved_pass2_triggers)}/{len(pass2_triggers)} Pass 2 triggers")
+    except Exception as e:
+        _fe_log(job_id, f"Manager Pass 2 review failed: {e}")
+        approved_pass2_triggers = []
+
+    # ------------------------------------------------------------------
+    # Phase 77%: Pass 2 Execution (NEW)
+    # Execute targeted playbooks for approved triggers
+    # ------------------------------------------------------------------
+    _update_job(77, "pass2", "Executing Pass 2 investigations")
+    pass2_results = {}
+    try:
+        pass2_results = _execute_pass2(
+            triggers=approved_pass2_triggers,
+            device_map=device_map,
+            case_work_dir=case_work_dir,
+            findings_writer=findings_writer,
+            image_offsets=image_offsets,
+            inventory=inventory,
+            job_id=job_id,
+            fe_log_func=_fe_log,
+        )
+        _fe_log(job_id, f"Pass 2: {len(pass2_results.get('playbooks_run', []))} playbooks, {pass2_results.get('findings_count', 0)} findings")
+    except Exception as e:
+        _fe_log(job_id, f"Pass 2 execution failed: {e}")
+        pass2_results = {"playbooks_run": [], "findings": []}
+
+    # ------------------------------------------------------------------
+    # Phase 80%: Batch Critic Review (now includes Pass 2 findings)
     # ------------------------------------------------------------------
     manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
-    _update_job(88, "batch-critic", "Batch Critic reviewing all findings")
+    _update_job(80, "batch-critic", "Batch Critic reviewing all findings (Pass 1 + Pass 2)")
     try:
         _batch_assess = _batch_critic_review_all_playbooks(
             findings=findings_writer.all_records(),
@@ -4997,7 +6074,7 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # --- Incremental Replay: re-run steps with Manager-patched params ---
     replay_adjustments = manager_decision.get("replay_adjustments", {})
     if manager_decision.get("action") == "replay" and replay_adjustments:
-        _update_job(89, "replay", f"Replaying {len(replay_adjustments)} step(s) with adjusted params")
+        _update_job(85, "replay", f"Replaying {len(replay_adjustments)} step(s) with adjusted params")
         _fe_log(job_id, f"  [REPLAY] Manager flagged {len(replay_adjustments)} step(s) for incremental replay")
         for _rk, _rparams in replay_adjustments.items():
             # Find the original step record
@@ -5037,26 +6114,6 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
                     _fe_log(job_id, f"  ✗ Replay failed: {_module}.{_function}")
             except Exception as _re:
                 _fe_log(job_id, f"  ✗ Replay error for {_rk}: {_re}")
-
-    # ------------------------------------------------------------------
-    # Phase 3b-new: Super-Timeline Build
-    # ------------------------------------------------------------------
-    _update_job(90, "super-timeline", "Building unified timeline")
-    try:
-        super_tl = SuperTimeline()
-        super_timeline_path, super_timeline_events = super_tl.build(
-            device_map=device_map,
-            findings=findings_writer.all_records(),
-            case_work_dir=case_work_dir,
-            plaso_specialist=orchestrator.plaso if hasattr(orchestrator, 'plaso') else None,
-            job_id=job_id,
-            fe_log_func=_fe_log,
-        )
-        _fe_log(job_id, f"Super-timeline: {len(super_timeline_events)} events across {len(device_map)} devices")
-    except Exception as e:
-        _fe_log(job_id, f"Super-timeline build failed: {e}")
-        super_timeline_path = None
-        super_timeline_events = []
 
     # ------------------------------------------------------------------
     # Phase 3c-new: Behavioral Analysis (per device)
@@ -5280,6 +6337,32 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
         "evidence_inventory": {k: v for k, v in inventory.items() if isinstance(v, list)},
         "attack_chain": attack_chain,
         "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
+        # Pass 2 timeline-driven investigation results
+        "timeline_intelligence": {
+            "cross_device_process_chains": timeline_intelligence.get("cross_device_process_chains", []),
+            "usb_lateral_movement": timeline_intelligence.get("usb_lateral_movement", []),
+            "off_hours_clusters": timeline_intelligence.get("off_hours_clusters", []),
+            "file_beaconing_patterns": timeline_intelligence.get("file_beaconing_patterns", []),
+            "ioc_correlations": timeline_intelligence.get("ioc_correlations", []),
+            "dwell_time_window": timeline_intelligence.get("dwell_time_window", {}),
+        },
+        "pass2_triggers": [
+            {
+                "trigger_id": t.get("trigger_id", ""),
+                "trigger_type": t.get("trigger_type", ""),
+                "playbook_id": t.get("playbook_id", ""),
+                "priority": t.get("priority", ""),
+                "devices_involved": t.get("devices_involved", []),
+                "approved": t.get("trigger_id") in [at.get("trigger_id") for at in approved_pass2_triggers],
+            }
+            for t in (pass2_triggers if 'pass2_triggers' in dir() else [])
+        ],
+        "pass2_playbooks_run": pass2_results.get("playbooks_run", []),
+        "pass2_findings_count": pass2_results.get("findings_count", 0),
+        "pass2_steps_completed": pass2_results.get("steps_completed", 0),
+        "pass2_steps_failed": pass2_results.get("steps_failed", 0),
+        "pass2_steps_skipped": pass2_results.get("steps_skipped", 0),
+        "pass2_findings_detail": pass2_results.get("findings", []),
     }
 
     # ------------------------------------------------------------------
