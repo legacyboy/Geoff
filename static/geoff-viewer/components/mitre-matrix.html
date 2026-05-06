@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MITRE ATT&CK Matrix — Geoff DFIR</title>
+  <style>
+    /* ── Geoff Design Tokens (mirrors geoff-viewer/styles.css) ── */
+    :root {
+      --g-bg:         #0B1220;
+      --g-bg-2:       #0F172A;
+      --g-surface:    #1E293B;
+      --g-surface-2:  #172033;
+      --g-border:     #334155;
+      --g-border-soft:#1F2A3F;
+      --g-text:       #F1F5F9;
+      --g-text-dim:   #94A3B8;
+      --g-text-mute:  #64748B;
+      --g-blue:       #3B82F6;
+      --g-blue-soft:  #60A5FA;
+      --g-green:      #10B981;
+      --g-amber:      #F59E0B;
+      --g-red:        #EF4444;
+      --g-purple:     #A78BFA;
+      --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+      --radius: 6px;
+      --radius-sm: 4px;
+
+      /* MITRE-specific tokens */
+      --m-obs-bg:    rgba(59,130,246,0.18);
+      --m-obs-bd:    rgba(59,130,246,0.5);
+      --m-obs-fg:    #60A5FA;
+      --m-mis-bg:    rgba(30,41,59,0.3);
+      --m-mis-bd:    rgba(51,65,85,0.25);
+      --m-mis-fg:    #475569;
+      --m-hdr-obs:   rgba(59,130,246,0.15);
+      --m-hdr-mis:   rgba(30,41,59,0.2);
+      --m-hdr-bd-obs: var(--g-blue);
+      --m-hdr-bd-mis: rgba(51,65,85,0.3);
+      --m-hdr-fg-obs: var(--g-blue-soft);
+      --m-hdr-fg-mis: #475569;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--g-bg);
+      color: var(--g-text);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    .matrix-shell {
+      display: flex; flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 14px;
+      height: 48px;
+      background: var(--g-bg-2);
+      border-bottom: 1px solid var(--g-border-soft);
+      flex-shrink: 0;
+    }
+    .topbar .brand {
+      display: flex; align-items: baseline; gap: 8px;
+      font-family: var(--font-mono); font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .topbar .brand .logo {
+      color: var(--g-blue); font-size: 15px;
+    }
+    .topbar .brand .tag {
+      color: var(--g-text-mute); font-size: 10px;
+      letter-spacing: 1.5px; text-transform: uppercase;
+    }
+    .topbar .spacer { flex: 1; }
+    .topbar .case-label {
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--g-text-dim);
+    }
+    .topbar .case-label strong { color: var(--g-text); font-weight: 500; }
+
+    /* ── Legend bar ── */
+    .legend-bar {
+      display: flex; align-items: center; gap: 20px;
+      padding: 6px 14px;
+      font-size: 11px; color: var(--g-text-dim);
+      border-bottom: 1px solid var(--g-border-soft);
+      background: var(--g-surface-2);
+      flex-shrink: 0;
+    }
+    .legend-bar .lbl { display: flex; align-items: center; gap: 6px; }
+    .legend-bar .swatch {
+      width: 14px; height: 14px; border-radius: 3px;
+    }
+    .legend-bar .swatch.obs { background: var(--g-blue); }
+    .legend-bar .swatch.mis { background: rgba(30,41,59,0.6); border: 1px solid rgba(51,65,85,0.5); }
+    .legend-bar .not-found { color: var(--g-amber); font-style: italic; margin-left: auto; }
+
+    /* ── Main scroll area ── */
+    .matrix-scroll {
+      flex: 1; overflow: auto;
+      padding: 16px;
+    }
+
+    /* ── Tooltip ── */
+    .mitre-tooltip {
+      position: fixed;
+      pointer-events: none;
+      z-index: 9999;
+      max-width: 320px;
+      background: var(--g-bg-2);
+      border: 1px solid var(--g-border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--g-text);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      opacity: 0;
+      transition: opacity 120ms;
+    }
+    .mitre-tooltip.visible { opacity: 1; }
+    .mitre-tooltip .tt-title {
+      font-family: var(--font-mono);
+      font-weight: 600; font-size: 13px;
+      color: var(--g-blue-soft);
+      margin-bottom: 4px;
+    }
+    .mitre-tooltip .tt-desc {
+      color: var(--g-text-dim);
+      line-height: 1.5;
+      font-size: 11.5px;
+    }
+    .mitre-tooltip .tt-tactic {
+      margin-top: 4px;
+      font-size: 10px;
+      color: var(--g-text-mute);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    /* ── Matrix grid ── */
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 4px;
+      min-width: 900px;
+    }
+
+    .tactic-col {
+      display: flex; flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .tactic-header {
+      text-align: center;
+      padding: 8px 4px;
+      border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      position: relative;
+      overflow: hidden;
+    }
+    .tactic-header.active {
+      background: var(--m-hdr-obs);
+      border: 1px solid var(--m-hdr-bd-obs);
+      color: var(--m-hdr-fg-obs);
+    }
+    .tactic-header.muted {
+      background: var(--m-hdr-mis);
+      border: 1px solid var(--m-hdr-bd-mis);
+      color: var(--m-hdr-fg-mis);
+    }
+    .tactic-header .tactic-count {
+      display: block;
+      font-size: 9px;
+      font-weight: 400;
+      margin-top: 2px;
+      opacity: 0.7;
+    }
+
+    .tech-cell {
+      padding: 8px 6px;
+      border-radius: var(--radius-sm);
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 150ms;
+      position: relative;
+      user-select: none;
+      min-height: 36px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tech-cell.observed {
+      background: var(--m-obs-bg);
+      border: 1px solid var(--m-obs-bd);
+      color: var(--m-obs-fg);
+      font-weight: 600;
+    }
+    .tech-cell.observed:hover {
+      background: rgba(59,130,246,0.28);
+      border-color: var(--g-blue);
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(59,130,246,0.15);
+    }
+    .tech-cell.missing {
+      background: var(--m-mis-bg);
+      border: 1px solid var(--m-mis-bd);
+      color: var(--m-mis-fg);
+    }
+    .tech-cell.missing:hover {
+      background: rgba(30,41,59,0.5);
+      border-color: var(--g-border);
+      color: var(--g-text-dim);
+    }
+
+    /* ── Other techniques ── */
+    .other-section {
+      margin-top: 20px;
+      padding: 14px 16px;
+      background: var(--g-surface-2);
+      border: 1px solid var(--g-border-soft);
+      border-radius: var(--radius);
+    }
+    .other-section h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--g-amber);
+      margin-bottom: 10px;
+    }
+    .other-section .other-tags {
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .other-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 10px;
+      background: var(--m-obs-bg);
+      border: 1px solid var(--m-obs-bd);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--m-obs-fg);
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 120ms;
+    }
+    .other-tag:hover {
+      background: rgba(59,130,246,0.28);
+      border-color: var(--g-blue);
+    }
+    .other-tag .tactic-hint {
+      font-size: 10px;
+      color: var(--g-text-mute);
+      font-weight: 400;
+      font-family: var(--font-sans);
+    }
+
+    /* ── Status bar ── */
+    .statusbar {
+      display: flex; align-items: center; gap: 18px;
+      padding: 0 14px;
+      height: 22px;
+      background: var(--g-bg-2);
+      border-top: 1px solid var(--g-border-soft);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--g-text-mute);
+      flex-shrink: 0;
+    }
+
+    /* ── empty ── */
+    .empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: var(--g-text-mute); font-size: 13px;
+    }
+
+    /* ── Mobile scroll hint ── */
+    .matrix-wrapper {
+      width: 100%; overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="matrix-shell">
+  <div class="topbar">
+    <div class="brand"><span class="logo">G.E.O.F.F.</span><span class="tag">DFIR · MITRE ATT&CK</span></div>
+    <span class="case-label">Case: <strong id="mx-case-id">—</strong></span>
+    <span class="spacer"></span>
+    <span id="mx-severity" style="font-size:10px;letter-spacing:0.8px;"></span>
+  </div>
+  <div class="legend-bar">
+    <span class="lbl"><span class="swatch obs"></span> Technique observed</span>
+    <span class="lbl"><span class="swatch mis"></span> Not observed</span>
+    <span class="lbl" style="margin-left:8px;">🖱 Click → MITRE ATT&CK reference</span>
+    <span id="mx-other-hint" class="not-found" style="display:none;"></span>
+  </div>
+  <div id="mx-content" class="matrix-scroll">
+    <div class="empty">No data loaded. Use <code>loadMitreMatrix(techniquesObserved, killChainPhases)</code> to render.</div>
+  </div>
+  <div class="statusbar">
+    <span>Techniques observed: <strong id="mx-count-obs">0</strong></span>
+    <span>Tactics active: <strong id="mx-count-tac">0</strong></span>
+    <span style="margin-left:auto;">Matrix map from narrative_report.py _MITRE_PHASES</span>
+  </div>
+</div>
+
+<div id="mx-tooltip" class="mitre-tooltip"></div>
+
+<script>
+// ─── MITRE ATT&CK Technique Descriptions ──────────────────────────
+// Sourced from MITRE ATT&CK Enterprise v14
+const MITRE_DESCRIPTIONS = {
+  // Initial Access
+  "T1566": "Spearphishing — targeted email with malicious attachments or links.",
+  "T1190": "Exploit Public-Facing Application — exploit a vulnerability in an internet-facing system.",
+  "T1133": "External Remote Services — leverage VPNs, Citrix, or other remote access gateways.",
+  "T1078": "Valid Accounts — use compromised domain credentials for initial foothold.",
+  // Execution
+  "T1059": "Command and Scripting Interpreter — PowerShell, cmd, bash, Python abuse.",
+  "T1204": "User Execution — rely on a user to open a malicious file, link, or attachment.",
+  "T1053": "Scheduled Task/Job — persistence & execution via cron, Task Scheduler, or launchd.",
+  "T1047": "Windows Management Instrumentation — WMI for process creation and lateral movement.",
+  // Persistence
+  "T1547": "Boot or Logon Autostart Execution — Run keys, Startup folder, or Login items.",
+  "T1060": "Registry Run Keys / Startup Folder — classic Windows persistence mechanisms.",
+  "T1112": "Modify Registry — alter registry keys to maintain persistence.",
+  "T1543": "Create or Modify System Process — install as a system service or daemon.",
+  // Defense Evasion
+  "T1036": "Masquerading — name or location mimicry to blend in with legitimate files.",
+  "T1070": "Indicator Removal — clear logs, delete files, or remove forensic artefacts.",
+  "T1027": "Obfuscated Files or Information — packers, base64, encryption to evade detection.",
+  "T1140": "Deobfuscate/Decode Files or Information — reversing obfuscation at runtime.",
+  // Credential Access
+  "T1003": "OS Credential Dumping — LSASS, SAM, NTDS.dit dumping; Mimikatz family.",
+  "T1110": "Brute Force — password guessing, spraying, credential stuffing.",
+  "T1555": "Credentials from Password Stores — web browsers, keychains, password managers.",
+  // Discovery
+  "T1046": "Network Service Discovery — port scanning, banner grabbing, service enumeration.",
+  "T1083": "File and Directory Discovery — enumerate files, shares, and directory structures.",
+  "T1082": "System Information Discovery — OS version, hostname, domain, and user enumeration.",
+  // Lateral Movement
+  "T1021": "Remote Services — RDP, SMB, SSH, VNC, WinRM for lateral movement.",
+  "T1076": "Remote Desktop Protocol — use RDP for interactive sessions on remote hosts.",
+  // Exfiltration
+  "T1041": "Exfiltration Over C2 Channel — send stolen data back through the command channel.",
+  "T1048": "Exfiltration Over Alternative Protocol — HTTP/S, DNS, FTP, or cloud APIs.",
+  // Command & Control
+  "T1071": "Application Layer Protocol — web protocols (HTTP/S, DNS, WebSocket) for C2.",
+  "T1105": "Ingress Tool Transfer — download additional tools or malware from C2 server.",
+};
+
+// ─── Tactic-to-Technique Mapping (from narrative_report.py _MITRE_PHASES) ──
+const TACTIC_MAP = {
+  "Initial Access":     ["T1566","T1190","T1133","T1078"],
+  "Execution":          ["T1059","T1204","T1053","T1047"],
+  "Persistence":        ["T1547","T1060","T1112","T1543"],
+  "Defense Evasion":    ["T1036","T1070","T1027","T1140"],
+  "Credential Access":  ["T1003","T1110","T1555"],
+  "Discovery":          ["T1046","T1083","T1082"],
+  "Lateral Movement":   ["T1021","T1076"],
+  "Exfiltration":       ["T1041","T1048"],
+  "Command & Control":  ["T1071","T1105"],
+};
+
+function loadMitreMatrix(techniquesObserved, killChainPhases) {
+  // Normalize: strip sub-technique suffixes for matching
+  const obsSet = new Set((techniquesObserved || []).map(t => t.split('.')[0]));
+  const phaseSet = new Set((killChainPhases || []).map(p => p.toLowerCase()));
+
+  // Build tactic-to-technique display order (same as TACTIC_MAP)
+  const tacticOrder = [
+    "Initial Access", "Execution", "Persistence", "Defense Evasion",
+    "Credential Access", "Discovery", "Lateral Movement",
+    "Exfiltration", "Command & Control"
+  ];
+
+  // Determine which tactics have observed techniques
+  const tacticActivity = {};
+  for (const [tactic, techs] of Object.entries(TACTIC_MAP)) {
+    tacticActivity[tactic] = techs.some(t => obsSet.has(t));
+  }
+
+  // Find techniques observed but not in our mapping
+  const allMapped = new Set(Object.values(TACTIC_MAP).flat());
+  const unmapped = [...obsSet].filter(t => !allMapped.has(t));
+
+  // ── Render ──
+  const content = document.getElementById('mx-content');
+  const tooltip = document.getElementById('mx-tooltip');
+
+  let html = '<div class="matrix-wrapper"><div class="matrix-grid">';
+
+  for (const tactic of tacticOrder) {
+    const techs = TACTIC_MAP[tactic];
+    const active = tacticActivity[tactic];
+    const obsInTactic = techs.filter(t => obsSet.has(t)).length;
+
+    html += '<div class="tactic-col">';
+    html += '<div class="tactic-header ' + (active ? 'active' : 'muted') + '">'
+         + tactic
+         + '<span class="tactic-count">' + obsInTactic + '/' + techs.length + ' observed</span>'
+         + '</div>';
+
+    for (const tid of techs) {
+      const observed = obsSet.has(tid);
+      const cls = observed ? 'observed' : 'missing';
+      const desc = MITRE_DESCRIPTIONS[tid] || '';
+      html += '<div class="tech-cell ' + cls + '"'
+           + ' data-tid="' + tid + '"'
+           + ' data-tactic="' + tactic + '"'
+           + ' data-desc="' + _escAttr(desc) + '"'
+           + ' onclick="openMitreTechnique(\'' + tid + '\')"'
+           + ' onmouseenter="showTooltip(event, this)"'
+           + ' onmouseleave="hideTooltip()"'
+           + '>'
+           + tid
+           + '</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div></div>';
+
+  // Unmapped / Other techniques section
+  if (unmapped.length > 0) {
+    document.getElementById('mx-other-hint').style.display = '';
+    document.getElementById('mx-other-hint').textContent =
+      '\u26A0 ' + unmapped.length + ' technique(s) outside Geoff\'s phase map';
+    html += '<div class="other-section"><h3>\uD83D\uDD0D Additional Observed Techniques (not in Geoff\'s phase map)</h3>';
+    html += '<div class="other-tags">';
+    for (const tid of unmapped) {
+      html += '<a href="https://attack.mitre.org/techniques/' + tid + '/" '
+           + 'target="_blank" class="other-tag" '
+           + 'title="View ' + tid + ' on MITRE ATT&CK.">'
+           + tid
+           + '<span class="tactic-hint"></span>'
+           + '</a>';
+    }
+    html += '</div></div>';
+  } else {
+    document.getElementById('mx-other-hint').style.display = 'none';
+  }
+
+  content.innerHTML = html;
+
+  // Update stats
+  document.getElementById('mx-count-obs').textContent = obsSet.size;
+  document.getElementById('mx-count-tac').textContent = Object.values(tacticActivity).filter(Boolean).length;
+}
+
+// ── Tooltip helpers ──
+function showTooltip(ev, el) {
+  const tt = document.getElementById('mx-tooltip');
+  const tid = el.dataset.tid;
+  const tactic = el.dataset.tactic;
+  const desc = el.dataset.desc;
+
+  tt.querySelector('.tt-title').textContent = tid;
+  tt.querySelector('.tt-desc').textContent = desc || '—';
+  tt.querySelector('.tt-tactic').textContent = tactic;
+
+  // Position near mouse but stay within viewport
+  const pad = 12;
+  let x = ev.clientX + pad;
+  let y = ev.clientY + pad;
+  tt.classList.add('visible');
+  const rect = tt.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - pad) x = ev.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - pad) y = ev.clientY - rect.height - pad;
+  tt.style.left = x + 'px';
+  tt.style.top = y + 'px';
+}
+function hideTooltip() {
+  document.getElementById('mx-tooltip').classList.remove('visible');
+}
+
+function openMitreTechnique(tid) {
+  window.open('https://attack.mitre.org/techniques/' + tid + '/', '_blank');
+}
+
+function _escAttr(s) {
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+// ── Read query params for standalone view ──
+(function initFromQuery() {
+  const params = new URLSearchParams(window.location.search);
+  const caseParam = params.get('case');
+  const techsParam = params.get('techs');
+  const phasesParam = params.get('phases');
+  const labelParam = params.get('label');
+
+  if (labelParam) {
+    document.getElementById('mx-case-id').textContent = labelParam;
+  }
+
+  if (caseParam) {
+    // Fetch from Geoff API
+    const caseId = caseParam.replace('#', '');
+    document.getElementById('mx-case-id').textContent = caseId;
+    fetch('/reports/' + encodeURIComponent(caseId) + '/json')
+      .then(r => r.ok ? r.json() : Promise.reject('not found'))
+      .then(data => {
+        const chain = data.attack_chain || {};
+        const techs = chain.mitre_techniques_observed || [];
+        const phases = chain.kill_chain_phases || [];
+        updateHeader(data);
+        loadMitreMatrix(techs, phases);
+      })
+      .catch(() => {
+        document.getElementById('mx-content').innerHTML =
+          '<div class="empty">Case not found or report unavailable: ' + _escHtml(caseId) + '</div>';
+      });
+  } else if (techsParam) {
+    const techs = techsParam.split(',').map(s => s.trim()).filter(Boolean);
+    const phases = (phasesParam || '').split(',').map(s => s.trim()).filter(Boolean);
+    loadMitreMatrix(techs, phases);
+  }
+})();
+
+function updateHeader(data) {
+  document.getElementById('mx-case-id').textContent = data.case_id || '—';
+  const sev = data.severity || 'INFO';
+  const sevColors = {
+    CRITICAL: { fg: '#EF4444' },
+    HIGH: { fg: '#F59E0B' },
+    MEDIUM: { fg: '#60A5FA' },
+    LOW: { fg: '#94A3B8' },
+    INFO: { fg: '#64748B' }
+  }[sev] || { fg: '#94A3B8' };
+  const el = document.getElementById('mx-severity');
+  el.textContent = sev;
+  el.style.color = sevColors.fg;
+}
+
+function _escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

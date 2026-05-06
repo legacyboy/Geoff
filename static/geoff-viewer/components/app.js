@@ -139,6 +139,16 @@ function App() {
     a.download = selected ? `${selected.replace(":", "_")}.json` : `${report.case_id || "case"}.json`;
     a.click();
   }, [report, selected]);
+  const openMitreMatrix = useCallback(() => {
+    const chain = (report && report.attack_chain) || {};
+    const techs = chain.mitre_techniques_observed || [];
+    const phases = chain.kill_chain_phases || [];
+    const params = new URLSearchParams();
+    params.set('techs', techs.join(','));
+    params.set('phases', phases.join(','));
+    params.set('label', report.case_id || '');
+    window.open('/reports/mitre-matrix?' + params.toString(), '_blank');
+  }, [report]);
   if (!report) return /*#__PURE__*/React.createElement("div", {
     className: "empty"
   }, "No report loaded.");
@@ -214,7 +224,11 @@ function App() {
   }, "Load JSON\u2026"), /*#__PURE__*/React.createElement("button", {
     className: "action",
     onClick: exportSelection
-  }, "Export")), /*#__PURE__*/React.createElement("div", {
+  }, "Export"), /*#__PURE__*/React.createElement("button", {
+    className: "action",
+    onClick: openMitreMatrix,
+    title: "Open MITRE ATT&CK visual matrix"
+  }, "\uD83D\uDC41 MITRE")), /*#__PURE__*/React.createElement("div", {
     className: "workspace"
   }, /*#__PURE__*/React.createElement("aside", {
     className: "pane-left"

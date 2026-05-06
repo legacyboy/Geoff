@@ -6343,7 +6343,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 const report = await res.json();
                 const graphLink = '/reports/viewer?case=' + encodeURIComponent(caseDir);
                 const graphBtn = '<button class="graph-open-btn" onclick="window.open(\'' + graphLink + '\', \'' + '_blank' + '\')" style="margin-bottom:12px;padding:6px 14px;background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:4px;color:#60a5fa;cursor:pointer;font-size:12px;">🕸 View as Graph</button>';
-                viewer.innerHTML = graphBtn + _renderReportHtml(report, title || caseDir);
+                viewer.innerHTML = graphBtn + _renderReportHtml(report, title || caseDir, caseDir);
             } catch(e) {
                 viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#EF4444;">Error: ' + _escHtml(e.message) + '</span></div>';
             }
@@ -6362,7 +6362,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     const text = await file.text();
                     const report = JSON.parse(text);
                     document.querySelectorAll('.report-entry').forEach(e => e.classList.remove('active'));
-                    viewer.innerHTML = _renderReportHtml(report, file.name.replace(/\.json$/i, ''));
+                    viewer.innerHTML = _renderReportHtml(report, file.name.replace(/\.json$/i, ''), null);
                 } catch(e) {
                     viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#EF4444;">Invalid JSON: ' + _escHtml(e.message) + '</span></div>';
                 }
@@ -6428,7 +6428,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             return paths;
         }
 
-        function _renderReportHtml(report, title) {
+        function _renderReportHtml(report, title, caseDirForMitre) {
             const sev = report.severity || 'INFO';
             const evil = report.evil_found;
             const sevDist = report.severity_distribution || {};
@@ -6500,6 +6500,9 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     h += '<div style="margin-top:10px;"><strong style="font-size:0.82rem;color:#64748B;">MITRE Techniques Observed</strong><div style="margin-top:6px;">';
                     h += mitreObs.map(t => '<a href="https://attack.mitre.org/techniques/' + _escHtml(t) + '/" target="_blank" class="mitre-tag" style="text-decoration:none;" title="View on MITRE ATT&CK">' + _escHtml(t) + '</a>').join('');
                     h += '</div></div>';
+                }
+                if (mitreObs.length && caseDirForMitre) {
+                    h += '<div style="margin-top:12px;"><a href="/reports/mitre-matrix?case=' + encodeURIComponent(caseDirForMitre) + '" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(59,130,246,0.1);border:1px solid var(--g-blue);border-radius:4px;color:#60A5FA;text-decoration:none;font-size:0.8rem;transition:all 120ms;" onmouseover="this.style.background='rgba(59,130,246,0.2)';this.style.color='#93C5FD';" onmouseout="this.style.background='rgba(59,130,246,0.1)';this.style.color='#60A5FA';">🖱 View MITRE ATT&CK Matrix</a></div>';
                 }
                 h += '</div></div>';
             }
@@ -7733,6 +7736,14 @@ def viewer_static(filename):
     if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 400
     return send_from_directory(str(viewer_dir), filename)
+
+
+@app.route('/reports/mitre-matrix', methods=['GET'])
+@_require_auth
+def mitre_matrix():
+    """Serve the MITRE ATT&CK matrix viewer (optional case= query param)."""
+    viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
+    return send_from_directory(str(viewer_dir), 'mitre-matrix.html')
 
 
 @app.route('/tools', methods=['GET'])
