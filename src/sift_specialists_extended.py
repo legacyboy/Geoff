@@ -1289,8 +1289,8 @@ if not evtx_file or not os.path.exists(evtx_file):
     sys.exit(1)
 
 try:
-    from evtx import PyEvtxParser
-    parser = PyEvtxParser(evtx_file)
+    from Evtx.Evtx import Evtx as EvtxParser
+    parser = EvtxParser(evtx_file)
     events = []
     for record in parser.records():
         events.append(json.loads(record["data"]))

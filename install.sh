@@ -107,12 +107,12 @@ if [[ "$SKIP_DEPS" == false ]]; then
         # Python-based REMnux tools (install via pip since apt packages may not exist)
         info "Installing Python-based REMnux/malware tools..."
         pip3 install --break-system-packages \
-            oletools floss jsbeautifier capstone \
+            oletools floss jsbeautifier capstone python-evtx \
             plyvel pyinstxtractor uncompyle6 \
             pefile python-magic lief construct \
             iLEAPP aLeapp 2>/dev/null || \
             pip3 install --user \
-            oletools floss jsbeautifier capstone \
+            oletools floss jsbeautifier capstone python-evtx \
             plyvel pyinstxtractor uncompyle6 \
             pefile python-magic lief construct \
             iLEAPP aLeapp 2>/dev/null || true
