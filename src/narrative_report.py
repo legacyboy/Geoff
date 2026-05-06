@@ -212,7 +212,24 @@ class NarrativeReportGenerator:
         if sections["attack_chain"] and self._is_template_fallback(sections["attack_chain"]):
             needs_review_sections.append("attack_chain")
 
-        # 8. Conclusion & Recommendations
+        # 8. Kill Chain & Timeline Reconstruction
+        sections["kill_chain_timeline"] = self._generate_kill_chain_timeline(
+            report_json, behavioral_flags)
+        if sections["kill_chain_timeline"] and self._is_template_fallback(sections["kill_chain_timeline"]):
+            needs_review_sections.append("kill_chain_timeline")
+
+        # 9. Blast Radius & Business Impact Mapping
+        sections["blast_radius"] = self._generate_blast_radius(
+            report_json, device_map, user_map)
+
+        # 10. Evidence Confidence & Gaps
+        sections["evidence_confidence"] = self._generate_evidence_confidence(
+            report_json, behavioral_flags)
+
+        # 11. Dwell Time & Lateral Movement
+        sections["dwell_time"] = self._generate_dwell_time(report_json)
+
+        # 12. Conclusion & Recommendations
         sections["conclusion"] = self._generate_conclusion(
             report_json, behavioral_flags, correlated_users)
         if sections["conclusion"] and self._is_template_fallback(sections["conclusion"]):
@@ -795,6 +812,495 @@ class NarrativeReportGenerator:
 
         return "\n".join(lines)
 
+    # ----------------------------------------------------------------
+    # Kill Chain & Timeline Reconstruction (Section 1)
+    # ----------------------------------------------------------------
+
+    def _generate_kill_chain_timeline(self, report_json: dict,
+                                        behavioral_flags: dict) -> str:
+        """Generate a unified attack timeline from behavioral flags, audit_trail,
+        and attack_chain data. Shows how the investigation unfolded."""
+        ac = report_json.get("attack_chain", {}) or {}
+        kill_phases = ac.get("kill_chain_phases", [])
+        mitres_observed = ac.get("mitre_techniques_observed", [])
+        classification = report_json.get("classification", "")
+
+        # Collect all behavioral flags across all devices
+        all_flags = []
+        for dev_id, flags in behavioral_flags.items():
+            for f in flags:
+                fc = dict(f)
+                fc["_device"] = dev_id
+                all_flags.append(fc)
+
+        # Collect timeline events flagged as suspicious
+        timeline = report_json.get("timeline", [])
+        suspicious_events = [e for e in timeline if e.get("suspicious")]
+
+        if self.call_llm:
+            ac_json = json.dumps(ac, default=str)[:2000]
+            flags_json = json.dumps(all_flags[:10], default=str)[:2000]
+            tl_json = json.dumps(suspicious_events[:20], default=str)[:2000]
+            prompt = (
+                "You are a forensic analyst. Generate a unified attack timeline "
+                "table showing how the investigation unfolded.\n\n"
+                f"Attack chain data:\n{ac_json}\n\n"
+                f"Behavioral flags:\n{flags_json}\n\n"
+                f"Suspicious timeline events:\n{tl_json}\n\n"
+                f"Kill chain phases: {', '.join(kill_phases)}\n"
+                f"MITRE techniques observed: {', '.join(mitres_observed[:15])}\n"
+                f"Classification: {classification}\n\n"
+                "Generate a Markdown table with columns: Timeframe | Event | MITRE Tactic | Log Source | Confidence\n"
+                "- Derive timeframe from available timestamps (use 'Unknown' if unavailable)\n"
+                "- Map each event to a MITRE tactic (Initial Access, Execution, Persistence, Defense Evasion, "
+                "Credential Access, Discovery, Lateral Movement, Exfiltration, Command & Control)\n"
+                "- Assign confidence: 'Observed' (artifact-backed), 'Inferred' (correlated evidence), 'Assumed' (heuristic)\n"
+                "- Default log source to 'Forensic artifact' unless something more specific is available\n"
+                "- If no data is available, state 'Insufficient data to reconstruct timeline'\n\n"
+                "Output ONLY the Markdown table. No preamble, no commentary."
+            )
+            try:
+                result = self._call_llm_with_retry(prompt, "", agent_type="manager")
+                if result is not None:
+                    return result
+            except Exception:
+                pass
+
+        # Template fallback
+        return self._template_kill_chain_timeline(
+            kill_phases, mitres_observed, classification, all_flags, suspicious_events)
+
+    def _template_kill_chain_timeline(self, kill_phases: list,
+                                        mitres_observed: list,
+                                        classification: str,
+                                        all_flags: list,
+                                        suspicious_events: list) -> str:
+        """Template-based kill chain timeline."""
+
+        phase_mitre_map = {
+            "phishing": ("T1566", "Initial Access"),
+            "initial_access": ("T1190", "Initial Access"),
+            "credential_theft": ("T1003", "Credential Access"),
+            "credential_access": ("T1003", "Credential Access"),
+            "persistence": ("T1053", "Persistence"),
+            "lateral_movement": ("T1021", "Lateral Movement"),
+            "exfiltration": ("T1048", "Exfiltration"),
+            "c2": ("T1071", "Command & Control"),
+            "command_and_control": ("T1071", "Command & Control"),
+            "lolbin": ("T1218", "Execution"),
+            "web_shell": ("T1505.003", "Persistence"),
+            "cryptominer": ("T1496", "Command & Control"),
+            "privilege_escalation": ("T1055", "Privilege Escalation"),
+            "defense_evasion": ("T1070", "Defense Evasion"),
+            "discovery": ("T1083", "Discovery"),
+        }
+
+        entries = []
+
+        if kill_phases:
+            for i, phase in enumerate(kill_phases):
+                phase_lower = phase.lower() if isinstance(phase, str) else ""
+                mapping = phase_mitre_map.get(phase_lower)
+                if mapping:
+                    tid, tactic = mapping
+                    label = phase.replace("_", " ").title()
+                    timeframe = "Unknown" if i == 0 else f"+{i * 2}h"
+                    entries.append({
+                        "timeframe": timeframe,
+                        "event": f"{label} ({tid})",
+                        "tactic": tactic,
+                        "source": "Classification metadata",
+                        "confidence": "Inferred",
+                    })
+            # Add techniques from mitres_observed not already covered
+            covered = {m[0] for m in [phase_mitre_map.get(p.lower(), (None, None)) for p in kill_phases] if m[0]}
+            for tid in mitres_observed:
+                if tid not in covered and tid in self._MITRE_PHASES:
+                    entries.append({
+                        "timeframe": "Unknown",
+                        "event": f"{tid}",
+                        "tactic": self._MITRE_PHASES[tid],
+                        "source": "Forensic artifact",
+                        "confidence": "Inferred",
+                    })
+
+        if not entries and classification:
+            cls_lower = classification.lower()
+            for phase_key, (tid, tactic) in phase_mitre_map.items():
+                if phase_key.replace("_", " ") in cls_lower or phase_key in cls_lower:
+                    entries.append({
+                        "timeframe": "Unknown",
+                        "event": f"{phase_key.replace('_', ' ').title()} ({tid})",
+                        "tactic": tactic,
+                        "source": "Classification metadata",
+                        "confidence": "Inferred",
+                    })
+
+        if not entries:
+            return "Insufficient data to reconstruct attack timeline. No kill-chain phases, behavioral flags, or suspicious timeline events were identified."
+
+        lines = []
+        lines.append("| Timeframe | Event | MITRE Tactic | Log Source | Confidence |")
+        lines.append("|-----------|-------|-------------|------------|------------|")
+        for e in entries[:25]:
+            lines.append(
+                f"| {e['timeframe']} | {e['event']} | {e['tactic']} | {e['source']} | {e['confidence']} |")
+
+        lines.append("")
+        lines.append(
+            "> **Note:** Timeframes are estimated from attack-chain phase ordering. "
+            "Corroborate with network logs and EDR telemetry."
+        )
+
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------
+    # Blast Radius & Business Impact Mapping (Section 2)
+    # ----------------------------------------------------------------
+
+    def _generate_blast_radius(self, report_json: dict,
+                                 device_map: dict,
+                                 user_map: dict) -> str:
+        """Translate technical findings into organizational risk."""
+        ac = report_json.get("attack_chain", {}) or {}
+        classification = report_json.get("classification", "")
+        evil_found = report_json.get("evil_found", False)
+
+        users_dict = user_map.get("users", user_map) if isinstance(user_map, dict) else {}
+        num_users = len(users_dict) if users_dict else 0
+        privileged_count = sum(
+            1 for u in users_dict.values()
+            if isinstance(u, dict) and str(u.get("is_admin", u.get("group", ""))).lower() in ("true", "admin", "administrator")
+        ) if users_dict else 0
+
+        num_devices = len(device_map)
+        servers = sum(1 for d in device_map.values() if "server" in str(d.get("device_type", "")).lower())
+        dcs = sum(1 for d in device_map.values()
+                  if "dc" in str(d.get("device_type", "")).lower()
+                  or "dc" in str(d.get("hostname", "")).lower())
+        workstations = sum(1 for d in device_map.values()
+                           if "pc" in str(d.get("device_type", "")).lower()
+                           or "workstation" in str(d.get("device_type", "")).lower()
+                           or "desktop" in str(d.get("hostname", "")).lower())
+        mobile = sum(1 for d in device_map.values()
+                     if "mobile" in str(d.get("device_type", "")).lower())
+        network = sum(1 for d in device_map.values()
+                      if "network" in str(d.get("device_type", "")).lower()
+                      or "pcap" in str(d.get("device_type", "")).lower())
+        unknown = num_devices - servers - dcs - workstations - mobile - network
+
+        # Data categories at risk
+        data_categories = []
+        all_text = (classification + " " + " ".join(ac.get("kill_chain_phases", []))).lower()
+        if any(w in all_text for w in ("phishing", "email", "credential")):
+            data_categories.append("PII (credentials, email)")
+        if any(w in all_text for w in ("exfiltration", "exfil")):
+            data_categories.append("intellectual property")
+        if any(w in all_text for w in ("cryptominer", "crypto")):
+            data_categories.append("compute resources")
+        if not data_categories:
+            data_categories.append("credentials, configuration data")
+
+        # CIA impact
+        cia = {"Confidentiality": "MEDIUM", "Integrity": "MEDIUM", "Availability": "LOW"}
+        cia_rationale = {
+            "Confidentiality": "No confirmed data breach",
+            "Integrity": "No confirmed system modification",
+            "Availability": "No impact on service availability",
+        }
+
+        if evil_found:
+            if any(w in all_text for w in ("exfiltration", "credential_theft", "credential")):
+                cia["Confidentiality"] = "HIGH"
+                cia_rationale["Confidentiality"] = "Credential theft and/or exfiltration detected"
+            elif any(w in all_text for w in ("phishing", "lateral")):
+                cia["Confidentiality"] = "HIGH"
+                cia_rationale["Confidentiality"] = "Potential unauthorized access to sensitive data"
+            else:
+                cia_rationale["Confidentiality"] = "Compromise confirmed — scope of data exposure unclear"
+
+            if any(w in all_text for w in ("persistence", "web_shell", "lolbin")):
+                cia["Integrity"] = "HIGH"
+                cia_rationale["Integrity"] = "Persistence mechanisms modified system state"
+            else:
+                cia_rationale["Integrity"] = "Potential system modifications by attacker"
+
+            if any(w in all_text for w in ("cryptominer", "ransomware")):
+                cia["Availability"] = "HIGH"
+                cia_rationale["Availability"] = "Resource consumption or destructive malware may impact service"
+
+        # Worst-case
+        if evil_found:
+            parts = []
+            if any(w in all_text for w in ("credential", "privilege")):
+                parts.append("credential theft enabling tenant-wide compromise")
+            if any(w in all_text for w in ("exfiltration", "exfil")):
+                parts.append("data exfiltration to criminal infrastructure")
+            if not parts:
+                parts.append("unauthorized access leading to data theft, sabotage, or ransomware")
+            worst_case = " and ".join(parts) + "."
+        else:
+            worst_case = "No compromise confirmed. Unresolved anomalies should be investigated to rule out nascent threats."
+
+        # Render
+        lines = []
+        lines.append("### Affected Assets")
+        asset_parts = []
+        if num_users > 0:
+            priv_str = f" ({privileged_count} privileged)" if privileged_count else ""
+            asset_parts.append(f"**{num_users}** user accounts{priv_str}")
+        if num_devices > 0:
+            type_parts = []
+            if servers: type_parts.append(f"{servers} server{'s' if servers != 1 else ''}")
+            if dcs: type_parts.append(f"{dcs} DC{'s' if dcs != 1 else ''}")
+            if workstations: type_parts.append(f"{workstations} workstation{'s' if workstations != 1 else ''}")
+            if mobile: type_parts.append(f"{mobile} mobile")
+            if network: type_parts.append(f"{network} network capture{'s' if network != 1 else ''}")
+            if unknown: type_parts.append(f"{unknown} unknown")
+            type_str = ", ".join(type_parts)
+            asset_parts.append(f"**{num_devices}** devices ({type_str})")
+
+        if asset_parts:
+            lines.append("- " + ", ".join(asset_parts))
+        else:
+            lines.append("- No assets identified in evidence scope")
+        if data_categories:
+            lines.append(f"- **Data at risk**: {', '.join(data_categories)}")
+
+        lines.append("")
+        lines.append("### CIA Impact Assessment")
+        lines.append("| Dimension | Score | Rationale |")
+        lines.append("|-----------|-------|-----------|")
+        for dim in ("Confidentiality", "Integrity", "Availability"):
+            lines.append(f"| {dim} | {cia[dim]} | {cia_rationale[dim]} |")
+
+        lines.append("")
+        lines.append("### Worst-Case Projection")
+        lines.append(f"If not contained: {worst_case}")
+
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------
+    # Evidence Confidence & Gaps (Section 3)
+    # ----------------------------------------------------------------
+
+    def _generate_evidence_confidence(self, report_json: dict,
+                                       behavioral_flags: dict) -> str:
+        """Show epistemic humility — evidence strength and known gaps."""
+        ac = report_json.get("attack_chain", {}) or {}
+        kill_phases_lower = [kp.lower() for kp in ac.get("kill_chain_phases", [])]
+        classification = report_json.get("classification", "")
+        cls_lower = classification.lower()
+
+        phase_strength_map = {
+            "credential_theft": ("Credential Access", "Strong"),
+            "credential_access": ("Credential Access", "Strong"),
+            "lateral_movement": ("Lateral Movement", "Moderate"),
+            "exfiltration": ("Exfiltration", "Moderate"),
+            "phishing": ("Initial Access", "Weak"),
+            "initial_access": ("Initial Access", "Weak"),
+            "persistence": ("Persistence", "Moderate"),
+            "lolbin": ("Execution", "Moderate"),
+            "web_shell": ("Persistence", "Strong"),
+            "c2": ("Command & Control", "Moderate"),
+            "command_and_control": ("Command & Control", "Moderate"),
+            "cryptominer": ("Command & Control", "Moderate"),
+            "privilege_escalation": ("Privilege Escalation", "Moderate"),
+            "defense_evasion": ("Defense Evasion", "Weak"),
+            "discovery": ("Discovery", "Weak"),
+        }
+
+        basis_map = {
+            "Strong": "Artifacts confirmed in findings",
+            "Moderate": "Correlated indicators suggesting activity",
+            "Weak": "Classification metadata — no specific artifact confirmed",
+        }
+
+        strength_entries = []
+        seen_categories = set()
+        for phase in kill_phases_lower:
+            info = phase_strength_map.get(phase)
+            if info:
+                cat_name, strength = info
+                if cat_name in seen_categories:
+                    continue
+                seen_categories.add(cat_name)
+                strength_entries.append({
+                    "category": cat_name,
+                    "strength": strength,
+                    "basis": basis_map[strength],
+                })
+
+        if not strength_entries and cls_lower:
+            for phase_key, (cat_name, strength) in phase_strength_map.items():
+                if phase_key.replace("_", " ") in cls_lower or phase_key in cls_lower:
+                    if cat_name not in seen_categories:
+                        seen_categories.add(cat_name)
+                        strength_entries.append({
+                            "category": cat_name,
+                            "strength": strength,
+                            "basis": basis_map[strength],
+                        })
+
+        # Known gaps
+        gaps = []
+        failures = report_json.get("failures", [])
+        total_steps = (report_json.get("steps_completed", 0)
+                       + report_json.get("steps_failed", 0)
+                       + report_json.get("steps_skipped", 0))
+        failed_count = len(failures)
+
+        if total_steps > 0 and failed_count > 0:
+            gaps.append(f"{failed_count} of {total_steps} analysis steps failed (tool/dependency/parameter issues)")
+
+        inv = report_json.get("evidence_inventory", {})
+        if not inv.get("evtx_logs"):
+            gaps.append("No Windows EVTX log files in evidence scope")
+        if not inv.get("syslogs"):
+            gaps.append("No syslog files in evidence scope")
+
+        device_map = report_json.get("device_map", {})
+        memory_devices = sum(
+            1 for d in device_map.values()
+            if any("memdump" in str(f).lower() or "memory" in str(f).lower()
+                   for f in d.get("evidence_files", []))
+        )
+        if len(device_map) > 0 and memory_devices < len(device_map):
+            gaps.append(f"Memory captured for {memory_devices} of {len(device_map)} devices — volatile artifacts may be missing")
+
+        if not gaps:
+            gaps.append("No significant evidence gaps identified in this investigation scope")
+
+        # Render
+        lines = []
+        lines.append("### Evidence Strength")
+        if strength_entries:
+            lines.append("| Finding Category | Strength | Basis |")
+            lines.append("|-----------------|----------|-------|")
+            for e in strength_entries:
+                lines.append(f"| {e['category']} | {e['strength']} | {e['basis']} |")
+        else:
+            lines.append("*No finding categories available for strength assessment.*")
+
+        lines.append("")
+        lines.append("### Known Evidence Gaps")
+        for gap in gaps:
+            lines.append(f"- {gap}")
+
+        lines.append("")
+        lines.append(
+            "> **Analyst Note:** Evidence confidence ratings reflect the automated analysis "
+            "pipeline only. Manual review may upgrade confidence levels. Gaps identified here "
+            "represent limitations of evidence scope, not analysis failures."
+        )
+
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------
+    # Dwell Time & Lateral Movement (Section 4)
+    # ----------------------------------------------------------------
+
+    def _generate_dwell_time(self, report_json: dict) -> str:
+        """Show time-based analysis: dwell time, milestone progression, lateral path."""
+        ac = report_json.get("attack_chain", {}) or {}
+        first_seen = ac.get("first_seen_ts", "")
+        last_seen = ac.get("last_seen_ts", "")
+        dwell_days = ac.get("dwell_days")
+        lateral_path = ac.get("lateral_movement_path", [])
+        kill_phases = ac.get("kill_chain_phases", [])
+
+        phase_labels = {
+            "phishing": "Initial Access",
+            "initial_access": "Initial Access",
+            "credential_theft": "Credential Harvesting",
+            "credential_access": "Credential Access",
+            "privilege_escalation": "Privilege Escalation",
+            "lateral_movement": "Lateral Movement",
+            "persistence": "Persistence Established",
+            "exfiltration": "Exfiltration",
+            "c2": "C2 Established",
+            "command_and_control": "C2 Communications",
+            "lolbin": "Execution / LOLBin Usage",
+            "web_shell": "Web Shell Deployment",
+            "cryptominer": "Crypto Mining Activity",
+            "defense_evasion": "Defense Evasion",
+            "discovery": "Discovery / Reconnaissance",
+        }
+
+        lines = []
+        lines.append("### Dwell Time & Progression")
+
+        if not first_seen and not last_seen and dwell_days is None and not lateral_path:
+            lines.append("")
+            lines.append("*No temporal or lateral movement data available for this investigation.*")
+            return "\n".join(lines)
+
+        lines.append("| Milestone | Estimated Timeframe |")
+        lines.append("|-----------|--------------------|")
+
+        if kill_phases:
+            for i, phase in enumerate(kill_phases):
+                label = phase_labels.get(
+                    phase.lower() if isinstance(phase, str) else "",
+                    phase.replace("_", " ").title() if isinstance(phase, str) else str(phase))
+                if i == 0:
+                    timeframe = "First detected"
+                elif dwell_days is not None and dwell_days > 0 and len(kill_phases) > 0:
+                    frac = (i / len(kill_phases)) * dwell_days * 24
+                    if frac < 1:
+                        timeframe = f"~{int(frac * 60)}m after initial"
+                    else:
+                        timeframe = f"~{frac:.1f}h after initial"
+                else:
+                    timeframe = f"+{i * 2}h (estimated)"
+                lines.append(f"| {label} | {timeframe} |")
+        else:
+            lines.append("| Initial Access | Unknown |")
+            lines.append("| Attack Activity | Evidence detected — exact timing not available |")
+
+        if dwell_days is not None:
+            if dwell_days < 1 / 24:
+                dwell_str = f"~{int(dwell_days * 1440)} minutes"
+            elif dwell_days < 1:
+                dwell_str = f"~{dwell_days * 24:.1f} hours"
+            elif dwell_days < 30:
+                dwell_str = f"~{dwell_days:.1f} days"
+            else:
+                dwell_str = f"~{dwell_days / 30:.1f} months"
+            lines.append(f"| **Total Dwell** | **{dwell_str}** |")
+
+        if first_seen or last_seen:
+            lines.append("")
+            lines.append(f"- **First Seen:** {first_seen or 'Unknown'}")
+            lines.append(f"- **Last Seen:** {last_seen or 'Unknown'}")
+
+        lines.append("")
+        lines.append("### Lateral Movement Path")
+        if lateral_path:
+            seen = set()
+            deduped = []
+            for dev in lateral_path:
+                if dev not in seen:
+                    seen.add(dev)
+                    deduped.append(dev)
+            if len(deduped) > 1:
+                lines.append(" → ".join(deduped))
+                lines.append("")
+                lines.append(
+                    f"> **{len(deduped)} devices** show evidence of lateral movement. "
+                    f"Path reconstructed from artifact relationships and credential usage patterns."
+                )
+            else:
+                lines.append(str(deduped[0]) if deduped else "No path detected")
+        else:
+            lines.append("*No lateral movement path data available.*")
+
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------
+    # Conclusion
+    # ----------------------------------------------------------------
+
     def _generate_conclusion(self, report_json: dict,
                               behavioral_flags: dict,
                               correlated_users: dict) -> str:
@@ -1325,9 +1831,23 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+## Kill Chain & Timeline Reconstruction
+
+{sections.get('kill_chain_timeline', 'No timeline data available.')}
+
+---
+
 ## Devices & Users
 
 {sections.get('devices_and_users', 'No devices identified.')}
+
+---
+
+---
+
+## Blast Radius & Business Impact
+
+{sections.get('blast_radius', 'No blast radius data available.')}
 
 ---
 
@@ -1357,6 +1877,12 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+## Evidence Confidence & Gaps
+
+{sections.get('evidence_confidence', 'No confidence assessment available.')}
+
+---
+
 ## Indicators of Compromise
 
 {self._render_ioc_table(sections.get('iocs', {}))}
@@ -1366,6 +1892,12 @@ Write the following sections. ACCURACY RULES:
 ## Investigation Synthesis
 
 {sections.get('attack_chain', 'No synthesis generated.')}
+
+---
+
+## Dwell Time & Lateral Movement
+
+{sections.get('dwell_time', 'No dwell time data available.')}
 
 ---
 

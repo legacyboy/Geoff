@@ -6476,6 +6476,40 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</div>';
             }
 
+            // ========== KILL CHAIN & TIMELINE RECONSTRUCTION ==========
+            const killPhases = chain.kill_chain_phases || [];
+            if (killPhases.length > 0 || (chain.mitre_techniques_observed || []).length > 0) {
+                h += '<div class="report-section"><h3 style="color:#F59E0B;">\u23F0 Kill Chain & Timeline Reconstruction</h3>';
+                h += '<table class="fe-pb-table"><tr><th>Timeframe</th><th>Event</th><th>MITRE Tactic</th><th>Log Source</th><th>Confidence</th></tr>';
+                const phaseMitreMap = {
+                    phishing: ['T1566', 'Initial Access'],
+                    initial_access: ['T1190', 'Initial Access'],
+                    credential_theft: ['T1003', 'Credential Access'],
+                    credential_access: ['T1003', 'Credential Access'],
+                    persistence: ['T1053', 'Persistence'],
+                    lateral_movement: ['T1021', 'Lateral Movement'],
+                    exfiltration: ['T1048', 'Exfiltration'],
+                    c2: ['T1071', 'Command & Control'],
+                    command_and_control: ['T1071', 'Command & Control'],
+                    lolbin: ['T1218', 'Execution'],
+                    web_shell: ['T1505.003', 'Persistence'],
+                    cryptominer: ['T1496', 'Command & Control'],
+                    privilege_escalation: ['T1055', 'Privilege Escalation'],
+                    defense_evasion: ['T1070', 'Defense Evasion'],
+                    discovery: ['T1083', 'Discovery'],
+                };
+                killPhases.forEach((phase, i) => {
+                    const pLower = (phase || '').toLowerCase();
+                    const map = phaseMitreMap[pLower];
+                    if (map) {
+                        const label = phase.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                        const tf = i === 0 ? 'Initial' : '+' + (i * 2) + 'h';
+                        h += '<tr><td>' + tf + '</td><td>' + _escHtml(label) + ' (' + map[0] + ')</td><td>' + map[1] + '</td><td>Forensic artifact</td><td>Inferred</td></tr>';
+                    }
+                });
+                h += '</table><p style="font-size:0.75rem;color:#64748B;margin-top:8px;">\u26A0 Timeframes estimated from attack-chain phase ordering. Corroborate with network logs and EDR telemetry.</p></div>';
+            }
+
             // Severity distribution
             const hasSev = Object.values(sevDist).some(v => v > 0);
             if (hasSev) {
@@ -6658,6 +6692,88 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</div>';
             }
 
+            // ========== BLAST RADIUS & BUSINESS IMPACT ==========
+            (function() {
+                const cls = (report.classification || '').toLowerCase();
+                const kp = (chain.kill_chain_phases || []).map(p => (p || '').toLowerCase());
+                const allText = cls + ' ' + kp.join(' ');
+
+                // Affected assets
+                const devMapEntries = Object.entries(devMap);
+                let servers = 0, dcs = 0, workstations = 0, mobile = 0, network = 0, unknownType = 0;
+                devMapEntries.forEach(([id, d]) => {
+                    const dt = (d.device_type || '').toLowerCase();
+                    const hn = (d.hostname || '').toLowerCase();
+                    if (dt.indexOf('server') !== -1) servers++;
+                    else if (dt.indexOf('dc') !== -1 || hn.indexOf('dc') !== -1) dcs++;
+                    else if (dt.indexOf('pc') !== -1 || hn.indexOf('desktop') !== -1) workstations++;
+                    else if (dt.indexOf('mobile') !== -1) mobile++;
+                    else if (dt.indexOf('network') !== -1 || dt.indexOf('pcap') !== -1) network++;
+                    else unknownType++;
+                });
+                const numDevices = devMapEntries.length;
+
+                // Data categories at risk
+                const dataCats = [];
+                if (/phishing|email|credential/.test(allText)) dataCats.push('PII (credentials, email)');
+                if (/exfiltration|exfil/.test(allText)) dataCats.push('intellectual property');
+                if (/cryptominer|crypto/.test(allText)) dataCats.push('compute resources');
+                if (!dataCats.length) dataCats.push('credentials, configuration data');
+
+                // CIA
+                let ciaC = 'MEDIUM', ciaI = 'MEDIUM', ciaA = 'LOW';
+                let rC = 'No confirmed data breach', rI = 'No confirmed system modification', rA = 'No impact on service availability';
+                if (evil) {
+                    if (/exfiltration|credential/.test(allText)) { ciaC = 'HIGH'; rC = 'Credential theft and/or exfiltration detected'; }
+                    else if (/phishing|lateral/.test(allText)) { ciaC = 'HIGH'; rC = 'Potential unauthorized access to sensitive data'; }
+                    else { rC = 'Compromise confirmed \u2014 scope of data exposure unclear'; }
+                    if (/persistence|web_shell|lolbin/.test(allText)) { ciaI = 'HIGH'; rI = 'Persistence mechanisms modified system state'; }
+                    else { rI = 'Potential system modifications by attacker'; }
+                    if (/cryptominer|ransomware/.test(allText)) { ciaA = 'HIGH'; rA = 'Resource consumption or destructive malware may impact service'; }
+                }
+
+                // Worst-case
+                let worstParts = [];
+                if (evil) {
+                    if (/credential|privilege/.test(allText)) worstParts.push('credential theft enabling tenant-wide compromise');
+                    if (/exfiltration|exfil/.test(allText)) worstParts.push('data exfiltration to criminal infrastructure');
+                    if (!worstParts.length) worstParts.push('unauthorized access leading to data theft, sabotage, or ransomware');
+                }
+                const worstCase = evil
+                    ? worstParts.map((s, i) => i === 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s).join(' and ') + '.'
+                    : 'No compromise confirmed. Unresolved anomalies should be investigated to rule out nascent threats.';
+
+                h += '<div class="report-section"><h3 style="color:#EF4444;">\ud83d\udca5 Blast Radius & Business Impact</h3>';
+                h += '<div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);border-radius:6px;padding:12px;">';
+
+                h += '<h4 style="margin:0 0 8px 0;">Affected Assets</h4>';
+                let assetParts = [];
+                if (numDevices > 0) {
+                    let typeParts = [];
+                    if (servers) typeParts.push(servers + ' server' + (servers !== 1 ? 's' : ''));
+                    if (dcs) typeParts.push(dcs + ' DC' + (dcs !== 1 ? 's' : ''));
+                    if (workstations) typeParts.push(workstations + ' workstation' + (workstations !== 1 ? 's' : ''));
+                    if (mobile) typeParts.push(mobile + ' mobile');
+                    if (network) typeParts.push(network + ' network capture' + (network !== 1 ? 's' : ''));
+                    if (unknownType) typeParts.push(unknownType + ' unknown');
+                    assetParts.push('<b>' + numDevices + '</b> devices (' + typeParts.join(', ') + ')');
+                }
+                h += '<p style="margin:4px 0;font-size:0.85rem;">' + (assetParts.length ? assetParts.join(', ') : 'No assets identified in evidence scope') + '</p>';
+                h += '<p style="margin:4px 0;font-size:0.85rem;"><strong>Data at risk:</strong> ' + dataCats.join(', ') + '</p>';
+
+                h += '<h4 style="margin:12px 0 8px 0;">CIA Impact Assessment</h4>';
+                h += '<table class="fe-pb-table"><tr><th>Dimension</th><th>Score</th><th>Rationale</th></tr>';
+                h += '<tr><td>Confidentiality</td><td style="color:' + (ciaC === 'HIGH' ? '#EF4444' : '#F59E0B') + ';"><strong>' + ciaC + '</strong></td><td style="font-size:0.82rem;">' + rC + '</td></tr>';
+                h += '<tr><td>Integrity</td><td style="color:' + (ciaI === 'HIGH' ? '#EF4444' : '#F59E0B') + ';"><strong>' + ciaI + '</strong></td><td style="font-size:0.82rem;">' + rI + '</td></tr>';
+                h += '<tr><td>Availability</td><td style="color:' + (ciaA === 'HIGH' ? '#EF4444' : '#10B981') + ';"><strong>' + ciaA + '</strong></td><td style="font-size:0.82rem;">' + rA + '</td></tr>';
+                h += '</table>';
+
+                h += '<h4 style="margin:12px 0 8px 0;">Worst-Case Projection</h4>';
+                h += '<p style="margin:4px 0;font-size:0.85rem;color:#FCA5A5;">If not contained: ' + _escHtml(worstCase) + '</p>';
+
+                h += '</div></div>';
+            })();
+
             // Behavioral flags
             if (totalFlags > 0) {
                 h += '<div class="report-section"><h3 style="color:#EF4444;">\u26A0 Behavioral Flags: ' + totalFlags + '</h3><div class="flag-box">';
@@ -6734,6 +6850,151 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 if (failures.length > 25) h += '<tr><td colspan="5" style="color:#64748B;text-align:center;padding:8px;">\u2026 ' + (failures.length - 25) + ' more failures not shown</td></tr>';
                 h += '</table></div>';
             }
+
+            // ========== EVIDENCE CONFIDENCE & GAPS ==========
+            (function() {
+                const kp = (chain.kill_chain_phases || []).map(p => (p || '').toLowerCase());
+                const cls = (report.classification || '').toLowerCase();
+                const allText = cls + ' ' + kp.join(' ');
+                const phaseStrengthMap = {
+                    credential_theft: ['Credential Access', 'Strong'],
+                    credential_access: ['Credential Access', 'Strong'],
+                    lateral_movement: ['Lateral Movement', 'Moderate'],
+                    exfiltration: ['Exfiltration', 'Moderate'],
+                    phishing: ['Initial Access', 'Weak'],
+                    initial_access: ['Initial Access', 'Weak'],
+                    persistence: ['Persistence', 'Moderate'],
+                    lolbin: ['Execution', 'Moderate'],
+                    web_shell: ['Persistence', 'Strong'],
+                    c2: ['Command & Control', 'Moderate'],
+                    command_and_control: ['Command & Control', 'Moderate'],
+                    cryptominer: ['Command & Control', 'Moderate'],
+                    privilege_escalation: ['Privilege Escalation', 'Moderate'],
+                    defense_evasion: ['Defense Evasion', 'Weak'],
+                    discovery: ['Discovery', 'Weak'],
+                };
+                const basisMap = {
+                    Strong: 'Artifacts confirmed in findings',
+                    Moderate: 'Correlated indicators suggesting activity',
+                    Weak: 'Classification metadata \u2014 no specific artifact confirmed',
+                };
+
+                const seen = new Set();
+                const entries = [];
+                kp.forEach(phase => {
+                    const info = phaseStrengthMap[phase];
+                    if (!info || seen.has(info[0])) return;
+                    seen.add(info[0]);
+                    entries.push({ category: info[0], strength: info[1], basis: basisMap[info[1]] });
+                });
+
+                if (!entries.length && cls) {
+                    Object.entries(phaseStrengthMap).forEach(([pk, info]) => {
+                        if (cls.indexOf(pk) !== -1 || cls.indexOf(pk.replace(/_/g, ' ')) !== -1) {
+                            if (!seen.has(info[0])) {
+                                seen.add(info[0]);
+                                entries.push({ category: info[0], strength: info[1], basis: basisMap[info[1]] });
+                            }
+                        }
+                    });
+                }
+
+                const totalSteps = (report.steps_completed || 0) + (report.steps_failed || 0) + (report.steps_skipped || 0);
+                const gaps = [];
+                if (totalSteps > 0 && failures.length > 0)
+                    gaps.push(failures.length + ' of ' + totalSteps + ' analysis steps failed');
+                if (!(inv.evtx_logs || []).length) gaps.push('No Windows EVTX log files in evidence scope');
+                if (!(inv.syslogs || []).length) gaps.push('No syslog files in evidence scope');
+                const devMapEntriesForGaps = Object.entries(devMap);
+                const memDevs = devMapEntriesForGaps.filter(([id, d]) =>
+                    (d.evidence_files || []).some(f => (f || '').toLowerCase().indexOf('memdump') !== -1 || (f || '').toLowerCase().indexOf('memory') !== -1)
+                ).length;
+                if (devMapEntriesForGaps.length > 0 && memDevs < devMapEntriesForGaps.length)
+                    gaps.push('Memory captured for ' + memDevs + ' of ' + devMapEntriesForGaps.length + ' devices');
+                if (!gaps.length) gaps.push('No significant evidence gaps identified');
+
+                h += '<div class="report-section"><h3 style="color:#8B5CF6;">\ud83d\udd0d Evidence Confidence & Gaps</h3>';
+                h += '<h4 style="margin:8px 0;">Evidence Strength</h4>';
+                if (entries.length) {
+                    h += '<table class="fe-pb-table"><tr><th>Finding Category</th><th>Strength</th><th>Basis</th></tr>';
+                    entries.forEach(e => {
+                        const sc = e.strength === 'Strong' ? '#10B981' : (e.strength === 'Moderate' ? '#F59E0B' : '#EF4444');
+                        h += '<tr><td>' + _escHtml(e.category) + '</td><td style="color:' + sc + ';"><strong>' + e.strength + '</strong></td><td style="font-size:0.8rem;">' + _escHtml(e.basis) + '</td></tr>';
+                    });
+                    h += '</table>';
+                } else {
+                    h += '<p style="color:#64748B;font-size:0.82rem;">No finding categories available for strength assessment.</p>';
+                }
+                h += '<h4 style="margin:12px 0 8px 0;">Known Evidence Gaps</h4>';
+                gaps.forEach(g => { h += '<p style="margin:2px 0;font-size:0.82rem;color:#CBD5E1;">\u2022 ' + _escHtml(g) + '</p>'; });
+                h += '<p style="font-size:0.72rem;color:#64748B;margin-top:8px;">\u26A0 Ratings reflect automated analysis pipeline only. Manual review may upgrade confidence levels.</p>';
+                h += '</div>';
+            })();
+
+            // ========== DWELL TIME & LATERAL MOVEMENT ==========
+            (function() {
+                const hasData = chain.first_seen_ts || chain.last_seen_ts || (chain.lateral_movement_path || []).length > 1;
+                if (!hasData && (chain.kill_chain_phases || []).length === 0) return;
+
+                h += '<div class="report-section"><h3 style="color:#8B5CF6;">\u23F1 Dwell Time & Lateral Movement</h3>';
+
+                // Dwell time table
+                const kp = chain.kill_chain_phases || [];
+                const phaseLabels = {
+                    phishing: 'Initial Access', initial_access: 'Initial Access',
+                    credential_theft: 'Credential Harvesting', credential_access: 'Credential Access',
+                    privilege_escalation: 'Privilege Escalation', lateral_movement: 'Lateral Movement',
+                    persistence: 'Persistence Established', exfiltration: 'Exfiltration',
+                    c2: 'C2 Established', command_and_control: 'C2 Communications',
+                    lolbin: 'Execution / LOLBin Usage', web_shell: 'Web Shell Deployment',
+                    cryptominer: 'Crypto Mining Activity', defense_evasion: 'Defense Evasion',
+                    discovery: 'Discovery / Reconnaissance',
+                };
+
+                h += '<h4 style="margin:8px 0;">Dwell Time & Progression</h4>';
+                h += '<table class="fe-pb-table"><tr><th>Milestone</th><th>Estimated Timeframe</th></tr>';
+                if (kp.length > 0) {
+                    kp.forEach((phase, i) => {
+                        const label = phaseLabels[(phase || '').toLowerCase()] || (phase || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                        let tf = i === 0 ? 'First detected' : '+' + (i * 2) + 'h (estimated)';
+                        if (chain.dwell_days !== undefined && chain.dwell_days > 0 && i > 0) {
+                            const frac = (i / kp.length) * chain.dwell_days * 24;
+                            tf = frac < 1 ? '~' + Math.round(frac * 60) + 'm after initial' : '~' + frac.toFixed(1) + 'h after initial';
+                        }
+                        h += '<tr><td>' + _escHtml(label) + '</td><td>' + tf + '</td></tr>';
+                    });
+                } else {
+                    h += '<tr><td>Initial Access</td><td>Unknown</td></tr>';
+                }
+                if (chain.dwell_days !== undefined) {
+                    let dwellStr;
+                    const dd = chain.dwell_days;
+                    if (dd < 1/24) dwellStr = '~' + Math.round(dd * 1440) + ' minutes';
+                    else if (dd < 1) dwellStr = '~' + (dd * 24).toFixed(1) + ' hours';
+                    else if (dd < 30) dwellStr = '~' + dd.toFixed(1) + ' days';
+                    else dwellStr = '~' + (dd / 30).toFixed(1) + ' months';
+                    h += '<tr><td><strong>Total Dwell</strong></td><td><strong>' + dwellStr + '</strong></td></tr>';
+                }
+                if (chain.first_seen_ts || chain.last_seen_ts) {
+                    h += '<tr><td>First Seen</td><td>' + _escHtml(chain.first_seen_ts || 'Unknown') + '</td></tr>';
+                    h += '<tr><td>Last Seen</td><td>' + _escHtml(chain.last_seen_ts || 'Unknown') + '</td></tr>';
+                }
+                h += '</table>';
+
+                // Lateral movement path
+                h += '<h4 style="margin:12px 0 8px 0;">Lateral Movement Path</h4>';
+                const lmp = chain.lateral_movement_path || [];
+                if (lmp.length > 0) {
+                    const deduped = [];
+                    const seenDevs = new Set();
+                    lmp.forEach(d => { if (!seenDevs.has(d)) { seenDevs.add(d); deduped.push(d); } });
+                    h += '<p style="font-size:0.85rem;font-family:monospace;color:#93C5FD;">' + deduped.map(_escHtml).join(' \u2192 ') + '</p>';
+                    h += '<p style="font-size:0.75rem;color:#64748B;">' + deduped.length + ' devices in reconstructed path</p>';
+                } else {
+                    h += '<p style="color:#64748B;font-size:0.82rem;">No lateral movement path data available.</p>';
+                }
+                h += '</div>';
+            })();
 
             // Raw JSON toggle
             h += '<div class="report-section">';
