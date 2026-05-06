@@ -6370,6 +6370,64 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             inp.click();
         }
 
+        // System accounts to filter out when scanning file paths
+        const SYS_ACCOUNTS = new Set([
+            'All Users','Default','Default User','Public','Administrator','Guest',
+            'sansforensics','claw','root','nobody','daemon','ubuntu','pi','vagrant'
+        ]);
+
+        function extractUsernameFromPath(filePath) {
+            if (!filePath || typeof filePath !== 'string') return null;
+            // Scan the ENTIRE path for embedded user directories.
+            // Evidence paths look like: .../Protected Files/Users/mortysmith/NTUSER.DAT
+            // or .../Users/ricksanchez/Crypto/Keys/...
+
+            // Windows user paths: .../Users/username/ (anywhere in path)
+            const winMatch = filePath.match(/[/\\]Users[/\\]([^/\\]+)/i);
+            if (winMatch) {
+                const u = winMatch[1];
+                if (SYS_ACCOUNTS.has(u)) return null;
+                return u;
+            }
+
+            // Linux home paths: /home/username/ (use LAST match to avoid analysis machine prefix)
+            const linuxMatches = filePath.match(/[/\\]home[/\\]([^/\\]+)/gi);
+            if (linuxMatches) {
+                const lastMatch = linuxMatches[linuxMatches.length - 1];
+                const m = lastMatch.match(/[/\\]home[/\\]([^/\\]+)/i);
+                if (m) {
+                    const u = m[1];
+                    if (SYS_ACCOUNTS.has(u.toLowerCase())) return null;
+                    return u;
+                }
+            }
+
+            // Protected Files pattern: .../Protected Files/Users/username/
+            const protMatch = filePath.match(/[/\\]Protected(?:\s+Files)?[/\\]Users[/\\]([^/\\]+)/i);
+            if (protMatch) {
+                const u = protMatch[1];
+                if (SYS_ACCOUNTS.has(u)) return null;
+                return u;
+            }
+            return null;
+        }
+
+        // Collect all evidence file paths from report for user extraction
+        function getAllEvidencePaths(report) {
+            const paths = [];
+            // From device_map evidence_files
+            const dm = report.device_map || {};
+            for (const dev of Object.values(dm)) {
+                if (Array.isArray(dev.evidence_files)) paths.push(...dev.evidence_files);
+            }
+            // From evidence_inventory
+            const inv = report.evidence_inventory || {};
+            for (const items of Object.values(inv)) {
+                if (Array.isArray(items)) paths.push(...items);
+            }
+            return paths;
+        }
+
         function _renderReportHtml(report, title) {
             const sev = report.severity || 'INFO';
             const evil = report.evil_found;
@@ -6492,15 +6550,6 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '</table></div>';
             }
 
-            // ========== NARRATIVE REPORT ==========
-            const narrativeMd = report.narrative_report;
-            if (narrativeMd && narrativeMd.length > 200) {
-                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udcdd Narrative Report</h3>';
-                h += '<div style="max-height:600px;overflow-y:auto;background:#0B1220;border:1px solid #334155;border-radius:6px;padding:16px;font-size:0.82rem;line-height:1.5;">';
-                h += _md2html(narrativeMd);
-                h += '</div></div>';
-            }
-
             // ========== USERS / ACCOUNTS ==========
             let userMap = report.user_map || {};
             let userEntries = Object.entries(userMap).filter(([k, v]) => k !== 'users' && typeof v === 'object');
@@ -6526,19 +6575,50 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 }
             }
 
+            // If still empty, scan ALL evidence file paths for embedded usernames
+            if (userEntries.length === 0) {
+                const allPaths = getAllEvidencePaths(report);
+                const usersFound = new Map();
+                for (const fp of allPaths) {
+                    const uname = extractUsernameFromPath(fp);
+                    if (uname) {
+                        if (!usersFound.has(uname)) usersFound.set(uname, { devices: [], files: [] });
+                        usersFound.get(uname).files.push(fp);
+                    }
+                }
+                // Build synthetic user entries from path analysis
+                if (usersFound.size > 0) {
+                    const sorted = [...usersFound.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+                    userEntries = sorted.map(([uname, udata]) => [uname, {
+                        devices: [],
+                        files: udata.files,
+                        source: 'evidence_paths'
+                    }]);
+                }
+            }
+
+            // Always show the Accounts section
+            h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udc64 Accounts Discovered (' + userEntries.length + ')</h3>';
             if (userEntries.length > 0) {
-                h += '<div class="report-section"><h3 style="color:#60A5FA;">\ud83d\udc64 Accounts Discovered (' + userEntries.length + ')</h3>';
-                h += '<table class="fe-pb-table"><tr><th>Username</th><th>SID</th><th>Devices</th><th>Last Login</th></tr>';
+                h += '<table class="fe-pb-table"><tr><th>Username</th><th>SID</th><th>Evidence Files</th><th>Last Login</th></tr>';
                 for (const [uname, udata] of userEntries) {
                     if (typeof udata !== 'object') continue;
+                    // Show evidence file count instead of devices when extracted from paths
+                    const fileCount = (udata.files && udata.files.length) ? udata.files.length : 0;
+                    const fileInfo = fileCount > 0 ? (fileCount + ' file' + (fileCount !== 1 ? 's' : '')) : '\u2014';
                     const devices = udata.devices || [];
+                    const devInfo = devices.length > 0 ? devices.map(_escHtml).join(', ') : '';
+                    const evidenceInfo = devInfo || fileInfo;
                     h += '<tr><td><strong>' + _escHtml(uname) + '</strong></td>'
                        + '<td><code style="font-size:0.75rem;">' + _escHtml(udata.sid || udata.SID || '\u2014') + '</code></td>'
-                       + '<td style="font-size:0.78rem;">' + (devices.length > 0 ? devices.map(_escHtml).join(', ') : '\u2014') + '</td>'
+                       + '<td style="font-size:0.78rem;">' + _escHtml(evidenceInfo) + '</td>'
                        + '<td>' + _escHtml(udata.last_login || udata.lastLogon || '\u2014') + '</td></tr>';
                 }
-                h += '</table></div>';
+                h += '</table>';
+            } else {
+                h += '<p style="color:#64748B;font-size:0.82rem;margin:8px 0;">No accounts found in evidence. Users may need to be correlated from registry hives or memory analysis.</p>';
             }
+            h += '</div>';
 
             // Correlated Users / Relationships
             const corrUsers = report.correlated_users || {};
