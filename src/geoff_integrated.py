@@ -3831,6 +3831,12 @@ def _execute_pass2(
                                 v = v.replace("{time_window_end}", str(time_window.get("end", "")))
                                 v = v.replace("{dwell_start}", str(time_window.get("start", "")))
                                 v = v.replace("{dwell_end}", str(time_window.get("end", "")))
+                            elif isinstance(v, dict):
+                                v = {sk: str(sv).replace("{dwell_start}", str(time_window.get("start", "")))
+                                     .replace("{dwell_end}", str(time_window.get("end", "")))
+                                     .replace("{time_window}", str(time_window))
+                                     .replace("{target_hosts}", ",".join(trigger.get("devices_involved", [])))
+                                     for sk, sv in v.items()}
                             params[k] = v
 
                         # Convert numeric string params
@@ -3877,7 +3883,7 @@ def _execute_pass2(
                                 steps_completed += 1
                                 # Quick forensicator interpretation
                                 try:
-                                    if 'geoff_forensicator' in dir():
+                                    if 'geoff_forensicator' in dir() or 'geoff_forensicator' in globals():
                                         fn_notes = geoff_forensicator.interpret_step_result(
                                             playbook_id=playbook_id,
                                             module=module,
@@ -3903,21 +3909,21 @@ def _execute_pass2(
                         pass2_writer.append(step_record)
                         pb_findings.append(step_record)
 
-            playbooks_run.append({
-                "playbook_id": playbook_id,
-                "pass": 2,
-                "trigger_type": trigger_type,
-                "steps_attempted": len(pb_findings),
-                "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
-                "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
-                "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
-            })
+        playbooks_run.append({
+            "playbook_id": playbook_id,
+            "pass": 2,
+            "trigger_type": trigger_type,
+            "steps_attempted": len(pb_findings),
+            "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+            "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+            "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+        })
 
-            # Write pass2 playbook output
-            try:
-                pb_output = case_work_dir / "output" / f"{playbook_id}_pass2.json"
-                _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
-            except Exception:
+        # Write pass2 playbook output
+        try:
+            pb_output = case_work_dir / "output" / f"{playbook_id}_pass2.json"
+            _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
+        except Exception:
                 pass
 
         _log(f"    ✓ {playbook_id}: {len(pb_findings)} steps")
@@ -6055,9 +6061,13 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
     _update_job(80, "batch-critic", "Batch Critic reviewing all findings (Pass 1 + Pass 2)")
+    # Merge Pass 2 findings into Pass 1 for critic review
+    all_findings = findings_writer.all_records()
+    if 'pass2_results' in dir() and pass2_results and pass2_results.get('findings'):
+        all_findings = all_findings + pass2_results['findings']
     try:
         _batch_assess = _batch_critic_review_all_playbooks(
-            findings=findings_writer.all_records(),
+            findings=all_findings,
             playbooks_run=playbooks_run,
             case_work_dir=case_work_dir,
             job_id=job_id,
