@@ -7140,6 +7140,10 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             }
             if (inList)  html += '</ul>\n';
             if (inTable) html += '</table>\n';
+            // Strip residual dangerous patterns (defense-in-depth against XSS from attacker-controlled evidence)
+            html = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+                       .replace(/\bon\w+\s*=/gi, 'data-removed=')
+                       .replace(/javascript\s*:/gi, '');
             return html;
         }
 
@@ -7612,7 +7616,10 @@ def get_report_json(case_dir):
         # Enrich with narrative report content
         narrative_md = case_path / "reports" / "narrative_report.md"
         if narrative_md.exists():
-            data['narrative_report'] = narrative_md.read_text(encoding='utf-8')
+            if narrative_md.stat().st_size > 10 * 1024 * 1024:
+                data['narrative_report'] = None
+            else:
+                data['narrative_report'] = narrative_md.read_text(encoding='utf-8')
         else:
             data['narrative_report'] = None
         # Enrich with executive summary from narrative report JSON

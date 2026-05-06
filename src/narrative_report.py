@@ -194,7 +194,7 @@ class NarrativeReportGenerator:
                 super_timeline_path, behavioral_flags)
 
         # 5. Behavioral Findings
-                # 5b. Failed steps analysis
+        # 5b. Failed steps analysis
         sections["failed_steps"] = self._render_failed_steps(report_json)
 
         # 5c. Behavioral Findings
@@ -421,63 +421,58 @@ class NarrativeReportGenerator:
             narrative_parts = []
             if "phishing" in all_cats or "initial_access" in all_cats:
                 narrative_parts.append(
-                    "The attacker gained **initial access** through phishing (T1566), "
-                    "delivering malicious content that compromised user credentials."
+                    "**Possible phishing** activity was detected (T1566) based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "credential_theft" in all_cats or "credential_access" in all_cats:
                 narrative_parts.append(
-                    "**Credential theft** (T1003) was detected - the attacker harvested "
-                    "passwords and authentication tokens from compromised systems, "
-                    "enabling further access."
+                    "**Possible credential theft** activity was detected (T1003) based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "persistence" in all_cats:
                 narrative_parts.append(
-                    "The attacker established **persistence** (T1053) through mechanisms "
-                    "such as scheduled tasks and registry modifications, ensuring "
-                    "continued access after reboots."
+                    "**Possible persistence** activity was detected (T1053) based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "lateral_movement" in all_cats:
                 narrative_parts.append(
-                    "**Lateral movement** was observed - the attacker pivoted to "
-                    "internal systems using stolen credentials."
+                    "**Possible lateral movement** was detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "cryptominer" in all_cats:
                 narrative_parts.append(
-                    "A **cryptocurrency miner** (T1496) was deployed on compromised "
-                    "systems, consuming computational resources for illicit mining."
+                    "**Possible cryptocurrency mining** activity was detected (T1496) based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "exfiltration" in all_cats:
                 narrative_parts.append(
-                    "**Data exfiltration** (T1048) was detected - sensitive data was "
-                    "transferred to external infrastructure, including cloud storage "
-                    "services."
+                    "**Possible data exfiltration** activity was detected (T1048) based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "c2" in all_cats or "command_and_control" in all_cats:
                 narrative_parts.append(
-                    "**Command and control** (C2) communications were identified, "
-                    "indicating ongoing remote control of compromised hosts."
+                    "**Possible command and control** (C2) communications were detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "web_shell" in all_cats:
                 narrative_parts.append(
-                    "A **web shell** was discovered, providing the attacker "
-                    "HTTP-based remote access to internal systems."
+                    "**Possible web shell** activity was detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "lolbin" in all_cats:
                 narrative_parts.append(
-                    "The attacker used **living-off-the-land binaries** (LOLBins) "
-                    "such as PowerShell and certutil to evade detection during "
-                    "execution and data staging."
+                    "**Possible living-off-the-land binary** (LOLBin) usage was detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "privilege_escalation" in all_cats:
                 narrative_parts.append(
-                    "**Privilege escalation** was detected - the attacker elevated "
-                    "from standard user to administrator or SYSTEM level access."
+                    "**Possible privilege escalation** activity was detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
             if "defense_evasion" in all_cats:
                 narrative_parts.append(
-                    "**Defense evasion** techniques were employed - the attacker "
-                    "took steps to avoid detection, such as disabling security tools "
-                    "or clearing event logs."
+                    "**Possible defense evasion** activity was detected based on "
+                    "classification metadata — analyst review of specific artifacts recommended."
                 )
 
             if narrative_parts:
@@ -1235,43 +1230,6 @@ Write the following sections. ACCURACY RULES:
             lines.append("4. Ensure endpoint security tooling is current on all devices")
 
         return "\n".join(lines)
-
-    def _condense_playbook_runs(self, audit_trail_path: str) -> dict:
-        """Group duplicate playbook runs into single entries."""
-        pb_runs = {}  # pb_id -> {count, total_steps}
-        try:
-            with open(audit_trail_path, "r") as f:
-                for line in f:
-                    event = json.loads(line)
-                    if event.get("event") == "playbook_complete":
-                        pb_id = event.get("playbook_id", "Unknown")
-                        completed = event.get("steps_completed", 0)
-                        if pb_id not in pb_runs:
-                            pb_runs[pb_id] = {"count": 0, "total_steps": 0}
-                        pb_runs[pb_id]["count"] += 1
-                        pb_runs[pb_id]["total_steps"] += completed
-        except (FileNotFoundError, IOError):
-            pass
-        return pb_runs
-
-    def _parse_failed_steps(self, audit_trail_path: str) -> list:
-        """Extract failure reasons from audit trail."""
-        failed = []
-        try:
-            with open(audit_trail_path, "r") as f:
-                for line in f:
-                    event = json.loads(line)
-                    if event.get("event") == "unverified" or event.get("status") == "failed":
-                        failed.append({
-                            "playbook": event.get("playbook_id", "Unknown"),
-                            "module": event.get("module", ""),
-                            "function": event.get("function", ""),
-                            "device": event.get("device_id", ""),
-                            "reason": event.get("reason", event.get("error", "Unknown error"))
-                        })
-        except (FileNotFoundError, IOError):
-            pass
-        return failed
 
     # ----------------------------------------------------------------
     # Markdown rendering
