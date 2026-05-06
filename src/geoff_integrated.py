@@ -2149,6 +2149,9 @@ PLAYBOOK_STEPS_PASS2 = {
              "time_window_start": "{time_window_start}",
              "time_window_end": "{time_window_end}"}),
             # Extract process binaries for malware analysis
+            # NOTE: target_inodes must come from list_files output above.
+            # This is a two-step process: run list_files first, then pipe the
+            # discovered inodes as target_inodes for extract_file.
             ("sleuthkit", "extract_file", {"image": "{image}", "offset": "{offset}",
              "inode": "{target_inodes}"}),
         ],
@@ -2186,10 +2189,13 @@ PLAYBOOK_STEPS_PASS2 = {
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}",
              "time_window_start": "{time_window_start}",
              "time_window_end": "{time_window_end}"}),
-            # Correlate file hashes between source and destination
-            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8,
-             "time_window_start": "{time_window_start}",
-             "time_window_end": "{time_window_end}"}),
+            # Hash correlation between source and destination images
+            # NOTE: Hash correlation (e.g. MD5/SHA1 cross-reference) should be
+            # performed as a separate post-processing step comparing file hash
+            # lists from both source and destination, not via raw string extraction.
+            # ("sleuthkit", "hash_files", {"image": "{image}", "offset": "{offset}",
+            #  "time_window_start": "{time_window_start}",
+            #  "time_window_end": "{time_window_end}"}),
         ],
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}",
@@ -2201,6 +2207,8 @@ PLAYBOOK_STEPS_PASS2 = {
     "PB-SIFT-102": {  # Temporal Anomaly Investigation
         "disk_images": [
             # Extract full Plaso timeline for the anomaly window
+            # GUARD: sort_timeline will be skipped gracefully at runtime if the
+            # .plaso storage file does not exist (e.g. no prior log2timeline run).
             ("plaso", "sort_timeline", {
                 "storage_file": "{output_dir}/timeline_{image_stem}.plaso",
                 "output_format": "json_line",
@@ -2256,8 +2264,9 @@ PLAYBOOK_STEPS_PASS2 = {
              "filter_host": "{ioc_ips}"}),
         ],
         "registry_hives": [
-            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
-            ("registry", "extract_services", {"system_path": "{hive}"}),
+            # extract_autoruns reads the SOFTWARE hive; extract_services reads SYSTEM
+            ("registry", "extract_autoruns", {"software_path": "{autoruns_hive}"}),
+            ("registry", "extract_services", {"system_path": "{services_hive}"}),
         ],
     },
 
@@ -2287,10 +2296,12 @@ PLAYBOOK_STEPS_PASS2 = {
         ],
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}",
-             "time_filter": {"start": "{dwell_start}", "end": "{dwell_end}"}}),
+             "time_filter_start": "{dwell_start}",
+             "time_filter_end": "{dwell_end}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}",
              "output_dir": "{output_dir}/flows",
-             "time_filter": {"start": "{dwell_start}", "end": "{dwell_end}"}}),
+             "time_filter_start": "{dwell_start}",
+             "time_filter_end": "{dwell_end}"}),
         ],
         "registry_hives": [
             ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
@@ -3269,7 +3280,7 @@ def _timeline_intelligence_analysis(
             trigger = {
                 "trigger_id": f"trigger-chain-{proc_name}-{hash(ts) % 10000:04d}",
                 "trigger_type": "cross_device_process_chain",
-                "playbook_id": "PB-SIFT-100",
+                "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("cross_device_process_chain", "PB-SIFT-100"),
                 "priority": "HIGH",
                 "devices_involved": devices_involved,
                 "time_window": chain["time_window"],
@@ -3345,7 +3356,7 @@ def _timeline_intelligence_analysis(
                 trigger = {
                     "trigger_id": f"trigger-usb-{serial[:8]}",
                     "trigger_type": "usb_lateral_movement",
-                    "playbook_id": "PB-SIFT-101",
+                    "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("usb_lateral_movement", "PB-SIFT-101"),
                     "priority": "HIGH",
                     "devices_involved": sorted(devices_with_serial),
                     "time_window": usb_movement["time_window"],
@@ -3414,7 +3425,7 @@ def _timeline_intelligence_analysis(
                 trigger = {
                     "trigger_id": f"trigger-offhours-{window_key.replace(':', '').replace('-', '')}",
                     "trigger_type": "off_hours_cluster",
-                    "playbook_id": "PB-SIFT-102",
+                    "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("off_hours_cluster", "PB-SIFT-102"),
                     "priority": "MEDIUM",
                     "devices_involved": sorted(devices_in_window),
                     "time_window": {
@@ -3493,7 +3504,7 @@ def _timeline_intelligence_analysis(
                     trigger = {
                         "trigger_id": f"trigger-beacon-{did}",
                         "trigger_type": "file_beaconing",
-                        "playbook_id": "PB-SIFT-103",
+                        "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("file_beaconing", "PB-SIFT-103"),
                         "priority": "HIGH",
                         "devices_involved": [did],
                         "time_window": beacon["time_window"],
@@ -3555,7 +3566,7 @@ def _timeline_intelligence_analysis(
             trigger = {
                 "trigger_id": f"trigger-ioc-{hash(ioc) % 10000:04d}",
                 "trigger_type": "ioc_correlation",
-                "playbook_id": "PB-SIFT-103",
+                "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("ioc_correlation", "PB-SIFT-103"),
                 "priority": "HIGH",
                 "devices_involved": sorted(devices_with_ioc),
                 "time_window": {"start": "", "end": ""},  # Full scope
@@ -3604,7 +3615,7 @@ def _timeline_intelligence_analysis(
         trigger = {
             "trigger_id": f"trigger-dwell-{dw['dwell_days']}d",
             "trigger_type": "dwell_window",
-            "playbook_id": "PB-SIFT-104",
+            "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("dwell_window", "PB-SIFT-104"),
             "priority": "MEDIUM",
             "devices_involved": sorted(device_map.keys()),
             "time_window": {"start": dw["first_seen"], "end": dw["last_seen"]},
@@ -3831,6 +3842,17 @@ def _execute_pass2(
                                 v = v.replace("{time_window_end}", str(time_window.get("end", "")))
                                 v = v.replace("{dwell_start}", str(time_window.get("start", "")))
                                 v = v.replace("{dwell_end}", str(time_window.get("end", "")))
+                                # Context-driven params (derived from trigger context or defaults)
+                                v = v.replace("{target_inodes}", str(trigger_context.get("target_inodes", "")))
+                                v = v.replace("{target_pids}", str(trigger_context.get("target_pids", "")))
+                                v = v.replace("{ioc_ips}", str(trigger_context.get("ioc_ips", "")))
+                                v = v.replace("{ioc_patterns}", str(trigger_context.get("ioc_patterns", trigger_context.get("ioc", ""))))
+                                v = v.replace("{filter_patterns}", str(trigger_context.get("filter_patterns", "")))
+                                v = v.replace("{target_hosts}", ",".join(trigger.get("devices_involved", [])))
+                                v = v.replace("{target_paths}", str(trigger_context.get("target_paths", "")))
+                                # Registry hive params (SOFTWARE for autoruns, SYSTEM for services)
+                                v = v.replace("{autoruns_hive}", "SOFTWARE")
+                                v = v.replace("{services_hive}", "SYSTEM")
                             elif isinstance(v, dict):
                                 v = {sk: str(sv).replace("{dwell_start}", str(time_window.get("start", "")))
                                      .replace("{dwell_end}", str(time_window.get("end", "")))
@@ -6052,6 +6074,12 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
             fe_log_func=_fe_log,
         )
         _fe_log(job_id, f"Pass 2: {len(pass2_results.get('playbooks_run', []))} playbooks, {pass2_results.get('findings_count', 0)} findings")
+        # Merge Pass 2 findings into the main findings_writer so that
+        # severity_counts, evil_found, findings_detail, and narrative report
+        # anchors all include Pass 2 data.
+        for pf in pass2_results.get('findings', []):
+            if isinstance(pf, dict) and not findings_writer.is_completed(pf.get('step_key', '')):
+                findings_writer.append(pf)
     except Exception as e:
         _fe_log(job_id, f"Pass 2 execution failed: {e}")
         pass2_results = {"playbooks_run": [], "findings": []}
@@ -6061,10 +6089,8 @@ def find_evil(evidence_dir: str, job_id: str = None) -> dict:
     # ------------------------------------------------------------------
     manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
     _update_job(80, "batch-critic", "Batch Critic reviewing all findings (Pass 1 + Pass 2)")
-    # Merge Pass 2 findings into Pass 1 for critic review
+    # Pass 2 findings have already been merged into findings_writer above
     all_findings = findings_writer.all_records()
-    if 'pass2_results' in dir() and pass2_results and pass2_results.get('findings'):
-        all_findings = all_findings + pass2_results['findings']
     try:
         _batch_assess = _batch_critic_review_all_playbooks(
             findings=all_findings,
