@@ -2149,11 +2149,10 @@ PLAYBOOK_STEPS_PASS2 = {
              "time_window_start": "{time_window_start}",
              "time_window_end": "{time_window_end}"}),
             # Extract process binaries for malware analysis
-            # NOTE: target_inodes must come from list_files output above.
-            # This is a two-step process: run list_files first, then pipe the
-            # discovered inodes as target_inodes for extract_file.
-            ("sleuthkit", "extract_file", {"image": "{image}", "offset": "{offset}",
-             "inode": "{target_inodes}"}),
+            # NOTE: extract_file requires manual inode specification.
+            # Run list_files first, identify inodes of interest, then
+            # re-run with explicit inode values via a targeted playbook.
+            # The extract_file step is deferred until target_inodes is known.
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -2265,8 +2264,9 @@ PLAYBOOK_STEPS_PASS2 = {
         ],
         "registry_hives": [
             # extract_autoruns reads the SOFTWARE hive; extract_services reads SYSTEM
-            ("registry", "extract_autoruns", {"software_path": "{autoruns_hive}"}),
-            ("registry", "extract_services", {"system_path": "{services_hive}"}),
+            # Both use {hive} (substituted with actual hive file paths from evidence)
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
         ],
     },
 
@@ -3850,9 +3850,8 @@ def _execute_pass2(
                                 v = v.replace("{filter_patterns}", str(trigger_context.get("filter_patterns", "")))
                                 v = v.replace("{target_hosts}", ",".join(trigger.get("devices_involved", [])))
                                 v = v.replace("{target_paths}", str(trigger_context.get("target_paths", "")))
-                                # Registry hive params (SOFTWARE for autoruns, SYSTEM for services)
-                                v = v.replace("{autoruns_hive}", "SOFTWARE")
-                                v = v.replace("{services_hive}", "SYSTEM")
+                                # Registry hive params are handled via {hive} substitution above
+                                # (autoruns_hive / services_hive removed — use {hive} in playbook defs)
                             elif isinstance(v, dict):
                                 v = {sk: str(sv).replace("{dwell_start}", str(time_window.get("start", "")))
                                      .replace("{dwell_end}", str(time_window.get("end", "")))
