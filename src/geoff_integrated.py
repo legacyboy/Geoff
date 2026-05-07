@@ -7277,9 +7277,9 @@ HTML_TEMPLATE = r"""
             <span class="tag">DFIR Platform</span>
         </div>
         <div class="tabs">
-            <div class="tab active" onclick="showTab('findevil')">Find Evil</div>
-            <div class="tab" onclick="showTab('evidence')">Evidence</div>
-            <div class="tab" onclick="showTab('reports')">Reports</div>
+            <div class="tab active" onclick="switchTab('findevil', this)">Find Evil</div>
+            <div class="tab" onclick="switchTab('evidence', this)">Evidence</div>
+            <div class="tab" onclick="switchTab('reports', this)">Reports</div>
         </div>
         <div class="header-right">
             <div class="status"><span class="dot"></span>Online</div>
@@ -7389,10 +7389,11 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             if (inp && EVIDENCE_BASE_DIR) inp.value = EVIDENCE_BASE_DIR;
         });
 
-        function showTab(tab) {
+        function switchTab(tab, el) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
-            event.target.classList.add('active');
+            var activeTab = el || document.querySelector('.tab.active') || document.querySelector('[onclick*="' + tab + '"]');
+            if (activeTab) activeTab.classList.add('active');
             document.getElementById(tab).classList.add('active');
             if (tab === 'evidence') loadEvidence();
             if (tab === 'reports') loadReports();
