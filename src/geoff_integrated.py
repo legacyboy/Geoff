@@ -7655,7 +7655,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                     h += '</div></div>';
                 }
                 if (mitreObs.length && caseDirForMitre) {
-                    h += '<div style="margin-top:12px;"><a href="/reports/mitre-matrix?case=' + encodeURIComponent(caseDirForMitre) + '" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(59,130,246,0.1);border:1px solid var(--g-blue);border-radius:4px;color:#60A5FA;text-decoration:none;font-size:0.8rem;transition:all 120ms;" onmouseover="this.style.background='rgba(59,130,246,0.2)';this.style.color='#93C5FD';" onmouseout="this.style.background='rgba(59,130,246,0.1)';this.style.color='#60A5FA';">🖱 View MITRE ATT&CK Matrix</a></div>';
+                    h += '<div style="margin-top:12px;"><a href="/reports/mitre-matrix?case=' + encodeURIComponent(caseDirForMitre) + '" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(59,130,246,0.1);border:1px solid var(--g-blue);border-radius:4px;color:#60A5FA;text-decoration:none;font-size:0.8rem;transition:all 120ms;">🖱 View MITRE ATT&CK Matrix</a></div>';
                 }
                 h += '</div></div>';
             }
