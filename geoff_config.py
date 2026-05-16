@@ -341,14 +341,11 @@ LLM_MODEL = AGENT_MODELS["manager"]
 _EVIDENCE_TYPE_MAP = {
     ".dd": "disk_image", ".raw": "disk_image", ".e01": "disk_image",
     ".img": "disk_image", ".vmdk": "disk_image", ".vhd": "disk_image",
-    ".vhdx": "disk_image", ".qcow2": "disk_image", ".vdi": "disk_image",
     ".vmem": "memory_dump", ".mem": "memory_dump", ".dmp": "memory_dump",
-    ".lime": "memory_dump",
     ".pcap": "pcap", ".pcapng": "pcap", ".cap": "pcap",
     ".evtx": "evtx", ".evt": "evt",
     ".hive": "hive", ".dat": "registry",
     ".eml": "email", ".mbox": "email", ".pst": "email",
-    ".ab": "other_files",
 }
 
 
@@ -391,7 +388,7 @@ MITRE_TAGS = {
 
 # ---------------------------------------------------------------------------
 
-# All 37 playbook IDs — always run, never cherry-pick
+# All 19 SIFT playbook IDs — always run, never cherry-pick
 PLAYBOOK_NAMES = {
     "PB-SIFT-000": "Triage & Execution Planning",
     "PB-SIFT-001": "Initial Access",
@@ -418,7 +415,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-022": "Browser Forensics",
     "PB-SIFT-023": "Email Forensics",
     "PB-SIFT-024": "macOS Forensics",
-    "PB-SIFT-025": "Cloud & Enterprise IR",
+    "PB-SIFT-025": "Generic File Analysis",
     "PB-SIFT-026": "File Carving & Recovery",
     "PB-SIFT-027": "Memory Forensics",
     "PB-SIFT-028": "Windows Modern Artifacts",
@@ -427,9 +424,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-031": "Enterprise Collaboration",
     "PB-SIFT-032": "VM Snapshot Forensics",
     "PB-SIFT-033": "Container Forensics",
-    "PB-SIFT-034": "Network Device Forensics",
-    "PB-SIFT-035": "Active Directory DC Forensics",
-    "PB-SIFT-036": "PCAP Network Forensics",
+    "PB-SIFT-035": "SQLite Analysis",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -455,7 +450,6 @@ PLAYBOOK_STEPS = {
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("dc3dd", "verify_image", {"image": "{image}"}),
         ],
     },
     "PB-SIFT-002": {  # Execution
@@ -477,8 +471,6 @@ PLAYBOOK_STEPS = {
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("jumplist", "parse_lnk_files", {"directory": "{image}"}),
-            ("scheduled", "parse_windows_scheduled_tasks", {"evidence_dir": "{image}"}),
-            ("scheduled", "parse_linux_crontabs", {"evidence_dir": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -486,16 +478,14 @@ PLAYBOOK_STEPS = {
     },
     "PB-SIFT-004": {  # Privilege Escalation
         "memory_dumps": [
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
-            ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
         ],
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
-            ("registry", "parse_hive", {"hive_path": "{hive}"}),
         ],
     },
     "PB-SIFT-005": {  # Credential Theft
@@ -551,7 +541,6 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
-            ("bulk_extractor", "scan_image", {"image": "{image}", "output_dir": "{output_dir}/bulk_extractor"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -559,16 +548,17 @@ PLAYBOOK_STEPS = {
         ],
     },
     "PB-SIFT-009": {  # Ransomware
+        "evtx_logs": [
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "evt_logs": [
+            ("logs", "parse_evt", {"evt_file": "{evt}"}),
+        ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
-            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
-        ],
-        "other_files": [
-            ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
         ],
     },
     "PB-SIFT-010": {  # Living-off-the-Land
@@ -606,9 +596,6 @@ PLAYBOOK_STEPS = {
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
-            ("scheduled", "detect_backdoors", {"evidence_dir": "{image}"}),
-            ("vss", "list_vss", {"image": "{image}"}),
-            ("vss", "extract_vss_files", {"image": "{image}", "output_dir": "{output_dir}/vss"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -638,8 +625,6 @@ PLAYBOOK_STEPS = {
         "disk_images": [
             ("sleuthkit", "analyze_partition_table", {"disk_image": "{image}"}),
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("scheduled", "parse_linux_crontabs", {"evidence_dir": "{image}"}),
-            ("scheduled", "detect_backdoors", {"evidence_dir": "{image}"}),
         ],
     },
     "PB-SIFT-015": {  # Data Staging
@@ -654,8 +639,6 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-016": {  # Cross-Image Correlation
         "disk_images": [
             ("plaso", "create_timeline", {"evidence_path": "{image}", "output_file": "{output_dir}/timeline_{image_stem}.plaso"}),
-            ("host_correlator", "merge_timelines", {"output_dir": "{output_dir}"}),
-            ("host_correlator", "correlate_cross_image", {"output_dir": "{output_dir}"}),
         ],
     },
     "PB-SIFT-017": {  # REMnux Malware Analysis — full 15-tool coverage
@@ -739,7 +722,6 @@ PLAYBOOK_STEPS = {
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
-            ("zeek", "analyze_pcap", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/zeek"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -841,7 +823,7 @@ PLAYBOOK_STEPS = {
             ("macos", "analyze_launch_agents", {"directory": "{file}"}),
         ],
     },
-    "PB-SIFT-025": {  # Cloud & Enterprise IR — cloud logs and unclassified file analysis
+    "PB-SIFT-025": {  # Generic File Analysis — every unclassified file gets analysed
         "other_files": [
             ("remnux", "die_scan",       {"target_file": "{file}"}),
             ("remnux", "exiftool_scan",  {"target_file": "{file}"}),
@@ -851,9 +833,9 @@ PLAYBOOK_STEPS = {
             ("remnux", "radare2_analyze",{"target_file": "{file}"}),
             ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
             ("logs", "scan_document_pii", {"evidence_path": "{file}"}),
-            ("mobile_malware", "analyze_apk", {"apk_path": "{file}"}),
-            ("mobile_malware", "analyze_ipa", {"ipa_path": "{file}"}),
-            ("mobile_malware", "analyze_mobile_binary", {"binary_path": "{file}"}),
+            ("mobile", "analyze_apk", {"apk_path": "{file}"}),
+            ("mobile", "analyze_ipa", {"ipa_path": "{file}"}),
+            ("mobile", "analyze_mobile_binary", {"binary_path": "{file}"}),
         ],
     },
     "PB-SIFT-026": {  # File Carving & Recovery — triggered automatically when needed
@@ -876,6 +858,7 @@ PLAYBOOK_STEPS = {
             ("windows", "analyze_prefetch", {"image": "{image}"}),
             ("windows", "analyze_jumplists", {"image": "{image}"}),
             ("windows", "analyze_lnk", {"image": "{image}"}),
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
             ("windows", "analyze_amcache", {"image": "{image}"}),
             ("windows", "analyze_srum", {"image": "{image}"}),
             ("windows", "analyze_timeline", {"image": "{image}"}),
@@ -921,10 +904,11 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-032": {  # VM Snapshot Forensics — triggered by .vmss/.vmsn/.vmem files
         "memory_dumps": [
             ("vm", "extract_memory", {"vmem_file": "{mem}"}),
-            ("vm", "detect_snapshots", {}),
+            ("vm", "detect_snapshots", {"config_path": "{file}"}),
         ],
         "disk_images": [
             ("vm", "extract_disk", {"image": "{image}"}),
+            ("vm", "analyze_config", {"config_path": "{file}"}),
             ("vm", "detect_escape", {"evidence_path": "{image}"}),
         ],
     },
@@ -938,38 +922,9 @@ PLAYBOOK_STEPS = {
             ("container", "detect_supply_chain", {"evidence_path": "{file}"}),
         ],
     },
-    "PB-SIFT-034": {  # Network Device Forensics — triggered by disk_images (network device configs)
-        "disk_images": [
-            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
-            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-        ],
-        "syslogs": [
-            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
-        ],
-        "other_files": [
-            ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
-        ],
-    },
-    "PB-SIFT-035": {  # Active Directory DC Forensics — triggered by ntds.dit/SYSTEM/SAM artifacts
+    "PB-SIFT-035": {  # SQLite Analysis — generic adaptive pipeline for any .sqlite/.db/.sqlite3
         "other_files": [
             ("sqlite", "analyze_sqlite", {"db_path": "{file}"}),
-        ],
-        "registry_hives": [
-            ("registry", "extract_sam_users", {"sam_path": "{hive}"}),
-            ("registry", "extract_domain_accounts", {"system_path": "{hive}"}),
-        ],
-    },
-    # PB-SIFT-035 Note: Active Directory DC Forensics currently runs SQLite analysis
-    # on other_files and registry analysis on hives. For full AD forensics, add
-    # explicit NTDS.dit parsing (e.g., with ntdsxtract or libesedb) when .dit
-    # files are detected in evidence. Also add a dedicated step to search for
-    # NTDS.dit and SYSTEM hive pairs for credential extraction.
-    "PB-SIFT-036": {  # PCAP Network Forensics — triggered by .pcap/.pcapng captures
-        "pcaps": [
-            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
-            ("network", "extract_http", {"pcap_file": "{pcap}"}),
-            ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
         ],
     },
 }

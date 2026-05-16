@@ -88,10 +88,11 @@ if [[ "$SKIP_DEPS" == false ]]; then
             foremost scalpel tcpflow zeek \
             libbde-utils libpst-utils libguestfs-tools qemu-utils \
             bulk-extractor dc3dd cryptsetup testdisk \
+            libvshadow-utils libpff-utils \
             libmagic1 libmagic-dev 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd vshadowmount photorec ent; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi

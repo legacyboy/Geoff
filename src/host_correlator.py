@@ -443,3 +443,168 @@ class HostCorrelator:
             return dt.hour
         except (ValueError, TypeError):
             return None
+
+    # -------------------------------------------------------------------
+    # Cross-image correlation methods (wired from PB-SIFT-016)
+    # -------------------------------------------------------------------
+
+    def merge_timelines(self, output_dir: str) -> dict:
+        """Merge all per-image .plaso timeline files into a single super-timeline.
+
+        Called once per case from PB-SIFT-016. Scans output_dir for
+        timeline_*.plaso files, merges, and writes super_timeline.jsonl.
+        """
+        from super_timeline import SuperTimeline
+        import glob
+        import json
+
+        output_path = Path(output_dir)
+        plaso_files = list(output_path.glob("timeline_*.plaso"))
+
+        if not plaso_files:
+            return {
+                "tool": "host_correlator",
+                "status": "warning",
+                "message": "No timeline_*.plaso files found to merge",
+                "plaso_count": 0,
+                "output_dir": output_dir,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        # Build a minimal device_map from the timeline filenames
+        device_map = {"devices": {}}
+        for pf in plaso_files:
+            device_id = pf.stem.replace("timeline_", "", 1)
+            device_map["devices"][device_id] = {
+                "paths": {"plaso_timeline": str(pf)},
+                "os_type": "unknown",
+            }
+
+        # Build super timeline
+        st = SuperTimeline()
+        # SuperTimeline.build() needs device_map, findings, timeline_events
+        # Use empty findings since we're just building timelines
+        try:
+            timeline = st.build(device_map, [], [])
+            super_file = output_path / "super_timeline.jsonl"
+            st.write(timeline, str(super_file))
+
+            return {
+                "tool": "host_correlator",
+                "status": "success",
+                "message": f"Merged {len(plaso_files)} timelines into super_timeline.jsonl",
+                "plaso_count": len(plaso_files),
+                "super_timeline": str(super_file),
+                "event_count": len(timeline) if isinstance(timeline, list) else 0,
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "host_correlator",
+                "status": "error",
+                "message": f"Merge failed: {e}",
+                "plaso_files": [str(p) for p in plaso_files],
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def correlate_cross_image(self, output_dir: str) -> dict:
+        """Correlate users, processes, and devices ACROSS multiple images.
+
+        Analyzes merged super_timeline, detects shared users/IPs/serials
+        across different disk images, and reports cross-image artifacts.
+        """
+        import glob
+        import json
+
+        output_path = Path(output_dir)
+        super_file = output_path / "super_timeline.jsonl"
+
+        if not super_file.exists():
+            return {
+                "tool": "host_correlator",
+                "status": "warning",
+                "message": "super_timeline.jsonl not found — run merge_timelines first",
+                "output_dir": output_dir,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        # Load events
+        events = []
+        try:
+            with open(super_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        events.append(json.loads(line))
+        except Exception as e:
+            return {
+                "tool": "host_correlator",
+                "status": "error",
+                "message": f"Failed to read super_timeline: {e}",
+                "event_count": len(events),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        if not events:
+            return {
+                "tool": "host_correlator",
+                "status": "warning",
+                "message": "super_timeline is empty",
+                "event_count": 0,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        # Extract device IDs present
+        device_ids = set()
+        for e in events:
+            did = e.get("device_id", "")
+            if did:
+                device_ids.add(did)
+
+        # Find shared users across devices
+        user_device_map = {}
+        for e in events:
+            owner = e.get("owner", "")
+            did = e.get("device_id", "")
+            if owner and did:
+                if owner not in user_device_map:
+                    user_device_map[owner] = set()
+                user_device_map[owner].add(did)
+
+        cross_device_users = {
+            user: list(devs)
+            for user, devs in user_device_map.items()
+            if len(devs) > 1
+        }
+
+        # Find shared network connections (IPs seen on multiple devices)
+        ip_device_map = {}
+        for e in events:
+            detail = e.get("detail", {})
+            if isinstance(detail, dict):
+                for ip_key in ("source_ip", "destination_ip", "ip_address", "remote_ip"):
+                    ip = detail.get(ip_key, "")
+                    if ip:
+                        if ip not in ip_device_map:
+                            ip_device_map[ip] = set()
+                        ip_device_map[ip].add(e.get("device_id", ""))
+
+        cross_device_ips = {
+            ip: list(devs)
+            for ip, devs in ip_device_map.items()
+            if len(devs) > 1
+        }
+
+        return {
+            "tool": "host_correlator",
+            "status": "success",
+            "message": "Cross-image correlation complete",
+            "device_count": len(device_ids),
+            "devices": list(device_ids),
+            "total_events": len(events),
+            "cross_device_users": cross_device_users,
+            "cross_device_user_count": len(cross_device_users),
+            "cross_device_ips": cross_device_ips,
+            "cross_device_ip_count": len(cross_device_ips),
+            "timestamp": datetime.now().isoformat(),
+        }

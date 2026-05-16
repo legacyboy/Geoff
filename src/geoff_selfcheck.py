@@ -232,13 +232,30 @@ def check_network_tools() -> None:
 
 def check_carving_tools() -> None:
     """photorec / foremost — file carving."""
-    found = [b for b in ["photorec", "foremost"] if _which(b)]
+    found = [b for b in ["photorec", "foremost", "scalpel"] if _which(b)]
     if found:
         _record("File carving", ", ".join(found), PASS)
     else:
-        _record("File carving", "photorec/foremost", WARN,
+        _record("File carving", "photorec/foremost/scalpel", WARN,
                 "Not found — file carving unavailable. "
-                "Install: sudo apt install testdisk foremost")
+                "Install: sudo apt install testdisk foremost scalpel")
+
+
+def check_utility_tools() -> None:
+    """Additional forensic utilities — vshadowmount, readpst, pffexport, ent."""
+    found = [b for b in ["vshadowmount", "readpst", "pffexport", "ent"] if _which(b)]
+    if found:
+        _record("Forensic utilities", ", ".join(found), PASS)
+    else:
+        missing = [b for b in ["vshadowmount", "readpst", "pffexport", "ent"] if not _which(b)]
+        _record("Forensic utilities", ", ".join(missing), WARN,
+                "Not found — some analyses may be limited. "
+                "Install: sudo apt install libvshadow-utils libpst-utils libpff-utils")
+    if _which("photorec_testdisk"):
+        _record("Forensic utilities", "photorec (testdisk)", PASS)
+    else:
+        # photorec is already in check_carving_tools, but verify the package separately
+        pass
 
 
 def check_strings_functional() -> None:
@@ -430,6 +447,7 @@ def run_all_checks(
     check_timeline_tools()
     check_network_tools()
     check_carving_tools()
+    check_utility_tools()
     check_mobile_tools()
     check_ollama(ollama_url, api_key, agent_models)
     check_directories(evidence_base, cases_work)
