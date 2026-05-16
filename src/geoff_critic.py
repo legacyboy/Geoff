@@ -9,9 +9,11 @@ import json
 import subprocess
 import re
 import os
+import hashlib
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Literal
 
 import sys
 
@@ -21,6 +23,158 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 import requests
+import time
+
+# ---------------------------------------------------------------------------
+# Self-Healing Data Structures
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ErrorContext:
+    """Structured error context passed to the Critic LLM for diagnosis."""
+    job_id: str
+    step_index: int
+    module: str
+    function: str
+    exception_type: str
+    exception_message: str
+    traceback: str
+    tool_command: str
+    params: dict
+    stdout: str
+    stderr: str
+    exit_code: Optional[int]
+    evidence_file: str
+    evidence_type: str
+    os_type: str
+    prior_heal_attempts: list = field(default_factory=list)
+
+    def to_prompt_block(self) -> str:
+        """Render a human-readable prompt block for the Critic LLM."""
+        tb = (self.traceback or "")[:2048]
+        block = f"""Module:   {self.module}
+Function: {self.function}
+Evidence: {self.evidence_file} ({self.evidence_type}, {self.os_type})
+
+=== INVOCATION ===
+Parameters:
+{json.dumps(self.params, default=str, indent=2)}
+
+Shell command (if applicable):
+{self.tool_command or '(none)'}
+
+=== ERROR ===
+Exception: {self.exception_type}: {self.exception_message}
+
+stderr:
+{(self.stderr or '')[:1024]}
+
+stdout:
+{(self.stdout or '')[:1024]}
+
+Exit code: {self.exit_code}
+
+Traceback (last frames):
+{tb}
+
+=== PRIOR ATTEMPTS ===
+{json.dumps(self.prior_heal_attempts, default=str, indent=2)}"""
+        return block
+
+    def cache_key(self) -> str:
+        """Deterministic key for caching error→fix mappings."""
+        raw = f"{self.module}.{self.function}|{self.exception_type}|{(self.stderr or '')[:200]}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+@dataclass
+class HealDecision:
+    """Parsed healing decision returned by the Critic LLM."""
+    fixable: bool = False
+    fix_type: str = "fail"
+    fix_detail: str = ""
+    root_cause: str = ""
+    new_params: dict = field(default_factory=dict)
+    fallback_module: Optional[str] = None
+    fallback_function: Optional[str] = None
+    adjusted_command: Optional[str] = None
+    skip_reason: Optional[str] = None
+    confidence: int = 0
+    llm_model: str = ""
+    latency_ms: int = 0
+    from_cache: bool = False
+
+
+@dataclass
+class HealCacheEntry:
+    """Persisted cache entry for error→fix mappings."""
+    cache_key: str
+    error_fingerprint: str
+    decision: HealDecision
+    success_count: int = 0
+    failure_count: int = 0
+    last_seen: str = ""
+    created: str = ""
+
+
+class HealCache:
+    """Local file-based cache for error→fix mappings to avoid repeat LLM calls."""
+
+    def __init__(self, path: str):
+        self._path = Path(path)
+        self._store: dict = {}
+        self._load()
+
+    def _load(self):
+        if self._path.exists():
+            try:
+                data = json.loads(self._path.read_text())
+                for k, v in data.items():
+                    decision_data = v.pop('decision', {})
+                    decision = HealDecision(**decision_data) if decision_data else HealDecision()
+                    entry = HealCacheEntry(decision=decision, **{kvk: v[kvk] for kvk in v if kvk != 'decision'})
+                    self._store[k] = entry
+            except Exception:
+                pass
+
+    def get(self, key: str) -> Optional[HealDecision]:
+        entry = self._store.get(key)
+        if entry and entry.success_count > 0:
+            return entry.decision
+        return None
+
+    def store(self, key: str, decision: HealDecision):
+        entry = HealCacheEntry(
+            cache_key=key,
+            error_fingerprint="",
+            decision=decision,
+            success_count=0,
+            failure_count=0,
+            last_seen=datetime.now().isoformat(),
+            created=datetime.now().isoformat(),
+        )
+        self._store[key] = entry
+        self._flush()
+
+    def record_outcome(self, key: str, success: bool):
+        if key in self._store:
+            if success:
+                self._store[key].success_count += 1
+            else:
+                self._store[key].failure_count += 1
+            self._store[key].last_seen = datetime.now().isoformat()
+            self._flush()
+
+    def _flush(self):
+        try:
+            serializable = {}
+            for k, entry in self._store.items():
+                d = asdict(entry)
+                d['decision'] = asdict(entry.decision)
+                serializable[k] = d
+            self._path.write_text(json.dumps(serializable, default=str, indent=2))
+        except Exception:
+            pass
 
 
 class GeoffCritic:
@@ -56,15 +210,22 @@ class GeoffCritic:
         On Ollama timeout after retries, returns empty string so the caller
         can mark the step needs_review instead of producing a finding.
         """
-        _max_retries = 3
-        _backoff = [30, 60, 120]
+        _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
+        _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
+        _max_retries = 99  # effectively unlimited within time window
         _error_patterns = (
             "Having trouble connecting to Ollama",
             "Check OLLAMA_URL",
             "[ERROR] Ollama returned",
         )
+        _start = time.time()
 
-        for attempt in range(_max_retries + 1):
+        for attempt in range(_max_retries):
+            elapsed = time.time() - _start
+            if elapsed > _MAX_RETRY_TIME:
+                print(f"[CRITIC] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
+                return ""
+
             try:
                 response = requests.post(
                     f"{self._base_url()}/generate",
@@ -81,24 +242,43 @@ class GeoffCritic:
                     result_text = response.json().get('response', '')
                     # Reject error messages that leaked into the response
                     if any(pat in result_text for pat in _error_patterns):
-                        if attempt < _max_retries:
-                            print(f"[CRITIC] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
-                            import time; time.sleep(_backoff[attempt])
-                            continue
-                        return ""  # Final attempt still returned error text
+                        wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                        remaining = _MAX_RETRY_TIME - elapsed
+                        actual_wait = min(wait, remaining)
+                        if actual_wait <= 0:
+                            return ""
+                        print(f"[CRITIC] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                        time.sleep(actual_wait)
+                        continue
                     return result_text
                 else:
-                    if attempt < _max_retries:
-                        print(f"[CRITIC] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
-                        import time; time.sleep(_backoff[attempt])
-                        continue
+                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                    remaining = _MAX_RETRY_TIME - elapsed
+                    actual_wait = min(wait, remaining)
+                    if actual_wait <= 0:
+                        return ""
+                    print(f"[CRITIC] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                    time.sleep(actual_wait)
+                    continue
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait, remaining)
+                if actual_wait <= 0:
                     return ""
+                print(f"[CRITIC] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                time.sleep(actual_wait)
+                continue
             except Exception as e:
                 print(f"[CRITIC] LLM Error (attempt {attempt+1}): {e}")
-                if attempt < _max_retries:
-                    import time; time.sleep(_backoff[attempt])
-                    continue
-        return ""  # All retries exhausted
+                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait, remaining)
+                if actual_wait <= 0:
+                    return ""
+                time.sleep(actual_wait)
+                continue
+        return ""  # All retries exceeded (should not normally reach here)
 
     def validate_tool_output(self, tool_name: str, tool_params: Dict,
                             raw_output: str, geoff_analysis: str) -> Dict[str, Any]:
@@ -472,6 +652,90 @@ Respond ONLY in valid JSON:
                 "confidence": 0.0,
                 "llm_response": critic_response[:500]
             }
+
+    # --- Self-Healing v2 (ErrorContext-driven) ---
+
+    def analyze_execution_error_v2(self, ctx: ErrorContext) -> HealDecision:
+        """LLM-powered error diagnosis using structured ErrorContext.
+
+        Sends the full error context to the Critic LLM and parses the
+        structured JSON response into a HealDecision.
+        """
+        prompt = self._build_heal_prompt(ctx)
+        t0 = time.time()
+        raw = self._call_critic_llm(prompt)
+        latency_ms = int((time.time() - t0) * 1000)
+
+        try:
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            data = json.loads(m.group() if m else raw)
+        except Exception:
+            return HealDecision(
+                fixable=False, fix_type="fail", confidence=0,
+                root_cause="parse_error", llm_model=self.model,
+                latency_ms=latency_ms, from_cache=False,
+            )
+
+        return HealDecision(
+            fixable=data.get("fixable", False),
+            fix_type=data.get("fix_type", "fail"),
+            fix_detail=data.get("fix_detail", ""),
+            root_cause=data.get("root_cause", ""),
+            new_params=data.get("new_params") or {},
+            fallback_module=data.get("fallback_module"),
+            fallback_function=data.get("fallback_function"),
+            adjusted_command=data.get("adjusted_command"),
+            skip_reason=data.get("skip_reason"),
+            confidence=int(data.get("confidence", 5)),
+            llm_model=self.model,
+            latency_ms=latency_ms,
+            from_cache=False,
+        )
+
+    def _build_heal_prompt(self, ctx: ErrorContext) -> str:
+        """Build the Critic LLM prompt for error diagnosis."""
+        return f"""You are the Geoff Critic, an expert DFIR forensic analyst. A forensic pipeline step has failed.
+Your task: diagnose the error and prescribe a fix.
+
+=== FAILED STEP ===
+{ctx.to_prompt_block()}
+
+=== AVAILABLE FIX TYPES ===
+- retry_params         Modify params dict and retry the same tool
+- retry_with_offset    Change the partition offset (sleuthkit only)
+- retry_without_offset Remove offset param (sleuthkit only)
+- retry_with_profile   Change Volatility profile or TSK filesystem type
+- retry_with_backoff   Retry with 0.5s/1s/2s delays (SQLite busy errors)
+- copy_then_retry      Copy locked file to temp, retry on copy
+- fallback_tool        Use a different specialist or function entirely
+- adjust_command       Modify the raw shell command string
+- skip_file            Mark this evidence file as unprocessable and continue
+- skip_step            Mark this step as non-critical and skip it
+- fail                 Cannot heal; propagate failure
+
+=== INSTRUCTIONS ===
+1. Identify the root cause precisely.
+2. If fixable, choose the most targeted fix type.
+3. For retry_params: provide the complete new_params dict (merge with existing).
+4. For fallback_tool: specify module and function from the Geoff specialist registry.
+5. For adjust_command: provide the complete corrected shell command.
+6. Set confidence 1-10 (10 = certain this works).
+7. Only choose skip_file if the artifact is genuinely corrupt/unreadable.
+8. Only choose fail if the error is environmental (missing tool, permission denied, no such file).
+
+Respond ONLY in valid JSON — no explanation outside the JSON block:
+{{
+    "fixable": true,
+    "fix_type": "retry_params",
+    "fix_detail": "human-readable description of what's being changed and why",
+    "root_cause": "precise technical diagnosis",
+    "new_params": {{}},
+    "fallback_module": null,
+    "fallback_function": null,
+    "adjusted_command": null,
+    "skip_reason": null,
+    "confidence": 8
+}}"""
 
     def analyze_chat_request(self, user_message: str, chat_history: List[Dict],
                               current_context: Dict = None) -> Dict[str, Any]:

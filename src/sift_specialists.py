@@ -69,6 +69,17 @@ class SLEUTHKIT_Specialist:
                     'description': match.group(7).strip()
                 })
                 continue
+            # Try DOS/MBR format: slot: start end length desc
+            # e.g. "000: 0000063 020948759 020948697 NTFS (0x07)"
+            match = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if match:
+                partitions.append({
+                    'start_sector': int(match.group(1)),
+                    'end_sector': int(match.group(2)),
+                    'length_sectors': int(match.group(3)),
+                    'description': match.group(4).strip()
+                })
+                continue
             # Try simpler format: start end length description
             parts = line.split()
             if len(parts) >= 4:
@@ -168,6 +179,18 @@ class SLEUTHKIT_Specialist:
             if match:
                 desc = match.group(4).strip()
                 # Extract fs_type from description (e.g. "NTFS / exFAT (0x07)" -> "ntfs")
+                fs_type = self._extract_fs_type(desc)
+                partitions.append({
+                    'offset': int(match.group(1)),
+                    'fs_type': fs_type,
+                    'description': desc
+                })
+                continue
+            # Try DOS/MBR format: slot: start end length desc
+            # e.g. "000: 0000063 020948759 020948697 NTFS (0x07)"
+            match = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if match:
+                desc = match.group(4).strip()
                 fs_type = self._extract_fs_type(desc)
                 partitions.append({
                     'offset': int(match.group(1)),
@@ -445,8 +468,15 @@ class SLEUTHKIT_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def list_files(self, image: str, offset: Optional[int] = None, inode: Optional[Union[int, str]] = None, recursive: bool = True) -> Dict[str, Any]:
-        """fls - List files and directories with parsed file entries"""
+    def list_files(self, image: str, offset: Optional[int] = None, inode: Optional[Union[int, str]] = None, recursive: bool = True, filter_path: Optional[str] = None, time_window_start: Optional[str] = None, time_window_end: Optional[str] = None) -> Dict[str, Any]:
+        """fls - List files and directories with parsed file entries.
+
+        *filter_path* (str, optional): substring match against file/dir full_path.
+            Only entries whose path contains this string are returned.
+        *time_window_start* / *time_window_end* (str, optional): accepted for
+            playbook compat; fls does not do inline time-filtering.  Use
+            list_files_mactime for time-constrained file enumeration.
+        """
         args = []
         if recursive:
             args.append('-r')
@@ -510,6 +540,20 @@ class SLEUTHKIT_Specialist:
             if is_deleted:
                 deleted.append(entry)
 
+        # Apply path-based filtering when filter_path is set
+        if filter_path:
+            filter_lower = filter_path.lower()
+            files = [f for f in files if filter_lower in f.get('full_path', '').lower()]
+            dirs = [d for d in dirs if filter_lower in d.get('full_path', '').lower()]
+            deleted = [e for e in deleted if filter_lower in e.get('full_path', '').lower()]
+
+        # Time-window filtering note: fls output does not include timestamps in
+        # standard format.  list_files_mactime is the correct tool for
+        # time-constrained enumeration from a disk image.
+        time_window_applied = False
+        if time_window_start or time_window_end:
+            time_window_applied = False  # not actionable in std fls output
+
         return {
             'tool': 'fls',
             'image': image,
@@ -554,9 +598,9 @@ class SLEUTHKIT_Specialist:
                 return {'tool': 'icat', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
         return raw
 
-    def list_deleted(self, image: str, offset: Optional[int] = None) -> Dict[str, Any]:
+    def list_deleted(self, image: str, offset: Optional[int] = None, time_window_start: Optional[str] = None, time_window_end: Optional[str] = None) -> Dict[str, Any]:
         """List deleted files using fls — filters for entries marked as deleted."""
-        result = self.list_files(image, offset, recursive=True)
+        result = self.list_files(image, offset, recursive=True, time_window_start=time_window_start, time_window_end=time_window_end)
         if result['status'] != 'success':
             return result
         deleted_files = result.get('deleted_files', [])
@@ -1102,28 +1146,81 @@ class VOLATILITY_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def dump_process(self, memory_dump: str, pid: int, output_dir: str) -> Dict[str, Any]:
-        """Dump process memory"""
+    def dump_process(self, memory_dump: str, pid: Optional[int] = None, target_pids: Optional[List[int]] = None, output_dir: str = '/tmp/geoff_memdumps') -> Dict[str, Any]:
+        """Dump process memory for one or more PIDs.
+
+        Pass a single *pid* (int) for backward compat, or *target_pids*
+        (list of int) to dump multiple processes in one call.
+        """
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         if not self.volatility_path:
             return {'tool': 'volatility', 'plugin': 'memmap', 'status': 'error', 'error': 'Volatility not found', 'timestamp': datetime.now().isoformat()}
 
-        cmd = [self.volatility_path, '-f', memory_dump, '-q', 'windows.memmap.Memmap', '--pid', str(pid), '--dump', '-D', output_dir]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            return {
-                'tool': 'volatility',
-                'plugin': 'memmap',
-                'pid': pid,
-                'output_dir': output_dir,
-                'status': 'success' if result.returncode == 0 else 'error',
-                'returncode': result.returncode,
-                'raw_output': result.stdout,
-                'timestamp': datetime.now().isoformat()
-            }
-        except Exception as e:
-            return {'tool': 'volatility', 'plugin': 'memmap', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+        # Normalise pids list from either pid or target_pids (target_pids takes
+        # precedence when both are supplied).
+        pids: List[int] = []
+        if target_pids:
+            pids = target_pids if isinstance(target_pids, list) else [target_pids]
+        elif pid is not None:
+            pids = [pid]
+        else:
+            return {'tool': 'volatility', 'plugin': 'memmap', 'status': 'error', 'error': 'No pid or target_pids provided', 'timestamp': datetime.now().isoformat()}
 
+        results: List[Dict[str, Any]] = []
+        for _pid in pids:
+            cmd = [self.volatility_path, '-f', memory_dump, '-q', 'windows.memmap.Memmap', '--pid', str(_pid), '--dump', '-D', output_dir]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                results.append({
+                    'pid': _pid,
+                    'status': 'success' if result.returncode == 0 else 'error',
+                    'returncode': result.returncode,
+                    'raw_output': result.stdout,
+                })
+            except Exception as e:
+                results.append({'pid': _pid, 'status': 'error', 'error': str(e)})
+
+        success_count = sum(1 for r in results if r.get('status') == 'success')
+        return {
+            'tool': 'volatility',
+            'plugin': 'memmap',
+            'output_dir': output_dir,
+            'pids_requested': pids,
+            'pids_dumped': success_count,
+            'status': 'success' if success_count > 0 else 'error',
+            'results': results,
+            'timestamp': datetime.now().isoformat()
+        }
+
+
+
+# Keywords that indicate forensic acquisition metadata bleed-through.
+# When found inside a purported file path, the "path" is spurious.
+_FORENSIC_METADATA_KEYWORDS = [
+    'Image Verification',
+    'Acquisition started',
+    'Acquisition finished',
+    '[Device Info]',
+    'Source Type',
+    'Drive Geometry',
+    'Cylinders:',
+    'Tracks per Cylinder',
+    'Sectors per Track',
+    'Physical Evidentiary',
+    'MD5 checksum',
+    'SHA1 checksum',
+    'SHA256 checksum',
+    'Image Information:',
+]
+
+def _is_valid_file_path(path: str) -> bool:
+    """Reject paths that contain forensic acquisition metadata bleed-through."""
+    if len(path) < 3:
+        return False
+    for kw in _FORENSIC_METADATA_KEYWORDS:
+        if kw in path:
+            return False
+    return True
 
 
 class STRINGS_Specialist:
@@ -1218,13 +1315,13 @@ class STRINGS_Specialist:
 
                 # Windows paths
                 for path in win_path_re.findall(s):
-                    if path not in seen:
+                    if path not in seen and _is_valid_file_path(path):
                         iocs['file_paths'].append(path)
                         seen.add(path)
 
                 # Unix paths
                 for path in unix_path_re.findall(s):
-                    if path not in seen:
+                    if path not in seen and _is_valid_file_path(path):
                         iocs['file_paths'].append(path)
                         seen.add(path)
 

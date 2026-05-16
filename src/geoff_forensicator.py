@@ -14,6 +14,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Any
 import requests
+import time
 
 # Forensicator Model Configuration
 # Set GEOFF_FORENSICATOR_MODEL to override, or GEOFF_PROFILE=cloud|local
@@ -43,15 +44,22 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
     needs_review rather than producing a finding with error text.
     """
     url = ollama_url or _ollama_base_url()
-    _max_retries = 3
-    _backoff = [30, 60, 120]
+    _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
+    _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
+    _max_retries = 99  # effectively unlimited within time window
     _error_patterns = (
         "Having trouble connecting to Ollama",
         "Check OLLAMA_URL",
         "[ERROR] Ollama returned",
     )
+    _start = time.time()
 
-    for attempt in range(_max_retries + 1):
+    for attempt in range(_max_retries):
+        elapsed = time.time() - _start
+        if elapsed > _MAX_RETRY_TIME:
+            print(f"[FORENSICATOR] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
+            return None
+
         try:
             response = requests.post(
                 f"{url}/generate",
@@ -68,25 +76,43 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
                 result_text = response.json().get('response', '')
                 # Reject error messages that leaked into the response
                 if any(pat in result_text for pat in _error_patterns):
-                    if attempt < _max_retries:
-                        print(f"[FORENSICATOR] Ollama error in response, retrying ({attempt+1}/{_max_retries})...")
-                        import time; time.sleep(_backoff[attempt])
-                        continue
-                    return None  # Final attempt still returned error
+                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                    remaining = _MAX_RETRY_TIME - elapsed
+                    actual_wait = min(wait, remaining)
+                    if actual_wait <= 0:
+                        return None
+                    print(f"[FORENSICATOR] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                    time.sleep(actual_wait)
+                    continue
                 return result_text
             else:
-                if attempt < _max_retries:
-                    print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retrying ({attempt+1}/{_max_retries})...")
-                    import time; time.sleep(_backoff[attempt])
-                    continue
+                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait, remaining)
+                if actual_wait <= 0:
+                    return None
+                print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                time.sleep(actual_wait)
+                continue
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+            remaining = _MAX_RETRY_TIME - elapsed
+            actual_wait = min(wait, remaining)
+            if actual_wait <= 0:
                 return None
+            print(f"[FORENSICATOR] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+            time.sleep(actual_wait)
+            continue
         except Exception as e:
             print(f"[FORENSICATOR] LLM Error (attempt {attempt+1}): {e}")
-            if attempt < _max_retries:
-                import time; time.sleep(_backoff[attempt])
-                continue
-    return None  # All retries exhausted
-
+            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+            remaining = _MAX_RETRY_TIME - elapsed
+            actual_wait = min(wait, remaining)
+            if actual_wait <= 0:
+                return None
+            time.sleep(actual_wait)
+            continue
+    return None  # All retries exceeded (should not normally reach here)
 
 class ForensicatorAgent:
     """

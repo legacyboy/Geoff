@@ -149,9 +149,9 @@
     /* ── Matrix grid ── */
     .matrix-grid {
       display: grid;
-      grid-template-columns: repeat(9, 1fr);
+      grid-template-columns: repeat(10, 1fr);
       gap: 4px;
-      min-width: 900px;
+      min-width: 1000px;
     }
 
     .tactic-col {
@@ -222,6 +222,15 @@
       background: rgba(30,41,59,0.5);
       border-color: var(--g-border);
       color: var(--g-text-dim);
+    }
+    .tech-cell.uncovered {
+      opacity: 0.35;
+      border: 1px dashed #555;
+      font-style: italic;
+    }
+    .tech-cell.uncovered:hover {
+      opacity: 0.6;
+      border-color: var(--g-border);
     }
 
     /* ── Other techniques ── */
@@ -429,24 +438,34 @@ function loadMitreMatrix(techniquesObserved, killChainPhases) {
     }
     html += '</div>';
   }
+  // Add uncovered techniques as dimmed cells in an "Other" column
+  if (unmapped.length > 0) {
+    html += '<div class="tactic-col">';
+    html += '<div class="tactic-header active" style="border:1px dashed #555;">Other / Uncategorized'
+         + '<span class="tactic-count">' + unmapped.length + ' observed</span>'
+         + '</div>';
+    for (const tid of unmapped) {
+      const desc = MITRE_DESCRIPTIONS[tid] || '';
+      html += '<div class="tech-cell uncovered"'
+           + ' data-tid="' + tid + '"'
+           + ' data-tactic="Other"'
+           + ' data-desc="' + _escAttr(desc) + '"'
+           + ' onclick="openMitreTechnique(\'' + tid + '\')"'
+           + ' onmouseenter="showTooltip(event, this)"'
+           + ' onmouseleave="hideTooltip()"'
+           + '>'
+           + tid
+           + '</div>';
+    }
+    html += '</div>';
+  }
   html += '</div></div>';
 
-  // Unmapped / Other techniques section
+  // Unmapped hint in legend
   if (unmapped.length > 0) {
     document.getElementById('mx-other-hint').style.display = '';
     document.getElementById('mx-other-hint').textContent =
-      '\u26A0 ' + unmapped.length + ' technique(s) outside Geoff\'s phase map';
-    html += '<div class="other-section"><h3>\uD83D\uDD0D Additional Observed Techniques (not in Geoff\'s phase map)</h3>';
-    html += '<div class="other-tags">';
-    for (const tid of unmapped) {
-      html += '<a href="https://attack.mitre.org/techniques/' + tid + '/" '
-           + 'target="_blank" class="other-tag" '
-           + 'title="View ' + tid + ' on MITRE ATT&CK.">'
-           + tid
-           + '<span class="tactic-hint"></span>'
-           + '</a>';
-    }
-    html += '</div></div>';
+      '\u26A0 ' + unmapped.length + ' technique(s) outside Geoff\'s phase map (dimmed in matrix)';
   } else {
     document.getElementById('mx-other-hint').style.display = 'none';
   }

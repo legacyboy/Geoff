@@ -165,6 +165,18 @@ class SuperTimeline:
         all_events.extend(reg_events)
         _log(f"  Registry: {len(reg_events)} events")
 
+        # ---- Source 7: Email events ----
+        _log("Super-timeline: Processing Email findings...")
+        email_events = self._extract_email_events(findings, device_map)
+        all_events.extend(email_events)
+        _log(f"  Email: {len(email_events)} events")
+
+        # ---- Source 8: SQLite events ----
+        _log("Super-timeline: Processing SQLite findings...")
+        sqlite_events = self._extract_sqlite_events(findings, device_map)
+        all_events.extend(sqlite_events)
+        _log(f"  SQLite: {len(sqlite_events)} events")
+
         # ---- Sort by timestamp ----
         _log(f"Super-timeline: Sorting {len(all_events)} total events...")
         all_events.sort(key=lambda e: e.get("timestamp", ""))
@@ -1003,6 +1015,250 @@ class SuperTimeline:
                         "behavioral_flags": [],
                     })
                     current_key = ""
+
+        return events
+
+    def _extract_email_events(self, findings: List[dict],
+                               device_map: dict) -> List[dict]:
+        """Extract email timestamps from email analysis findings.
+
+        Parses analyze_eml, analyze_pst, analyze_mbox, and detect_phishing results
+        to create timeline events for each email with header metadata.
+        Phishing emails are tagged with MITRE T1566.
+        """
+        events = []
+        email_funcs = {'analyze_eml', 'analyze_pst', 'analyze_mbox', 'parse_pst',
+                       'detect_phishing'}
+
+        # -- Pass 1: Individual email findings (analyze_eml, analyze_mbox) --
+        for f in findings:
+            if f.get('module') != 'email':
+                continue
+            if f.get('function') not in email_funcs:
+                continue
+
+            device_id = f.get('device_id', 'unknown')
+            owner = f.get('owner', '')
+            result = f.get('result', {})
+
+            # Single-email results: result contains from/to/subject/date directly
+            if isinstance(result, dict) and result.get('date'):
+                ts = self._normalize_timestamp(result['date'])
+                if not ts:
+                    continue
+                subject = result.get('subject', '') or ''
+                sender = result.get('from', '') or ''
+                recipient = result.get('to', '') or ''
+                summary = f"Email: {subject[:120]} | From: {sender[:80]}"
+                if recipient:
+                    summary += f" | To: {recipient[:80]}"
+
+                # Check if this email was flagged as phishing
+                suspicious = False
+                suspicion_reason = None
+                mitre_techniques = []
+                # detect_phishing findings have is_phishing=True set
+                # Also check linked detect_phishing findings for this eml path
+                eml_path = result.get('eml_path', '')
+                if eml_path:
+                    for pf in findings:
+                        if pf.get('module') == 'email' and pf.get('function') == 'detect_phishing':
+                            pf_result = pf.get('result', {})
+                            if isinstance(pf_result, dict):
+                                for phish_finding in pf_result.get('findings', []) or []:
+                                    if phish_finding.get('eml_path') == eml_path:
+                                        suspicious = True
+                                        suspicion_reason = (
+                                            f"Phishing detected: {phish_finding.get('explanation', '')}"
+                                        )[:200]
+                                        mitre_techniques = phish_finding.get('mitre_techniques', ['T1566'])
+                                        break
+
+                events.append({
+                    'timestamp': ts,
+                    'device_id': device_id,
+                    'owner': owner,
+                    'source_type': 'email',
+                    'source_parser': 'eml_header',
+                    'event_type': 'email_received',
+                    'summary': summary,
+                    'detail': {
+                        'subject': subject,
+                        'from': sender,
+                        'to': recipient,
+                        'eml_path': eml_path,
+                        'mitre_techniques': mitre_techniques,
+                    },
+                    'suspicious': suspicious,
+                    'suspicion_reason': suspicion_reason,
+                    'behavioral_flags': [],
+                })
+
+        # -- Pass 2: Multi-email results (analyze_mbox messages list, analyze_pst folders) --
+        for f in findings:
+            if f.get('module') != 'email':
+                continue
+            if f.get('function') not in ('analyze_mbox', 'parse_pst'):
+                continue
+
+            device_id = f.get('device_id', 'unknown')
+            owner = f.get('owner', '')
+            result = f.get('result', {})
+
+            if not isinstance(result, dict):
+                continue
+
+            # analyze_mbox: result['messages'] is a list of {from, to, subject, date}
+            msg_list = result.get('messages', []) or []
+            for msg in msg_list:
+                date_str = msg.get('date', '')
+                ts = self._normalize_timestamp(date_str) if date_str else ''
+                if not ts:
+                    continue
+                subject = msg.get('subject', '') or ''
+                sender = msg.get('from', '') or ''
+                recipient = msg.get('to', '') or ''
+                summary = f"Email: {subject[:120]} | From: {sender[:80]}"
+                if recipient:
+                    summary += f" | To: {recipient[:80]}"
+
+                events.append({
+                    'timestamp': ts,
+                    'device_id': device_id,
+                    'owner': owner,
+                    'source_type': 'email',
+                    'source_parser': 'mbox_message',
+                    'event_type': 'email_received',
+                    'summary': summary,
+                    'detail': {
+                        'subject': subject,
+                        'from': sender,
+                        'to': recipient,
+                        'message_id': msg.get('message_id', ''),
+                    },
+                    'suspicious': False,
+                    'suspicion_reason': None,
+                    'behavioral_flags': [],
+                })
+                if len(events) >= 1000:
+                    break
+
+            # parse_pst: result['folders'] is a dict of folder_name -> list of per-eml results
+            folders = result.get('folders', {}) or {}
+            for folder_name, eml_results in folders.items():
+                if not isinstance(eml_results, list):
+                    continue
+                for eml_result in eml_results:
+                    if not isinstance(eml_result, dict):
+                        continue
+                    date_str = eml_result.get('date', '')
+                    ts = self._normalize_timestamp(date_str) if date_str else ''
+                    if not ts:
+                        continue
+                    subject = eml_result.get('subject', '') or ''
+                    sender = eml_result.get('from', '') or ''
+                    recipient = eml_result.get('to', '') or ''
+                    summary = f"Email [{folder_name}]: {subject[:110]} | From: {sender[:80]}"
+
+                    events.append({
+                        'timestamp': ts,
+                        'device_id': device_id,
+                        'owner': owner,
+                        'source_type': 'email',
+                        'source_parser': 'pst_message',
+                        'event_type': 'email_received',
+                        'summary': summary,
+                        'detail': {
+                            'subject': subject,
+                            'from': sender,
+                            'to': recipient,
+                            'folder': folder_name,
+                            'eml_path': eml_result.get('eml_path', ''),
+                        },
+                        'suspicious': False,
+                        'suspicion_reason': None,
+                        'behavioral_flags': [],
+                    })
+                if len(events) >= 1000:
+                    break
+
+        return events
+
+    def _extract_sqlite_events(self, findings: List[dict],
+                               device_map: dict) -> List[dict]:
+        """Extract timeline events from SQLite analysis findings.
+
+        Parses analyze_sqlite results and maps detected artifact classes
+        to normalized event types.
+        """
+        events = []
+
+        # Map artifact class → normalized event type
+        _ARTIFACT_EVENT_MAP = {
+            "browser_history": "browser_visit",
+            "browser_visits": "browser_visit",
+            "browser_downloads": "file_download",
+            "browser_cookies": "cookie_access",
+            "browser_bookmarks": "bookmark_access",
+            "browser_cache": "cache_access",
+            "browser_passwords": "credential_access",
+            "sms": "communication",
+            "call_log": "communication",
+            "contacts": "contact_access",
+            "calendar": "calendar_event",
+            "notes": "note_access",
+            "photos": "media_access",
+            "chat": "communication",
+            "ios_manifest": "file_activity",
+            "credentials": "credential_access",
+            "location": "location_update",
+            "generic": "database_row",
+        }
+
+        for f in findings:
+            if f.get("module") != "sqlite":
+                continue
+            device_id = f.get("device_id", "unknown")
+            owner = f.get("owner", "")
+            result = f.get("result", {})
+
+            if not isinstance(result, dict) or result.get("status") != "success":
+                continue
+
+            db_name = result.get("db_name", "")
+            db_path = result.get("db_path", "")
+
+            for evt in result.get("events", []):
+                ts = evt.get("timestamp", "")
+                if not ts:
+                    continue
+
+                art_class = evt.get("artifact_class", "generic")
+                event_type = _ARTIFACT_EVENT_MAP.get(art_class, "database_row")
+
+                events.append({
+                    "timestamp": self._normalize_timestamp(ts),
+                    "device_id": device_id,
+                    "owner": owner,
+                    "source_type": "sqlite",
+                    "source_parser": (
+                        f"sqlite:{art_class}:" + evt.get("table", "?")
+                    ),
+                    "event_type": event_type,
+                    "summary": evt.get("description", f"{art_class} event"),
+                    "detail": {
+                        "db_path": db_path,
+                        "db_name": db_name,
+                        "table": evt.get("table", ""),
+                        "artifact_class": art_class,
+                        "timestamp_column": evt.get("timestamp_column", ""),
+                        "urls": evt.get("urls", {}),
+                        "row_data": evt.get("detail", {}),
+                    },
+                    "suspicious": False,
+                    "suspicion_reason": None,
+                    "behavioral_flags": [],
+                })
 
         return events
 

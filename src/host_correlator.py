@@ -132,6 +132,23 @@ class HostCorrelator:
 
         return dict(user_events)
 
+    @staticmethod
+    def _is_valid_timestamp(ts_str: str) -> bool:
+        """Check if a timestamp string represents a date in range 1970-2100.
+
+        Filters out corrupt/invalid timestamps commonly emitted by
+        SleuthKit's fls/mactime (e.g., year 1994 or year 6005).
+        """
+        if not ts_str:
+            return False
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            if dt.year < 1970 or dt.year > 2100:
+                return False
+            return True
+        except (ValueError, TypeError):
+            return False
+
     def _build_activity_profile(self, events: List[dict]) -> dict:
         """Build a behavioral profile from user's events."""
         if not events:
@@ -142,22 +159,28 @@ class HostCorrelator:
                 "total_events": 0,
             }
 
+        # Filter out events with invalid timestamps before building profile.
+        # SleuthKit fls/mactime can emit dates like year 1601 (FILETIME epoch),
+        # year 6005, or other corrupt values outside 1970-2100.
+        valid_events = [
+            e for e in events
+            if self._is_valid_timestamp(e.get("timestamp", ""))
+        ]
+
         timestamps = []
         hours = defaultdict(int)
         days = defaultdict(int)
         applications = defaultdict(int)
         websites = defaultdict(int)
 
-        for event in events:
+        # All events have already been validated — no need to re-check in-loop
+        for event in valid_events:
             ts = event.get("timestamp", "")
             if ts:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 timestamps.append(ts)
-                try:
-                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    hours[dt.hour] += 1
-                    days[dt.strftime("%a")] += 1
-                except (ValueError, TypeError):
-                    pass
+                hours[dt.hour] += 1
+                days[dt.strftime("%a")] += 1
 
             # Track applications from process execution events
             if event.get("event_type") == "process_execution":
@@ -179,6 +202,10 @@ class HostCorrelator:
         sorted_ts = sorted(timestamps)
         typical_hours = sorted(
             [h for h, count in hours.items() if count >= 2])
+
+        # If typical_hours covers all 24 hours, it's likely bad/noisy data — clear it
+        if len(typical_hours) >= 24:
+            typical_hours = []
         active_days = sorted(
             days.keys(),
             key=lambda d: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].index(d)
@@ -189,14 +216,27 @@ class HostCorrelator:
         common_sites = sorted(
             websites.items(), key=lambda x: x[1], reverse=True)[:20]
 
+        # Safety net: double-check first_seen/last_seen are in valid range
+        # (should have been filtered in the event loop, but belt-and-suspenders)
+        first_seen = None
+        last_seen = None
+        if sorted_ts:
+            first_seen = sorted_ts[0]
+            last_seen = sorted_ts[-1]
+            # Validate the boundary timestamps themselves
+            if not self._is_valid_timestamp(first_seen):
+                first_seen = None
+            if not self._is_valid_timestamp(last_seen):
+                last_seen = None
+
         return {
-            "first_seen": sorted_ts[0] if sorted_ts else None,
-            "last_seen": sorted_ts[-1] if sorted_ts else None,
+            "first_seen": first_seen,
+            "last_seen": last_seen,
             "typical_hours": typical_hours,
             "active_days": active_days,
             "common_applications": common_apps,
             "common_websites": common_sites,
-            "total_events": len(events),
+            "total_events": len(valid_events),
         }
 
     def _build_per_device_summary(self, events: List[dict],
@@ -215,8 +255,12 @@ class HostCorrelator:
                 }
                 continue
 
-            timestamps = sorted(
-                [e.get("timestamp", "") for e in dev_events if e.get("timestamp")])
+            # Validate timestamps upstream — filter corrupt SleuthKit dates
+            raw_timestamps = [
+                e.get("timestamp", "") for e in dev_events
+                if e.get("timestamp") and self._is_valid_timestamp(e.get("timestamp", ""))
+            ]
+            timestamps = sorted(raw_timestamps)
             event_types = defaultdict(int)
             for e in dev_events:
                 event_types[e.get("event_type", "other")] += 1

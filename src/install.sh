@@ -86,16 +86,9 @@ if [[ "$SKIP_DEPS" == false ]]; then
             sleuthkit ewf-tools ssdeep hashdeep exiftool plaso-tools \
             regripper libimage-exiftool-perl \
             foremost scalpel tcpflow zeek \
-            libbde-utils libpst-utils pst-utils libguestfs-tools qemu-utils \
+            libbde-utils libpst-utils libguestfs-tools qemu-utils \
             bulk-extractor dc3dd cryptsetup testdisk \
-            libmagic1 libmagic-dev \
-            libimobiledevice-utils ifuse \
-            yara chkrootkit rkhunter debsums \
-            nfdump geoip-bin \
-            tcpdump sqlite3 nmap ncat socat iptables nftables ent \
-            libvshadow-utils ltrace strace busybox-static cron \
-            docker.io \
-            etcd-client passing-the-hash 2>/dev/null || true
+            libmagic1 libmagic-dev 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
         for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
@@ -117,12 +110,12 @@ if [[ "$SKIP_DEPS" == false ]]; then
             oletools floss jsbeautifier capstone python-evtx \
             plyvel pyinstxtractor uncompyle6 \
             pefile python-magic lief construct \
-            gitpython mcp 2>/dev/null || \
+            iLEAPP aLeapp 2>/dev/null || \
             pip3 install --user \
             oletools floss jsbeautifier capstone python-evtx \
             plyvel pyinstxtractor uncompyle6 \
             pefile python-magic lief construct \
-            gitpython mcp 2>/dev/null || true
+            iLEAPP aLeapp 2>/dev/null || true
         # Ensure ~/.local/bin is on PATH for pip-installed tools
         LOCAL_BIN="${HOME}/.local/bin"
         if [ -d "$LOCAL_BIN" ] && [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
@@ -135,49 +128,6 @@ if [[ "$SKIP_DEPS" == false ]]; then
             pip3 install --break-system-packages git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
                 pip3 install --user git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
                 warn "peframe install failed — PE analysis will use die/file as fallback"
-        fi
-        # crackmapexec — AD/network security assessment (PB-SIFT-035)
-        if ! command -v crackmapexec &>/dev/null && ! command -v nxc &>/dev/null; then
-            info "Installing crackmapexec..."
-            pip3 install --break-system-packages crackmapexec 2>/dev/null || \
-                pip3 install --user crackmapexec 2>/dev/null || \
-                warn "crackmapexec install failed — AD DC forensics playbook may be limited"
-        fi
-        # fsevents-parser — macOS FSEvents log parser (PB-SIFT-024)
-        if ! python3 -c "import fsevents_parser" &>/dev/null 2>&1; then
-            info "Installing fsevents-parser..."
-            pip3 install --break-system-packages fsevents-parser 2>/dev/null || \
-                pip3 install --user fsevents-parser 2>/dev/null || \
-                warn "fsevents-parser install failed — macOS FSEvents analysis will be limited"
-        fi
-        # kubectl — Kubernetes CLI (PB-SIFT-033 container forensics)
-        if ! command -v kubectl &>/dev/null; then
-            info "Installing kubectl..."
-            curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key 2>/dev/null | \
-                sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 2>/dev/null && \
-                echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | \
-                sudo tee /etc/apt/sources.list.d/kubernetes.list >/dev/null && \
-                sudo apt-get update -qq && \
-                sudo apt-get install -y -qq kubectl 2>/dev/null || \
-                warn "kubectl install failed — Kubernetes forensics (PB-SIFT-033) will be limited"
-        fi
-        # crictl — CRI container runtime CLI (PB-SIFT-033)
-        if ! command -v crictl &>/dev/null; then
-            info "Installing crictl..."
-            CRICTL_VER=$(curl -s https://api.github.com/repos/kubernetes-sigs/cri-tools/releases/latest | \
-                grep '"tag_name"' | sed 's/.*"v\([^"]*\)\".*/\1/' 2>/dev/null || echo "1.29.0")
-            curl -fsSL "https://github.com/kubernetes-sigs/cri-tools/releases/download/v${CRICTL_VER}/crictl-v${CRICTL_VER}-linux-amd64.tar.gz" \
-                -o /tmp/crictl.tar.gz 2>/dev/null && \
-                sudo tar -C /usr/local/bin -xzf /tmp/crictl.tar.gz 2>/dev/null && \
-                rm -f /tmp/crictl.tar.gz || \
-                warn "crictl install failed — container runtime forensics (PB-SIFT-033) will be limited"
-        fi
-        # chrome-historiographer — Chrome history parser (PB-SIFT-022)
-        if ! python3 -c "import chrome_historian" &>/dev/null 2>&1; then
-            info "Installing chrome-historiographer..."
-            pip3 install --break-system-packages chrome-historiographer 2>/dev/null || \
-                pip3 install --user chrome-historiographer 2>/dev/null || \
-                warn "chrome-historiographer install failed — Chrome history parsing will use SQLite fallback"
         fi
         # Tshark (needs non-interactive setup)
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
@@ -353,40 +303,12 @@ DIE_EOF
         info "python-cim already installed"
     fi
 
-    # iLEAPP — clone from GitHub for full iOS backup analysis (PB-021)
-    if [ ! -d /opt/iLEAPP ]; then
-        info "Installing iLEAPP to /opt/iLEAPP..."
-        sudo git clone --depth=1 https://github.com/abrignoni/iLEAPP.git /opt/iLEAPP 2>/dev/null || \
-            warn "iLEAPP clone failed — iOS mobile analysis will be limited"
-    else
-        info "iLEAPP already installed at /opt/iLEAPP"
-    fi
-    # ALEAPP — clone from GitHub for full Android data analysis (PB-021)
-    if [ ! -d /opt/ALEAPP ]; then
-        info "Installing ALEAPP to /opt/ALEAPP..."
-        sudo git clone --depth=1 https://github.com/abrignoni/ALEAPP.git /opt/ALEAPP 2>/dev/null || \
-            warn "ALEAPP clone failed — Android mobile analysis will be limited"
-    else
-        info "ALEAPP already installed at /opt/ALEAPP"
-    fi
-    if [ -f /opt/ALEAPP/requirements.txt ]; then
-        pip3 install --break-system-packages -r /opt/ALEAPP/requirements.txt 2>/dev/null || true
-    fi
-    # Mobile malware analysis tools (APK/IPA)
-    if ! command -v apktool &>/dev/null; then
-        info "Installing apktool for Android APK analysis..."
-        wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool 2>/dev/null || \
-            warn "apktool download failed — APK analysis may be limited"
-        chmod +x /usr/local/bin/apktool 2>/dev/null || true
-    fi
-    install_packages "yara"
-
-    # Verify mobile tools
+    # iLEAPP / aLeapp — verify install (pip install attempted earlier)
     for mobile_tool in ileapp aleapp; do
-        if [ -d "/opt/${mobile_tool^^}" ] && [ -f "/opt/${mobile_tool^^}/${mobile_tool}.py" ]; then
-            info "${mobile_tool} available for mobile forensics"
-        else
+        if ! command -v $mobile_tool &>/dev/null && ! python3 -c "import ${mobile_tool}" &>/dev/null 2>&1; then
             warn "$mobile_tool not found — mobile analysis (PB-021) may be limited"
+        else
+            info "$mobile_tool available for mobile forensics"
         fi
     done
 

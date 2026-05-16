@@ -4,6 +4,16 @@ const {
   useEffect,
   useCallback
 } = React;
+
+// Read API key injected by server into <meta name="geoff-api-key"> so that
+// authenticated Geoff instances work without exposing the key in JS source.
+const _geoffApiKey = document.querySelector('meta[name="geoff-api-key"]')?.content || '';
+function authFetch(url, opts = {}) {
+  if (_geoffApiKey) {
+    opts.headers = Object.assign({}, opts.headers || {}, {'X-API-Key': _geoffApiKey});
+  }
+  return fetch(url, opts);
+}
 function App() {
   const [report, setReport] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -20,7 +30,7 @@ function App() {
     const initialSel = params.get('sel');
     if (initialSel) setSelected(initialSel);
     if (caseDir) {
-      fetch(`/reports/${encodeURIComponent(caseDir)}/json`).then(res => {
+      authFetch(`/reports/${encodeURIComponent(caseDir)}/json`).then(res => {
         if (!res.ok) throw new Error('Report not found');
         return res.json();
       }).then(data => {

@@ -75,6 +75,36 @@ _FLAG_EXPLANATIONS = {
 }
 
 
+# Keywords that indicate forensic acquisition metadata bleed-through.
+# When found inside a purported file path, the "path" is spurious.
+_FORENSIC_METADATA_KEYWORDS = [
+    'Image Verification',
+    'Acquisition started',
+    'Acquisition finished',
+    '[Device Info]',
+    'Source Type',
+    'Drive Geometry',
+    'Cylinders:',
+    'Tracks per Cylinder',
+    'Sectors per Track',
+    'Physical Evidentiary',
+    'MD5 checksum',
+    'SHA1 checksum',
+    'SHA256 checksum',
+    'Image Information:',
+]
+
+
+def _is_valid_file_path(path: str) -> bool:
+    """Reject paths that contain forensic acquisition metadata bleed-through."""
+    if len(path) < 3:
+        return False
+    for kw in _FORENSIC_METADATA_KEYWORDS:
+        if kw in path:
+            return False
+    return True
+
+
 class NarrativeReportGenerator:
     """
     Generates human-readable investigation reports from structured findings.
@@ -229,6 +259,9 @@ class NarrativeReportGenerator:
         # 11. Dwell Time & Lateral Movement
         sections["dwell_time"] = self._generate_dwell_time(report_json)
 
+        # 11b. Unprocessed Evidence Files
+        sections["unprocessed_files"] = self._render_unprocessed_section(report_json)
+
         # 12. Conclusion & Recommendations
         sections["conclusion"] = self._generate_conclusion(
             report_json, behavioral_flags, correlated_users)
@@ -316,6 +349,13 @@ class NarrativeReportGenerator:
             "classification": report_json.get("classification", ""),
             "kill_chain_phases": (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []),
             "mitre_techniques_observed": (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", []),
+            # Email / phishing findings from direct extraction
+            "email_direct_findings": [
+                f for f in report_json.get("findings_detail", [])
+                if f.get("playbook") == "EMAIL_DIRECT"
+            ],
+            # Collect email_iocs from findings_detail for executive summary
+            "email_iocs": report_json.get("email_iocs", {}),
         }
 
         if self.call_llm:
@@ -377,10 +417,9 @@ class NarrativeReportGenerator:
         if evil:
             lines.append("")
             lines.append(
-                f"**The investigation confirmed a security compromise of "
-                f"{severity} severity.** Multiple indicators of malicious "
-                f"activity were identified across the examined evidence, "
-                f"consistent with a coordinated intrusion."
+                f"**The investigation identified evidence of malicious activity with "
+                f"{severity} severity classification.** Multiple indicators were "
+                f"identified across the examined evidence."
             )
 
             # Collect all flags for the narrative
@@ -438,9 +477,23 @@ class NarrativeReportGenerator:
             narrative_parts = []
             if "phishing" in all_cats or "initial_access" in all_cats:
                 narrative_parts.append(
-                    "**Possible phishing** activity was detected (T1566) based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
+                    "**Phishing activity confirmed** — suspicious emails were identified "
+                    "through direct email extraction from disk images (T1566). See "
+                    "Email Findings section for details."
                 )
+            elif context.get("email_direct_findings"):
+                # Direct email extraction found phishing emails even if classification
+                # metadata didn't explicitly flag "phishing"
+                phish_count = sum(
+                    1 for f in context["email_direct_findings"]
+                    if f.get("result", {}).get("is_phishing") is True
+                )
+                if phish_count > 0:
+                    narrative_parts.append(
+                        f"**Phishing activity detected** — {phish_count} suspicious "
+                        f"email(s) identified through direct email extraction from "
+                        f"disk images (T1566). See Email Findings section for details."
+                    )
             if "credential_theft" in all_cats or "credential_access" in all_cats:
                 narrative_parts.append(
                     "**Possible credential theft** activity was detected (T1003) based on "
@@ -516,7 +569,53 @@ class NarrativeReportGenerator:
                     f"noted that may represent secondary indicators or benign anomalies "
                     f"requiring analyst review."
                 )
-        else:
+        # Add email/phishing findings section if direct extraction found anything
+        email_findings = context.get("email_direct_findings", [])
+        if email_findings:
+            phishing_hits = [f for f in email_findings
+                           if f.get("result", {}).get("is_phishing") is True]
+            scan_records = [f for f in email_findings
+                          if f.get("function") == "email_scan"]
+
+            if phishing_hits:
+                lines.append("")
+                lines.append("### Email / Phishing Findings")
+                lines.append("")
+                lines.append(
+                    f"Direct email extraction from disk images identified "
+                    f"**{len(phishing_hits)} suspicious email(s)** with phishing "
+                    f"indicators (T1566)."
+                )
+                for ph in phishing_hits[:5]:
+                    result = ph.get("result", {})
+                    lines.append(
+                        f"- **{result.get('subject', 'No subject')}** "
+                        f"\u2014 From: `{result.get('from', 'Unknown')}` "
+                        f"(confidence: {result.get('confidence', 0):.0%})"
+                    )
+                # Email IOCs summary
+                email_iocs = context.get("email_iocs", {})
+                if email_iocs:
+                    src_ips = email_iocs.get("sender_ips", [])
+                    ret_path_diff = email_iocs.get("return_path_mismatches", [])
+                    if src_ips:
+                        lines.append(f"- Extracted {len(src_ips)} sender IP address(es) from email headers")
+                    if ret_path_diff:
+                        lines.append(f"- {len(ret_path_diff)} Return-Path mismatch(es) detected (spoofing indicator)")
+            elif scan_records:
+                lines.append("")
+                lines.append("### Email / Phishing Findings")
+                lines.append("")
+                total_scanned = sum(
+                    r.get("result", {}).get("emails_scanned", 0)
+                    for r in scan_records
+                )
+                lines.append(
+                    f"Direct email extraction scanned **{total_scanned} email(s)** "
+                    f"from disk images. No phishing indicators were detected."
+                )
+
+        if not evil:
             # Clean investigation
             lines.append("")
             lines.append(
@@ -1420,11 +1519,13 @@ class NarrativeReportGenerator:
                     text, re.IGNORECASE):
                 buckets["registry_keys"].add(m.group(0))
             # Windows file paths (min 10 chars to reduce noise)
+            # Require at least 2-char directory names to avoid matching
+            # single-char garbage from forensic metadata (e.g. \r\n parsed as r\, n\)
             for m in re.finditer(
-                    r'[A-Za-z]:\\(?:[^\\\/:*?"<>|\r\n]+\\)*[^\\\/:*?"<>|\r\n]{2,}',
+                    r'[A-Za-z]:\\(?:[^\\\/:*?"<>|\r\n]{2,}\\)*[^\\\/:*?"<>|\r\n]{2,}',
                     text):
                 p = m.group(0).rstrip('.,)')
-                if len(p) >= 10:
+                if len(p) >= 10 and _is_valid_file_path(p):
                     buckets["file_paths"].add(p)
             # Email addresses
             for m in re.finditer(
@@ -1473,7 +1574,78 @@ class NarrativeReportGenerator:
             except OSError:
                 continue
 
-        return {k: sorted(v) for k, v in buckets.items() if v}
+        # Source 5: structured email IOCs from direct email extraction findings
+        # Collects sender IPs, spoofed domains, and return-path mismatches
+        # from findings_detail results that contain email_iocs dicts
+        email_iocs_agg: Dict[str, list] = {
+            "sender_ips": [],
+            "from_addresses": [],
+            "to_addresses": [],
+            "return_paths": [],
+            "urls_in_body": [],
+            "return_path_mismatches": [],
+            "spoofed_domains": [],
+        }
+        seen = {k: set() for k in email_iocs_agg}
+
+        for finding in report_json.get("findings_detail", []):
+            result = finding.get("result", {})
+            if not isinstance(result, dict):
+                continue
+            eiocs = result.get("email_iocs", {})
+            if not isinstance(eiocs, dict):
+                continue
+
+            for ip in eiocs.get("sender_ips", []):
+                if ip not in seen["sender_ips"]:
+                    seen["sender_ips"].add(ip)
+                    # Only include public IPs for the main iocs bucket
+                    if not self._PRIV_IP.match(str(ip)):
+                        buckets["ip_addresses"].add(str(ip))
+
+            for addr in eiocs.get("from_addresses", []):
+                if addr not in seen["from_addresses"]:
+                    seen["from_addresses"].add(addr)
+                    buckets["email_addresses"].add(str(addr).lower())
+
+            for addr in eiocs.get("to_addresses", []):
+                if addr not in seen["to_addresses"]:
+                    seen["to_addresses"].add(addr)
+                    buckets["email_addresses"].add(str(addr).lower())
+
+            for rp in eiocs.get("return_paths", []):
+                if rp not in seen["return_paths"]:
+                    seen["return_paths"].add(rp)
+
+            for url in eiocs.get("urls_in_body", []):
+                if url not in seen["urls_in_body"]:
+                    seen["urls_in_body"].add(url)
+                    buckets["urls"].add(str(url))
+
+            for mismatch in eiocs.get("return_path_mismatches", []):
+                if isinstance(mismatch, dict):
+                    mkey = json.dumps(mismatch, sort_keys=True, default=str)
+                    if mkey not in seen["return_path_mismatches"]:
+                        seen["return_path_mismatches"].add(mkey)
+                        email_iocs_agg["return_path_mismatches"].append(mismatch)
+
+            for domain in eiocs.get("spoofed_domains", []):
+                if domain not in seen["spoofed_domains"]:
+                    seen["spoofed_domains"].add(domain)
+
+        # Store deduplicated email IOCs
+        email_iocs_agg["sender_ips"] = sorted(seen["sender_ips"])
+        email_iocs_agg["from_addresses"] = sorted(seen["from_addresses"])
+        email_iocs_agg["to_addresses"] = sorted(seen["to_addresses"])
+        email_iocs_agg["return_paths"] = sorted(seen["return_paths"])
+        email_iocs_agg["urls_in_body"] = sorted(seen["urls_in_body"])
+        email_iocs_agg["spoofed_domains"] = sorted(seen["spoofed_domains"])
+
+        result_dict = {k: sorted(v) for k, v in buckets.items() if v}
+        if any(v for v in email_iocs_agg.values()):
+            result_dict["email_iocs"] = email_iocs_agg
+
+        return result_dict
 
     # ----------------------------------------------------------------
     # Attack Chain Synthesis
@@ -1596,7 +1768,7 @@ VERIFIED EVIDENCE ANCHORS (tool → artifact → finding):
 Write the following sections. ACCURACY RULES:
 - Every factual claim in Attack Narrative and Key Evidence MUST cite a specific artifact from the VERIFIED EVIDENCE ANCHORS above (tool name + file name)
 - Use format: "... (source: <tool> on <file>)" when citing an anchor
-- Use "appears to", "likely", "consistent with" for inferences — never present inferences as facts
+- State facts only based on verified evidence. Do NOT include hypotheses, inferences, or speculative language
 - Do NOT invent file names, timestamps, offsets, or tool outputs not present in the anchors or flags above
 - If evidence is insufficient for a section, write "Insufficient evidence to assess" rather than speculating
 
@@ -1901,6 +2073,8 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+{sections.get('unprocessed_files', '')}
+
 ## Conclusion & Recommendations
 
 {sections.get('conclusion', 'No conclusion generated.')}
@@ -1912,6 +2086,42 @@ Write the following sections. ACCURACY RULES:
 """
 
         return md
+
+    def _render_unprocessed_section(self, report_json: dict) -> str:
+        """Render a section listing evidence files that were not processed by any playbook step."""
+        unprocessed = report_json.get("unprocessed_files", [])
+        if not unprocessed:
+            return ""
+
+        lines = [
+            "## Unprocessed Evidence Files\n",
+            f"**{len(unprocessed)} file(s)** were present in the evidence inventory "
+            "but were not processed by any playbook step.\n",
+        ]
+
+        # Group by reason
+        by_reason = {}
+        for entry in unprocessed:
+            by_reason.setdefault(entry["reason"], []).append(entry)
+
+        reason_labels = {
+            "no_playbook_coverage": "No playbook coverage for this evidence type",
+            "item_cap_exceeded": "Item cap exceeded (>3 files of this type)",
+            "step_skipped_or_failed": "Step skipped or failed before recording",
+            "not_in_inventory": "Not classified by inventory",
+        }
+
+        for reason, entries in by_reason.items():
+            label = reason_labels.get(reason, reason)
+            lines.append(f"\n### {label} ({len(entries)} file(s))\n")
+            for e in entries:
+                lines.append(f"- `{e['path']}` — {e['detail']}\n")
+
+        lines.append(
+            "\n> **Recommendation**: Review item-capped and uncovered files manually. "
+            "Consider adding playbook steps for uncovered evidence types.\n"
+        )
+        return "".join(lines)
 
     def _render_failed_steps(self, report_json: dict) -> str:
         """Render failed steps with explanations."""
@@ -1973,5 +2183,94 @@ Write the following sections. ACCURACY RULES:
             if len(values) > 50:
                 lines.append(f"| *(+{len(values)-50} more — see findings_jsonl)* |")
             lines.append("")
+
+        # Render email IOCs if present
+        email_iocs = iocs.get("email_iocs", {})
+        if email_iocs:
+            lines.append("---")
+            lines.append("")
+            lines.append("### Email-Derived IOCs (Header Analysis)\n")
+
+            sender_ips = email_iocs.get("sender_ips", [])
+            if sender_ips:
+                lines.append(f"**Sender IP Addresses** ({len(sender_ips)})\n")
+                lines.append("| IP |")
+                lines.append("|-----|")
+                for ip in sender_ips[:20]:
+                    lines.append(f"| `{ip}` |")
+                if len(sender_ips) > 20:
+                    lines.append(
+                        f"| *(+{len(sender_ips)-20} more)* |")
+                lines.append("")
+
+            from_addrs = email_iocs.get("from_addresses", [])
+            if from_addrs:
+                lines.append(f"**From Addresses** ({len(from_addrs)})\n")
+                lines.append("| Address |")
+                lines.append("|---------|")
+                for addr in from_addrs[:20]:
+                    lines.append(f"| `{addr}` |")
+                lines.append("")
+
+            to_addrs = email_iocs.get("to_addresses", [])
+            if to_addrs:
+                lines.append(f"**To Addresses** ({len(to_addrs)})\n")
+                lines.append("| Address |")
+                lines.append("|---------|")
+                for addr in to_addrs[:20]:
+                    lines.append(f"| `{addr}` |")
+                lines.append("")
+
+            return_paths = email_iocs.get("return_paths", [])
+            if return_paths:
+                lines.append(f"**Return-Path Addresses** ({len(return_paths)})\n")
+                lines.append("| Address |")
+                lines.append("|---------|")
+                for rp in return_paths[:20]:
+                    lines.append(f"| `{rp}` |")
+                lines.append("")
+
+            body_urls = email_iocs.get("urls_in_body", [])
+            if body_urls:
+                lines.append(f"**URLs in Email Body** ({len(body_urls)})\n")
+                lines.append("| URL |")
+                lines.append("|-----|")
+                for url in body_urls[:30]:
+                    lines.append(f"| `{url}` |")
+                lines.append("")
+
+            # Return-Path mismatches (domain spoofing indicators)
+            mismatches = email_iocs.get("return_path_mismatches", [])
+            if mismatches:
+                lines.append(
+                    f"**Return-Path / From Mismatches (Spoofing Indicators)** "
+                    f"({len(mismatches)})\n"
+                )
+                lines.append(
+                    "| From | From Domain | Return-Path | Return-Path Domain |"
+                )
+                lines.append(
+                    "|------|-------------|-------------|--------------------|"
+                )
+                for m in mismatches[:20]:
+                    lines.append(
+                        f"| `{m.get('from', '')}` "
+                        f"| `{m.get('from_domain', '')}` "
+                        f"| `{m.get('return_path', '')}` "
+                        f"| `{m.get('return_path_domain', '')}` |"
+                    )
+                lines.append("")
+
+            spoofed = email_iocs.get("spoofed_domains", [])
+            if spoofed:
+                lines.append(
+                    f"**Spoofed Domains** ({len(spoofed)})\n"
+                )
+                lines.append("| Domain |")
+                lines.append("|--------|")
+                for domain in spoofed:
+                    lines.append(f"| `{domain}` |")
+                lines.append("")
+
         return "\n".join(lines) if lines else \
             "No indicators of compromise were extracted."

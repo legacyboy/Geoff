@@ -285,14 +285,40 @@ class UNPACKING_Specialist:
         }
 
     def pdfid_scan(self, target_file: str) -> Dict[str, Any]:
-        """Identify PDF suspicious elements with pdfid"""
+        """Identify PDF suspicious elements with pdfid
+
+        Requires pdfid (either the CLI tool on PATH or the Python module
+        installed via pip). Returns clear diagnostic if neither is available.
+        """
         pdf_file = target_file
-        # Use python3 -m pdfid if pdfid CLI not on PATH
+        # Try CLI tool first
         pdfid_cmd = 'pdfid' if _check_tool_available('pdfid') else None
         if pdfid_cmd:
             result = _run_tool('pdfid', [pdf_file])
-        else:
+            if result['status'] == 'success':
+                pass
+            elif 'import' in str(result.get('error', '')).lower():
+                # CLI is a stub that calls python -m pdfid internally
+                # Fall through to the Python module path below
+                pdfid_cmd = None
+            else:
+                return result
+        if not pdfid_cmd:
             # Fallback to python -m pdfid
+            try:
+                import pdfid as _pdfid_mod  # noqa: F401 — check importability
+            except ImportError:
+                return {
+                    'tool': 'pdfid',
+                    'target': pdf_file,
+                    'status': 'error',
+                    'error': (
+                        'pdfid not available: neither the pdfid CLI tool nor '
+                        'the pdfid Python module were found. '
+                        'Install with: pip install pdfid'
+                    ),
+                    'timestamp': datetime.now().isoformat()
+                }
             result = _run_tool('python3', ['-m', 'pdfid', pdf_file])
         if result['status'] != 'success':
             return result
@@ -463,8 +489,21 @@ class DISASSEMBLY_Specialist:
         }
 
     def floss_strings(self, target_file: str) -> Dict[str, Any]:
-        """Extract obfuscated strings with FLARE FLOSS"""
+        """Extract obfuscated strings with FLARE FLOSS
+
+        Tries multiple CLI syntaxes because floss changed its interface
+        across versions. v2.x uses positional file arg; v3.x+ may require
+        a subcommand like 'extract'.
+        """
+        # Try v2.x / v3.x positional: floss <file>
         result = _run_tool('floss', [target_file], timeout=300)
+        if result['status'] == 'success':
+            pass  # good, proceed to parsing
+        elif (result['status'] == 'error'
+              and ('No such command' in str(result.get('error', ''))
+                   or 'No such command' in str(result.get('stderr', '')))):
+            # floss expects a subcommand — try 'extract'
+            result = _run_tool('floss', ['extract', target_file], timeout=300)
         if result['status'] != 'success':
             return result
 

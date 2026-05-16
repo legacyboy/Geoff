@@ -1458,6 +1458,133 @@ except Exception as e:
                 'timestamp': datetime.now().isoformat(),
             }
 
+    def parse_evt(self, evt_file: str, event_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+        """Parse Windows XP/2003 .evt event log files (binary format).
+
+        .evt files are the legacy binary event log format used by Windows NT 4.0
+        through Windows Server 2003. They are NOT the same as .evtx (XML-based,
+        Vista+). This method uses `strings` extraction and heuristic parsing to
+        recover event records, timestamps, and source/event IDs.
+        """
+        try:
+            import re as _re
+
+            # Use strings to extract readable content from binary .evt file
+            result = subprocess.run(
+                ['strings', '-n', '8', evt_file],
+                capture_output=True, text=True, timeout=120,
+            )
+            raw_text = result.stdout if result.stdout else ''
+
+            if not raw_text.strip():
+                return {
+                    'tool': 'evt_parser_strings',
+                    'evt_file': evt_file,
+                    'status': 'success',
+                    'event_count': 0,
+                    'event_id_counts': {},
+                    'source_distribution': {},
+                    'parsed_events': [],
+                    'all_timestamps': [],
+                    'note': 'no readable strings found in binary .evt file',
+                    'timestamp': datetime.now().isoformat(),
+                }
+
+            # Heuristic extraction of event records
+            # .evt files contain embedded records with source names, event IDs,
+            # and timestamp-like patterns. We scan for known source names and
+            # try to extract context around them.
+            lines = raw_text.splitlines()
+            event_id_counts: Dict[str, int] = {}
+            source_distribution: Dict[str, int] = {}
+            parsed_events: List[Dict[str, Any]] = []
+            all_timestamps: List[str] = []
+
+            # Known Windows event sources (case-insensitive)
+            known_sources = [
+                'Service Control Manager', 'EventLog', 'Security',
+                'Application', 'System', 'Dhcp', 'DnsApi', 'NetLogon',
+                'Print', 'W32Time', 'Tcpip', 'Browser', 'DCOM', 'RPC',
+                'Disk', 'Ntfs', 'Ftdisk', 'Atapi', 'i8042prt', 'Cdrom',
+                'TermService', 'Winlogon', 'Userenv', 'SceCli', 'SChannel',
+                'MSDTC', 'Ci', 'MsiInstaller', 'WMI', 'PerfNet', 'PerfDisk',
+                'PerfProc', 'PerfOS', 'NtServicePack', 'Setup', 'SysmonLog',
+                'Microsoft-Windows', 'ESENT', 'Ntfs', 'PlugPlayManager',
+            ]
+
+            # Timestamp patterns: typical Windows .evt record timestamps
+            ts_patterns = [
+                _re.compile(r'\b(\d{1,2}/\d{1,2}/\d{4})\b'),           # M/D/YYYY
+                _re.compile(r'\b(\d{4}-\d{2}-\d{2})\b'),                # YYYY-MM-DD
+                _re.compile(r'\b(\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM)?)\b', _re.IGNORECASE),  # HH:MM:SS
+                _re.compile(r'\b(\d{4}\d{2}\d{2}\d{2}\d{2}\d{2})\b'), # YYYYMMDDHHMMSS
+            ]
+
+            # Scan for known source strings and extract surrounding context
+            for i, line in enumerate(lines):
+                line_lower = line.lower()
+                for src in known_sources:
+                    if src.lower() in line_lower:
+                        source_distribution[src] = source_distribution.get(src, 0) + 1
+                        # Try to extract event ID (usually numeric, nearby)
+                        eid_match = _re.search(r'\b(?:Event(?:\s*ID)?|ID)\s*[:\s#]*\s*(\d+)', line, _re.IGNORECASE)
+                        # Also check surrounding lines for event ID
+                        if not eid_match:
+                            for offset in [-2, -1, 1, 2]:
+                                if 0 <= i + offset < len(lines):
+                                    eid_match = _re.search(r'\b(\d{3,5})\b', lines[i + offset])
+                                    if eid_match:
+                                        break
+
+                        eid_str = eid_match.group(1) if eid_match else 'unknown'
+                        event_id_counts[eid_str] = event_id_counts.get(eid_str, 0) + 1
+
+                        # Extract timestamps from context
+                        context = ' '.join(lines[max(0, i-2):min(len(lines), i+3)])
+                        for ts_pat in ts_patterns:
+                            ts_match = ts_pat.search(context)
+                            if ts_match:
+                                all_timestamps.append(ts_match.group(1))
+                                break
+
+                        parsed_events.append({
+                            'source': src,
+                            'event_id': eid_str,
+                            'context': line[:200],
+                        })
+                        break
+
+            # Also extract any timestamps found
+            for line in lines:
+                for ts_pat in ts_patterns[:2]:
+                    for match in ts_pat.finditer(line):
+                        all_timestamps.append(match.group(1))
+
+            # Deduplicate
+            all_timestamps = list(dict.fromkeys(all_timestamps))[:200]
+
+            return {
+                'tool': 'evt_parser_strings',
+                'evt_file': evt_file,
+                'status': 'success',
+                'event_count': len(parsed_events),
+                'event_id_counts': event_id_counts,
+                'source_distribution': source_distribution,
+                'parsed_events': parsed_events[:1000],
+                'all_timestamps': all_timestamps,
+                'total_lines_scanned': len(lines),
+                'note': 'parsed via heuristic strings extraction — .evt binary format',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                'tool': 'evt_parser',
+                'evt_file': evt_file,
+                'status': 'error',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat(),
+            }
+
     def parse_syslog(self, log_file: str, patterns: Optional[List[str]] = None) -> Dict[str, Any]:
         """Parse syslog files – structured entries with timestamps, IPs, severity."""
         try:
@@ -1675,6 +1802,229 @@ except Exception as e:
             }
         except Exception as e:
             return {'tool': 'ssh_authorized_keys', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def scan_document_pii(self, evidence_path: str) -> Dict[str, Any]:
+        """Scan extracted documents for PII and confidential data patterns.
+
+        Reads .xlsx, .docx, .pdf, .csv, .txt files and searches for:
+          - Social Security Numbers (XXX-XX-XXXX)
+          - Credit card numbers (Luhn-validated 13-19 digit patterns)
+          - Salary figures ($XXX,XXX.XX patterns)
+          - Confidential keywords
+
+        Returns findings dict with matches grouped by document and category.
+        """
+        import re as _re
+        from pathlib import Path as _Path
+
+        p = _Path(evidence_path)
+        if not p.exists():
+            return {
+                'tool': 'document_pii_scanner',
+                'status': 'error',
+                'error': f'Evidence path not found: {evidence_path}',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        # -- PII patterns --------------------------------------------------
+        SSN_RE = _re.compile(r'\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b')
+        CC_RE = _re.compile(
+            r'\b(?:4\d{12}(?:\d{3})?|5[1-5]\d{14}|3[47]\d{13}|'
+            r'6011\d{12}|65\d{14}|3(?:0[0-5]|[68]\d)\d{11})\b'
+        )
+        SALARY_RE = _re.compile(
+            r'(?:\$|USD\s*)\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})\b'
+        )
+        CONFIDENTIAL_KW = [
+            'confidential', 'proprietary', 'internal only', 'not for distribution',
+            'do not forward', 'ssn', 'social security', 'salary', 'compensation',
+            'payroll', 'tax id', 'ein', 'passport', 'driver license',
+            'secret', 'restricted', 'classified', 'sensitive',
+            'bank account', 'routing number', 'financial',
+        ]
+        # Build compiled confidential keyword regex (case-insensitive)
+        _kw_pattern = '|'.join(_re.escape(kw) for kw in CONFIDENTIAL_KW)
+        CONFIDENTIAL_RE = _re.compile(r'\b(' + _kw_pattern + r')\b', _re.IGNORECASE)
+
+        # -- File extensions to scan ---------------------------------------
+        scan_exts = {'.xlsx', '.docx', '.pdf', '.csv', '.txt', '.log',
+                     '.xls', '.doc', '.rtf', '.odt', '.ods', '.odp'}
+
+        matches = []
+        files_scanned = 0
+
+        if p.is_file():
+            files = [p]
+        else:
+            files = [fp for fp in p.rglob('*') if fp.is_file()]
+
+        for fp in files[:500]:
+            ext = fp.suffix.lower()
+            if ext not in scan_exts:
+                continue
+
+            try:
+                size = fp.stat().st_size
+                if size > 10 * 1024 * 1024:  # Skip >10MB
+                    continue
+            except OSError:
+                continue
+
+            content = ''
+            try:
+                # 1. Try direct text read for csv, txt, log, rtf
+                if ext in ('.csv', '.txt', '.log', '.rtf'):
+                    with open(fp, 'r', errors='ignore') as fh:
+                        content = fh.read(100000)
+
+                # 2. Try zip-based extraction for docx, xlsx, odt, ods, odp
+                elif ext in ('.docx', '.xlsx', '.odt', '.ods', '.odp'):
+                    import zipfile
+                    with zipfile.ZipFile(fp, 'r') as zf:
+                        for name in zf.namelist():
+                            if any(s in name.lower() for s in ('sharedstring', 'content', 'body')):
+                                try:
+                                    content += zf.read(name).decode('utf-8', errors='ignore')[:50000]
+                                except Exception:
+                                    pass
+                    if not content:
+                        # Fallback: extract all xml text
+                        with zipfile.ZipFile(fp, 'r') as zf:
+                            for name in zf.namelist():
+                                if name.endswith('.xml'):
+                                    try:
+                                        content += zf.read(name).decode('utf-8', errors='ignore')[:20000]
+                                    except Exception:
+                                        pass
+
+                # 3. Old .doc/.xls (binary) — strings-based scan
+                elif ext in ('.doc', '.xls'):
+                    import subprocess as _sp
+                    r = _sp.run(
+                        ['strings', '-n', '8', str(fp)],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if r.returncode == 0:
+                        content = r.stdout[:100000]
+
+                # 4. PDF — strings-based scan (pdftotext optional)
+                elif ext == '.pdf':
+                    import subprocess as _sp
+                    # Try pdftotext first for clean text extraction
+                    r = _sp.run(
+                        ['pdftotext', str(fp), '-', '-l', '10'],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if r.returncode == 0 and r.stdout.strip():
+                        content = r.stdout[:100000]
+                    else:
+                        # Fallback: strings on raw PDF
+                        r2 = _sp.run(
+                            ['strings', '-n', '8', str(fp)],
+                            capture_output=True, text=True, timeout=30
+                        )
+                        if r2.returncode == 0:
+                            content = r2.stdout[:100000]
+
+                if not content or not content.strip():
+                    continue
+
+            except Exception:
+                continue
+
+            files_scanned += 1
+            file_matches = {
+                'file': str(fp),
+                'size_bytes': size,
+                'ssns': [],
+                'credit_cards': [],
+                'salary_figures': [],
+                'confidential_keywords': [],
+            }
+
+            # Scan for SSNs
+            ssn_found = SSN_RE.findall(content)
+            if ssn_found:
+                file_matches['ssns'] = list(dict.fromkeys(ssn_found))[:10]
+
+            # Scan for credit card numbers
+            cc_found = CC_RE.findall(content)
+            if cc_found:
+                # Luhn validation
+                valid_ccs = []
+                for cc in dict.fromkeys(cc_found):
+                    digits = ''.join(c for c in cc if c.isdigit())
+                    if 13 <= len(digits) <= 19 and self._luhn_valid(digits):
+                        # Mask for safety: show first 4 + last 4 only
+                        masked = digits[:4] + '-' * (len(digits) - 8) + digits[-4:]
+                        valid_ccs.append(masked)
+                        if len(valid_ccs) >= 10:
+                            break
+                if valid_ccs:
+                    file_matches['credit_cards'] = valid_ccs
+
+            # Scan for salary figures
+            salary_found = SALARY_RE.findall(content)
+            if salary_found:
+                file_matches['salary_figures'] = list(dict.fromkeys(salary_found))[:20]
+
+            # Scan for confidential keywords
+            kw_found = CONFIDENTIAL_RE.findall(content)
+            if kw_found:
+                kw_counts = {}
+                for kw in kw_found:
+                    kw_lower = kw.lower()
+                    kw_counts[kw_lower] = kw_counts.get(kw_lower, 0) + 1
+                file_matches['confidential_keywords'] = dict(sorted(
+                    kw_counts.items(), key=lambda x: -x[1]))
+
+            # Only include if something was found
+            has_findings = any([
+                file_matches['ssns'],
+                file_matches['credit_cards'],
+                file_matches['salary_figures'],
+                file_matches['confidential_keywords'],
+            ])
+            if has_findings:
+                matches.append(file_matches)
+            if len(matches) >= 100:
+                break
+
+        # Summary
+        total_ssns = sum(len(m['ssns']) for m in matches)
+        total_ccs = sum(len(m['credit_cards']) for m in matches)
+        total_salaries = sum(len(m['salary_figures']) for m in matches)
+        total_conf_kw = sum(len(m.get('confidential_keywords', {})) for m in matches)
+
+        return {
+            'tool': 'document_pii_scanner',
+            'evidence_path': evidence_path,
+            'status': 'success',
+            'files_scanned': files_scanned,
+            'files_with_matches': len(matches),
+            'total_ssns_found': total_ssns,
+            'total_credit_cards_found': total_ccs,
+            'total_salary_figures_found': total_salaries,
+            'total_confidential_keywords_found': total_conf_kw,
+            'matches': matches,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    @staticmethod
+    def _luhn_valid(card_number: str) -> bool:
+        """Validate a credit card number using the Luhn algorithm."""
+        digits = [int(c) for c in card_number if c.isdigit()]
+        if not digits:
+            return False
+        total = 0
+        reverse_digits = digits[::-1]
+        for i, d in enumerate(reverse_digits):
+            if i % 2 == 1:
+                d *= 2
+                if d > 9:
+                    d -= 9
+            total += d
+        return total % 10 == 0
 
 
 # ---------------------------------------------------------------------------
@@ -3923,6 +4273,859 @@ class MOBILE_Specialist:
                 'data_dir': data_dir,
             }
 
+# ---------------------------------------------------------------------------
+# MOBILE_MALWARE_Specialist
+# ---------------------------------------------------------------------------
+
+class MOBILE_MALWARE_Specialist:
+    """Specialist for mobile malware detection — Android APK, iOS IPA, ARM binaries."""
+
+    # Dangerous Android permissions commonly abused by malware
+    _DANGEROUS_PERMISSIONS = {
+        'android.permission.SEND_SMS',
+        'android.permission.RECEIVE_SMS',
+        'android.permission.READ_SMS',
+        'android.permission.WRITE_SMS',
+        'android.permission.RECEIVE_MMS',
+        'android.permission.RECEIVE_WAP_PUSH',
+        'android.permission.RECORD_AUDIO',
+        'android.permission.CAMERA',
+        'android.permission.READ_CONTACTS',
+        'android.permission.WRITE_CONTACTS',
+        'android.permission.READ_CALL_LOG',
+        'android.permission.WRITE_CALL_LOG',
+        'android.permission.PROCESS_OUTGOING_CALLS',
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
+        'android.permission.ACCESS_BACKGROUND_LOCATION',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+        'android.permission.READ_PHONE_STATE',
+        'android.permission.SYSTEM_ALERT_WINDOW',
+        'android.permission.BIND_DEVICE_ADMIN',
+        'android.permission.REQUEST_INSTALL_PACKAGES',
+        'android.permission.INSTALL_PACKAGES',
+        'android.permission.INSTALL_SHORTCUT',
+        'android.permission.READ_HISTORY_BOOKMARKS',
+        'android.permission.WRITE_HISTORY_BOOKMARKS',
+        'android.permission.READ_LOGS',
+        'android.permission.GET_ACCOUNTS',
+        'android.permission.MANAGE_ACCOUNTS',
+        'android.permission.AUTHENTICATE_ACCOUNTS',
+        'android.permission.CALL_PHONE',
+        'android.permission.CALL_PRIVILEGED',
+        'android.permission.INTERNET',
+        'android.permission.ACCESS_NETWORK_STATE',
+        'android.permission.CHANGE_NETWORK_STATE',
+        'android.permission.ACCESS_WIFI_STATE',
+        'android.permission.CHANGE_WIFI_STATE',
+        'android.permission.NFC',
+        'android.permission.BLUETOOTH',
+        'android.permission.SET_WALLPAPER',
+        'android.permission.VIBRATE',
+        'android.permission.WAKE_LOCK',
+        'android.permission.DISABLE_KEYGUARD',
+        'android.permission.GET_TASKS',
+        'android.permission.KILL_BACKGROUND_PROCESSES',
+        'android.permission.RESTART_PACKAGES',
+        'android.permission.WRITE_SETTINGS',
+        'android.permission.MOUNT_UNMOUNT_FILESYSTEMS',
+        'android.permission.RECEIVE_BOOT_COMPLETED',
+        'android.permission.QUICKBOOT_POWERON',
+        'android.permission.WRITE_SECURE_SETTINGS',
+        'android.permission.CHANGE_CONFIGURATION',
+        'android.permission.SET_DEBUG_APP',
+        'android.permission.MODIFY_AUDIO_SETTINGS',
+        'android.permission.MASTER_CLEAR',
+        'android.permission.DELETE_PACKAGES',
+        'android.permission.MODIFY_PHONE_STATE',
+        'android.permission.READ_PRIVILEGED_PHONE_STATE',
+        'android.permission.USE_CREDENTIALS',
+        'android.permission.MANAGE_DOCUMENTS',
+        'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE',
+        'android.permission.BIND_ACCESSIBILITY_SERVICE',
+        'android.permission.USES_POLICY_FORCE_LOCK',
+        'android.permission.PACKAGE_USAGE_STATS',
+    }
+
+    # Known malware package name patterns
+    _MALWARE_PACKAGE_PATTERNS = [
+        # Banking trojans
+        r'.*\.(?:bank|banc[a-z]*|kredi|finans|mobilbank|token|otp|tan).*',
+        # Common malware families
+        r'.*\.(?:anubis|cerberus|hydra|gustuff|marcher|agent\.\w{3,4}|compressed|uncompressed|facestealer|spy(?:note|max|agent|tool)|ahmyth|droidjack|omnirat|spymax|metasploit|meterpreter|payload|backdoor|dropper|downloader|injector|malspam|ransom|locker|crypt|miner|botnet|smssteal|smssend).*',
+        # Obfuscated/app-impersonation patterns
+        r'.*\.(?:update|system|service|sync|security|verify|clean(?:er|up)|boost(?:er)?|optimize(?:r)?|flash|player|camera|gallery|scanner|antivirus|vpn|wifi|settings|helper|utils?)\d*$',
+        # Suspicious single-class-name packages (no domain)
+        r'^[a-z]{3,20}$',
+    ]
+    _MALWARE_PACKAGE_REGEX = [re.compile(p, re.IGNORECASE) for p in _MALWARE_PACKAGE_PATTERNS]
+
+    # Suspicious iOS capabilities / entitlements
+    _SUSPICIOUS_IOS_CAPABILITIES = {
+        'get-task-allow',
+        'com.apple.private.skip-library-validation',
+        'com.apple.private.security.no-container',
+        'com.apple.private.security.no-sandbox',
+        'com.apple.security.get-task-allow',
+        'dynamic-codesigning',
+        'com.apple.private.memorystatus',
+        'com.apple.private.coalition',
+        'com.apple.private.tcc.allow',
+        'com.apple.private.security.container-required',
+        'com.apple.developer.kernel.increased-memory-limit',
+        'com.apple.developer.kernel.extended-virtual-addressing',
+        'com.apple.developer.networking.vpn.api',
+        'com.apple.developer.networking.networkextension',
+        'com.apple.developer.networking.hotspot-helper',
+        'com.apple.developer.homekit',
+        'com.apple.developer.healthkit',
+        'com.apple.developer.siri',
+        'com.apple.developer.usernotifications.filtering',
+        'com.apple.developer.usernotifications.communication',
+        'com.apple.developer.location.push',
+        'com.apple.private.corewifi',
+        'com.apple.private.mediaexperience',
+        'keychain-access-groups',
+        'application-groups',
+        'aps-environment',
+    }
+
+    # Mobile malware string patterns (for strings-based scanning)
+    _MOBILE_MALWARE_STRINGS = [
+        # Banking / credential theft
+        re.compile(r'(?:bank|banc|kredi|finan|credit|debit|card|account|login|password|credential)', re.IGNORECASE),
+        # C2 / remote access patterns
+        re.compile(r'(?:c2|command|botnet|beacon|callback|heartbeat|polling|register_device)', re.IGNORECASE),
+        # Data exfiltration
+        re.compile(r'(?:steal|exfiltrat|upload.*contact|upload.*sms|upload.*photo|upload.*call|send.*sms|forward.*sms)', re.IGNORECASE),
+        # SMS interception
+        re.compile(r'(?:sms.*intercept|abortbroadcast|smsreceiver|onReceive.*sms|sendTextMessage)', re.IGNORECASE),
+        # Keylogging / overlay attacks
+        re.compile(r'(?:keylog|overlay|accessibility.*service|input.*method|touch.*event|onAccessibilityEvent)', re.IGNORECASE),
+        # Privilege escalation / root
+        re.compile(r'(?:su\s|/system/bin/su|magisk|superuser|root.*access|exec.*su|Runtime.*exec)', re.IGNORECASE),
+        # Obfuscation
+        re.compile(r'(?:obfuscat|encrypt.*dex|decrypt.*dex|classloader|reflect.*load|hidden.*api|hide.*icon|hide.*app)', re.IGNORECASE),
+        # Persistence
+        re.compile(r'(?:boot_completed|BOOT_COMPLETED|onBoot|autostart|persist|PACKAGE_REPLACED|USER_PRESENT)', re.IGNORECASE),
+        # Cryptomining
+        re.compile(r'(?:miner|cryptonight|stratum|monero|nicehash|xmrig|cpuminer)', re.IGNORECASE),
+        # Ransomware
+        re.compile(r'(?:ransom|encrypt.*file|decrypt.*file|lock.*screen|reset.*pin|change.*pin)', re.IGNORECASE),
+        # Spyware / surveillance
+        re.compile(r'(?:record.*audio|record.*call|record.*video|capture.*screen|screen.*capture|mic.*record|call.*recording)', re.IGNORECASE),
+        # Dropper patterns
+        re.compile(r'(?:assets/.*\.(?:dex|jar|apk|so)|lib/.*\.so|decrypt.*payload|loadLibrary)', re.IGNORECASE),
+        # Meta — known malware toolkits
+        re.compile(r'(?:AhMyth|DroidJack|SpyNote|SpyMax|OmniRAT|AndroRAT|Dendroid|DarkComet|njRAT|LuminosityLink)', re.IGNORECASE),
+    ]
+
+    @staticmethod
+    def _find_tool(name: str) -> Optional[str]:
+        """Find a binary on PATH."""
+        result = subprocess.run(['which', name], capture_output=True, text=True)
+        return name if result.returncode == 0 else None
+
+    # ------------------------------------------------------------------
+    # Android APK analysis
+    # ------------------------------------------------------------------
+
+    def analyze_apk(self, apk_path: str) -> Dict[str, Any]:
+        """Analyze an Android APK file for malware indicators.
+
+        Uses apktool to decode the APK, checks AndroidManifest.xml for
+        dangerous permissions, scans for known malware package names,
+        and inspects dex classes for suspicious patterns.
+
+        Returns a structured dict with package info, permissions, and findings.
+        """
+        apk = Path(apk_path)
+        if not apk.exists():
+            return {
+                'tool': 'apk_analyzer',
+                'apk_path': apk_path,
+                'status': 'error',
+                'error': f'APK file not found: {apk_path}',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        result = {
+            'tool': 'apk_analyzer',
+            'apk_path': apk_path,
+            'apk_name': apk.name,
+            'apk_size_bytes': apk.stat().st_size,
+            'status': 'success',
+            'package': '',
+            'permissions': [],
+            'suspicious_permissions': [],
+            'permission_count': 0,
+            'suspicious_permission_count': 0,
+            'dex_entries': [],
+            'dex_count': 0,
+            'manifest_issues': [],
+            'malware_package_matches': [],
+            'findings': [],
+            'risk_score': 0,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        tmpdir = None
+        try:
+            tmpdir = tempfile.mkdtemp(prefix='geoff_apk_')
+
+            # Step 1: Decode the APK with apktool
+            apktool = self._find_tool('apktool')
+            if apktool:
+                cmd = [apktool, 'd', '-s', '-f', apk_path, '-o', tmpdir]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if r.returncode != 0:
+                    result['status'] = 'partial'
+                    result['manifest_issues'].append(
+                        f'apktool decode failed: {r.stderr[:200]}'
+                    )
+            else:
+                # Fallback: unzip the APK (APK is a ZIP file)
+                result['status'] = 'partial'
+                result['manifest_issues'].append(
+                    'apktool not found — using ZIP extraction fallback'
+                )
+                import zipfile
+                with zipfile.ZipFile(apk_path, 'r') as zf:
+                    zf.extractall(tmpdir)
+
+            # Step 2: Parse AndroidManifest.xml
+            manifest_path = Path(tmpdir) / 'AndroidManifest.xml'
+            raw_manifest: str = ''
+            if manifest_path.exists():
+                raw_manifest = manifest_path.read_text(errors='replace')
+                result['manifest_size'] = len(raw_manifest)
+
+                # Extract package name
+                pkg_match = re.search(r'package="([^"]+)"', raw_manifest)
+                if pkg_match:
+                    result['package'] = pkg_match.group(1)
+
+                # Extract permissions
+                perms = set(re.findall(
+                    r'<uses-permission\s+android:name="([^"]+)"',
+                    raw_manifest
+                ))
+                # Also extract maxSdkVersion / removed permissions via uses-permission-sdk-23
+                perms_sdk = set(re.findall(
+                    r'<uses-permission-sdk-23\s+android:name="([^"]+)"',
+                    raw_manifest
+                ))
+                all_perms = perms | perms_sdk
+                result['permissions'] = sorted(all_perms)
+                result['permission_count'] = len(all_perms)
+
+                # Flag dangerous permissions
+                suspicious = [p for p in all_perms if p in self._DANGEROUS_PERMISSIONS]
+                result['suspicious_permissions'] = sorted(suspicious)
+                result['suspicious_permission_count'] = len(suspicious)
+
+                # Extract other manifest elements
+                # Intents/actions
+                actions = set(re.findall(
+                    r'<action\s+android:name="([^"]+)"',
+                    raw_manifest
+                ))
+                # Receivers
+                receivers = re.findall(
+                    r'<receiver\s+android:name="([^"]+)"',
+                    raw_manifest
+                )
+                # Services
+                services = re.findall(
+                    r'<service\s+android:name="([^"]+)"',
+                    raw_manifest
+                )
+                # Activities
+                activities = re.findall(
+                    r'<activity\s+android:name="([^"]+)"',
+                    raw_manifest
+                )
+
+                result['manifest_components'] = {
+                    'actions': sorted(actions)[:50],
+                    'receivers': receivers[:50],
+                    'services': services[:50],
+                    'activities': activities[:50],
+                }
+
+                # Check manifest issues
+                # 1. No icon / hidden app
+                if 'android:icon' not in raw_manifest:
+                    result['manifest_issues'].append('No app icon defined — may be hidden')
+                # 2. Device admin request
+                if 'BIND_DEVICE_ADMIN' in raw_manifest or 'DeviceAdminReceiver' in raw_manifest:
+                    result['manifest_issues'].append('Requests device administrator privileges')
+                # 3. Accessibility service
+                if 'AccessibilityService' in raw_manifest:
+                    result['manifest_issues'].append('Registers accessibility service (potential keylogger/overlay)')
+                # 4. Notification listener
+                if 'NotificationListenerService' in raw_manifest:
+                    result['manifest_issues'].append('Registers notification listener (can read all notifications)')
+                # 5. debuggable flag
+                if 'android:debuggable="true"' in raw_manifest:
+                    result['manifest_issues'].append('Application is debuggable')
+                # 6. allowBackup
+                if 'android:allowBackup="true"' in raw_manifest:
+                    result['manifest_issues'].append('Application allows backup (data exfiltration vector)')
+                # 7. exported components without permissions
+                exported_receivers = sum(
+                    1 for r in receivers
+                    if 'android:exported="true"' in raw_manifest or 'android:permission' not in raw_manifest
+                )
+                if exported_receivers > 0:
+                    result['manifest_issues'].append(
+                        f'{exported_receivers} receiver(s) may be exported'
+                    )
+
+            # Step 3: Scan for known malware package names
+            pkg_name = result.get('package', '')
+            if pkg_name:
+                for regex in self._MALWARE_PACKAGE_REGEX:
+                    if regex.search(pkg_name):
+                        result['malware_package_matches'].append(
+                            f'Package matches pattern: {regex.pattern}'
+                        )
+
+            # Step 4: Find and list dex files
+            dex_files = list(Path(tmpdir).rglob('*.dex'))
+            result['dex_entries'] = [
+                {'file': str(d.relative_to(tmpdir)), 'size': d.stat().st_size}
+                for d in dex_files
+            ]
+            result['dex_count'] = len(dex_files)
+
+            # Check for multi-dex (may indicate heavy obfuscation or large payload)
+            if len(dex_files) > 1:
+                result['manifest_issues'].append(
+                    f'Multi-dex APK ({len(dex_files)} dex files) — may indicate obfuscation'
+                )
+
+            # Step 5: Scan strings in native libraries
+            lib_files = list(Path(tmpdir).rglob('*.so'))
+            suspicious_strings: List[Dict[str, Any]] = []
+            for lib in lib_files[:20]:  # cap to prevent timeout
+                try:
+                    sr = subprocess.run(
+                        ['strings', '-n', '6', str(lib)],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if sr.returncode == 0:
+                        for pattern in self._MOBILE_MALWARE_STRINGS:
+                            matches = pattern.findall(sr.stdout)
+                            if matches:
+                                suspicious_strings.append({
+                                    'file': str(lib.relative_to(tmpdir)),
+                                    'pattern': pattern.pattern,
+                                    'matches': list(set(matches))[:10],
+                                })
+                except Exception:
+                    pass
+
+            result['suspicious_strings'] = suspicious_strings
+            result['native_library_count'] = len(lib_files)
+            result['native_libraries'] = [
+                str(l.relative_to(tmpdir)) for l in lib_files
+            ]
+
+            # Step 6: Compute risk score
+            score = 0
+            score += min(result['suspicious_permission_count'] * 2, 30)
+            score += min(len(result['malware_package_matches']) * 15, 30)
+            score += min(len(result['manifest_issues']) * 8, 24)
+            score += min(len(suspicious_strings) * 4, 16)
+            result['risk_score'] = min(score, 100)
+
+            # Build human-readable findings
+            if result['risk_score'] >= 60:
+                result['findings'].append('HIGH risk — multiple malware indicators detected')
+            elif result['risk_score'] >= 30:
+                result['findings'].append('MEDIUM risk — some suspicious indicators present')
+            elif result['risk_score'] > 0:
+                result['findings'].append('LOW risk — minor indicators, likely benign')
+            else:
+                result['findings'].append('Clean — no malware indicators detected')
+
+            if result['malware_package_matches']:
+                result['findings'].append(
+                    f'Malware-like package name: {pkg_name}'
+                )
+            if result['suspicious_permissions']:
+                top_danger = result['suspicious_permissions'][:5]
+                result['findings'].append(
+                    f'Dangerous permissions: {", ".join(top_danger)}'
+                )
+
+        except subprocess.TimeoutExpired:
+            result['status'] = 'error'
+            result['error'] = 'APK analysis timed out'
+        except Exception as e:
+            result['status'] = 'error'
+            result['error'] = str(e)
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+        result['timestamp'] = datetime.now().isoformat()
+        return result
+
+    # ------------------------------------------------------------------
+    # iOS IPA analysis
+    # ------------------------------------------------------------------
+
+    def analyze_ipa(self, ipa_path: str) -> Dict[str, Any]:
+        """Analyze an iOS IPA file for malware indicators.
+
+        Unzips the IPA, checks Mach-O binaries, inspects Info.plist for
+        suspicious capabilities, verifies code signing, and scans strings.
+
+        Returns structured dict with bundle info, capabilities, and findings.
+        """
+        ipa = Path(ipa_path)
+        if not ipa.exists():
+            return {
+                'tool': 'ipa_analyzer',
+                'ipa_path': ipa_path,
+                'status': 'error',
+                'error': f'IPA file not found: {ipa_path}',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        result = {
+            'tool': 'ipa_analyzer',
+            'ipa_path': ipa_path,
+            'ipa_name': ipa.name,
+            'ipa_size_bytes': ipa.stat().st_size,
+            'status': 'success',
+            'bundle_id': '',
+            'bundle_name': '',
+            'bundle_version': '',
+            'sdk_version': '',
+            'capabilities': [],
+            'suspicious_capabilities': [],
+            'binaries': [],
+            'signing_info': {},
+            'suspicious_patterns': [],
+            'findings': [],
+            'risk_score': 0,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        tmpdir = None
+        try:
+            tmpdir = tempfile.mkdtemp(prefix='geoff_ipa_')
+
+            # Step 1: Unzip the IPA
+            import zipfile
+            with zipfile.ZipFile(ipa_path, 'r') as zf:
+                zf.extractall(tmpdir)
+
+            # Step 2: Find the Payload directory
+            payload_dir = Path(tmpdir) / 'Payload'
+            if not payload_dir.exists():
+                result['status'] = 'error'
+                result['error'] = 'No Payload directory found in IPA'
+                return result
+
+            app_dirs = list(payload_dir.glob('*.app'))
+            if not app_dirs:
+                result['status'] = 'error'
+                result['error'] = 'No .app bundle found in Payload'
+                return result
+
+            app_dir = app_dirs[0]
+
+            # Step 3: Parse Info.plist
+            info_plist = app_dir / 'Info.plist'
+            if info_plist.exists():
+                try:
+                    with open(info_plist, 'rb') as f:
+                        info = plistlib.load(f)
+                    result['bundle_id'] = info.get('CFBundleIdentifier', '')
+                    result['bundle_name'] = info.get('CFBundleName', info.get('CFBundleDisplayName', ''))
+                    result['bundle_version'] = info.get('CFBundleShortVersionString', '')
+                    result['sdk_version'] = info.get('DTPlatformVersion', info.get('MinimumOSVersion', ''))
+                    result['info_plist_keys'] = list(info.keys())[:50]
+
+                    # Extract entitlements / capabilities
+                    caps = set()
+                    for key in info.keys():
+                        if 'capability' in key.lower() or 'entitlement' in key.lower() or 'com.apple' in key.lower():
+                            caps.add(key)
+                    # Also check standard keys that map to capabilities
+                    if info.get('UIBackgroundModes'):
+                        for mode in info.get('UIBackgroundModes', []):
+                            caps.add(f'background-mode:{mode}')
+                    if info.get('NSAppTransportSecurity'):
+                        ats = info['NSAppTransportSecurity']
+                        if ats.get('NSAllowsArbitraryLoads'):
+                            caps.add('ATS:allows-arbitrary-loads')
+                    if info.get('NSLocationWhenInUseUsageDescription'):
+                        caps.add('location:when-in-use')
+                    if info.get('NSLocationAlwaysAndWhenInUseUsageDescription'):
+                        caps.add('location:always')
+                    if info.get('NSMicrophoneUsageDescription'):
+                        caps.add('microphone')
+                    if info.get('NSCameraUsageDescription'):
+                        caps.add('camera')
+                    if info.get('NSContactsUsageDescription'):
+                        caps.add('contacts')
+
+                    result['capabilities'] = sorted(caps)
+                    result['capability_count'] = len(caps)
+
+                    # Flag suspicious capabilities
+                    suspicious_caps = []
+                    for cap in caps:
+                        cap_lower = cap.lower()
+                        for sc in self._SUSPICIOUS_IOS_CAPABILITIES:
+                            if sc.lower() in cap_lower:
+                                suspicious_caps.append(cap)
+                                break
+                    result['suspicious_capabilities'] = suspicious_caps
+                except Exception as e:
+                    result['status'] = 'partial'
+                    result['suspicious_patterns'].append(f'Info.plist parse error: {e}')
+
+            # Step 4: Check embedded.mobileprovision for signing info
+            mobileprovision = app_dir / 'embedded.mobileprovision'
+            if mobileprovision.exists():
+                try:
+                    # Extract readable text from the signed plist
+                    sr = subprocess.run(
+                        ['strings', str(mobileprovision)],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    prov_text = sr.stdout
+                    sign_info: Dict[str, Any] = {
+                        'has_provisioning_profile': True,
+                        'team_name': '',
+                        'team_id': '',
+                        'creation_date': '',
+                        'expiration_date': '',
+                        'get_task_allow': 'get-task-allow' in prov_text,
+                    }
+                    # Extract team name
+                    team_match = re.search(r'<key>TeamName</key>\s*<string>([^<]+)</string>', prov_text)
+                    if team_match:
+                        sign_info['team_name'] = team_match.group(1)
+                    # Extract team ID
+                    teamid_match = re.search(
+                        r'<key>com\.apple\.developer\.team-identifier</key>\s*<string>([^<]+)</string>',
+                        prov_text
+                    )
+                    if teamid_match:
+                        sign_info['team_id'] = teamid_match.group(1)
+                    # Extract dates
+                    create_match = re.search(r'<key>CreationDate</key>\s*<date>([^<]+)</date>', prov_text)
+                    if create_match:
+                        sign_info['creation_date'] = create_match.group(1)
+                    expire_match = re.search(r'<key>ExpirationDate</key>\s*<date>([^<]+)</date>', prov_text)
+                    if expire_match:
+                        sign_info['expiration_date'] = expire_match.group(1)
+
+                    result['signing_info'] = sign_info
+
+                    # Flag issues
+                    if sign_info.get('get_task_allow'):
+                        result['suspicious_patterns'].append(
+                            'get-task-allow entitlement present — allows debugger attachment'
+                        )
+                    if sign_info.get('expiration_date'):
+                        try:
+                            from datetime import datetime as dt
+                            expire_dt = dt.fromisoformat(sign_info['expiration_date'].replace('Z', '+00:00'))
+                            if expire_dt < dt.now():
+                                result['suspicious_patterns'].append(
+                                    f'Provisioning profile expired: {sign_info["expiration_date"]}'
+                                )
+                        except Exception:
+                            pass
+                except Exception as e:
+                    result['signing_info'] = {'error': str(e)}
+
+            # Step 5: Find and analyze Mach-O binaries
+            mach_files = []
+            for fp in app_dir.rglob('*'):
+                if fp.is_file() and not fp.name.startswith('.') and fp.suffix != '.plist':
+                    try:
+                        fr = subprocess.run(
+                            ['file', str(fp)],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        ft = fr.stdout.strip()
+                        if 'Mach-O' in ft:
+                            mach_files.append({
+                                'file': str(fp.relative_to(app_dir)),
+                                'type': ft,
+                                'size': fp.stat().st_size,
+                            })
+                    except Exception:
+                        pass
+
+            result['binaries'] = mach_files
+            result['binary_count'] = len(mach_files)
+
+            # Step 6: Strings scan of main binary
+            main_binary = app_dir / app_dir.name.replace('.app', '')
+            if not main_binary.exists():
+                # Try to find any Mach-O executable
+                for mf in mach_files:
+                    candidate = app_dir / mf['file']
+                    if candidate.exists() and 'executable' in mf['type'].lower():
+                        main_binary = candidate
+                        break
+
+            if main_binary.is_file():
+                try:
+                    sr = subprocess.run(
+                        ['strings', '-n', '6', str(main_binary)],
+                        capture_output=True, text=True, timeout=60
+                    )
+                    output = sr.stdout
+                    result['string_count'] = len(output.splitlines())
+
+                    # Scan for mobile malware string patterns
+                    for pattern in self._MOBILE_MALWARE_STRINGS:
+                        matches = pattern.findall(output)
+                        if matches:
+                            result['suspicious_patterns'].append(
+                                f'Pattern "{pattern.pattern}": {len(matches)} match(es) — {", ".join(list(set(matches))[:5])}'
+                            )
+
+                    # Check for common iOS jailbreak/bypass strings
+                    jailbreak_strings = [
+                        'CydiaSubstrate', 'MobileSubstrate', 'cy://',
+                        '/Library/MobileSubstrate', 'jailbreak', 'rootful',
+                        '@executable_path', 'dlopen', 'dlsym',
+                    ]
+                    jb_found = [s for s in jailbreak_strings if s.lower() in output.lower()]
+                    if jb_found:
+                        result['suspicious_patterns'].append(
+                            f'Jailbreak-related strings: {", ".join(jb_found)}'
+                        )
+                except Exception as e:
+                    result['suspicious_patterns'].append(f'Binary strings scan error: {e}')
+
+            # Step 7: Check for frameworks with suspicious names
+            frameworks_dir = app_dir / 'Frameworks'
+            if frameworks_dir.exists():
+                fw_list = [d.name for d in frameworks_dir.iterdir() if d.is_dir() and d.suffix == '.framework']
+                result['frameworks'] = fw_list
+                result['framework_count'] = len(fw_list)
+                # Flag embedded frameworks (not system ones)
+                system_fws = {'UIKit', 'Foundation', 'CoreFoundation', 'CoreGraphics',
+                              'Security', 'CFNetwork', 'SystemConfiguration', 'AVFoundation'}
+                embedded = [f for f in fw_list if f.rsplit('.', 1)[0] not in system_fws]
+                if embedded:
+                    result['suspicious_patterns'].append(
+                        f'Non-standard embedded frameworks: {", ".join(embedded[:10])}'
+                    )
+
+            # Step 8: Compute risk score
+            score = 0
+            score += min(len(result['suspicious_capabilities']) * 10, 30)
+            score += min(len(result.get('suspicious_patterns', [])) * 10, 40)
+            if result.get('signing_info', {}).get('get_task_allow'):
+                score += 15
+            if not result.get('signing_info'):
+                score += 20  # No signing info at all
+            result['risk_score'] = min(score, 100)
+
+            # Build findings
+            if result['risk_score'] >= 60:
+                result['findings'].append('HIGH risk — multiple malware indicators detected')
+            elif result['risk_score'] >= 30:
+                result['findings'].append('MEDIUM risk — some suspicious indicators present')
+            elif result['risk_score'] > 0:
+                result['findings'].append('LOW risk — minor indicators, likely benign')
+            else:
+                result['findings'].append('Clean — no malware indicators detected')
+
+            if result.get('suspicious_capabilities'):
+                result['findings'].append(
+                    f'Suspicious capabilities: {", ".join(result["suspicious_capabilities"][:5])}'
+                )
+            if result.get('suspicious_patterns'):
+                result['findings'].extend(result['suspicious_patterns'][:3])
+
+        except zipfile.BadZipFile:
+            result['status'] = 'error'
+            result['error'] = 'Not a valid ZIP/IPA file'
+        except Exception as e:
+            result['status'] = 'error'
+            result['error'] = str(e)
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+        result['timestamp'] = datetime.now().isoformat()
+        return result
+
+    # ------------------------------------------------------------------
+    # Mobile binary analysis (standalone ARM/ELF/Mach-O)
+    # ------------------------------------------------------------------
+
+    def analyze_mobile_binary(self, binary_path: str) -> Dict[str, Any]:
+        """Analyze a standalone mobile binary (ARM ELF, Mach-O) for malware.
+
+        Identifies architecture with `file`, runs `strings` with mobile
+        malware patterns, and optionally runs YARA if rules are available.
+
+        Returns structured dict with arch, file_type, strings hits, and yara hits.
+        """
+        bp = Path(binary_path)
+        if not bp.exists():
+            return {
+                'tool': 'mobile_binary_analyzer',
+                'binary_path': binary_path,
+                'status': 'error',
+                'error': f'File not found: {binary_path}',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        result = {
+            'tool': 'mobile_binary_analyzer',
+            'binary_path': binary_path,
+            'binary_name': bp.name,
+            'binary_size_bytes': bp.stat().st_size,
+            'status': 'success',
+            'arch': '',
+            'file_type': '',
+            'suspicious_strings': [],
+            'suspicious_string_count': 0,
+            'yara_hits': [],
+            'yara_available': False,
+            'findings': [],
+            'risk_score': 0,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        try:
+            # Step 1: Identify architecture and file type
+            fr = subprocess.run(
+                ['file', binary_path],
+                capture_output=True, text=True, timeout=30
+            )
+            result['file_type'] = fr.stdout.replace(binary_path, '').strip(': \n\t')
+            if 'ARM' in result['file_type'] or 'arm' in result['file_type']:
+                result['arch'] = 'ARM'
+            elif 'x86_64' in result['file_type']:
+                result['arch'] = 'x86_64'
+            elif 'x86' in result['file_type']:
+                result['arch'] = 'x86'
+            elif 'aarch64' in result['file_type'] or 'ARM64' in result['file_type']:
+                result['arch'] = 'ARM64'
+            else:
+                result['arch'] = result['file_type']
+
+            # Step 2: Extract and scan strings
+            sr = subprocess.run(
+                ['strings', '-n', '6', binary_path],
+                capture_output=True, text=True, timeout=120
+            )
+            output = sr.stdout
+            result['total_strings'] = len(output.splitlines())
+
+            suspicious_strings: List[Dict[str, Any]] = []
+            for pattern in self._MOBILE_MALWARE_STRINGS:
+                matches = pattern.findall(output)
+                if matches:
+                    unique_matches = list(set(matches))[:10]
+                    suspicious_strings.append({
+                        'pattern': pattern.pattern,
+                        'match_count': len(matches),
+                        'sample_matches': unique_matches,
+                    })
+
+            result['suspicious_strings'] = suspicious_strings
+            result['suspicious_string_count'] = len(suspicious_strings)
+
+            # Step 3: YARA scan if available
+            yara_bin = self._find_tool('yara')
+            if yara_bin:
+                result['yara_available'] = True
+                # Look for mobile malware YARA rules
+                yara_rule_dirs = [
+                    '/opt/geoff/yara/rules',
+                    '/opt/yara-rules',
+                    '/usr/share/yara',
+                    '/home/sansforensics/yara-rules',
+                ]
+                yara_rules_files: List[str] = []
+                for rule_dir in yara_rule_dirs:
+                    rule_path = Path(rule_dir)
+                    if rule_path.exists():
+                        for rf in rule_path.rglob('*.yar'):
+                            yara_rules_files.append(str(rf))
+                        for rf in rule_path.rglob('*.yara'):
+                            yara_rules_files.append(str(rf))
+
+                # Also look for mobile-specific rules
+                mobile_indicators = ['mobile', 'android', 'ios', 'apk', 'iphone', 'arm']
+                target_rules = [
+                    rf for rf in yara_rules_files
+                    if any(ind in rf.lower() for ind in mobile_indicators)
+                ]
+                if not target_rules:
+                    target_rules = yara_rules_files[:20]  # Fallback: first 20 rules
+
+                for rule_file in target_rules[:30]:  # cap rules to scan
+                    try:
+                        yr = subprocess.run(
+                            [yara_bin, rule_file, binary_path],
+                            capture_output=True, text=True, timeout=60
+                        )
+                        if yr.stdout.strip():
+                            result['yara_hits'].append({
+                                'rule_file': rule_file,
+                                'output': yr.stdout.strip(),
+                            })
+                    except Exception:
+                        pass
+            else:
+                result['yara_available'] = False
+
+            # Step 4: Compute risk score
+            score = 0
+            score += min(len(suspicious_strings) * 8, 50)
+            score += min(len(result['yara_hits']) * 25, 50)
+            result['risk_score'] = min(score, 100)
+
+            # Build findings
+            if result['risk_score'] >= 60:
+                result['findings'].append('HIGH risk — multiple malware indicators detected')
+            elif result['risk_score'] >= 30:
+                result['findings'].append('MEDIUM risk — some suspicious indicators present')
+            elif result['risk_score'] > 0:
+                result['findings'].append('LOW risk — minor indicators, likely benign')
+            else:
+                result['findings'].append('Clean — no malware indicators detected')
+
+            if result['yara_hits']:
+                rule_names = [h.get('output', '').split()[0] for h in result['yara_hits']]
+                result['findings'].append(f'YARA hits: {", ".join(rule_names[:5])}')
+
+        except subprocess.TimeoutExpired:
+            result['status'] = 'error'
+            result['error'] = 'Binary analysis timed out'
+        except Exception as e:
+            result['status'] = 'error'
+            result['error'] = str(e)
+
+        result['timestamp'] = datetime.now().isoformat()
+        return result
+
+
+# ---------------------------------------------------------------------------
+# BROWSER_Specialist
+# ---------------------------------------------------------------------------
+
 class BROWSER_Specialist:
     """Extract browser forensic artefacts from SQLite databases on disk."""
 
@@ -4008,6 +5211,580 @@ class BROWSER_Specialist:
 
 
 # ---------------------------------------------------------------------------
+# SQLITE_Specialist — Generic SQLite forensics pipeline
+# ---------------------------------------------------------------------------
+
+class SQLITE_Specialist:
+    """Generic SQLite analysis specialist — adaptive pipeline for any SQLite database.
+
+    Replaces hardcoded per-app SQLite extractors with a single adaptive pipeline
+    that introspects schema, auto-detects artifact types via fingerprint matching,
+    normalizes timestamps, and extracts timeline events + IOC candidates.
+    """
+
+    # Timestamp column fingerprint patterns (case-insensitive regex)
+    _TS_COLUMN_PATTERNS: List[str] = [
+        r'timestamp', r'date', r'time', r'created_at?', r'modified_at?', r'updated_at?',
+        r'last_visit', r'visit_time', r'access', r'login', r'sent', r'received',
+        r'expires', r'creation_date', r'modification_date', r'event_time', r'occurred',
+        r'start', r'end', r'entry', r'exit', r'arrival', r'departure',
+        r'zdate', r'zcreationdate', r'zmodificationdate', r'zenter', r'zleave',
+        r'date_sent', r'date_received', r'last_access', r'added', r'published_on',
+    ]
+
+    # URL / domain column patterns
+    _URL_COLUMN_PATTERNS: List[str] = [
+        r'url', r'uri', r'location', r'host', r'domain',
+        r'target_url', r'source_url', r'referer', r'referrer', r'link',
+        r'website', r'homepage', r'href', r'origin', r'redirect',
+    ]
+
+    # Email column patterns
+    _EMAIL_COLUMN_PATTERNS: List[str] = [
+        r'email', r'mail', r'from_address', r'to_address', r'sender',
+        r'recipient', r'contact_email', r'from$', r'^to$',
+    ]
+
+    # IP column patterns
+    _IP_COLUMN_PATTERNS: List[str] = [
+        r'ip', r'ipv4', r'ipv6', r'host_ip', r'server_ip', r'client_ip',
+        r'source_ip', r'destination_ip', r'remote_addr', r'local_addr',
+        r'peer_ip', r'ip_address', r'addr',
+    ]
+
+    # ------------------------------------------------------------------
+    # Artifact fingerprints: (artifact_class, table_regex, required_col_regex)
+    # ------------------------------------------------------------------
+    _ARTIFACT_FINGERPRINTS: List[tuple] = [
+        ("browser_history",  r"^(urls|moz_places|history_items)$",  r"url|location"),
+        ("browser_visits",   r"^(visits|moz_historyvisits|history_visits)$", r"visit_time|visit_date"),
+        ("browser_downloads",r"^(downloads|moz_downloads)$",       r"target_path|filename"),
+        ("browser_cookies",  r"^(cookies|moz_cookies)$",           r"host_key|host"),
+        ("browser_bookmarks",r"^(bookmarks|moz_bookmarks|bookmark$", r"title|url"),
+        ("browser_cache",    r"^(cache|cache_entries|cache_data)$", r"key|data"),
+        ("browser_passwords",r"^(logins|logins_data)$",            r"username|password"),
+        ("sms",              r"(sms|message|mmssms)",              r"body|text"),
+        ("call_log",         r"(calls|calllog|call_history)",      r"duration|number"),
+        ("contacts",         r"(contacts|raw_contacts|abperson)",  r"display_name|name"),
+        ("calendar",         r"(events|calendaritems|zcalendaritem)", r"dtstart|start_date"),
+        ("notes",            r"(notes|zsnippet|sticky)",           r"text|body|content"),
+        ("photos",           r"(zgenericasset|images|mediaitems)", r"latitude|zlatitude"),
+        ("chat",             r"(messages|chats?|conversations?)",  r"sender|from|author"),
+        ("ios_manifest",     r"^Files$",                          r"fileid|relativepath"),
+        ("credentials",      r"(keychain|keychain_items)",         r"service|account"),
+        ("location",         r"(zrtvisit|zrtplace)",              r"zlatitude|zlongitude"),
+    ]
+
+    _MAC_EPOCH_OFFSET: float = 978307200.0   # seconds between Unix epoch and Mac absolute time (2001-01-01)
+    _WEBKIT_EPOCH_OFFSET: float = 11644473600.0  # seconds between 1601-01-01 and 1970-01-01
+
+    # ------------------------------------------------------------------
+    # Schema introspection
+    # ------------------------------------------------------------------
+
+    def _read_schema(self, db_path: str) -> Dict[str, List[str]]:
+        """Read table names and column lists from sqlite_master.
+
+        Returns {table_name: [col_name, ...]} for every table in the database.
+        Catching sqlite3.DatabaseError skips non-SQLite files early.
+        """
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            schema: Dict[str, List[str]] = {}
+            for row in rows:
+                name = row['name']
+                sql_def = row['sql']
+                if sql_def:
+                    cols = self._parse_create_table_columns(sql_def)
+                else:
+                    cols = self._pragma_table_info(conn, name)
+                if cols:
+                    schema[name] = cols
+            conn.close()
+            return schema
+        except sqlite3.DatabaseError:
+            return {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _parse_create_table_columns(create_sql: str) -> List[str]:
+        """Extract column names from a CREATE TABLE SQL statement."""
+        match = re.search(r'\((.+)\)', create_sql, re.DOTALL)
+        if not match:
+            return []
+        col_defs = match.group(1)
+        cols: List[str] = []
+        for part in re.split(r',\s*(?![^(]*\))', col_defs):
+            part = part.strip()
+            if not part or part.upper().startswith(
+                ('PRIMARY', 'UNIQUE', 'FOREIGN', 'CHECK', 'CONSTRAINT')
+            ):
+                continue
+            col_name = part.strip().split()[0].strip('"`[]{}\'')
+            if col_name and col_name.upper() not in (
+                'PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT'
+            ):
+                cols.append(col_name)
+        return cols
+
+    @staticmethod
+    def _pragma_table_info(conn: sqlite3.Connection, table: str) -> List[str]:
+        """Fallback: get column names via PRAGMA table_info."""
+        try:
+            rows = conn.execute(f"PRAGMA table_info(\"{table}\")").fetchall()
+            return [r['name'] for r in rows if 'name' in r.keys()]
+        except Exception:
+            return []
+
+    # ------------------------------------------------------------------
+    # Schema classification
+    # ------------------------------------------------------------------
+
+    def _classify_schema(self, schema: Dict[str, List[str]]) -> Dict[str, Any]:
+        """Pattern-match table and column names to known data types.
+
+        Returns classification dict with:
+          - detected_types: sorted list of artifact classes found
+          - table_classifications: {table: artifact_class}
+          - timestamp_columns: {table: [ts_col, ...]}
+          - url_columns: {table: [url_col, ...]}
+          - email_columns: {table: [email_col, ...]}
+          - ip_columns: {table: [ip_col, ...]}
+          - generic_tables: list of unclassified tables
+        """
+        classification: Dict[str, Any] = {
+            "detected_types": set(),
+            "table_classifications": {},
+            "timestamp_columns": {},
+            "url_columns": {},
+            "email_columns": {},
+            "ip_columns": {},
+            "generic_tables": [],
+        }
+
+        for table, columns in schema.items():
+            cols_lower = [c.lower() for c in columns]
+            classified = False
+
+            # Try fingerprint matching
+            for artifact_class, table_regex, col_regex in self._ARTIFACT_FINGERPRINTS:
+                if re.search(table_regex, table, re.IGNORECASE):
+                    if any(re.search(col_regex, c, re.IGNORECASE) for c in columns):
+                        classification["table_classifications"][table] = artifact_class
+                        classification["detected_types"].add(artifact_class)
+                        classified = True
+                        break
+
+            if not classified:
+                classification["generic_tables"].append(table)
+
+            # Find timestamp columns
+            ts_cols: List[str] = []
+            for col in columns:
+                for pattern in self._TS_COLUMN_PATTERNS:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        ts_cols.append(col)
+                        break
+            if ts_cols:
+                classification["timestamp_columns"][table] = ts_cols
+
+            # Find URL/domain columns
+            url_cols: List[str] = []
+            for col in columns:
+                for pattern in self._URL_COLUMN_PATTERNS:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        url_cols.append(col)
+                        break
+            if url_cols:
+                classification["url_columns"][table] = url_cols
+
+            # Find email columns
+            email_cols: List[str] = []
+            for col in columns:
+                for pattern in self._EMAIL_COLUMN_PATTERNS:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        email_cols.append(col)
+                        break
+            if email_cols:
+                classification["email_columns"][table] = email_cols
+
+            # Find IP columns (skip common false positives)
+            ip_cols: List[str] = []
+            for col in columns:
+                if col.lower() in ('description', 'shipped', 'stripped', 'equipped'):
+                    continue
+                for pattern in self._IP_COLUMN_PATTERNS:
+                    if re.search(pattern, col, re.IGNORECASE):
+                        ip_cols.append(col)
+                        break
+            if ip_cols:
+                classification["ip_columns"][table] = ip_cols
+
+        classification["detected_types"] = sorted(classification["detected_types"])
+        return classification
+
+    # ------------------------------------------------------------------
+    # Timestamp normalization
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_timestamp(raw) -> Optional[str]:
+        """Convert various timestamp formats to ISO-8601 UTC string.
+
+        Handles: Unix seconds/ms/µs, WebKit/FILETIME (µs from 1601),
+        Mac Absolute (seconds from 2001), and ISO-8601 strings.
+        """
+        if raw is None:
+            return None
+        try:
+            if isinstance(raw, str):
+                raw = raw.strip()
+                if not raw:
+                    return None
+                # Try ISO-format string first
+                try:
+                    return datetime.fromisoformat(
+                        raw.replace(' ', 'T').replace('Z', '+00:00')
+                    ).isoformat()[:19] + 'Z'
+                except (ValueError, TypeError):
+                    pass
+                # Try as numeric string
+                try:
+                    return SQLITE_Specialist._normalize_timestamp(float(raw))
+                except (ValueError, TypeError):
+                    pass
+                return None
+
+            # Numeric timestamp
+            val = float(raw)
+            if val <= 0:
+                return None
+            if val > 1e15:
+                # WebKit/FILETIME in microseconds (µs since 1601-01-01)
+                unix_s = val / 1_000_000 - SQLITE_Specialist._WEBKIT_EPOCH_OFFSET
+            elif val > 1e12:
+                # Unix milliseconds
+                unix_s = val / 1_000
+            elif val > 1e9:
+                # Unix seconds
+                unix_s = val
+            elif val > 1e6:
+                # Mac absolute time (seconds since 2001-01-01)
+                unix_s = val + SQLITE_Specialist._MAC_EPOCH_OFFSET
+            else:
+                # Small value — try Mac absolute
+                unix_s = val + SQLITE_Specialist._MAC_EPOCH_OFFSET
+            dt = datetime.utcfromtimestamp(unix_s)
+            return dt.isoformat()[:19] + 'Z'
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    # ------------------------------------------------------------------
+    # Event extraction
+    # ------------------------------------------------------------------
+
+    def _extract_events(
+        self, db_path: str, schema: Dict[str, List[str]],
+        classification: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Extract timeline events from rows with timestamp columns."""
+        events: List[Dict[str, Any]] = []
+        db_name = Path(db_path).name
+
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+            conn.row_factory = sqlite3.Row
+
+            for table, ts_columns in classification.get("timestamp_columns", {}).items():
+                if table not in schema:
+                    continue
+
+                art_class = classification.get("table_classifications", {}).get(
+                    table, "generic"
+                )
+                all_cols = schema[table]
+
+                # Try each timestamp column
+                for ts_col in ts_columns:
+                    if ts_col not in all_cols:
+                        continue
+
+                    try:
+                        cols_quoted = [f'"{c}"' for c in all_cols[:30]]  # cap columns
+                        query = (
+                            f'SELECT {chr(44).join(cols_quoted)} '
+                            f'FROM "{table}" '
+                            f'WHERE "{ts_col}" IS NOT NULL '
+                            f'AND "{ts_col}" != "" '
+                            f'AND "{ts_col}" != 0 '
+                            f'LIMIT 500'
+                        )
+                        rows = conn.execute(query).fetchall()
+                    except Exception:
+                        continue
+
+                    url_cols_map = classification.get("url_columns", {}).get(table, [])
+
+                    for row in rows:
+                        rd = {k: row[k] for k in row.keys()}
+                        raw_ts = rd.get(ts_col)
+                        ts = self._normalize_timestamp(raw_ts)
+                        if not ts:
+                            continue
+
+                        # Build summary from first few columns
+                        summary_parts = []
+                        for col in all_cols[:5]:
+                            val = rd.get(col)
+                            if val is not None and str(val).strip() and col != ts_col:
+                                s = str(val)[:100]
+                                summary_parts.append(f"{col}={s}")
+
+                        summary = (
+                            f"[{art_class}] {table}: "
+                            + "; ".join(summary_parts[:2])
+                            if summary_parts
+                            else f"[{art_class}] {table} row"
+                        )
+
+                        # Extract URLs
+                        urls: Dict[str, str] = {}
+                        for url_col in url_cols_map:
+                            val = str(rd.get(url_col, ''))
+                            if val and (
+                                val.startswith('http') or val.startswith('https://')
+                                or '.' in val
+                            ):
+                                urls[url_col] = val[:500]
+
+                        events.append({
+                            "timestamp": ts,
+                            "source_file": db_path,
+                            "source_db": db_name,
+                            "table": table,
+                            "artifact_class": art_class,
+                            "timestamp_column": ts_col,
+                            "description": summary[:300],
+                            "urls": urls,
+                            "detail": {
+                                k: str(v)[:200]
+                                for k, v in rd.items()
+                                if v is not None and k in all_cols[:10]
+                            },
+                        })
+
+                    break  # Use first working timestamp column per table
+
+            conn.close()
+        except Exception:
+            pass
+
+        return events
+
+    # ------------------------------------------------------------------
+    # IOC extraction
+    # ------------------------------------------------------------------
+
+    def _extract_iocs(
+        self, db_path: str, schema: Dict[str, List[str]],
+        classification: Dict[str, Any]
+    ) -> Dict[str, List[str]]:
+        """Extract IOC candidates (URLs, emails, IPs, domains) from the database."""
+        iocs: Dict[str, List[str]] = {
+            "urls": [],
+            "emails": [],
+            "ips": [],
+            "domains": [],
+        }
+
+        url_pattern = re.compile(r'(https?://[^\s<>"\')\]\]+)', re.IGNORECASE)
+        domain_pattern = re.compile(
+            r'(?:^|[\s"\'\(\)\[\]\{\}<>])'
+            r'([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)'
+            r'+[a-zA-Z]{2,}'
+            r'(?=[\s"\'\(\)\[\]\{\}<>,;:!?]|$)',
+            re.IGNORECASE,
+        )
+        email_pattern = re.compile(
+            r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        )
+        ip_pattern = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}'
+                                r'(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
+
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+            conn.row_factory = sqlite3.Row
+
+            # Search URL/email/IP columns
+            search_targets = [
+                (classification.get("url_columns", {}), "urls"),
+            ]
+
+            for col_map, _ioc_key in search_targets:
+                for table, cols in col_map.items():
+                    for col in cols:
+                        if len(iocs["urls"]) >= 500:
+                            break
+                        try:
+                            rows = conn.execute(
+                                f'SELECT "{col}" FROM "{table}" '
+                                f'WHERE "{col}" IS NOT NULL AND "{col}" != "" '
+                                f'LIMIT 500'
+                            ).fetchall()
+                            for row in rows:
+                                val = str(row[col]) if col in row.keys() else str(row[0])
+                                # URLs
+                                for match in url_pattern.finditer(val):
+                                    url = match.group(1)
+                                    if url not in iocs["urls"]:
+                                        iocs["urls"].append(url)
+                                        if len(iocs["urls"]) >= 500:
+                                            break
+                                # Domains
+                                for match in domain_pattern.finditer(val):
+                                    domain = match.group(0).strip()
+                                    if domain and domain not in iocs["domains"] \
+                                       and len(domain) < 256:
+                                        iocs["domains"].append(domain)
+                                # Emails
+                                for match in email_pattern.finditer(val):
+                                    eml = match.group(0)
+                                    if eml not in iocs["emails"]:
+                                        iocs["emails"].append(eml)
+                        except Exception:
+                            continue
+
+            # Search IP columns
+            for table, ip_cols in classification.get("ip_columns", {}).items():
+                for col in ip_cols:
+                    if len(iocs["ips"]) >= 500:
+                        break
+                    try:
+                        rows = conn.execute(
+                            f'SELECT "{col}" FROM "{table}" '
+                            f'WHERE "{col}" IS NOT NULL AND "{col}" != "" '
+                            f'LIMIT 500'
+                        ).fetchall()
+                        for row in rows:
+                            val = str(row[col]) if col in row.keys() else str(row[0])
+                            for match in ip_pattern.finditer(val):
+                                ip = match.group(0)
+                                parts = ip.split('.')
+                                if all(0 <= int(p) <= 255 for p in parts):
+                                    if ip not in iocs["ips"] and ip not in (
+                                        '0.0.0.0', '255.255.255.255', '127.0.0.1'
+                                    ):
+                                        iocs["ips"].append(ip)
+                    except Exception:
+                        continue
+
+            conn.close()
+        except Exception:
+            pass
+
+        # Cap all IOC lists
+        for key in iocs:
+            iocs[key] = iocs[key][:500]
+
+        return iocs
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    def analyze_sqlite(self, db_path: str) -> Dict[str, Any]:
+        """Analyze any SQLite database for forensic artifacts.
+
+        Pipeline:
+          1. Introspect schema via sqlite_master
+          2. Auto-detect artifact types via table/column fingerprints
+          3. Extract rows with timestamps → timeline events
+          4. Extract URLs, emails, IPs → IOC candidates
+          5. Flag unknown schemas for optional LLM analysis
+
+        Returns a structured dict with timeline events, IOCs, and classification.
+        """
+        p = Path(db_path)
+        if not p.exists():
+            return {
+                'tool': 'sqlite_analyzer',
+                'db_path': db_path,
+                'status': 'error',
+                'error': 'Database file not found',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        # Phase 1: Read schema
+        schema = self._read_schema(db_path)
+        if not schema:
+            return {
+                'tool': 'sqlite_analyzer',
+                'db_path': db_path,
+                'db_name': p.name,
+                'status': 'not_sqlite',
+                'error': 'No tables found — may not be a valid SQLite database',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        # Phase 2: Classify schema
+        classification = self._classify_schema(schema)
+
+        # Phase 3: Extract timeline events
+        events = self._extract_events(db_path, schema, classification)
+
+        # Phase 4: Extract IOCs
+        iocs = self._extract_iocs(db_path, schema, classification)
+
+        # Phase 5: Flag unknown schemas for optional LLM analysis
+        unknown_tables = classification.get("generic_tables", [])
+        unknown_flag = None
+        if unknown_tables:
+            unknown_summary = "\n".join(
+                f"{t}: {', '.join(schema.get(t, []))}"
+                for t in unknown_tables
+            )
+            unknown_flag = {
+                "status": "unknown_schema",
+                "db": db_path,
+                "table_count": len(unknown_tables),
+                "schema_summary": unknown_summary[:2000],
+                "prompt": (
+                    "Forensic SQLite schema — identify artifact type "
+                    f"and key fields:\n{unknown_summary[:1000]}"
+                ),
+            }
+
+        total_ioc_count = sum(len(v) for v in iocs.values())
+
+        return {
+            'tool': 'sqlite_analyzer',
+            'db_path': db_path,
+            'db_name': p.name,
+            'status': 'success',
+            'table_count': len(schema),
+            'table_names': list(schema.keys()),
+            'detected_types': classification.get("detected_types", []),
+            'table_classifications': classification.get("table_classifications", {}),
+            'timestamp_tables': {
+                t: cols
+                for t, cols in classification.get("timestamp_columns", {}).items()
+                if cols
+            },
+            'event_count': len(events),
+            'events': events[:500],
+            'ioc_count': total_ioc_count,
+            'iocs': {k: v[:100] for k, v in iocs.items()},
+            'unknown_schema': unknown_flag,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+
+# ---------------------------------------------------------------------------
 # EMAIL_Specialist  (PST/OST via readpst, mbox via Python, .eml parsing)
 # ---------------------------------------------------------------------------
 
@@ -4025,28 +5802,145 @@ class EMAIL_Specialist:
         except Exception as e:
             return {"stdout": "", "stderr": str(e), "returncode": -1}
 
-    def analyze_pst(self, pst_path: str) -> Dict[str, Any]:
-        """Convert PST/OST to mbox using readpst and summarise folder structure."""
-        with tempfile.TemporaryDirectory() as tmp:
-            r = self._run(["readpst", "-o", tmp, "-S", pst_path], timeout=180)
-            folders: List[str] = []
-            msg_count = 0
-            if r["returncode"] == 0:
-                for root, dirs, files in os.walk(tmp):
-                    rel = os.path.relpath(root, tmp)
-                    if rel != ".":
-                        folders.append(rel)
-                    msg_count += len([f for f in files if f.endswith(".eml") or f.endswith(".txt")])
+    def analyze_pst(self, pst_path: str, output_dir: str = None) -> Dict[str, Any]:
+        """Parse a PST file, handling sleuthkit virtual paths (E01::path) via icat extraction.
+
+        For E01 forensic images, uses ewfmount -> icat to extract the PST, then
+        parses it with readpst -M. Direct PST files are parsed immediately.
+        Returns the per-folder message list plus a rolled-up summary.
+        """
+        result = {
+            "tool": "pst_parser",
+            "pst_path": pst_path,
+            "status": "success",
+            "total_messages": 0,
+            "folders": {},
+            "timestamp": datetime.now().isoformat(),
+        }
+        actual_path = pst_path
+        extract_dir = None
+
+        if "::" in pst_path:
+            img_path, internal_path = pst_path.split("::", 1)
+            if not os.path.isfile(img_path):
+                return {
+                    "tool": "pst_parser",
+                    "pst_path": pst_path,
+                    "status": "error",
+                    "error": f"Image file not found: {img_path}",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            extract_dir = tempfile.mkdtemp(prefix="pst_icat_")
+            out_file = os.path.join(extract_dir, os.path.basename(internal_path) or "outlook.pst")
+            try:
+                # Discover partition offset via mmls
+                offset = 63  # default DOS/legacy offset
+                mmls_r = subprocess.run(["mmls", img_path], capture_output=True, text=True, timeout=30)
+                for mline in mmls_r.stdout.splitlines():
+                    parts = mline.split()
+                    if len(parts) >= 5 and parts[0].rstrip(":").isdigit():
+                        try:
+                            start = int(parts[2])
+                            if start > 0:
+                                offset = start
+                                break
+                        except ValueError:
+                            pass
+
+                # Mount E01 via ewfmount
+                ewf_raw = f"/tmp/geoff_ewf_{os.getpid()}"
+                os.makedirs(ewf_raw, exist_ok=True)
+                try:
+                    ewf_r = subprocess.run(
+                        ["ewfmount", img_path, ewf_raw],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if ewf_r.returncode != 0:
+                        raise RuntimeError(f"ewfmount failed: {ewf_r.stderr.strip()[:200]}")
+
+                    raw_dev = os.path.join(ewf_raw, "ewf1")
+                    if not os.path.exists(raw_dev):
+                        raise RuntimeError(f"ewfmount device not found: {raw_dev}")
+
+                    # Extract PST via icat (stream to file for large PSTs)
+                    with open(out_file, "wb") as fh:
+                        icat_r = subprocess.run(
+                            ["icat", "-o", str(offset), raw_dev, internal_path],
+                            stdout=fh, stderr=subprocess.PIPE, timeout=120,
+                        )
+                    if icat_r.returncode != 0:
+                        raise RuntimeError(
+                            f"icat failed: {icat_r.stderr.decode()[:200] if icat_r.stderr else 'unknown error'}"
+                        )
+                finally:
+                    shutil.rmtree(ewf_raw, ignore_errors=True)
+
+                if os.path.getsize(out_file) > 0:
+                    actual_path = out_file
+                else:
+                    raise RuntimeError("extracted PST file is empty")
+            except Exception as e:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return {
+                    "tool": "pst_parser",
+                    "pst_path": pst_path,
+                    "status": "error",
+                    "error": f"icat extraction failed: {e}",
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+        if not os.path.isfile(actual_path):
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
             return {
-                "tool": "readpst",
+                "tool": "pst_parser",
                 "pst_path": pst_path,
-                "status": "success" if r["returncode"] == 0 else "error",
-                "folder_count": len(folders),
-                "folders": folders[:50],
-                "message_count_estimate": msg_count,
-                "stderr": r["stderr"][:500] if r["returncode"] != 0 else "",
+                "status": "error",
+                "error": f"PST file not found: {actual_path}",
                 "timestamp": datetime.now().isoformat(),
             }
+
+        # Parse PST with readpst
+        readpst_dir = output_dir or tempfile.mkdtemp(prefix="geoff_pst_")
+        try:
+            r = self._run(
+                ["readpst", "-M", "-o", readpst_dir, actual_path],
+                timeout=300,
+            )
+            if r["returncode"] != 0:
+                return {
+                    "tool": "pst_parser",
+                    "pst_path": pst_path,
+                    "status": "error",
+                    "error": r["stderr"][:1000] or "readpst failed",
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+            # Walk the output tree and parse every .eml file
+            folders: Dict[str, List[Dict[str, Any]]] = {}
+            total_msgs = 0
+            for root, dirs, files in os.walk(readpst_dir):
+                rel = os.path.relpath(root, readpst_dir)
+                for fn in files:
+                    if not fn.lower().endswith('.eml'):
+                        continue
+                    eml_path = os.path.join(root, fn)
+                    parsed = self.analyze_eml(eml_path)
+                    folders.setdefault(rel, []).append(parsed)
+                    total_msgs += 1
+
+            result["folder_count"] = len(folders)
+            result["folder_names"] = sorted(folders.keys())
+            result["total_messages"] = total_msgs
+            result["folders"] = {k: v[:100] for k, v in folders.items()}
+            result["output_dir"] = readpst_dir
+        finally:
+            if output_dir is None:
+                shutil.rmtree(readpst_dir, ignore_errors=True)
+            if extract_dir:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+
+        return result
 
     def analyze_mbox(self, mbox_path: str) -> Dict[str, Any]:
         """Parse an mbox file and return header summary for each message."""
@@ -4113,6 +6007,1003 @@ class EMAIL_Specialist:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat(),
             }
+
+    def parse_dbx(self, dbx_path: str) -> Dict[str, Any]:
+        """Parse an Outlook Express DBX file using strings + header-pattern extraction.
+
+        DBX files are a binary mailbox format used by Outlook Express 4-6
+        (Windows 98 through XP). Unlike PST/OST (Outlook) or MBOX/EML (text),
+        DBX stores messages in a compound-binary format that is not directly
+        readable. This method uses `strings` to extract readable text, then
+        scans for email header patterns (From:, To:, Subject:, Date:, etc.)
+        to reconstruct individual message summaries.
+
+        Returns structured email data similar to analyze_eml format:
+          - messages: list of {from, to, subject, date, message_id, body_snippet}
+          - total_strings: raw string count extracted
+          - header_fragments: number of header-like lines found
+        """
+        try:
+            # Use strings to extract readable content from the binary DBX
+            result = subprocess.run(
+                ["strings", "-n", "4", dbx_path],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0 or not result.stdout:
+                return {
+                    "tool": "dbx_parser",
+                    "dbx_path": dbx_path,
+                    "status": "error",
+                    "error": "strings extraction failed or produced no output",
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+            raw_text = result.stdout
+            lines = raw_text.splitlines()
+
+            # Patterns for email headers (case-insensitive, common variants)
+            _from_re = re.compile(r'^(?:From|Return-Path|Sender)\s*:\s*(.+)', re.IGNORECASE)
+            _to_re = re.compile(r'^(?:To|Cc|Bcc)\s*:\s*(.+)', re.IGNORECASE)
+            _subject_re = re.compile(r'^Subject\s*:\s*(.+)', re.IGNORECASE)
+            _date_re = re.compile(r'^Date\s*:\s*(.+)', re.IGNORECASE)
+            _msgid_re = re.compile(r'^Message-ID\s*:\s*(.+)', re.IGNORECASE)
+            _boundary_re = re.compile(r'^From\s+-\s+', re.IGNORECASE)
+
+            messages: List[Dict[str, Any]] = []
+            current: Dict[str, Any] = {}
+            body_lines: List[str] = []
+            in_body = False
+            header_fragments = 0
+
+            for line in lines:
+                line_s = line.strip()
+                if not line_s:
+                    if in_body:
+                        body_lines.append("")
+                    continue
+
+                # Detect mbox-style message boundary: "From - "
+                if _boundary_re.match(line_s):
+                    if current:
+                        current["body_snippet"] = "\n".join(body_lines[:20])[:500]
+                        messages.append(current)
+                    current = {}
+                    body_lines = []
+                    in_body = False
+                    continue
+
+                # Detect email header lines
+                from_m = _from_re.match(line_s)
+                to_m = _to_re.match(line_s)
+                subj_m = _subject_re.match(line_s)
+                date_m = _date_re.match(line_s)
+                msgid_m = _msgid_re.match(line_s)
+
+                if from_m:
+                    if not current:
+                        current = {}
+                    current["from"] = from_m.group(1).strip()
+                    header_fragments += 1
+                    in_body = False
+                elif to_m:
+                    if not current:
+                        current = {}
+                    current["to"] = to_m.group(1).strip()[:200]
+                    header_fragments += 1
+                    in_body = False
+                elif subj_m:
+                    if not current:
+                        current = {}
+                    current["subject"] = subj_m.group(1).strip()[:300]
+                    header_fragments += 1
+                    in_body = False
+                elif date_m:
+                    if not current:
+                        current = {}
+                    current["date"] = date_m.group(1).strip()[:100]
+                    header_fragments += 1
+                    in_body = False
+                elif msgid_m:
+                    if not current:
+                        current = {}
+                    current["message_id"] = msgid_m.group(1).strip()[:200]
+                    header_fragments += 1
+                    in_body = False
+                else:
+                    if current:
+                        in_body = True
+                        body_lines.append(line_s)
+
+            # Flush last message
+            if current:
+                current["body_snippet"] = "\n".join(body_lines[:20])[:500]
+                messages.append(current)
+
+            total_strings = len(lines)
+
+            return {
+                "tool": "dbx_parser",
+                "dbx_path": dbx_path,
+                "status": "success",
+                "message_count": len(messages),
+                "messages": messages[:500],
+                "total_strings": total_strings,
+                "header_fragments": header_fragments,
+                "note": "DBX binary format — parsed via strings + header-pattern extraction",
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            return {
+                "tool": "dbx_parser",
+                "dbx_path": dbx_path,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    # ------------------------------------------------------------------
+    # Phishing detection (LLM-powered with rule-based fallback)
+    # ------------------------------------------------------------------
+
+    # Heuristic patterns for rule-based fallback when LLM is unreachable
+    _PHISHING_HEURISTICS = [
+        (re.compile(
+            r'(?i)\b(?:urgent|immediate action required|suspended|'
+            r'click here now|act now|limited time|verify your account)\b'),
+         'urgency/pressure language'),
+        (re.compile(
+            r'(?i)\b(?:password|credential|login|sign.?in|'
+            r'update your.*(?:password|account|billing))\b'),
+         'credential harvesting language'),
+        (re.compile(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'),
+         'IP-literal URL'),
+        (re.compile(r'(?i)\.(?:exe|js|vbs|docm|xlsm|scr|bat|ps1|hta|iso|img)\b'),
+         'risky attachment extension'),
+        (re.compile(
+            r'(?i)\b(?:bit\.ly|tinyurl|ow\.ly|is\.gd|buff\.ly|'
+            r'goo\.gl|short\.link|cutt\.ly|rebrand\.ly)\b'),
+         'URL shortener link'),
+        (re.compile(
+            r'(?i)\b(?:won|winner|prize|lottery|inheritance|'
+            r'million|claim.*prize|you have been selected)\b'),
+         'prize/advance-fee scam language'),
+        (re.compile(
+            r'(?i)\b(?:paypal|apple|microsoft|google|amazon|netflix|bank)\b.*'
+            r'\b(?:verify|confirm|update|unlock|reactivate)\b|'
+            r'\b(?:verify|confirm|update|unlock|reactivate)\b.*'
+            r'\b(?:paypal|apple|microsoft|google|amazon|netflix|bank|account)\b'),
+         'brand-impersonation + action combo'),
+    ]
+
+    _SUSPICIOUS_TLDS = {'.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.pw', '.cc', '.ws',
+                        '.club', '.work', '.date', '.bid', '.win', '.loan', '.men', '.stream'}
+
+    def detect_phishing(self, email_dir: str, chat_dir: str = None, chat_files: List[str] = None) -> Dict[str, Any]:
+        """LLM-powered phishing analysis of extracted .eml files and chat databases.
+
+        Walks *email_dir* for all .eml files, extracts key fields, sends a
+        structured prompt to the Manager LLM, and falls back to rule-based
+        heuristics when the LLM is unreachable.
+
+        Also scans for SMS/iMessage/WhatsApp/Telegram chat databases in
+        *chat_dir* (defaults to *email_dir*) or explicit *chat_files*.
+
+        Returns a finding-worthy dict with type='phishing' and
+        mitre_techniques=['T1566'].
+        """
+        import email as email_lib
+        from email import policy
+
+        # Collect all .eml files
+        eml_files: List[str] = []
+        email_dir_path = Path(email_dir)
+        if email_dir_path.is_dir():
+            for root, _dirs, files in os.walk(email_dir_path):
+                for fn in files:
+                    fpath = os.path.join(root, fn)
+                    if fn.lower().endswith('.eml'):
+                        eml_files.append(fpath)
+                    elif '.' not in fn and os.path.getsize(fpath) > 100:
+                        # readpst often outputs files without extensions (1, 2, 3...)
+                        # Check if it looks like an email by scanning first 200 bytes
+                        try:
+                            with open(fpath, 'rb') as _fh:
+                                hdr = _fh.read(200).decode('utf-8', errors='replace')
+                            if 'from:' in hdr.lower() and 'subject:' in hdr.lower():
+                                eml_files.append(fpath)
+                        except (IOError, OSError):
+                            pass
+
+        if not eml_files:
+            return {
+                'tool': 'phishing_detector',
+                'email_dir': email_dir,
+                'status': 'success',
+                'emails_scanned': 0,
+                'phishing_found': 0,
+                'findings': [],
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        all_findings: List[Dict[str, Any]] = []
+        emails_scanned = 0
+        phishing_count = 0
+
+        for eml_path in eml_files[:500]:  # safety cap
+            try:
+                with open(eml_path, 'rb') as fh:
+                    msg = email_lib.message_from_binary_file(fh, policy=policy.default)
+
+                # Extract body text (prefer plain, fall back to HTML snippet)
+                body_text = ''
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        ct = part.get_content_type()
+                        if ct == 'text/plain':
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                try:
+                                    body_text = payload.decode('utf-8', errors='replace')
+                                except Exception:
+                                    body_text = str(payload)[:2000]
+                                break
+                    if not body_text:
+                        for part in msg.walk():
+                            if part.get_content_type() == 'text/html':
+                                payload = part.get_payload(decode=True)
+                                if payload:
+                                    try:
+                                        # Strip HTML tags for a rough text version
+                                        html = payload.decode('utf-8', errors='replace')
+                                        body_text = re.sub(r'<[^>]+>', ' ', html)[:2000]
+                                    except Exception:
+                                        pass
+                                    break
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        try:
+                            body_text = payload.decode('utf-8', errors='replace')
+                        except Exception:
+                            body_text = str(payload)[:2000]
+                body_text = body_text[:2000]  # cap for LLM
+
+                # Extract headers
+                headers = {}
+                for hdr in ('From', 'To', 'Reply-To', 'Return-Path', 'Subject',
+                            'Date', 'Message-ID', 'Received'):
+                    val = msg.get(hdr, '')
+                    if val:
+                        headers[hdr] = str(val)[:500]
+
+                # Extract links from body
+                link_pattern = re.compile(r'https?://[^\s<>"\')\]]+')
+                links_raw = link_pattern.findall(body_text)
+                links = list(dict.fromkeys(links_raw))[:20]  # dedupe + cap
+
+                # Extract attachment names
+                attachments: List[str] = []
+                for part in msg.walk():
+                    fn = part.get_filename()
+                    if fn:
+                        attachments.append(str(fn))
+
+                # Build email artifact dict
+                artifact = {
+                    'eml_path': eml_path,
+                    'headers': headers,
+                    'subject': headers.get('Subject', ''),
+                    'from': headers.get('From', ''),
+                    'to': headers.get('To', ''),
+                    'body_text': body_text,
+                    'links': links,
+                    'attachments': attachments,
+                }
+
+                # Run phishing analysis
+                assessment = self._analyze_single_email(artifact)
+                emails_scanned += 1
+
+                if assessment['is_phishing']:
+                    phishing_count += 1
+                    all_findings.append({
+                        'type': 'phishing',
+                        'eml_path': eml_path,
+                        'subject': artifact['subject'],
+                        'from': artifact['from'],
+                        'is_phishing': True,
+                        'confidence': assessment['confidence'],
+                        'indicators': assessment['indicators'],
+                        'explanation': assessment['explanation'],
+                        'llm_used': assessment.get('llm_used', False),
+                        'mitre_techniques': ['T1566'],
+                    })
+            except Exception:
+                continue  # skip malformed emails silently
+
+        # Also scan for SMS/IM phishing in chat databases (WhatsApp, Telegram, iMessage, etc.)
+        scan_chat_dir = chat_dir or email_dir
+        sms_result = self.detect_sms_phishing(chat_dir=scan_chat_dir, chat_files=chat_files)
+        if sms_result.get('status') == 'success':
+            sms_findings = sms_result.get('findings', [])
+            all_findings.extend(sms_findings)
+            phishing_count += sms_result.get('phishing_found', 0)
+
+        return {
+            'tool': 'phishing_detector',
+            'email_dir': email_dir,
+            'status': 'success',
+            'emails_scanned': emails_scanned,
+            'phishing_found': phishing_count,
+            'sms_databases_scanned': sms_result.get('databases_scanned', 0),
+            'sms_messages_scanned': sms_result.get('messages_scanned', 0),
+            'findings': all_findings,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def _analyze_single_email(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze a single email artifact for phishing indicators.
+
+        Tries LLM first; falls back to heuristics on any failure.
+        Returns {is_phishing, confidence, indicators, explanation, llm_used}.
+        """
+        # Try LLM path
+        try:
+            result = self._llm_phishing_check(artifact)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+
+        # Fallback: heuristic analysis
+        return self._heuristic_phishing_check(artifact)
+
+    def _llm_phishing_check(self, artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Send phishing-analysis prompt to Manager LLM.
+
+        Returns parsed dict on success, None if the LLM is unreachable
+        or returns unparseable output.
+        """
+        # Late import to avoid circular dependency at module level
+        try:
+            from geoff_self_heal import _call_manager_llm
+        except ImportError:
+            return None
+
+        prompt = self._build_phishing_prompt(artifact)
+        raw = _call_manager_llm(prompt, timeout=180)
+        if not raw:
+            return None
+
+        # Parse JSON from LLM response
+        try:
+            # Strip markdown fences if present
+            clean = raw.strip()
+            if clean.startswith('```'):
+                clean = re.sub(r'^```(?:json)?\s*', '', clean)
+                clean = re.sub(r'\s*```$', '', clean)
+            parsed = json.loads(clean)
+            return {
+                'is_phishing': bool(parsed.get('is_phishing', False)),
+                'confidence': min(max(int(parsed.get('confidence', 0)), 0), 100),
+                'indicators': parsed.get('indicators', []),
+                'explanation': str(parsed.get('explanation', 'No explanation provided')),
+                'llm_used': True,
+            }
+        except (json.JSONDecodeError, ValueError, KeyError):
+            return None
+
+    def _build_phishing_prompt(self, artifact: Dict[str, Any]) -> str:
+        """Build a structured phishing-analysis prompt for the LLM."""
+        body = artifact.get('body_text', '')
+        links = artifact.get('links', [])
+        attachments = artifact.get('attachments', [])
+
+        return f"""Analyze this email for phishing indicators. Return ONLY valid JSON (no markdown fences).
+
+EMAIL ARTIFACT:
+  From:        {artifact.get('from', '')}
+  To:          {artifact.get('to', '')}
+  Subject:     {artifact.get('subject', '')}
+  Body (first 2000 chars):
+{body}
+
+  Links extracted: {', '.join(links) if links else 'none'}
+  Attachments: {', '.join(attachments) if attachments else 'none'}
+
+Analyze for:
+1. Sender spoofing (display name != envelope address, lookalike domains, free-mail impersonating corporate)
+2. Language patterns (urgency, threats, prize claims, password-reset pressure)
+3. Link risk (IP-literal URLs, URL shorteners, mismatched TLDs, homoglyphs)
+4. Attachment risk (executables, macro-enabled Office, password-protected archives)
+5. Header anomalies (Reply-To diverges from From, missing DKIM/SPF markers)
+
+Return JSON:
+{{
+  "is_phishing": true|false,
+  "confidence": 0-100,
+  "indicators": ["specific finding 1", ...],
+  "explanation": "2-3 sentence forensic summary"
+}}"""
+
+    def _heuristic_phishing_check(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        """Rule-based phishing detection fallback.
+
+        Flags emails matching >3 heuristic indicators.
+        """
+        hits: List[str] = []
+        text = f"{artifact.get('subject', '')} {artifact.get('body_text', '')}"
+
+        # Check heuristic patterns
+        for pattern, label in self._PHISHING_HEURISTICS:
+            if pattern.search(text):
+                hits.append(label)
+
+        # Check links for suspicious patterns
+        for link in artifact.get('links', []):
+            # IP-literal URL
+            if re.search(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', link):
+                if 'IP-literal URL' not in hits:
+                    hits.append('IP-literal URL')
+            # Suspicious TLD
+            for tld in self._SUSPICIOUS_TLDS:
+                if tld in link.lower():
+                    if 'suspicious TLD in link' not in hits:
+                        hits.append('suspicious TLD in link')
+                    break
+
+        # Check From vs Return-Path mismatch
+        from_addr = artifact.get('from', '')
+        headers = artifact.get('headers', {})
+        return_path = headers.get('Return-Path', '')
+        if from_addr and return_path:
+            # Extract email addresses for comparison
+            from_email = re.findall(r'<([^>]+@[^>]+)>', from_addr) or [from_addr]
+            rp_email = re.findall(r'<([^>]+@[^>]+)>', return_path) or [return_path]
+            if from_email and rp_email and from_email[0].lower() != rp_email[0].lower():
+                hits.append('From/Return-Path mismatch')
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_hits = []
+        for h in hits:
+            if h not in seen:
+                seen.add(h)
+                unique_hits.append(h)
+
+        # Determine result: flag when >3 indicators found
+        is_phishing = len(unique_hits) >= 3
+        if unique_hits:
+            confidence = min(30 + len(unique_hits) * 15, 75)  # cap at 75 for heuristic
+        else:
+            confidence = 5
+
+        return {
+            'is_phishing': is_phishing,
+            'confidence': confidence,
+            'indicators': unique_hits,
+            'explanation': (
+                f"Rule-based heuristic analysis detected {len(unique_hits)} indicator(s). "
+                "LLM was unreachable; manual review recommended."
+            ) if unique_hits else (
+                "No heuristic indicators found. LLM was unreachable; manual review recommended."
+            ),
+            'llm_used': False,
+        }
+
+    def _sms_heuristic_phishing_check(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        """SMS/IM-adapted heuristic phishing check.
+
+        Combines the email heuristics (_PHISHING_HEURISTICS) with SMS-specific
+        patterns (_SMS_PHISHING_EXTRA).  Also checks for sender-name spoofing
+        (e.g. display names that look like a bank/company but have unknown
+        numbers) and SMS-specific URL risks.
+        """
+        hits: List[str] = []
+        text = f"{artifact.get('subject', '')} {artifact.get('body_text', '')}"
+        sender = str(artifact.get('from', ''))
+
+        # Check email-based heuristic patterns
+        for pattern, label in self._PHISHING_HEURISTICS:
+            if pattern.search(text):
+                hits.append(label)
+
+        # Check SMS-specific patterns
+        for pattern, label in self._SMS_PHISHING_EXTRA:
+            if pattern.search(text):
+                hits.append(label)
+
+        # Check links for suspicious patterns (same as email logic)
+        for link in artifact.get('links', []):
+            # IP-literal URL
+            if re.search(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', link):
+                if 'IP-literal URL' not in hits:
+                    hits.append('IP-literal URL')
+            # Suspicious TLD
+            for tld in self._SUSPICIOUS_TLDS:
+                if tld in link.lower():
+                    if 'suspicious TLD in link' not in hits:
+                        hits.append('suspicious TLD in link')
+                    break
+
+        # SMS-specific: spoofed sender check (display name looks like a brand
+        # but the number is unknown/untrusted)
+        known_spoofed_brands = [
+            'Apple', 'PayPal', 'Netflix', 'Amazon', 'Microsoft', 'Google',
+            'Bank', 'Wells Fargo', 'Chase', 'Citi', 'IRS', 'FedEx', 'UPS',
+            'USPS', 'DHL', 'Canada Post', 'Royal Mail', 'Apple ID',
+            'ApplePay', 'Facebook', 'Instagram', 'WhatsApp', 'Telegram',
+            'Coinbase', 'Binance', 'Kraken',
+        ]
+        if sender:
+            sender_lower = sender.lower()
+            # Check if sender name contains a spoofed brand but the sender
+            # looks like a phone number or short code
+            for brand in known_spoofed_brands:
+                if brand.lower() in sender_lower:
+                    # If sender is a phone number (starts with + or digits)
+                    digits_only = re.sub(r'[^0-9]', '', sender)
+                    if len(digits_only) >= 10:
+                        if 'spoofed sender name' not in hits:
+                            hits.append('spoofed sender name')
+                        break
+            # Check for short-code sender with brand name
+            for brand in known_spoofed_brands:
+                if brand.lower() in sender_lower:
+                    # Short code: 5-6 digit number used as SMS sender
+                    if re.match(r'^\d{5,6}$', sender.strip()):
+                        if 'spoofed sender name' not in hits:
+                            hits.append('spoofed sender name')
+                        break
+
+        # SMS-specific: unusual file-share or attachment links
+        file_share_domains = [
+            'dropbox.com/s/', 'drive.google.com/file', '1drv.ms',
+            'sharepoint.com', 'box.com/s/', 'mega.nz', 'gofile.io',
+            'anonfiles.com', 'mediafire.com', 'sendspace.com',
+        ]
+        for link in artifact.get('links', []):
+            link_lower = link.lower()
+            for fsd in file_share_domains:
+                if fsd in link_lower:
+                    if 'unusual file-share link' not in hits:
+                        hits.append('unusual file-share link')
+                    break
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_hits = []
+        for h in hits:
+            if h not in seen:
+                seen.add(h)
+                unique_hits.append(h)
+
+        # SMS threshold: flag when >=3 indicators found (same as email)
+        is_phishing = len(unique_hits) >= 3
+        if unique_hits:
+            confidence = min(30 + len(unique_hits) * 15, 75)
+        else:
+            confidence = 5
+
+        return {
+            'is_phishing': is_phishing,
+            'confidence': confidence,
+            'indicators': unique_hits,
+            'explanation': (
+                f"SMS/IM heuristic analysis detected {len(unique_hits)} indicator(s). "
+                "Manual review recommended for chat-based phishing."
+            ) if unique_hits else (
+                "No heuristic indicators found in chat messages."
+            ),
+            'llm_used': False,
+        }
+
+    # ------------------------------------------------------------------
+    # SMS / IM phishing detection
+    # ------------------------------------------------------------------
+
+    # Known chat database filenames and their table + column mappings
+    _CHAT_DB_MAP = {
+        'sms.db': {
+            'table': 'message',
+            'text_col': 'text',
+            'sender_col': 'handle_id',
+            'ts_col': 'date',
+            'query': "SELECT m.ROWID, m.text, m.date, m.is_from_me, m.service, h.id AS handle FROM message m LEFT JOIN chat_handle_join chj ON m.ROWID = chj.message_id LEFT JOIN handle h ON chj.handle_id = h.ROWID ORDER BY m.date DESC LIMIT 1000",
+        },
+        'mmssms.db': {
+            'table': 'sms',
+            'text_col': 'body',
+            'sender_col': 'address',
+            'ts_col': 'date',
+            'query': "SELECT _id, body, address, date, type, read FROM sms ORDER BY date DESC LIMIT 1000",
+        },
+        'ChatStorage.sqlite': {  # WhatsApp iOS
+            'table': 'ZWAMESSAGE',
+            'text_col': 'ZTEXT',
+            'sender_col': 'ZISFROMME',
+            'ts_col': 'ZMESSAGEDATE',
+            'query': "SELECT m.Z_PK, m.ZTEXT, m.ZMESSAGEDATE, m.ZISFROMME, s.ZCONTACTJID, s.ZPARTNERNAME FROM ZWAMESSAGE m LEFT JOIN ZWACHATSESSION s ON m.ZCHATSESSION = s.Z_PK ORDER BY m.ZMESSAGEDATE DESC LIMIT 1000",
+        },
+        'msgstore.db': {  # WhatsApp Android (unencrypted)
+            'table': 'message',
+            'text_col': 'data',
+            'sender_col': 'key_from_me',
+            'ts_col': 'timestamp',
+            'query': "SELECT key_remote_jid, key_from_me, data, timestamp FROM message ORDER BY timestamp DESC LIMIT 1000",
+        },
+        'cache4.db': {  # Telegram Android
+            'table': 'messages',
+            'text_col': 'data',
+            'sender_col': 'from_id',
+            'ts_col': 'mid',
+            'query': "SELECT _id, data, from_id, mid, date FROM messages ORDER BY mid DESC LIMIT 1000",
+        },
+        'tgnet.db': {  # Telegram network messages
+            'table': 'messages',
+            'text_col': 'data',
+            'sender_col': 'uid',
+            'ts_col': 'date',
+            'query': "SELECT _id, data, uid, date FROM messages ORDER BY date DESC LIMIT 1000",
+        },
+        'postbox.sqlite': {  # Telegram iOS
+            'table': 'messages',
+            'text_col': 'data',
+            'sender_col': 'from_id',
+            'ts_col': 'date',
+            'query': "SELECT _id, data, from_id, date FROM messages ORDER BY date DESC LIMIT 1000",
+        },
+    }
+
+    # SMS-specific heuristic patterns (adapted from email patterns)
+    _SMS_PHISHING_EXTRA = [
+        (re.compile(
+            r'(?i)\b(?:click\s*(?:here|this|the)\s*link|tap\s*(?:here|this|the)\s*link|'
+            r'open\s*the\s*link|follow\s*this\s*link)\b'),
+         'SMS link-click prompt'),
+        (re.compile(
+            r'(?i)\b(?:your\s*(?:package|order|delivery|parcel|shipment)\s*(?:is|has|was)\s*'
+            r'(?:delayed|held|suspended|canceled|returned|pending)|'
+            r'USPS|UPS|FedEx|DHL|Canada\s*Post|Royal\s*Mail)\b'),
+         'package/delivery scam language'),
+        (re.compile(r'(?i)\b(?:IRS|tax\s*refund|stimulus|government\s*grant)\b'),
+         'government impersonation'),
+        (re.compile(r'(?i)\b(?:urgent|ASAP|alert|warning)\s*[!]{2,}'),
+         'urgency punctuation (!!-pattern)'),
+        (re.compile(r'(?i)\bmsg\b.*\b\d{4,6}\b.*\b(?:verify|code|confirm|pin)\b'),
+         'verification code solicitation'),
+        (re.compile(r'(?i)\b(?:shortened.me|bit\.ly|t\.co|goo\.gl|ow\.ly|'
+                    r'tinyurl|is\.gd|buff\.ly|cutt\.ly|rebrand\.ly|cl\.ly|'
+                    r'lnkd\.in)\b'),
+         'URL shortener link (SMS)'),
+    ]
+
+    def detect_sms_phishing(self, chat_dir: str = None, chat_files: List[str] = None) -> Dict[str, Any]:
+        """Scan SMS/iMessage/WhatsApp/Telegram messages for phishing patterns.
+
+        Accepts a directory to walk for known chat databases, or a list of
+        specific database file paths.  Queries each found database for message
+        text and runs the rule-based heuristic phishing checks on every message.
+
+        Returns a finding-worthy dict with type='sms_phishing',
+        mitre_techniques=['T1566', 'T1666'].
+        """
+        db_files: List[str] = []
+
+        # Collect from chat_dir
+        if chat_dir:
+            chat_path = Path(chat_dir)
+            if chat_path.is_dir():
+                for root, _dirs, files in os.walk(chat_path):
+                    for fn in files:
+                        fname_lower = fn.lower()
+                        if fname_lower in self._CHAT_DB_MAP:
+                            db_files.append(os.path.join(root, fn))
+                        elif fname_lower.endswith('.db') or fname_lower.endswith('.sqlite'):
+                            # Sniff SQLite header before walking deep
+                            fpath = os.path.join(root, fn)
+                            try:
+                                with open(fpath, 'rb') as _fh:
+                                    hdr = _fh.read(16)
+                                if hdr == b'SQLite format 3\x00':
+                                    # Only include if filename hints at chat/IM
+                                    chat_indicators = [
+                                        'sms', 'mms', 'message', 'chat', 'whatsapp',
+                                        'telegram', 'signal', 'viber', 'wechat',
+                                        'imessage', 'msg', 'thread', 'conversation',
+                                    ]
+                                    if any(ind in fname_lower for ind in chat_indicators):
+                                        db_files.append(fpath)
+                            except (IOError, OSError):
+                                pass
+
+        # Collect from explicit chat_files list
+        if chat_files:
+            for cf in chat_files:
+                if os.path.isfile(cf) and cf not in db_files:
+                    db_files.append(cf)
+
+        if not db_files:
+            return {
+                'tool': 'sms_phishing_detector',
+                'status': 'success',
+                'databases_scanned': 0,
+                'messages_scanned': 0,
+                'phishing_found': 0,
+                'findings': [],
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        all_findings: List[Dict[str, Any]] = []
+        databases_scanned = 0
+        total_messages = 0
+        phishing_count = 0
+
+        for db_path in db_files[:50]:  # safety cap
+            db_name = os.path.basename(db_path).lower()
+            db_config = self._CHAT_DB_MAP.get(db_name)
+
+            # For unknown-but-viable databases, try auto-detection
+            if db_config is None:
+                db_config = self._auto_detect_chat_schema(db_path)
+            if db_config is None:
+                continue
+
+            messages = self._extract_chat_messages(db_path, db_config)
+            if not messages:
+                continue
+
+            databases_scanned += 1
+            for msg in messages:
+                text = msg.get('text') or msg.get('body', '')
+                if not text or len(text) < 10:
+                    continue
+
+                sender = msg.get('sender') or msg.get('handle', '') or msg.get('address', '')
+                from_me = msg.get('from_me') or msg.get('is_from_me', False)
+
+                # Build SMS artifact dict (reuse email heuristic)
+                artifact = {
+                    'subject': f"SMS/IM from {sender}",
+                    'from': str(sender),
+                    'body_text': text[:2000],
+                    'links': re.findall(r'https?://[^\s<>"\')\]\]]+', text),
+                    'attachments': [],
+                    'headers': {},
+                    'eml_path': db_path,
+                }
+
+                total_messages += 1
+                # Apply both email and SMS-specific heuristic patterns
+                assessment = self._sms_heuristic_phishing_check(artifact)
+
+                if assessment['is_phishing']:
+                    phishing_count += 1
+                    all_findings.append({
+                        'type': 'sms_phishing',
+                        'db_path': db_path,
+                        'db_name': db_name,
+                        'message_text': text[:300],
+                        'sender': str(sender),
+                        'from_me': bool(from_me),
+                        'timestamp': msg.get('timestamp', ''),
+                        'is_phishing': True,
+                        'confidence': assessment['confidence'],
+                        'indicators': assessment['indicators'],
+                        'explanation': f"SMS/IM heuristic phishing detection: {assessment['explanation']}",
+                        'mitre_techniques': ['T1566', 'T1666'],
+                    })
+
+                    if phishing_count >= 200:  # cap findings
+                        break
+
+            if phishing_count >= 200:
+                break
+
+        return {
+            'tool': 'sms_phishing_detector',
+            'chat_dir': chat_dir,
+            'status': 'success',
+            'databases_scanned': databases_scanned,
+            'messages_scanned': total_messages,
+            'phishing_found': phishing_count,
+            'findings': all_findings,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def _extract_chat_messages(self, db_path: str, db_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Query a chat database for messages using the configured schema."""
+        messages: List[Dict[str, Any]] = []
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(db_config['query']).fetchall()
+                col_names = [d[0] for d in conn.execute(
+                    f"SELECT * FROM ({db_config['query']}) LIMIT 0"
+                ).description] if hasattr(conn.execute(
+                    f"SELECT * FROM ({db_config['query']}) LIMIT 0"
+                ), 'description') else []
+
+                # Determine column indices from the actual query result
+                # Fallback: use Row-based access
+                for r in rows:
+                    msg_entry: Dict[str, Any] = {}
+                    # Pull known-named columns if they exist
+                    rkeys = r.keys()
+                    text_col = db_config.get('text_col', 'text')
+                    sender_col = db_config.get('sender_col', 'sender')
+                    ts_col = db_config.get('ts_col', 'date')
+
+                    if text_col in rkeys:
+                        msg_entry['text'] = r[text_col] or ''
+                    elif 'ZTEXT' in rkeys:
+                        msg_entry['text'] = r['ZTEXT'] or ''
+                    elif 'body' in rkeys:
+                        msg_entry['text'] = r['body'] or ''
+                    elif 'data' in rkeys:
+                        msg_entry['text'] = r['data'] or ''
+
+                    if sender_col in rkeys:
+                        msg_entry['sender'] = r[sender_col] or ''
+                    elif 'ZCONTACTJID' in rkeys:
+                        msg_entry['sender'] = r['ZCONTACTJID'] or ''
+                    elif 'address' in rkeys:
+                        msg_entry['sender'] = r['address'] or ''
+                    elif 'from_id' in rkeys:
+                        msg_entry['sender'] = r['from_id'] or ''
+                    elif 'key_remote_jid' in rkeys:
+                        msg_entry['sender'] = r['key_remote_jid'] or ''
+
+                    # from_me flag
+                    if 'is_from_me' in rkeys:
+                        msg_entry['from_me'] = bool(r['is_from_me'])
+                    elif 'ZISFROMME' in rkeys:
+                        msg_entry['from_me'] = bool(r['ZISFROMME'])
+                    elif 'key_from_me' in rkeys:
+                        msg_entry['from_me'] = bool(r['key_from_me'])
+
+                    # Timestamp
+                    ts_val = None
+                    if ts_col in rkeys:
+                        ts_val = r[ts_col]
+                    elif 'ZMESSAGEDATE' in rkeys:
+                        ts_val = r['ZMESSAGEDATE']
+                    elif 'date' in rkeys:
+                        ts_val = r['date']
+                    elif 'timestamp' in rkeys:
+                        ts_val = r['timestamp']
+                    if ts_val is not None:
+                        try:
+                            ts_f = float(ts_val)
+                            if ts_f > 1e12:  # millisecond epoch (iOS/WhatsApp/Telegram)
+                                ts_f = ts_f / 1000.0
+                            if ts_f > 100000000:  # looks like an epoch
+                                msg_entry['timestamp'] = datetime.utcfromtimestamp(ts_f).isoformat()
+                            else:
+                                msg_entry['timestamp'] = str(ts_val)
+                        except (ValueError, OSError, OverflowError):
+                            msg_entry['timestamp'] = str(ts_val)
+
+                    # Skip empty messages
+                    if not msg_entry.get('text'):
+                        continue
+
+                    messages.append(msg_entry)
+                    if len(messages) >= 500:  # per-DB cap
+                        break
+
+            except Exception:
+                pass
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
+        return messages
+
+    def _auto_detect_chat_schema(self, db_path: str) -> Optional[Dict[str, Any]]:
+        """Auto-detect a chat-message schema from an unknown SQLite database.
+
+        Inspects table names and columns to find a likely chat/message table
+        with a text body column, then returns a config dict in the same format
+        as _CHAT_DB_MAP entries.  Returns None if no chat-like schema is found.
+        """
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [r[0] for r in cursor.fetchall()]
+            except Exception:
+                conn.close()
+                return None
+
+            # Chat table name hints
+            chat_table_hints = ['message', 'messages', 'chat', 'sms', 'mms', 'im', 'conversation', 'thread']
+            candidate_table = None
+            for t in tables:
+                t_lower = t.lower()
+                if any(h in t_lower for h in chat_table_hints):
+                    candidate_table = t
+                    break
+            if candidate_table is None and tables:
+                # Fallback: pick the first table with > 10 columns (chat DBs tend to be wide)
+                for t in tables:
+                    try:
+                        cursor.execute(f"PRAGMA table_info({t})")
+                        cols = [r['name'] for r in cursor.fetchall()]
+                        if len(cols) >= 5:
+                            candidate_table = t
+                            break
+                    except Exception:
+                        pass
+
+            if candidate_table is None:
+                conn.close()
+                return None
+
+            # Find text column
+            cursor.execute(f"PRAGMA table_info({candidate_table})")
+            col_info = cursor.fetchall()
+            col_names = [r['name'] for r in col_info]
+
+            text_candidates = ['text', 'body', 'data', 'message', 'content', 'ZTEXT', 'body_text', 'msg']
+            text_col = None
+            for tc in text_candidates:
+                if tc in col_names:
+                    text_col = tc
+                    break
+            if text_col is None:
+                # Fallback: any column with 'text' in name
+                for cn in col_names:
+                    if 'text' in cn.lower() or 'body' in cn.lower() or 'msg' in cn.lower():
+                        text_col = cn
+                        break
+            if text_col is None:
+                conn.close()
+                return None
+
+            # Find sender column
+            sender_candidates = ['sender', 'from', 'address', 'handle', 'from_id', 'uid', 'ZCONTACTJID',
+                                  'key_remote_jid', 'user_id', 'peer_id', 'contact', 'phone_number']
+            sender_col = None
+            for sc in sender_candidates:
+                if sc in col_names:
+                    sender_col = sc
+                    break
+            if sender_col is None:
+                sender_col = col_names[0]  # fallback to first column
+
+            # Find timestamp column
+            ts_candidates = ['date', 'timestamp', 'time', 'created', 'ts', 'received', 'sent',
+                              'ZMESSAGEDATE', 'mid', 'msg_id']
+            ts_col = None
+            for tc in ts_candidates:
+                if tc in col_names:
+                    ts_col = tc
+                    break
+            if ts_col is None:
+                ts_col = col_names[0]
+
+            # Build query
+            query = f"SELECT * FROM {candidate_table}"
+            if ts_col and ts_col != col_names[0]:
+                query += f" ORDER BY {ts_col} DESC"
+            query += " LIMIT 1000"
+
+            conn.close()
+
+            return {
+                'table': candidate_table,
+                'text_col': text_col,
+                'sender_col': sender_col,
+                'ts_col': ts_col,
+                'query': query,
+            }
+        except Exception:
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -6330,6 +9221,1210 @@ class DATA_STAGING_Specialist:
 
 
 # ---------------------------------------------------------------------------
+# SCHEDULED_TASK_Specialist — Windows task parsing, Linux crontab, backdoor detection
+# ---------------------------------------------------------------------------
+
+class SCHEDULED_TASK_Specialist:
+    """Specialist for scheduled task analysis and backdoor/hidden-persistence detection.
+
+    Three core capabilities:
+      1. parse_windows_scheduled_tasks  – XML (Vista+) and legacy .job files
+      2. parse_linux_crontabs           – /etc/crontab, cron.d, spool/cron, cron.hourly etc.
+      3. detect_backdoors               – cross-platform backdoor survey
+    """
+
+    # ------------------------------------------------------------------
+    # Common webshell filenames (case-insensitive match)
+    # ------------------------------------------------------------------
+    _WEBSHELL_PATTERNS = [
+        re.compile(r'.*cmd\.asp[x]?$', re.IGNORECASE),
+        re.compile(r'.*shell\.(?:asp[x]?|php[34578]?|jsp|cfm|aspx|py|cgi|pl)$', re.IGNORECASE),
+        re.compile(r'.*c99\.php$', re.IGNORECASE),
+        re.compile(r'.*r57\.php$', re.IGNORECASE),
+        re.compile(r'.*b374k\.php$', re.IGNORECASE),
+        re.compile(r'.*weevely\.php$', re.IGNORECASE),
+        re.compile(r'.*p0wny.*\.php$', re.IGNORECASE),
+        re.compile(r'.*(?:webshell|backdoor|phpinfo|pwd|exec|passthru|system)\.php$', re.IGNORECASE),
+        re.compile(r'.*upload(?:er)?\.(?:asp[x]?|php[34578]?|jsp|cfm)$', re.IGNORECASE),
+        re.compile(r'.*china.*(?:shell|chopper).*\.(?:asp[x]?|php[34578]?|jsp)$', re.IGNORECASE),
+        re.compile(r'.*\.(?:asp[x]?|php[34578]?|jsp|war|cfm)$', re.IGNORECASE),
+    ]
+
+    # Suspicious service name patterns
+    _SUSPICIOUS_SERVICE_PATTERNS = [
+        re.compile(r'^[a-z]{3,8}\d{2,6}$', re.IGNORECASE),
+        re.compile(r'^[a-z0-9]{8,32}$', re.IGNORECASE),
+        re.compile(r'.*(?:update|svc|helper|service|daemon|agent|guard|monitor)\d{2,}$', re.IGNORECASE),
+        re.compile(r'.*(?:backdoor|trojan|rat|keylog|steal|inject|payload).*', re.IGNORECASE),
+    ]
+
+    # Suspicious execution paths
+    _SUSPICIOUS_PATHS = [
+        '/tmp/', '/var/tmp/', '/dev/shm/', '/run/shm/',
+        '\\Temp\\', '\\AppData\\Local\\Temp\\', '\\Users\\Public\\',
+        'C:\\PerfLogs\\', 'C:\\ProgramData\\',
+    ]
+
+    # ------------------------------------------------------------------
+    # Task 1: Windows Scheduled Task Parser
+    # ------------------------------------------------------------------
+
+    def parse_windows_scheduled_tasks(self, evidence_dir: str) -> Dict[str, Any]:
+        """Parse Windows Scheduled Tasks from an evidence directory.
+
+        Walks the evidence tree for:
+          - XML tasks in Windows/System32/Tasks/ and Windows/Tasks/ (Vista+)
+          - Legacy .job files in Windows/Tasks/ (pre-Vista)
+
+        For XML tasks, extracts: task name, triggers, actions (program/script),
+        user context, enabled/disabled state.
+
+        For .job files, uses strings extraction with heuristic parsing.
+        """
+        evidence_path = Path(evidence_dir)
+        tasks: List[Dict[str, Any]] = []
+
+        # XML tasks (Vista+) — look in Windows/System32/Tasks/ and Windows/Tasks/
+        xml_task_dirs = list(evidence_path.rglob('Windows/System32/Tasks'))
+        xml_task_dirs += list(evidence_path.rglob('Windows/Tasks'))
+        seen_dirs = set()
+        unique_dirs: List[Path] = []
+        for d in xml_task_dirs:
+            rd = d.resolve()
+            if rd not in seen_dirs:
+                seen_dirs.add(rd)
+                unique_dirs.append(d)
+
+        for task_dir in unique_dirs:
+            for xml_file in task_dir.rglob('*'):
+                if not xml_file.is_file():
+                    continue
+                if xml_file.suffix.lower() == '.job':
+                    continue  # handled by legacy parser
+                if xml_file.name.startswith('.'):
+                    continue
+                parsed = self._parse_task_xml(str(xml_file))
+                if parsed:
+                    tasks.append(parsed)
+                if len(tasks) >= 1000:
+                    break
+            if len(tasks) >= 1000:
+                break
+
+        # Legacy .job files
+        job_files: List[Path] = []
+        for task_dir in unique_dirs:
+            for job in task_dir.rglob('*.job'):
+                if job.is_file():
+                    job_files.append(job)
+        # Also search for .job files broadly
+        for job in evidence_path.rglob('*.job'):
+            if job.is_file() and job not in job_files:
+                job_files.append(job)
+
+        for job_file in job_files[:500]:
+            parsed = self._parse_legacy_job(str(job_file))
+            if parsed:
+                tasks.append(parsed)
+
+        # Summary
+        xml_count = sum(1 for t in tasks if t.get('format') == 'xml')
+        job_count = sum(1 for t in tasks if t.get('format') == 'job')
+        enabled_count = sum(1 for t in tasks if t.get('enabled') is True)
+        disabled_count = sum(1 for t in tasks if t.get('enabled') is False)
+
+        # Flag suspicious tasks
+        suspicious = []
+        for t in tasks:
+            flags = []
+            action = (t.get('action', '') or '').lower()
+            for sp in self._SUSPICIOUS_PATHS:
+                if sp.lower() in action:
+                    flags.append(f'executes from suspicious path: {sp}')
+                    break
+            for pat in self._SUSPICIOUS_SERVICE_PATTERNS:
+                if pat.match(t.get('name', '')):
+                    flags.append(f'suspicious task name pattern')
+                    break
+            if t.get('hidden') or t.get('settings_hidden'):
+                flags.append('task is hidden')
+            if flags:
+                suspicious.append({**t, 'flags': flags})
+
+        return {
+            'tool': 'windows_scheduled_task_parser',
+            'evidence_dir': evidence_dir,
+            'status': 'success',
+            'total_tasks': len(tasks),
+            'xml_tasks': xml_count,
+            'legacy_job_tasks': job_count,
+            'enabled_tasks': enabled_count,
+            'disabled_tasks': disabled_count,
+            'suspicious': suspicious[:100],
+            'suspicious_count': len(suspicious),
+            'tasks': tasks[:500],
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def _parse_task_xml(self, xml_path: str) -> Optional[Dict[str, Any]]:
+        """Parse a single Windows Task XML file into structured data."""
+        try:
+            with open(xml_path, 'rb') as f:
+                raw = f.read()
+
+            # Try multiple encoding strategies: check BOM first, then try codecs
+            root = None
+            # UTF-16 LE BOM: 0xFF 0xFE
+            if raw[:2] == b'\xff\xfe':
+                text = raw.decode('utf-16-le')
+            # UTF-16 BE BOM: 0xFE 0xFF
+            elif raw[:2] == b'\xfe\xff':
+                text = raw.decode('utf-16-be')
+            else:
+                # Try UTF-8 first (most flexible), then UTF-16, then latin-1
+                for codec in ['utf-8', 'utf-16-le', 'latin-1']:
+                    try:
+                        text = raw.decode(codec, errors='replace')
+                        root = ET.fromstring(text)
+                        break
+                    except (UnicodeDecodeError, ET.ParseError):
+                        continue
+            if root is None:
+                text = raw.decode('utf-8', errors='replace')
+                root = ET.fromstring(text)
+        except Exception:
+            return None
+
+        # Namespace handling
+        ns = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+        find = lambda el, tag: el.find(f'{{{ns}}}{tag}')  # noqa: E731
+        findall = lambda el, tag: el.findall(f'{{{ns}}}{tag}')  # noqa: E731
+
+        # Registration info
+        reg_info = find(root, 'RegistrationInfo')
+        task_name = Path(xml_path).stem
+        task_uri = ''
+        task_author = ''
+        task_date = ''
+        if reg_info is not None:
+            uri_el = find(reg_info, 'URI')
+            if uri_el is not None and uri_el.text:
+                task_uri = uri_el.text.strip('\\')
+                task_name = task_uri if task_uri else task_name
+            author_el = find(reg_info, 'Author')
+            if author_el is not None and author_el.text:
+                task_author = author_el.text
+            date_el = find(reg_info, 'Date')
+            if date_el is not None and date_el.text:
+                task_date = date_el.text
+
+        # Triggers
+        triggers_el = find(root, 'Triggers')
+        triggers: List[Dict[str, str]] = []
+        if triggers_el is not None:
+            for child in triggers_el:
+                tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                trigger_info: Dict[str, str] = {'type': tag}
+                for sub in child:
+                    stag = sub.tag.split('}')[-1] if '}' in sub.tag else sub.tag
+                    if sub.text:
+                        trigger_info[stag] = sub.text
+                triggers.append(trigger_info)
+
+        # Actions
+        actions_el = find(root, 'Actions')
+        action_type = ''
+        action_command = ''
+        action_args = ''
+        action_working_dir = ''
+        if actions_el is not None:
+            for child in actions_el:
+                tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                action_type = tag
+                cmd_el = find(child, 'Command')
+                if cmd_el is not None and cmd_el.text:
+                    action_command = cmd_el.text
+                arg_el = find(child, 'Arguments')
+                if arg_el is not None and arg_el.text:
+                    action_args = arg_el.text
+                wd_el = find(child, 'WorkingDirectory')
+                if wd_el is not None and wd_el.text:
+                    action_working_dir = wd_el.text
+                break  # first action only
+
+        # Principals (user context)
+        principals_el = find(root, 'Principals')
+        user_id = ''
+        run_level = ''
+        logon_type = ''
+        if principals_el is not None:
+            principal = find(principals_el, 'Principal')
+            if principal is not None:
+                uid_el = find(principal, 'UserId')
+                if uid_el is not None and uid_el.text:
+                    user_id = uid_el.text
+                rl_el = find(principal, 'RunLevel')
+                if rl_el is not None and rl_el.text:
+                    run_level = rl_el.text
+                lt_el = find(principal, 'LogonType')
+                if lt_el is not None and lt_el.text:
+                    logon_type = lt_el.text
+
+        # Settings
+        settings_el = find(root, 'Settings')
+        enabled = True
+        hidden = False
+        allow_on_demand = False
+        if settings_el is not None:
+            en_el = find(settings_el, 'Enabled')
+            if en_el is not None and en_el.text:
+                enabled = en_el.text.lower() == 'true'
+            hid_el = find(settings_el, 'Hidden')
+            if hid_el is not None and hid_el.text:
+                hidden = hid_el.text.lower() == 'true'
+            aod_el = find(settings_el, 'AllowStartOnDemand')
+            if aod_el is not None and aod_el.text:
+                allow_on_demand = aod_el.text.lower() == 'true'
+
+        return {
+            'format': 'xml',
+            'name': task_name,
+            'uri': task_uri,
+            'author': task_author,
+            'created_date': task_date,
+            'file_path': xml_path,
+            'triggers': triggers,
+            'action_type': action_type,
+            'action': action_command,
+            'action_args': action_args,
+            'action_working_dir': action_working_dir,
+            'user_id': user_id,
+            'run_level': run_level,
+            'logon_type': logon_type,
+            'enabled': enabled,
+            'hidden': hidden,
+            'allow_on_demand': allow_on_demand,
+            'settings_hidden': hidden,
+        }
+
+    def _parse_legacy_job(self, job_path: str) -> Optional[Dict[str, Any]]:
+        """Parse a legacy Windows .job (Task Scheduler 1.0) file using strings.
+
+        .job files are binary (pre-Vista). We use `strings` to extract
+        readable content and heuristically recover task info.
+        """
+        try:
+            result = subprocess.run(
+                ['strings', '-n', '4', job_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0 or not result.stdout:
+                return None
+            text = result.stdout
+        except Exception:
+            return None
+
+        # Heuristic extraction
+        lines = text.splitlines()
+        command = ''
+        arguments = ''
+        working_dir = ''
+        triggers: List[str] = []
+
+        for line in lines:
+            ls = line.strip()
+            if not ls:
+                continue
+            # Look for executable paths
+            if re.search(r'\.(?:exe|bat|cmd|ps1|vbs|com)\b', ls, re.IGNORECASE):
+                if not command:
+                    command = ls
+                elif not arguments:
+                    arguments = ls
+            # Look for schedule/trigger info
+            for ts_pat in [
+                r'\d{1,2}:\d{2}',
+                r'(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)',
+                r'(?:Daily|Weekly|Monthly|At system start|At logon|One time)',
+            ]:
+                if re.search(ts_pat, ls, re.IGNORECASE):
+                    triggers.append(ls)
+                    break
+
+        return {
+            'format': 'job',
+            'name': Path(job_path).stem,
+            'file_path': job_path,
+            'action': command,
+            'action_args': arguments,
+            'working_dir': working_dir,
+            'triggers': [{'type': t} for t in triggers[:10]],
+            'triggers_raw': triggers[:10],
+            'enabled': True,  # legacy .job has no explicit enabled flag
+            'note': 'parsed via strings — legacy .job binary format',
+        }
+
+    # ------------------------------------------------------------------
+    # Task 2: Linux Crontab Parser
+    # ------------------------------------------------------------------
+
+    def parse_linux_crontabs(self, evidence_dir: str) -> Dict[str, Any]:
+        """Parse Linux crontabs from an evidence directory.
+
+        Walks for:
+          - /etc/crontab          (system-wide, includes user field)
+          - /etc/cron.d/*         (package-managed, includes user field)
+          - /var/spool/cron/*     (per-user crontabs, no user field)
+          - /etc/cron.hourly/*    (run-parts directories)
+          - /etc/cron.daily/*
+          - /etc/cron.weekly/*
+          - /etc/cron.monthly/*
+
+        Extracts: schedule (min/hour/day/month/weekday), command, user.
+        """
+        evidence_path = Path(evidence_dir)
+        entries: List[Dict[str, Any]] = []
+        files_parsed: List[str] = []
+
+        # Known crontab locations
+        crontab_files: List[Path] = []
+        for pattern in ['etc/crontab', 'etc/cron.d/*', 'var/spool/cron/*',
+                        'var/spool/cron/crontabs/*']:
+            for match in evidence_path.glob(pattern):
+                if match.is_file() and not match.name.startswith('.'):
+                    crontab_files.append(match)
+
+        for crontab in crontab_files[:200]:
+            try:
+                with open(crontab, 'r', errors='replace') as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            files_parsed.append(str(crontab.relative_to(evidence_path)))
+            parsed = self._parse_crontab_text(content, str(crontab))
+            entries.extend(parsed)
+
+        # Also scan cron.hourly/daily/weekly/monthly (run-parts dirs)
+        for cron_dir_pattern in ['etc/cron.hourly', 'etc/cron.daily',
+                                  'etc/cron.weekly', 'etc/cron.monthly']:
+            for cron_dir in evidence_path.glob(cron_dir_pattern):
+                if not cron_dir.is_dir():
+                    continue
+                for script in cron_dir.iterdir():
+                    if script.is_file() and not script.name.startswith('.'):
+                        entries.append({
+                            'source': str(cron_dir.relative_to(evidence_path)),
+                            'source_file': str(script.relative_to(evidence_path)),
+                            'schedule': cron_dir.name.replace('cron.', ''),
+                            'user': 'root',
+                            'command': f'{script.name} (run-parts script)',
+                            'script_path': str(script.relative_to(evidence_path)),
+                        })
+
+        # Summary stats
+        schedule_types: Dict[str, int] = {}
+        for e in entries:
+            st = e.get('schedule', 'unknown')
+            schedule_types[st] = schedule_types.get(st, 0) + 1
+
+        # Flag suspicious cron entries
+        suspicious: List[Dict[str, Any]] = []
+        for e in entries:
+            flags = []
+            cmd = (e.get('command', '') or '').lower()
+            for sp in self._SUSPICIOUS_PATHS:
+                if sp.lower() in cmd:
+                    flags.append(f'executes from suspicious path: {sp}')
+                    break
+            # Check for obfuscated commands
+            if any(x in cmd for x in ['base64', 'eval(', 'exec(', 'wget ', 'curl ', 'nc ', 'bash -i', '/dev/tcp']):
+                flags.append('potential reverse shell or download cradle')
+            # Recurring every minute
+            if e.get('minute') == '*' and e.get('hour') == '*':
+                flags.append('runs every minute — aggressive schedule')
+            if flags:
+                suspicious.append({**e, 'flags': flags})
+
+        return {
+            'tool': 'linux_crontab_parser',
+            'evidence_dir': evidence_dir,
+            'status': 'success',
+            'files_parsed': len(files_parsed),
+            'files': files_parsed[:100],
+            'total_entries': len(entries),
+            'entries': entries[:500],
+            'schedule_distribution': schedule_types,
+            'suspicious': suspicious[:100],
+            'suspicious_count': len(suspicious),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    @staticmethod
+    def _parse_crontab_text(text: str, source: str) -> List[Dict[str, Any]]:
+        """Parse crontab text content into structured entries."""
+        entries: List[Dict[str, Any]] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            # Skip environment variable assignments
+            if '=' in stripped.split()[0] if stripped.split() else False:
+                continue
+
+            parts = stripped.split(None, 5)
+            if len(parts) < 6:
+                # Could be an @reboot or similar macro
+                if stripped.startswith('@'):
+                    macro_parts = stripped.split(None, 1)
+                    if len(macro_parts) >= 2:
+                        entries.append({
+                            'source': source,
+                            'schedule': macro_parts[0],
+                            'user': 'root',
+                            'minute': '',
+                            'hour': '',
+                            'day_of_month': '',
+                            'month': '',
+                            'day_of_week': '',
+                            'command': macro_parts[1].strip(),
+                        })
+                continue
+
+            # Check if this has a user field (6-field format: min hour dom mon dow user cmd)
+            # or 5-field format (min hour dom mon dow cmd)
+            user_field = ''
+            command = ''
+
+            try:
+                # Try to detect 6-field format by checking if the 6th field
+                # looks like a username (not a path or command)
+                possible_user = parts[5]
+                if (possible_user and not possible_user.startswith('/')
+                        and not possible_user.startswith('.')
+                        and not possible_user.startswith('-')
+                        and ' ' not in possible_user
+                        and not re.search(r'[^a-zA-Z0-9_.-]', possible_user)):
+                    # 6-field format: user present
+                    user_field = possible_user
+                    command = ' '.join(parts[6:]) if len(parts) > 6 else ''
+                else:
+                    # 5-field format: no user field, rest is command
+                    command = ' '.join(parts[5:])
+            except (IndexError, ValueError):
+                command = ' '.join(parts[5:])
+
+            entries.append({
+                'source': source,
+                'minute': parts[0],
+                'hour': parts[1],
+                'day_of_month': parts[2],
+                'month': parts[3],
+                'day_of_week': parts[4],
+                'user': user_field or 'root',
+                'command': command.strip(),
+                'schedule': f'{parts[0]} {parts[1]} {parts[2]} {parts[3]} {parts[4]}',
+            })
+
+        return entries
+
+    # ------------------------------------------------------------------
+    # Task 3: Backdoor Detection Survey
+    # ------------------------------------------------------------------
+
+    def detect_backdoors(self, evidence_dir: str) -> Dict[str, Any]:
+        """Comprehensive cross-platform backdoor detection survey.
+
+        Checks performed:
+          - SSH authorized_keys (unauthorized entries)
+          - Setuid/setgid binaries (unexpected ones)
+          - New user accounts (recently created)
+          - Suspicious services (random names, running from /tmp)
+          - Hidden processes and tools
+          - NTFS Alternate Data Streams
+          - LD_PRELOAD hooks
+          - Kernel module rootkits
+          - Common webshell filenames
+
+        Returns a structured findings dict with per-category results.
+        """
+        evidence_path = Path(evidence_dir)
+        findings: Dict[str, Any] = {
+            'tool': 'backdoor_detector',
+            'evidence_dir': evidence_dir,
+            'status': 'success',
+            'categories': {},
+            'total_findings': 0,
+            'risk_level': 'low',
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        # 1. SSH authorized_keys check
+        auth_keys_result = self._check_ssh_authorized_keys(evidence_path)
+        findings['categories']['ssh_authorized_keys'] = auth_keys_result
+
+        # 2. Setuid/setgid binaries
+        setuid_result = self._check_setuid_binaries(evidence_path)
+        findings['categories']['setuid_setgid_binaries'] = setuid_result
+
+        # 3. New user accounts
+        users_result = self._check_user_accounts(evidence_path)
+        findings['categories']['user_accounts'] = users_result
+
+        # 4. Suspicious services
+        services_result = self._check_suspicious_services(evidence_path)
+        findings['categories']['suspicious_services'] = services_result
+
+        # 5. Hidden processes / tools
+        hidden_result = self._check_hidden_processes(evidence_path)
+        findings['categories']['hidden_processes'] = hidden_result
+
+        # 6. NTFS Alternate Data Streams
+        ads_result = self._check_alternate_data_streams(evidence_path)
+        findings['categories']['alternate_data_streams'] = ads_result
+
+        # 7. LD_PRELOAD hooks
+        preload_result = self._check_ld_preload(evidence_path)
+        findings['categories']['ld_preload_hooks'] = preload_result
+
+        # 8. Kernel module rootkits
+        kernel_result = self._check_kernel_modules(evidence_path)
+        findings['categories']['kernel_modules'] = kernel_result
+
+        # 9. Webshell filenames
+        webshell_result = self._check_webshells(evidence_path)
+        findings['categories']['webshell_filenames'] = webshell_result
+
+        # Aggregate: count findings and compute risk level
+        total = 0
+        high_count = 0
+        for _cat_name, cat_result in findings['categories'].items():
+            fc = cat_result.get('finding_count', 0)
+            total += fc
+            if cat_result.get('risk') == 'high':
+                high_count += 1
+
+        findings['total_findings'] = total
+        if total == 0:
+            findings['risk_level'] = 'low'
+        elif high_count >= 3 or total >= 10:
+            findings['risk_level'] = 'high'
+        elif total >= 5:
+            findings['risk_level'] = 'medium'
+        else:
+            findings['risk_level'] = 'low'
+
+        return findings
+
+    # -- Individual checks --------------------------------------------------
+
+    def _check_ssh_authorized_keys(self, evidence_path: Path) -> Dict[str, Any]:
+        """Find and check SSH authorized_keys files for suspicious entries."""
+        keys_found: List[Dict[str, Any]] = []
+        suspicious: List[Dict[str, Any]] = []
+
+        for ak in evidence_path.rglob('authorized_keys'):
+            if not ak.is_file():
+                continue
+            try:
+                with open(ak, 'r', errors='replace') as f:
+                    for line_num, line in enumerate(f, 1):
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        parts = line.split()
+                        key_type = parts[0] if parts else 'unknown'
+                        key_b64 = parts[1] if len(parts) > 1 else ''
+                        comment = ' '.join(parts[2:]) if len(parts) > 2 else ''
+
+                        entry = {
+                            'path': str(ak.relative_to(evidence_path)),
+                            'line': line_num,
+                            'key_type': key_type,
+                            'key_preview': f'{key_b64[:16]}...{key_b64[-16:]}' if len(key_b64) > 32 else key_b64,
+                            'comment': comment,
+                        }
+                        keys_found.append(entry)
+
+                        # Flag suspicious comments
+                        comment_lower = comment.lower()
+                        sus_words = ['backdoor', 'hacker', 'anonymous', 'guest', 'test',
+                                     'temp', 'tmp', 'bot', 'c2', 'beacon', 'dropper']
+                        if any(w in comment_lower for w in sus_words):
+                            suspicious.append(entry)
+            except Exception:
+                pass
+
+        risk = 'high' if suspicious else ('medium' if len(keys_found) > 5 else 'low')
+        return {
+            'finding_count': len(suspicious),
+            'total_keys': len(keys_found),
+            'risk': risk,
+            'suspicious_keys': suspicious[:50],
+            'all_keys': keys_found[:100],
+        }
+
+    def _check_setuid_binaries(self, evidence_path: Path) -> Dict[str, Any]:
+        """Find setuid/setgid binaries that may be suspicious."""
+        setuid_bins: List[Dict[str, Any]] = []
+        suspicious: List[Dict[str, Any]] = []
+
+        # Known legitimate setuid binaries (normal Linux set)
+        _known_setuid = {
+            'su', 'sudo', 'passwd', 'chsh', 'chfn', 'gpasswd', 'newgrp',
+            'mount', 'umount', 'ping', 'ping6', 'traceroute', 'traceroute6',
+            'pkexec', 'polkit-agent-helper-1', 'dbus-daemon-launch-helper',
+            'Xorg', 'Xorg.wrap', 'chage', 'expiry', 'unix_chkpwd',
+            'fusermount', 'fusermount3', 'ssh-keysign', 'bsd-write', 'wall',
+            'locate', 'at', 'crontab', 'pam_timestamp_check', 'utempter',
+            'bwrap', 'newuidmap', 'newgidmap',
+        }
+
+        # Trusted directories for setuid binaries
+        _trusted_dirs = ['/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', '/usr/lib/',
+                         '/usr/libexec/', '/lib/', '/lib64/', '/usr/lib64/']
+
+        # Walk for setuid/setgid files (Unix permissions: setuid=0o4000, setgid=0o2000)
+        for fp in evidence_path.rglob('*'):
+            if not fp.is_file():
+                continue
+            try:
+                st = fp.stat()
+                mode = st.st_mode
+                is_setuid = bool(mode & 0o4000)
+                is_setgid = bool(mode & 0o2000)
+            except OSError:
+                continue
+
+            if not is_setuid and not is_setgid:
+                continue
+
+            fname = fp.name
+            rel_path = str(fp.relative_to(evidence_path))
+            entry = {
+                'path': rel_path,
+                'setuid': is_setuid,
+                'setgid': is_setgid,
+                'size': st.st_size,
+            }
+            setuid_bins.append(entry)
+
+            # Suspicious checks
+            if fname not in _known_setuid and not any(
+                    td in rel_path for td in _trusted_dirs):
+                suspicious.append(entry)
+            elif any(sp in rel_path for sp in self._SUSPICIOUS_PATHS):
+                suspicious.append(entry)
+
+        risk = 'high' if suspicious else ('medium' if len(setuid_bins) > 20 else 'low')
+        return {
+            'finding_count': len(suspicious),
+            'total_setuid_setgid': len(setuid_bins),
+            'risk': risk,
+            'suspicious': suspicious[:50],
+        }
+
+    def _check_user_accounts(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for suspicious new user accounts."""
+        suspicious: List[Dict[str, Any]] = []
+
+        # Check /etc/passwd
+        passwd_files = list(evidence_path.rglob('etc/passwd'))
+        shadow_files = list(evidence_path.rglob('etc/shadow'))
+        group_files = list(evidence_path.rglob('etc/group'))
+
+        # Also check Windows SAM via registry keyword
+        sam_hives = list(evidence_path.rglob('SAM'))
+
+        for pf in passwd_files[:5]:
+            try:
+                with open(pf, 'r', errors='replace') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        parts = line.split(':')
+                        if len(parts) < 7:
+                            continue
+                        username = parts[0]
+                        uid_str = parts[2]
+                        home = parts[5]
+                        shell = parts[6]
+                        try:
+                            uid = int(uid_str)
+                        except ValueError:
+                            continue
+
+                        flags = []
+                        # UID 0 accounts not named root
+                        if uid == 0 and username != 'root':
+                            flags.append('UID 0 (root) account with non-root name')
+                        # Shell on system accounts
+                        if uid < 1000 and shell not in ('/sbin/nologin', '/usr/sbin/nologin',
+                                                         '/bin/false', '/usr/bin/false', ''):
+                            flags.append(f'system account with login shell: {shell}')
+                        # Suspicious usernames
+                        sus_usernames = ['backdoor', 'hacker', 'guest', 'test',
+                                         'temp', 'anonymous', 'ftpuser', 'webmaster']
+                        if any(su in username.lower() for su in sus_usernames):
+                            flags.append('suspicious username')
+
+                        if flags:
+                            suspicious.append({
+                                'file': str(pf.relative_to(evidence_path)),
+                                'username': username,
+                                'uid': uid,
+                                'home': home,
+                                'shell': shell,
+                                'flags': flags,
+                            })
+            except Exception:
+                pass
+
+        # Check for group membership oddities (non-root in sudo/wheel/adm groups)
+        for gf in group_files[:5]:
+            try:
+                with open(gf, 'r', errors='replace') as f:
+                    for line in f:
+                        parts = line.strip().split(':')
+                        if len(parts) < 4:
+                            continue
+                        group_name = parts[0]
+                        members = parts[3]
+                        if group_name in ('sudo', 'wheel', 'adm', 'admin', 'docker'):
+                            if members:
+                                member_list = members.split(',')
+                                suspicious.append({
+                                    'file': str(gf.relative_to(evidence_path)),
+                                    'group': group_name,
+                                    'members': member_list,
+                                    'flags': [f'unusual members in privileged group: {members}'],
+                                })
+            except Exception:
+                pass
+
+        risk = 'high' if suspicious else 'low'
+        return {
+            'finding_count': len(suspicious),
+            'risk': risk,
+            'suspicious_accounts': suspicious[:50],
+        }
+
+    def _check_suspicious_services(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for suspicious systemd services and init scripts."""
+        suspicious: List[Dict[str, Any]] = []
+
+        # Check systemd service files
+        service_dirs = ['etc/systemd/system', 'usr/lib/systemd/system',
+                        'lib/systemd/system', 'etc/init.d', 'etc/rc.d']
+
+        for svc_dir in service_dirs:
+            svc_path = evidence_path / svc_dir
+            if not svc_path.exists():
+                continue
+            for svc_file in svc_path.rglob('*'):
+                if not svc_file.is_file():
+                    continue
+                if svc_file.suffix in ('.timer', '.target', '.mount', '.socket', '.device'):
+                    continue
+
+                fname = svc_file.name
+                flags = []
+
+                # Check name against suspicious patterns
+                for pat in self._SUSPICIOUS_SERVICE_PATTERNS:
+                    if pat.match(fname):
+                        flags.append(f'suspicious service name: {fname}')
+                        break
+
+                # Check content for suspicious ExecStart paths
+                try:
+                    with open(svc_file, 'r', errors='replace') as f:
+                        content = f.read(10000)
+                    exec_matches = re.findall(
+                        r'Exec(?:Start|Stop|Reload)\s*=\s*(.+)', content,
+                        re.IGNORECASE,
+                    )
+                    for em in exec_matches:
+                        for sp in self._SUSPICIOUS_PATHS:
+                            if sp.lower() in em.lower():
+                                flags.append(f'Executes from suspicious path: {em.strip()[:120]}')
+                                break
+                    # Check for Type=oneshot + RemainAfterExit (common persistence trick)
+                    if 'RemainAfterExit=yes' in content and 'Type=oneshot' in content:
+                        flags.append('oneshot service with RemainAfterExit — potential persistence trick')
+                except Exception:
+                    pass
+
+                if flags:
+                    suspicious.append({
+                        'service': str(svc_file.relative_to(evidence_path)),
+                        'flags': flags,
+                    })
+
+        risk = 'high' if suspicious else 'low'
+        return {
+            'finding_count': len(suspicious),
+            'risk': risk,
+            'suspicious_services': suspicious[:50],
+        }
+
+    def _check_hidden_processes(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for hidden processes and tools (evidence of hiding)."""
+        findings: List[Dict[str, Any]] = []
+
+        # Look for common rootkit/hidden process indicators
+        # Check /proc entries if available
+        proc_dir = evidence_path / 'proc'
+        suspicious_proc_names = ['kbeast', 'adore', 'enyelkm', 'knark', 'modhide',
+                                 'cleaner', 'hidepid', 'phalanx', 'suterusu',
+                                 'diamorphine', 'revengert', 'maK_it']
+
+        for proc_entry in evidence_path.rglob('proc/*/status'):
+            try:
+                with open(proc_entry, 'r', errors='replace') as f:
+                    content = f.read()
+                name_match = re.search(r'^Name:\s*(\S+)', content, re.MULTILINE)
+                if name_match:
+                    pname = name_match.group(1).lower()
+                    for sn in suspicious_proc_names:
+                        if sn in pname:
+                            findings.append({
+                                'source': str(proc_entry.relative_to(evidence_path)),
+                                'process_name': pname,
+                                'indicator': f'matches known rootkit/hiding name: {sn}',
+                            })
+            except Exception:
+                pass
+
+        # Check for hidden files (dot-prefixed) in unusual locations
+        hidden_in_tmp = list(evidence_path.glob('tmp/.*'))
+        hidden_in_dev_shm = list(evidence_path.glob('dev/shm/.*'))
+        for hidden in hidden_in_tmp[:10] + hidden_in_dev_shm[:10]:
+            if hidden.name not in ('.', '..', '.X11-unix', '.XIM-unix',
+                                    '.font-unix', '.ICE-unix', '.Test-unix'):
+                try:
+                    findings.append({
+                        'source': str(hidden.relative_to(evidence_path)),
+                        'indicator': f'hidden file in temp location: {hidden.name}',
+                        'size': hidden.stat().st_size if hidden.exists() else 0,
+                    })
+                except OSError:
+                    pass
+
+        # Look for deleted-but-still-running binaries (common rootkit tactic)
+        # Check .bash_history for process hiding commands
+        for hist_file in evidence_path.rglob('.bash_history'):
+            try:
+                with open(hist_file, 'r', errors='replace') as f:
+                    for line in f:
+                        line_lower = line.strip().lower()
+                        if any(cmd in line_lower for cmd in [
+                            'unset HISTFILE', 'unset HISTSIZE', 'history -c',
+                            'set +o history', 'export HISTFILE=/dev/null',
+                            'kill -9', 'kill -11', 'kill -31',
+                        ]):
+                            findings.append({
+                                'source': str(hist_file.relative_to(evidence_path)),
+                                'command': line.strip()[:200],
+                                'indicator': 'anti-forensic command in shell history',
+                            })
+            except Exception:
+                pass
+
+        # Check for unusual files in /dev (non-device files)
+        dev_dir = evidence_path / 'dev'
+        if dev_dir.exists():
+            try:
+                for fp in dev_dir.iterdir():
+                    if fp.is_file() and not fp.is_symlink():
+                        # Regular files in /dev are suspicious
+                        if fp.name not in ('MAKEDEV', '.udev', '.initramfs'):
+                            findings.append({
+                                'source': str(fp.relative_to(evidence_path)),
+                                'indicator': 'regular file in /dev (non-device) — possible rootkit hiding',
+                                'size': fp.stat().st_size,
+                            })
+            except OSError:
+                pass
+
+        risk = 'high' if findings else 'low'
+        return {
+            'finding_count': len(findings),
+            'risk': risk,
+            'findings': findings[:50],
+        }
+
+    def _check_alternate_data_streams(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for NTFS Alternate Data Streams (ADS).
+
+        On Linux, ADS can be detected by listing extended attributes on
+        mounted NTFS volumes, or by scanning for the ':streamname' notation
+        in file paths extracted from $MFT or fls output.
+        """
+        findings: List[Dict[str, Any]] = []
+
+        # Method 1: Look for ADS indicators in MFT extract or fls output
+        ads_patterns = [
+            re.compile(r'(.+):([^:\\]+):?\$(?:DATA|INDEX_ALLOCATION)', re.IGNORECASE),
+        ]
+
+        # Scan any text/log files for ADS path notation
+        for txt_file in evidence_path.rglob('*.txt'):
+            if txt_file.stat().st_size > 5 * 1024 * 1024:  # Skip >5MB
+                continue
+            try:
+                with open(txt_file, 'r', errors='replace') as f:
+                    content = f.read(100000)
+                for pat in ads_patterns:
+                    for match in pat.finditer(content):
+                        base_file = match.group(1)
+                        stream_name = match.group(2)
+                        if stream_name.lower() not in ('', '::$data'):
+                            findings.append({
+                                'source': str(txt_file.relative_to(evidence_path)),
+                                'base_file': base_file,
+                                'stream_name': stream_name,
+                                'indicator': 'Alternate Data Stream detected',
+                            })
+                if len(findings) >= 50:
+                    break
+            except Exception:
+                pass
+
+        # Method 2: Use getfattr to enumerate extended attributes on mounted NTFS
+        try:
+            r = subprocess.run(
+                ['getfattr', '-d', '-R', str(evidence_path)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode == 0 and r.stdout:
+                current_file = ''
+                for line in r.stdout.splitlines():
+                    if line.startswith('# file:'):
+                        current_file = line.split(':', 1)[1].strip()
+                    elif 'ntfs.stream' in line.lower() or 'user.ntfs' in line.lower():
+                        findings.append({
+                            'source': current_file,
+                            'attribute': line.strip(),
+                            'indicator': 'NTFS extended attribute stream',
+                        })
+        except Exception:
+            pass
+
+        risk = 'high' if len(findings) > 5 else ('medium' if findings else 'low')
+        return {
+            'finding_count': len(findings),
+            'risk': risk,
+            'ads_findings': findings[:50],
+        }
+
+    def _check_ld_preload(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for LD_PRELOAD hooks and suspicious shared libraries."""
+        findings: List[Dict[str, Any]] = []
+
+        # Check /etc/ld.so.preload
+        preload_file = evidence_path / 'etc' / 'ld.so.preload'
+        if preload_file.exists():
+            try:
+                with open(preload_file, 'r', errors='replace') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            findings.append({
+                                'source': 'etc/ld.so.preload',
+                                'preload_library': line,
+                                'indicator': 'global LD_PRELOAD configured via ld.so.preload',
+                            })
+            except Exception:
+                pass
+
+        # Check for LD_PRELOAD in profile files
+        for profile_file in evidence_path.rglob('etc/profile*'):
+            try:
+                with open(profile_file, 'r', errors='replace') as f:
+                    for line in f:
+                        if 'LD_PRELOAD' in line and not line.strip().startswith('#'):
+                            findings.append({
+                                'source': str(profile_file.relative_to(evidence_path)),
+                                'line': line.strip()[:200],
+                                'indicator': 'LD_PRELOAD set in profile',
+                            })
+            except Exception:
+                pass
+
+        # Check shell rc files for LD_PRELOAD
+        for rc_pattern in ['.bashrc', '.zshrc', '.profile', '.bash_profile']:
+            for rc_file in evidence_path.rglob(rc_pattern):
+                try:
+                    with open(rc_file, 'r', errors='replace') as f:
+                        for line in f:
+                            if 'LD_PRELOAD' in line and not line.strip().startswith('#'):
+                                findings.append({
+                                    'source': str(rc_file.relative_to(evidence_path)),
+                                    'line': line.strip()[:200],
+                                    'indicator': 'LD_PRELOAD set in user shell rc',
+                                })
+                except Exception:
+                    pass
+
+        risk = 'high' if findings else 'low'
+        return {
+            'finding_count': len(findings),
+            'risk': risk,
+            'ld_preload_findings': findings[:50],
+        }
+
+    def _check_kernel_modules(self, evidence_path: Path) -> Dict[str, Any]:
+        """Check for kernel module rootkits and suspicious modules."""
+        findings: List[Dict[str, Any]] = []
+
+        # Known rootkit LKM names
+        _rootkit_lkms = {
+            'knark', 'adore', 'adore-ng', 'kis', 'enyelkm', 'kbdv3',
+            'phalanx', 'phalanx2', 'suterusu', 'diamorphine', 'revengert',
+            'modhide', 'cleaner', 'override', 'kbeast', 'maK_it',
+            'rkit', 'fu', 'nitol', 'suckit', 'suckit2', 'wnps', 'mood-nt',
+        }
+
+        # Check /lib/modules for suspicious module names
+        for mod_dir in evidence_path.glob('lib/modules/*'):
+            if not mod_dir.is_dir():
+                continue
+            for mod_file in mod_dir.rglob('*.ko*'):
+                mod_name = mod_file.stem.split('.')[0].lower()
+                if mod_name in _rootkit_lkms:
+                    findings.append({
+                        'source': str(mod_file.relative_to(evidence_path)),
+                        'module': mod_name,
+                        'indicator': 'matches known rootkit kernel module name',
+                    })
+
+        # Check for suspicious kernel module configuration
+        modprobe_d = evidence_path / 'etc' / 'modprobe.d'
+        if modprobe_d.exists():
+            for conf_file in modprobe_d.rglob('*.conf'):
+                try:
+                    with open(conf_file, 'r', errors='replace') as f:
+                        for line in f:
+                            if 'install' in line.lower() and '/bin/bash' in line:
+                                findings.append({
+                                    'source': str(conf_file.relative_to(evidence_path)),
+                                    'line': line.strip()[:200],
+                                    'indicator': 'custom module install hook with shell',
+                                })
+                except Exception:
+                    pass
+
+        # Check /etc/modules for unusual autoload modules
+        modules_file = evidence_path / 'etc' / 'modules'
+        if modules_file.exists():
+            try:
+                with open(modules_file, 'r', errors='replace') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            for rk in _rootkit_lkms:
+                                if rk in line.lower():
+                                    findings.append({
+                                        'source': 'etc/modules',
+                                        'module': line,
+                                        'indicator': f'matches known rootkit LKM: {rk}',
+                                    })
+            except Exception:
+                pass
+
+        risk = 'high' if findings else 'low'
+        return {
+            'finding_count': len(findings),
+            'risk': risk,
+            'kernel_findings': findings[:50],
+        }
+
+    def _check_webshells(self, evidence_path: Path) -> Dict[str, Any]:
+        """Scan evidence directory for common webshell filenames."""
+        findings: List[Dict[str, Any]] = []
+        webshell_extensions = {'.php', '.php3', '.php4', '.php5', '.php7', '.php8',
+                               '.asp', '.aspx', '.jsp', '.jspx', '.war', '.cfm',
+                               '.cgi', '.pl', '.py', '.rb'}
+
+        # Walk for files with webshell extensions in web-accessible directories
+        web_dirs = ['var/www', 'var/www/html', 'usr/share/nginx',
+                    'opt/lampp/htdocs', 'srv/http', 'srv/www',
+                    'home/*/public_html', 'inetpub/wwwroot',
+                    'Program Files/Apache', 'xampp/htdocs']
+
+        for web_dir_pattern in web_dirs:
+            for web_dir in evidence_path.glob(web_dir_pattern):
+                if not web_dir.is_dir():
+                    continue
+                for fp in web_dir.rglob('*'):
+                    if fp.is_file() and fp.suffix.lower() in webshell_extensions:
+                        fname = fp.name.lower()
+                        matched = False
+                        for pat in self._WEBSHELL_PATTERNS:
+                            if pat.match(fp.name):
+                                matched = True
+                                break
+                        if matched:
+                            try:
+                                size = fp.stat().st_size
+                            except OSError:
+                                size = 0
+                            findings.append({
+                                'path': str(fp.relative_to(evidence_path)),
+                                'filename': fp.name,
+                                'size': size,
+                                'indicator': 'filename matches known webshell pattern',
+                            })
+                        if len(findings) >= 100:
+                            break
+
+        # Also scan for webshell content indicators (eval, exec, system in small PHP files)
+        for web_dir_pattern in web_dirs[:3]:  # limit to avoid excessive scanning
+            for web_dir in evidence_path.glob(web_dir_pattern):
+                if not web_dir.is_dir():
+                    continue
+                for fp in web_dir.rglob('*.php'):
+                    if not fp.is_file():
+                        continue
+                    try:
+                        if fp.stat().st_size > 10000:
+                            continue
+                    except OSError:
+                        continue
+                    try:
+                        with open(fp, 'r', errors='replace') as f:
+                            content = f.read()
+                        # Count webshell-indicative functions
+                        func_count = 0
+                        for func in ['eval(', 'exec(', 'system(', 'shell_exec(',
+                                     'passthru(', 'popen(', 'proc_open(',
+                                     'assert(', 'base64_decode(', '<?=`', '$_GET[',
+                                     '$_POST[', '$_REQUEST[', 'move_uploaded_file(']:
+                            func_count += content.count(func)
+                        if func_count >= 2:
+                            findings.append({
+                                'path': str(fp.relative_to(evidence_path)),
+                                'filename': fp.name,
+                                'size': fp.stat().st_size,
+                                'dangerous_function_count': func_count,
+                                'indicator': 'PHP file with multiple dangerous functions (possible webshell)',
+                            })
+                    except Exception:
+                        pass
+                    if len(findings) >= 100:
+                        break
+
+        risk = 'high' if findings else 'low'
+        return {
+            'finding_count': len(findings),
+            'risk': risk,
+            'webshell_findings': findings[:100],
+        }
+
+
+# ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes new specialists)
 # ---------------------------------------------------------------------------
 
@@ -6349,7 +10444,9 @@ class ExtendedOrchestrator:
         self.network = NETWORK_Specialist()
         self.logs = LOG_Specialist()
         self.mobile = MOBILE_Specialist()
+        self.mobile_malware = MOBILE_MALWARE_Specialist()
         self.browser = BROWSER_Specialist()
+        self.sqlite = SQLITE_Specialist()
         self.email = EMAIL_Specialist()
         self.jumplist = JUMPLIST_Specialist()
         self.macos = MACOS_Specialist()
@@ -6366,6 +10463,7 @@ class ExtendedOrchestrator:
         self.photorec = PHOTOREC_Specialist()
         self.vss = VSS_Specialist()
         self.zimmerman = ZIMMERMAN_Specialist()
+        self.scheduled = SCHEDULED_TASK_Specialist()
 
         try:
             from sift_specialists_remnux import REMNUX_Orchestrator
@@ -6387,11 +10485,13 @@ class ExtendedOrchestrator:
             'network': self.network,
             'logs': self.logs,
             'mobile': self.mobile,
+            'mobile_malware': self.mobile_malware,
             'photorec': self.photorec,
             'vss': self.vss,
             'zimmerman': self.zimmerman,
             'remnux': self.remnux,
             'browser': self.browser,
+            'sqlite': self.sqlite,
             'email': self.email,
             'jumplist': self.jumplist,
             'macos': self.macos,
@@ -6403,6 +10503,7 @@ class ExtendedOrchestrator:
             'collaboration': self.collaboration,
             'vm': self.vm,
             'container': self.container,
+            'scheduled': self.scheduled,
         }
 
         specialist = specialist_map.get(module)
@@ -6457,7 +10558,7 @@ class ExtendedOrchestrator:
                 'functions': ['analyze_pcap', 'extract_flows', 'extract_http'],
                 'tool_availability': avail(['tshark', 'tcpflow']),
             },
-            'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_syslog', 'extract_linux_users', 'extract_wtmp_logins', 'extract_ssh_authorized_keys'], 'tool_availability': {'python-evtx': evtx_available}},
+            'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_evt', 'parse_syslog', 'extract_linux_users', 'extract_wtmp_logins', 'extract_ssh_authorized_keys'], 'tool_availability': {'python-evtx': evtx_available}},
             'mobile': {
                 'category': 'Mobile Forensics',
                 'functions': [
@@ -6488,6 +10589,12 @@ class ExtendedOrchestrator:
                 'tool_availability': {},
                 'notes': 'Pure-Python - supports iOS backups and Android data directories',
             },
+            'mobile_malware': {
+                'category': 'Mobile Malware Analysis',
+                'functions': ['analyze_apk', 'analyze_ipa', 'analyze_mobile_binary'],
+                'tool_availability': avail(['apktool', 'jadx', 'yara']),
+                'notes': 'APK/IPA/mobile binary malware detection — apktool for APK decode, strings/YARA for binary scanning',
+            },
             'photorec': {
                 'category': 'File Carving',
                 'functions': ['recover_files', 'carve_files'],
@@ -6508,10 +10615,16 @@ class ExtendedOrchestrator:
                 'functions': ['extract_history', 'extract_cookies', 'extract_downloads', 'extract_saved_passwords'],
                 'tools': ['sqlite3 (Chrome/Firefox DBs)'],
             },
+            'sqlite': {
+                'category': 'SQLite Forensics',
+                'functions': ['analyze_sqlite'],
+                'tools': ['sqlite3 (generic)'],
+                'notes': 'Generic SQLite pipeline — auto-detects artifact type, extracts timeline events + IOCs',
+            },
             'email': {
                 'category': 'Email Forensics',
-                'functions': ['analyze_pst', 'analyze_mbox', 'analyze_eml'],
-                'tools': ['readpst', 'mailbox (stdlib)', 'email (stdlib)'],
+                'functions': ['analyze_pst', 'parse_dbx', 'analyze_mbox', 'analyze_eml', 'detect_phishing', 'detect_sms_phishing'],
+                'tools': ['readpst', 'mailbox (stdlib)', 'email (stdlib)', 'sqlite3'],
             },
             'jumplist': {
                 'category': 'Windows Artefacts',
@@ -6571,5 +10684,10 @@ class ExtendedOrchestrator:
                     'radare2_analyze', 'floss_strings', 'clamav_scan',
                 ] if self.remnux else [],
                 'tool_availability': avail(['die', 'exiftool', 'peframe', 'ssdeep', 'hashdeep', 'upx', 'pdfid', 'pdf-parser.py', 'oledump.py', 'js-beautify', 'r2', 'floss']),
+            },
+            'scheduled': {
+                'category': 'Scheduled Tasks & Backdoor Detection',
+                'functions': ['parse_windows_scheduled_tasks', 'parse_linux_crontabs', 'detect_backdoors'],
+                'tools': ['xml.etree.ElementTree (stdlib)', 'strings', 'getfattr'],
             },
         }

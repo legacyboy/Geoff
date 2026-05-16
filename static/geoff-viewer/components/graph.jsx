@@ -33,6 +33,40 @@ function classifyDevice(d, deviceId) {
   return "pc";
 }
 
+function isInternalIP(ip) {
+  if (!ip || typeof ip !== "string") return false;
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4) return false;
+  if (parts.some(p => isNaN(p) || p < 0 || p > 255)) return false;
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 127) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true;
+  return false;
+}
+
+function extractHostnameFromDeviceId(devId, dev) {
+  // 1. Use the hostname field from device_map if available
+  if (dev && dev.hostname && typeof dev.hostname === "string" && dev.hostname.trim()) {
+    return dev.hostname.trim().toLowerCase();
+  }
+  // 2. Try to extract hostname from device_id patterns like "memdump_HOSTNAME"
+  const did = (devId || "").toLowerCase();
+  const memdumpMatch = did.match(/(?:^memdump_|^memory_|^ram_)(.+)/i);
+  if (memdumpMatch) return memdumpMatch[1].toLowerCase();
+  // 3. Try disk image patterns: "20200918_0347_CDrive" → fall through to devId
+  const prefixMatch = did.match(/^\d{8}_\d{4}_/);
+  if (prefixMatch) {
+    const remainder = did.slice(prefixMatch[0].length);
+    if (remainder && remainder !== "cdrive" && remainder !== "c_drive") {
+      return remainder.toLowerCase();
+    }
+  }
+  // 4. Fall back to the device_id itself
+  return did;
+}
+
 function countFlags(flags) {
   const out = { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
   for (const f of flags || []) {
@@ -278,13 +312,18 @@ function describeNode(n, report) {
   } else if (n.kind === "service") {
     lines.push(`Service: ${n.name || "External"}`);
     if (n.hosts) lines.push(`Hosts: ${n.hosts.length}`);
-  } else if (n.kind === "ioc") {
-    lines.push(`IOC: ${n.subkind.toUpperCase()}`);
+  } else if (n.kind === "ioc" || n.kind === "external" || n.kind === "network_ip") {
+    const label = n.kind === "network_ip" ? "Internal IP" : n.kind === "external" ? "External IP" : "IOC";
+    lines.push(`${label}: ${n.subkind.toUpperCase()}`);
     lines.push(`Value: ${n.raw}`);
   } else {
-    const d = (report.device_map || {})[n.key] || {};
+    // Use consolidated device data if available, otherwise device_map
+    const d = n.raw && n.raw.evidence_files ? n.raw : ((report.device_map || {})[n.key] || {});
     lines.push(`Device: ${d.hostname || n.key}`);
     lines.push(`OS: ${osLabel(d)}`);
+    if (n.originalDeviceIds && n.originalDeviceIds.length > 1) {
+      lines.push(`Evidence files: ${n.originalDeviceIds.length}`);
+    }
     if (d.owner) lines.push(`Owner: ${d.owner}`);
     else if (d.metadata && d.metadata.user_profiles_found && d.metadata.user_profiles_found.length > 0) {
       lines.push(`Users: ${d.metadata.user_profiles_found.join(", ")}`);
@@ -316,7 +355,7 @@ function describeEdge(e, n1, n2) {
 }
 
 function edgePath(a, b) {
-  const isCircular = n => n.kind === "user" || n.kind === "ioc" || n.kind === "finding" || n.kind === "mitre";
+  const isCircular = n => n.kind === "user" || n.kind === "ioc" || n.kind === "finding" || n.kind === "mitre" || n.kind === "external" || n.kind === "network_ip";
   const [from, to] = a.x < b.x ? [a, b] : [b, a];
   const sx = from.x + (isCircular(from) ? from.r : from.w / 2);
   const ex = to.x   - (isCircular(to)   ? to.r   : to.w   / 2);
@@ -330,7 +369,98 @@ function buildGraph(report, size) {
   const deviceMap = report.device_map || {};
   const flagsByDevice = report.behavioral_flags || {};
 
-  // Build user list - extract usernames from device evidence files if owner is null
+  // ----------------------------------------------------------------
+  // 1. Consolidate devices by hostname (multiple evidence files → one node)
+  // ----------------------------------------------------------------
+  const deviceIdToConsolidated = {};   // original device_id → consolidated node key
+  const consolidatedByHost = {};       // hostname → merged device info
+  const consolidatedDevIds = [];       // ordered list of consolidated device IDs
+
+  Object.entries(deviceMap).forEach(([devId, dev]) => {
+    const host = extractHostnameFromDeviceId(devId, dev);
+    if (!consolidatedByHost[host]) {
+      consolidatedByHost[host] = {
+        hostname: host,
+        originalDeviceIds: [],
+        evidence_files: [],
+        evidence_types: [],
+        device_type: "unknown",
+        os_type: "unknown",
+        os_version: "",
+        owner: null,
+        owner_confidence: "NONE",
+        metadata: {},
+        discovery_method: "consolidated",
+      };
+      consolidatedDevIds.push(host);
+    }
+    deviceIdToConsolidated[devId] = host;
+    const cd = consolidatedByHost[host];
+    cd.originalDeviceIds.push(devId);
+    // Merge evidence files (dedup)
+    (dev.evidence_files || []).forEach(f => {
+      if (!cd.evidence_files.includes(f)) cd.evidence_files.push(f);
+    });
+    // Merge evidence types (dedup)
+    (dev.evidence_types || []).forEach(t => {
+      if (!cd.evidence_types.includes(t)) cd.evidence_types.push(t);
+    });
+    // Use the best device_type (prefer non-unknown)
+    if (dev.device_type && dev.device_type !== "unknown") {
+      if (cd.device_type === "unknown" || dev.device_type !== cd.device_type) {
+        cd.device_type = dev.device_type;
+      }
+    }
+    // Use the best os_type
+    if (dev.os_type && dev.os_type !== "unknown") {
+      cd.os_type = dev.os_type;
+      if (dev.os_version) cd.os_version = dev.os_version;
+    }
+    // Use first real hostname for display
+    if (!cd.hostname && dev.hostname && dev.hostname !== host) {
+      cd.hostname = dev.hostname;
+    }
+    // Take first non-null owner
+    if (!cd.owner && dev.owner) {
+      cd.owner = dev.owner;
+      cd.owner_confidence = dev.owner_confidence || "NONE";
+    }
+    // Merge metadata
+    if (dev.metadata) {
+      Object.keys(dev.metadata).forEach(k => {
+        if (!cd.metadata[k]) cd.metadata[k] = dev.metadata[k];
+      });
+    }
+  });
+
+  // Helper: resolve a device reference (original devId or consolidated host) to node ID
+  const resolveDeviceNodeId = (devRef) => {
+    // devRef could be an original device_id OR a consolidated hostname
+    if (nodeById["d:" + devRef]) return "d:" + devRef;
+    const cons = deviceIdToConsolidated[devRef];
+    if (cons && nodeById["d:" + cons]) return "d:" + cons;
+    return null;
+  };
+
+  // Helper: aggregate flag counts across all original devices in a consolidated device
+  const aggregateConsolidatedFlags = (host) => {
+    const cd = consolidatedByHost[host];
+    if (!cd) return { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    let agg = { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    for (const did of cd.originalDeviceIds) {
+      const c = countFlags(flagsByDevice[did] || []);
+      agg.total += c.total;
+      agg.CRITICAL += c.CRITICAL;
+      agg.HIGH += c.HIGH;
+      agg.MEDIUM += c.MEDIUM;
+      agg.LOW += c.LOW;
+    }
+    return agg;
+  };
+
+  // ----------------------------------------------------------------
+  // 2. Build user list
+  // ----------------------------------------------------------------
   const users = Object.entries(userMap).map(([k, u]) => ({
     id: "u:" + k, kind: "user", raw: u || {}, key: k,
   }));
@@ -353,18 +483,115 @@ function buildGraph(report, size) {
     });
   });
 
-  const devs = Object.entries(deviceMap).map(([k, d]) => ({
-    id: "d:" + k, kind: classifyDevice(d || {}, k), raw: d || {}, key: k,
-  }));
+  // ----------------------------------------------------------------
+  // 3. Build consolidated device items
+  // ----------------------------------------------------------------
+  const devs = consolidatedDevIds.map(host => {
+    const cd = consolidatedByHost[host];
+    // Use the first original device ID as the key for classification
+    const firstDevId = cd.originalDeviceIds[0];
+    const devDummy = {
+      device_type: cd.device_type,
+      os_type: cd.os_type,
+      os_version: cd.os_version,
+      hostname: cd.hostname,
+      evidence_files: cd.evidence_files,
+      owner: cd.owner,
+      metadata: cd.metadata,
+    };
+    const kind = classifyDevice(devDummy, firstDevId);
+    return {
+      id: "d:" + host,
+      kind: kind,
+      raw: cd,
+      key: host,
+      consolidated: true,
+      originalDeviceIds: cd.originalDeviceIds,
+    };
+  });
 
-  // Build findings items (behavioral flags, MITRE techniques, IOCs)
+  // ----------------------------------------------------------------
+  // 4. Extract external IPs for a new "External IPs" column
+  // ----------------------------------------------------------------
+  const externalIPsMap = new Map();
+  // Source A: report.iocs.ip_addresses (backend already filters to public IPs)
+  const iocIPs = (report.iocs || {}).ip_addresses || [];
+  iocIPs.forEach(ip => {
+    if (!externalIPsMap.has(ip)) {
+      externalIPsMap.set(ip, { id: "ext:" + ip, kind: "external", subkind: "ip", raw: ip, key: ip, deviceIds: new Set() });
+    }
+  });
+  // Source B: behavioral flag evidence dst_ip fields (external only)
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      const ev = flag.evidence || {};
+      [ev.dst_ip, ev.src_ip].forEach(ip => {
+        if (ip && typeof ip === "string" && !isInternalIP(ip)) {
+          if (!externalIPsMap.has(ip)) {
+            externalIPsMap.set(ip, { id: "ext:" + ip, kind: "external", subkind: "ip", raw: ip, key: ip, deviceIds: new Set() });
+          }
+          externalIPsMap.get(ip).deviceIds.add(devId);
+        }
+      });
+    });
+  });
+  // After collecting all external IPs, backfill device connections for IOC-listed
+  // IPs that weren't caught by the behavioral-flag scan (Source B). Scan ALL
+  // dst_ip / src_ip fields across every device's behavioral flags and link any
+  // that match an already-registered external IP.
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    (flags || []).forEach(flag => {
+      const ev = flag.evidence || {};
+      [ev.dst_ip, ev.src_ip].forEach(ip => {
+        if (ip && typeof ip === "string" && externalIPsMap.has(ip)) {
+          externalIPsMap.get(ip).deviceIds.add(devId);
+        }
+      });
+    });
+  });
+
+  const externalIPItems = Array.from(externalIPsMap.values())
+    .sort((a, b) => a.raw.localeCompare(b.raw))
+    .slice(0, 40) // Cap to avoid overwhelming the graph
+    .map(eip => ({ ...eip, deviceIds: Array.from(eip.deviceIds) }));
+
+  // ----------------------------------------------------------------
+  // 5. Extract internal IPs for the Network column (from PCAP-associated behavioral flags)
+  // ----------------------------------------------------------------
+  const networkInternalIPs = new Map();
+  Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+    const dev = deviceMap[devId];
+    if (!dev) return;
+    const kind = classifyDevice(dev, devId);
+    const isNetwork = kind === "network";
+    (flags || []).forEach(flag => {
+      const ev = flag.evidence || {};
+      // For network devices, extract internal IPs; for others, extract dst_ip for enrichment
+      const relevantIPs = isNetwork ? [ev.dst_ip, ev.src_ip] : [ev.dst_ip];
+      relevantIPs.forEach(ip => {
+        if (ip && typeof ip === "string" && isInternalIP(ip) && !networkInternalIPs.has(ip)) {
+          networkInternalIPs.set(ip, {
+            id: "nip:" + ip,
+            kind: "network_ip",
+            subkind: "ip",
+            raw: ip,
+            key: ip,
+            deviceId: devId,
+          });
+        }
+      });
+    });
+  });
+  const networkIPItems = Array.from(networkInternalIPs.values()).sort((a, b) => a.raw.localeCompare(b.raw));
+
+  // ----------------------------------------------------------------
+  // 6. Build findings, exfiltration services
+  // ----------------------------------------------------------------
   const findingsItems = buildFindingsItems(report);
 
-  // Aggregate exfiltration services from behavioral flags AND findings_detail
   const exfilServices = new Map();
   Object.entries(flagsByDevice).forEach(([devId, flags]) => {
     (flags || []).forEach(flag => {
-      // Broader detection: any flag_type containing "exfil", "c2", "network", "beacon"
       const ft = (flag.flag_type || "").toLowerCase();
       const isExfil = ft.includes("exfil") || ft.includes("c2") || ft.includes("beacon") || ft.includes("network_traffic");
       if (!isExfil) return;
@@ -379,7 +606,6 @@ function buildGraph(report, size) {
     });
   });
 
-  // Also extract exfiltration from findings_detail (evidence_chain threat_indicators)
   (report.findings_detail || []).forEach(fd => {
     const ec = fd.evidence_chain || {};
     const indicators = ec.threat_indicators || [];
@@ -395,19 +621,29 @@ function buildGraph(report, size) {
     });
   });
 
+  // ----------------------------------------------------------------
+  // 7. Define columns
+  // ----------------------------------------------------------------
+  const networkDevs = devs.filter(d => d.kind === "network");
+  // Merge PCAP device items with internal IP items in the Network column
+  const networkItems = [...networkDevs, ...networkIPItems];
+
   const columns = [
     { key: "user", label: "Accounts", items: users },
     { key: "pc", label: "Workstations", items: devs.filter(d => d.kind === "pc") },
     { key: "server", label: "Servers", items: devs.filter(d => d.kind === "server") },
     { key: "mobile", label: "Mobile", items: devs.filter(d => d.kind === "mobile") },
-    { key: "network", label: "Network", items: devs.filter(d => d.kind === "network") },
+    { key: "network", label: "Network", items: networkItems },
+    { key: "external", label: "External IPs", items: externalIPItems },
     { key: "service", label: "Services", items: Array.from(exfilServices.values()) },
     { key: "finding", label: "Findings", items: findingsItems.filter(f => f.kind === "finding") },
     { key: "mitre", label: "MITRE", items: findingsItems.filter(f => f.kind === "mitre") },
     { key: "ioc", label: "Indicators", items: findingsItems.filter(f => f.kind === "ioc") },
   ].filter(c => c.items.length > 0).map(c => ({ ...c, count: c.items.length }));
 
-  // Layout sizing
+  // ----------------------------------------------------------------
+  // 8. Layout
+  // ----------------------------------------------------------------
   const maxItems = Math.max(1, ...columns.map(c => c.items.length));
   const computedH = HEADER_Y + FOOTER_Y + maxItems * MIN_ROW_H;
   const totalH = Math.max(size.h, computedH);
@@ -425,9 +661,11 @@ function buildGraph(report, size) {
     server: "#A78BFA",
     mobile: "#F59E0B",
     network: "#64748B",
+    network_ip: "#64748B",
     finding: "#F59E0B",
     mitre: "#EF4444",
     ioc: "#EF4444",
+    external: "#EF4444",
     service: "#EC4899",
     ip: "#EF4444",
     url: "#F97316",
@@ -453,16 +691,22 @@ function buildGraph(report, size) {
       const isUser = kind === "user";
       const isFinding = kind === "finding";
       const isMitre = kind === "mitre";
+      const isExternal = kind === "external";
+      const isNetworkIP = kind === "network_ip";
 
-      const flags = isIoc ? { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
+      const flags = (isIoc || isExternal || isNetworkIP) ? { total: 0, CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }
                   : isUser ? aggregateUserFlags(report, item.key)
-                  :          countFlags((report.behavioral_flags || {})[item.deviceId] || []);
+                  : item.consolidated ? aggregateConsolidatedFlags(item.key)
+                  : countFlags(flagsByDevice[item.deviceId] || []);
       const sev = maxSev(flags);
 
       let label, sublabel;
       if (isIoc) {
         label = truncate(item.raw, 18);
         sublabel = item.subkind.toUpperCase();
+      } else if (isExternal || isNetworkIP) {
+        label = truncate(item.raw, 18);
+        sublabel = (isNetworkIP ? "INTERNAL" : "EXTERNAL");
       } else if (isUser) {
         label = truncate((item.raw.display_name || item.raw.username || item.key), 18);
         sublabel = truncate((item.raw.role || "user"), 22);
@@ -477,7 +721,11 @@ function buildGraph(report, size) {
         sublabel = truncate(osLabel(item.raw), 22);
       }
 
-      const accentKey = isIoc ? item.subkind : kind;
+      const accentKey = isIoc || isExternal || isNetworkIP ? item.subkind : kind;
+      const nodeR = isIoc || isFinding || isMitre ? 22 : (isExternal || isNetworkIP ? 22 : (isUser ? USER_R : 28));
+      const nodeW2 = isIoc || isFinding || isMitre || isExternal || isNetworkIP ? 44 : nodeW;
+      const nodeH2 = isIoc || isFinding || isMitre || isExternal || isNetworkIP ? 44 : NODE_H;
+
       const node = {
         id: item.id,
         kind: kind,
@@ -487,23 +735,27 @@ function buildGraph(report, size) {
         sublabel: sublabel,
         x: col.x,
         y,
-        r: isIoc || isFinding || isMitre ? 22 : (isUser ? USER_R : 28),
-        w: isIoc || isFinding || isMitre ? 44 : nodeW,
-        h: isIoc || isFinding || isMitre ? 44 : NODE_H,
+        r: nodeR,
+        w: nodeW2,
+        h: nodeH2,
         accent: accentMap[accentKey] || "#64748B",
-        badge: (!isIoc && !isFinding && !isMitre && flags.total > 0) ? { count: flags.total, sev } : null,
+        badge: (!isIoc && !isFinding && !isMitre && !isExternal && !isNetworkIP && flags.total > 0) ? { count: flags.total, sev } : null,
         raw: item.raw,
         deviceId: item.deviceId,
         flagType: item.flagType,
         severity: item.severity,
         techniqueId: item.techniqueId,
+        consolidated: item.consolidated,
+        originalDeviceIds: item.originalDeviceIds,
       };
       nodes.push(node);
       nodeById[node.id] = node;
     });
   });
 
-  // Build edges
+  // ----------------------------------------------------------------
+  // 9. Build edges
+  // ----------------------------------------------------------------
   const edges = [];
   const seenEdge = new Set();
   const addEdge = (e) => {
@@ -513,46 +765,49 @@ function buildGraph(report, size) {
     edges.push(e);
   };
 
-  // User <-> Device ownership
+  // 9a. User <-> Device ownership (map original devIds to consolidated)
   for (const [uname, u] of Object.entries(userMap)) {
     for (const devId of (u.devices || [])) {
-      if (!nodeById["u:" + uname] || !nodeById["d:" + devId]) continue;
+      const consolidatedNodeId = resolveDeviceNodeId(devId);
+      if (!consolidatedNodeId) continue;
+      if (!nodeById["u:" + uname] || !nodeById[consolidatedNodeId]) continue;
       const dev = deviceMap[devId] || {};
       const isOwner = dev.owner === uname;
-      addEdge({ from: "u:" + uname, to: "d:" + devId, kind: isOwner ? "owns" : "seen_on" });
+      addEdge({ from: "u:" + uname, to: consolidatedNodeId, kind: isOwner ? "owns" : "seen_on" });
     }
   }
 
-  // Extracted users from file paths -> devices
+  // Extracted users from file paths -> devices (consolidated)
   users.filter(u => !userMap[u.key]).forEach(u => {
     const devId = (u.raw.devices || [])[0];
-    if (devId && nodeById["d:" + devId]) {
-      addEdge({ from: u.id, to: "d:" + devId, kind: "seen_on" });
+    if (!devId) return;
+    const consolidatedNodeId = resolveDeviceNodeId(devId);
+    if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+      addEdge({ from: u.id, to: consolidatedNodeId, kind: "seen_on" });
     }
   });
 
-  // Lateral movement from correlated_users
+  // 9b. Lateral movement (consolidated)
   for (const [uname, cu] of Object.entries(report.correlated_users || {})) {
     for (const ind of (cu && cu.lateral_movement_indicators) || []) {
-      const a = "d:" + ind.from_device;
-      const b = "d:" + ind.to_device;
-      if (nodeById[a] && nodeById[b]) {
+      const a = resolveDeviceNodeId(ind.from_device);
+      const b = resolveDeviceNodeId(ind.to_device);
+      if (a && b && nodeById[a] && nodeById[b]) {
         addEdge({ from: a, to: b, kind: "lateral", via: uname, method: ind.method });
       }
     }
   }
 
-  // Lateral movement from attack_chain.lateral_movement_path
   const latPath = (report.attack_chain || {}).lateral_movement_path || [];
   for (let i = 0; i < latPath.length - 1; i++) {
-    const a = "d:" + latPath[i];
-    const b = "d:" + latPath[i + 1];
-    if (nodeById[a] && nodeById[b]) {
+    const a = resolveDeviceNodeId(latPath[i]);
+    const b = resolveDeviceNodeId(latPath[i + 1]);
+    if (a && b && nodeById[a] && nodeById[b]) {
       addEdge({ from: a, to: b, kind: "lateral", via: "attack_chain", method: "sequential_access" });
     }
   }
 
-  // Exfiltration: device -> service (from behavioral flags)
+  // 9c. Exfiltration: device -> service (consolidated)
   Object.entries(flagsByDevice).forEach(([devId, flags]) => {
     (flags || []).forEach(flag => {
       const ft = (flag.flag_type || "").toLowerCase();
@@ -563,9 +818,10 @@ function buildGraph(report, size) {
       if (!dstHost) return;
       const serviceType = classifyExfilService(dstHost) || "External";
       const serviceNodeId = "s:" + serviceType;
-      if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
+      const consolidatedSrc = resolveDeviceNodeId(devId);
+      if (consolidatedSrc && nodeById[consolidatedSrc] && nodeById[serviceNodeId]) {
         addEdge({
-          from: "d:" + devId,
+          from: consolidatedSrc,
           to: serviceNodeId,
           kind: "exfiltrated_to",
           host: dstHost,
@@ -576,9 +832,9 @@ function buildGraph(report, size) {
     });
   });
 
-  // Also add exfiltration edges from findings_detail
   (report.findings_detail || []).forEach(fd => {
     const devId = fd.device_id;
+    const consolidatedSrc = resolveDeviceNodeId(devId);
     const ec = fd.evidence_chain || {};
     const indicators = ec.threat_indicators || [];
     indicators.forEach(ind => {
@@ -587,9 +843,9 @@ function buildGraph(report, size) {
       const serviceType = classifyExfilService(dstHost);
       if (!serviceType) return;
       const serviceNodeId = "s:" + serviceType;
-      if (nodeById["d:" + devId] && nodeById[serviceNodeId]) {
+      if (consolidatedSrc && nodeById[consolidatedSrc] && nodeById[serviceNodeId]) {
         addEdge({
-          from: "d:" + devId,
+          from: consolidatedSrc,
           to: serviceNodeId,
           kind: "exfiltrated_to",
           host: dstHost,
@@ -600,23 +856,27 @@ function buildGraph(report, size) {
     });
   });
 
-  // Findings -> Device edges
+  // 9d. Findings -> Device edges (consolidated)
   findingsItems.forEach(f => {
-    if (f.kind === "finding" && f.deviceId && nodeById["d:" + f.deviceId]) {
-      addEdge({ from: f.id, to: "d:" + f.deviceId, kind: "has_finding", flagType: f.flagType });
+    if (f.kind === "finding" && f.deviceId) {
+      const consolidatedNodeId = resolveDeviceNodeId(f.deviceId);
+      if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+        addEdge({ from: f.id, to: consolidatedNodeId, kind: "has_finding", flagType: f.flagType });
+      }
     }
     if (f.kind === "mitre") {
-      // Connect MITRE techniques to devices with related flags
       Object.entries(flagsByDevice).forEach(([devId, flags]) => {
         (flags || []).forEach(flag => {
           if (flag.mitre_techniques && flag.mitre_techniques.some(t => t.id === f.techniqueId)) {
-            addEdge({ from: f.id, to: "d:" + devId, kind: "mitre_technique", techniqueId: f.techniqueId });
+            const consolidatedNodeId = resolveDeviceNodeId(devId);
+            if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+              addEdge({ from: f.id, to: consolidatedNodeId, kind: "mitre_technique", techniqueId: f.techniqueId });
+            }
           }
         });
       });
     }
     if (f.kind === "ioc") {
-      // Connect IOCs to devices
       Object.entries(flagsByDevice).forEach(([devId, flags]) => {
         (flags || []).forEach(flag => {
           const evidence = flag.evidence || {};
@@ -626,28 +886,46 @@ function buildGraph(report, size) {
             evidence.hash === f.raw ||
             evidence.file_path === f.raw
           );
-          if (iocMatch && nodeById["d:" + devId]) {
-            addEdge({ from: "d:" + devId, to: f.id, kind: "ioc" });
+          if (iocMatch) {
+            const consolidatedNodeId = resolveDeviceNodeId(devId);
+            if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+              addEdge({ from: consolidatedNodeId, to: f.id, kind: "ioc" });
+            }
           }
         });
       });
     }
   });
 
-  // If no MITRE techniques from behavioral flags, add from attack_chain
+  // 9e. External IP → Device edges
+  externalIPItems.forEach(eip => {
+    eip.deviceIds.forEach(devId => {
+      const consolidatedNodeId = resolveDeviceNodeId(devId);
+      if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+        addEdge({ from: consolidatedNodeId, to: eip.id, kind: "ioc" });
+      }
+    });
+  });
+
+  // 9f. Network internal IP → Device edges
+  networkIPItems.forEach(nip => {
+    const consolidatedNodeId = resolveDeviceNodeId(nip.deviceId);
+    if (consolidatedNodeId && nodeById[consolidatedNodeId]) {
+      addEdge({ from: consolidatedNodeId, to: nip.id, kind: "ioc" });
+    }
+  });
+
+  // 9g. If no MITRE techniques from behavioral flags, add from attack_chain
   const acMitres = (report.attack_chain || {}).mitre_techniques_observed || [];
   acMitres.forEach(tid => {
     const mitreId = "m:" + tid;
     if (!nodeById[mitreId]) {
-      // Only add if not already present from behavioral flags
       const mitreCol = columns.find(c => c.key === "mitre");
-      const findingCol = columns.find(c => c.key === "finding");
       if (mitreCol) {
         mitreCol.items.push({
           id: mitreId, kind: "mitre", subkind: "mitre",
           techniqueId: tid, name: "", severity: "MEDIUM"
         });
-        // Add node
         const colX = mitreCol.x;
         const numItems = mitreCol.items.length;
         const gapY = (totalH - HEADER_Y - FOOTER_Y) / Math.max(numItems, 1);
@@ -661,13 +939,14 @@ function buildGraph(report, size) {
         };
         nodes.push(node);
         nodeById[mitreId] = node;
-        // Connect to all devices (they were all part of the same investigation)
-        Object.keys(deviceMap).forEach(did => {
-          addEdge({ from: mitreId, to: "d:" + did, kind: "mitre_technique", techniqueId: tid });
+        // Connect to all consolidated devices
+        consolidatedDevIds.forEach(host => {
+          addEdge({ from: mitreId, to: "d:" + host, kind: "mitre_technique", techniqueId: tid });
         });
       }
     }
   });
+
   columns.forEach(c => c.count = c.items.length);
 
   return { nodes, edges, nodeById, columns, totalH };
@@ -704,11 +983,21 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
     if (!sevFilter) return null;
     const set = new Set();
     const flagsByDev = report.behavioral_flags || {};
+    const deviceMap = report.device_map || {};
+    // Map original device_ids to consolidated hostname-based node IDs
     Object.entries(flagsByDev).forEach(([devId, flags]) => {
-      if ((flags || []).some(f => f.severity === sevFilter)) set.add("d:" + devId);
+      if ((flags || []).some(f => f.severity === sevFilter)) {
+        const dev = deviceMap[devId];
+        const host = dev ? extractHostnameFromDeviceId(devId, dev) : devId;
+        set.add("d:" + host);
+      }
     });
     Object.entries(report.user_map || {}).forEach(([uname, u]) => {
-      if ((u.devices || []).some(d => set.has("d:" + d))) set.add("u:" + uname);
+      if ((u.devices || []).some(d => {
+        const dev = deviceMap[d];
+        const host = dev ? extractHostnameFromDeviceId(d, dev) : d;
+        return set.has("d:" + host);
+      })) set.add("u:" + uname);
     });
     return set;
   }, [sevFilter, report]);
@@ -808,10 +1097,10 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                       stroke={n.accent}
                       strokeWidth={isSel ? 2 : 1}
                     />
-                  ) : n.kind === "ioc" ? (
+                  ) : n.kind === "ioc" || n.kind === "external" || n.kind === "network_ip" ? (
                     <polygon
                       points={`0,${-n.r} ${n.r},0 0,${n.r} ${-n.r},0`}
-                      fill="rgba(239,68,68,0.06)"
+                      fill={n.kind === "network_ip" ? "rgba(100,116,139,0.06)" : "rgba(239,68,68,0.06)"}
                       stroke={n.accent}
                       strokeWidth={isSel ? 2 : 1}
                     />
@@ -851,7 +1140,7 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                   )}
                   <text
                     x={0}
-                    y={n.kind === "user" || n.kind === "ioc" ? 4 : -3}
+                    y={n.kind === "user" || n.kind === "ioc" || n.kind === "external" || n.kind === "network_ip" ? 4 : -3}
                     textAnchor="middle"
                   >
                     {n.label}
@@ -859,7 +1148,7 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
                   {n.sublabel && (
                     <text
                       x={0}
-                      y={n.kind === "user" || n.kind === "ioc" ? 18 : 12}
+                      y={n.kind === "user" || n.kind === "ioc" || n.kind === "external" || n.kind === "network_ip" ? 18 : 12}
                       textAnchor="middle"
                       className="sublabel"
                     >
@@ -884,6 +1173,8 @@ function RelationshipGraph({ report, selected, onSelect, hoverId, onHover, sevFi
 
 window.RelationshipGraph = RelationshipGraph;
 window.classifyDevice = classifyDevice;
+window.isInternalIP = isInternalIP;
+window.extractHostnameFromDeviceId = extractHostnameFromDeviceId;
 window.countFlags = countFlags;
 window.maxSev = maxSev;
 window.aggregateUserFlags = aggregateUserFlags;
