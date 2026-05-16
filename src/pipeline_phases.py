@@ -118,6 +118,42 @@ geoff_forensicator = None
 # Pipeline functions
 # ---------------------------------------------------------------------------
 
+def _pypff_extract_messages(folder, output_dir: str, depth: int = 0) -> int:
+    """Recursively extract messages from a pypff folder into .eml files.
+    Returns the count of messages extracted."""
+    import email as email_lib
+    from email import policy as email_policy
+    count = 0
+    try:
+        for msg_idx in range(folder.get_number_of_sub_messages()):
+            try:
+                msg = folder.get_sub_message(msg_idx)
+                subject = msg.subject or "no_subject"
+                safe_subj = re.sub(r'[^a-zA-Z0-9._-]', '_', subject)[:80]
+                received = msg.delivery_time or ""
+                received_clean = re.sub(r'[^a-zA-Z0-9_-]', '_', str(received))
+                eml_name = f"msg_{depth}_{msg_idx}_{safe_subj}_{received_clean}.eml"
+                eml_path = os.path.join(output_dir, eml_name)
+                msg_body = msg.get_text_body() or ""
+                eml_msg = email_lib.message_from_string(
+                    f"Subject: {subject}\n\n{msg_body}",
+                    policy=email_policy.default
+                )
+                with open(eml_path, 'w', encoding='utf-8', errors='replace') as fh:
+                    fh.write(eml_msg.as_string())
+                count += 1
+            except Exception:
+                continue
+        for sub_idx in range(folder.get_number_of_sub_folders()):
+            try:
+                sub = folder.get_sub_folder(sub_idx)
+                count += _pypff_extract_messages(sub, output_dir, depth + 1)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return count
+
 
 # ---------------------------------------------------------------------------
 # Batch Mode Helpers
@@ -3376,15 +3412,68 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                     _fe_log(job_id, f"      icat error: {e}")
                     continue
 
-                # Step 5: readpst -M to convert to .eml
+                # Step 5: PST conversion to .eml (try readpst, then pffexport, then pypff)
                 eml_dir = os.path.join(extract_dir, f"eml_{safe_name}")
                 os.makedirs(eml_dir, exist_ok=True)
+                pst_converted_ok = False
+
+                # Attempt A: readpst -M
                 rpst_r = subprocess.run(
                     ["readpst", "-M", "-o", eml_dir, pst_out],
                     capture_output=True, text=True, timeout=300,
                 )
-                if rpst_r.returncode != 0:
-                    _fe_log(job_id, f"      readpst failed: {rpst_r.stderr[:200]}")
+                if rpst_r.returncode == 0:
+                    pst_converted_ok = True
+                    _fe_log(job_id, f"      readpst OK")
+                else:
+                    _fe_log(job_id, f"      readpst failed: {rpst_r.stderr[:200]}, trying pffexport...")
+
+                # Attempt B: pffexport fallback
+                if not pst_converted_ok:
+                    try:
+                        import shutil as _shutil
+                        _shutil.rmtree(eml_dir, ignore_errors=True)
+                        os.makedirs(eml_dir, exist_ok=True)
+                        pff_r = subprocess.run(
+                            ["pffexport", "-d", eml_dir, pst_out],
+                            capture_output=True, text=True, timeout=300,
+                        )
+                        if pff_r.returncode == 0:
+                            pff_items = list(Path(eml_dir).rglob("*"))
+                            if pff_items:
+                                pst_converted_ok = True
+                                _fe_log(job_id, f"      pffexport OK ({len(pff_items)} items)")
+                            else:
+                                _fe_log(job_id, f"      pffexport ran but no output files")
+                        else:
+                            _fe_log(job_id, f"      pffexport failed: {pff_r.stderr[:200]}")
+                    except FileNotFoundError:
+                        _fe_log(job_id, f"      pffexport tool not found, trying pypff...")
+                    except Exception as e:
+                        _fe_log(job_id, f"      pffexport error: {e}")
+
+                # Attempt C: pypff fallback
+                if not pst_converted_ok:
+                    try:
+                        import shutil as _shutil2
+                        import pypff
+                        _shutil2.rmtree(eml_dir, ignore_errors=True)
+                        os.makedirs(eml_dir, exist_ok=True)
+                        pff_obj = pypff.open(pst_out)
+                        root_folder = pff_obj.get_root_folder()
+                        pypff_count = _pypff_extract_messages(root_folder, eml_dir, 0)
+                        if pypff_count > 0:
+                            pst_converted_ok = True
+                            _fe_log(job_id, f"      pypff OK ({pypff_count} messages)")
+                        else:
+                            _fe_log(job_id, f"      pypff found 0 messages")
+                    except ImportError:
+                        _fe_log(job_id, f"      pypff module not available")
+                    except Exception as e:
+                        _fe_log(job_id, f"      pypff error: {e}")
+
+                if not pst_converted_ok:
+                    _fe_log(job_id, f"      All PST conversion methods failed for {safe_name}")
                     continue
 
                 eml_count = sum(1 for _ in Path(eml_dir).rglob("*.eml"))

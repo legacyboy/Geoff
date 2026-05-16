@@ -85,6 +85,29 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
                     time.sleep(actual_wait)
                     continue
                 return result_text
+            elif response.status_code in (401, 403):
+                print(f"[FORENSICATOR] LLM HTTP {response.status_code} — bad auth, giving up immediately")
+                return None
+            elif 500 <= response.status_code < 600:
+                # Server errors: brief retry (3 attempts with 10s backoff)
+                if attempt < 3:
+                    wait = 10
+                    remaining = _MAX_RETRY_TIME - elapsed
+                    actual_wait = min(wait, remaining)
+                    if actual_wait <= 0:
+                        return None
+                    print(f"[FORENSICATOR] LLM HTTP {response.status_code} (server error), retry {attempt+1} after {wait}s")
+                    time.sleep(actual_wait)
+                    continue
+                # After 3 attempts, fall through to full retry window
+                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait, remaining)
+                if actual_wait <= 0:
+                    return None
+                print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                time.sleep(actual_wait)
+                continue
             else:
                 wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
                 remaining = _MAX_RETRY_TIME - elapsed

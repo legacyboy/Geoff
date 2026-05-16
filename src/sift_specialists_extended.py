@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from xml.etree import ElementTree as ET
+import sys
 
 
 # ---------------------------------------------------------------------------
@@ -5788,6 +5789,43 @@ class SQLITE_Specialist:
 # EMAIL_Specialist  (PST/OST via readpst, mbox via Python, .eml parsing)
 # ---------------------------------------------------------------------------
 
+def _extract_pypff_messages(folder, output_dir: str, depth: int = 0) -> int:
+    """Recursively extract messages from a pypff folder into .eml files.
+    Returns the count of messages extracted."""
+    import email as email_lib
+    from email import policy as email_policy
+    count = 0
+    try:
+        for msg_idx in range(folder.get_number_of_sub_messages()):
+            try:
+                msg = folder.get_sub_message(msg_idx)
+                subject = msg.subject or "no_subject"
+                safe_subj = re.sub(r'[^a-zA-Z0-9._-]', '_', subject)[:80]
+                received = msg.delivery_time or ""
+                received_clean = re.sub(r'[^a-zA-Z0-9_-]', '_', str(received))
+                eml_name = f"msg_{depth}_{msg_idx}_{safe_subj}_{received_clean}.eml"
+                eml_path = os.path.join(output_dir, eml_name)
+                msg_body = msg.get_text_body() or ""
+                eml_msg = email_lib.message_from_string(
+                    f"Subject: {subject}\n\n{msg_body}",
+                    policy=email_policy.default
+                )
+                with open(eml_path, 'w', encoding='utf-8', errors='replace') as fh:
+                    fh.write(eml_msg.as_string())
+                count += 1
+            except Exception:
+                continue
+        for sub_idx in range(folder.get_number_of_sub_folders()):
+            try:
+                sub = folder.get_sub_folder(sub_idx)
+                count += _extract_pypff_messages(sub, output_dir, depth + 1)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return count
+
+
 class EMAIL_Specialist:
     """Forensic extraction from email archives: PST/OST, mbox, and .eml files."""
 
@@ -5900,23 +5938,72 @@ class EMAIL_Specialist:
                 "timestamp": datetime.now().isoformat(),
             }
 
-        # Parse PST with readpst
+        # Parse PST — try readpst first, then pffexport, then pypff
         readpst_dir = output_dir or tempfile.mkdtemp(prefix="geoff_pst_")
+        pst_parsed_ok = False
         try:
+            # --- Attempt 1: readpst ---
             r = self._run(
                 ["readpst", "-M", "-o", readpst_dir, actual_path],
                 timeout=300,
             )
-            if r["returncode"] != 0:
+            if r["returncode"] == 0:
+                pst_parsed_ok = True
+            else:
+                print(f"[PST] readpst failed ({r['stderr'][:200]}), trying pffexport...", file=sys.stderr)
+
+            # --- Attempt 2: pffexport fallback ---
+            if not pst_parsed_ok:
+                try:
+                    shutil.rmtree(readpst_dir, ignore_errors=True)
+                    os.makedirs(readpst_dir, exist_ok=True)
+                    pff_r = subprocess.run(
+                        ["pffexport", "-d", readpst_dir, actual_path],
+                        capture_output=True, text=True, timeout=300,
+                    )
+                    if pff_r.returncode == 0:
+                        # pffexport outputs files into the directory; check for content
+                        pff_items = list(Path(readpst_dir).rglob("*"))
+                        if pff_items:
+                            pst_parsed_ok = True
+                            print(f"[PST] pffexport succeeded ({len(pff_items)} items)", file=sys.stderr)
+                        else:
+                            print(f"[PST] pffexport ran but produced no output files", file=sys.stderr)
+                    else:
+                        print(f"[PST] pffexport failed ({pff_r.stderr[:200]})", file=sys.stderr)
+                except FileNotFoundError:
+                    print(f"[PST] pffexport tool not found", file=sys.stderr)
+                except Exception as e:
+                    print(f"[PST] pffexport error: {e}", file=sys.stderr)
+
+            # --- Attempt 3: pypff fallback ---
+            if not pst_parsed_ok:
+                try:
+                    import pypff
+                    pff_obj = pypff.open(actual_path)
+                    root_folder = pff_obj.get_root_folder()
+                    # Walk folder tree and extract messages
+                    pypff_count = _extract_pypff_messages(root_folder, readpst_dir, depth=0)
+                    if pypff_count > 0:
+                        pst_parsed_ok = True
+                        print(f"[PST] pypff succeeded ({pypff_count} messages)", file=sys.stderr)
+                    else:
+                        print(f"[PST] pypff found 0 messages in PST", file=sys.stderr)
+                except ImportError:
+                    print(f"[PST] pypff module not available", file=sys.stderr)
+                except Exception as e:
+                    print(f"[PST] pypff error: {e}", file=sys.stderr)
+
+            if not pst_parsed_ok:
                 return {
                     "tool": "pst_parser",
                     "pst_path": pst_path,
                     "status": "error",
-                    "error": r["stderr"][:1000] or "readpst failed",
+                    "error": "readpst, pffexport, and pypff all failed — see stderr for details",
                     "timestamp": datetime.now().isoformat(),
                 }
 
-            # Walk the output tree and parse every .eml file
+            # Walk the output tree and parse every .eml file (or extracted message)
             folders: Dict[str, List[Dict[str, Any]]] = {}
             total_msgs = 0
             for root, dirs, files in os.walk(readpst_dir):
