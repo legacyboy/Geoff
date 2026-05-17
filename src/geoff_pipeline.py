@@ -252,6 +252,182 @@ def _preflight_validation(evidence_path: Path, case_work_dir: Path, job_id: str)
     return warnings
 
 
+def _reconstruct_raw_command(module: str, function: str, params: dict) -> str:
+    """
+    Reconstruct a copy-pasteable CLI command string from module, function, and params.
+    Handles the most common forensic tools used across all playbook steps.
+    Falls back to a descriptive string for unknown param patterns.
+    """
+    if not params:
+        return f"{module}.{function}"
+
+    # ---- SleuthKit tools ----
+    if module == "sleuthkit":
+        # Extract image path from any of the common keys
+        image = params.get("disk_image") or params.get("image") or ""
+        offset = params.get("offset")
+        inode = params.get("inode")
+        # Determine the tool from the function
+        tool_map = {
+            "analyze_partition_table": "mmls",
+            "analyze_filesystem": "fsstat",
+            "list_files": "fls",
+            "list_files_mactime": "fls",
+            "list_inodes": "ils",
+            "get_file_info": "istat",
+            "list_deleted": "fls",
+            "extract_file": "icat",
+        }
+        tool = tool_map.get(function, function)
+        args = []
+        if offset is not None:
+            args.append(f"-o {offset}")
+        if function == "list_files" and params.get("recursive"):
+            args.append("-r")
+        if function == "list_deleted":
+            args.append("-d")
+        if function == "list_files_mactime":
+            args.append("-m")
+        args.append(image)
+        if inode is not None:
+            args.append(str(inode))
+        cmd = f"{tool} {' '.join(a for a in args if a)}"
+        return cmd.strip()
+
+    # ---- Strings tool ----
+    if module == "strings":
+        file_path = params.get("file_path", "")
+        min_len = params.get("min_length")
+        encoding = params.get("encoding")
+        args = []
+        if min_len:
+            args.append(f"-n {min_len}")
+        if encoding:
+            enc_map = {"ascii": "a", "unicode": "l", "wide": "l"}
+            args.append(f"-e {enc_map.get(encoding, encoding)}")
+        args.append(file_path)
+        return f"strings {' '.join(a for a in args if a)}"
+
+    # ---- Volatility tool ----
+    if module == "volatility":
+        mem = params.get("memory_dump", "")
+        plugin_map = {
+            "process_list": "windows.pslist",
+            "network_scan": "windows.netscan",
+            "find_malware": "windows.malfind",
+            "scan_registry": "windows.registry.printkey",
+            "dump_process": "windows.dumpfiles",
+        }
+        plugin = plugin_map.get(function, function)
+        # Check if volatility3 or vol.py
+        return f"volatility3 -f {mem} {plugin}"
+
+    # ---- Memory module ----
+    if module == "memory":
+        mem = params.get("memory_dump", "")
+        func_name = function.replace("_", ".")
+        return f"memory.{func_name} --memory-dump {mem}"
+
+    # ---- Network tools ----
+    if module == "network":
+        pcap = params.get("pcap_file", "")
+        if function == "analyze_pcap":
+            return f"tshark -r {pcap}"
+        elif function == "extract_http":
+            return f"tshark -r {pcap} -Y http"
+        elif function == "extract_flows":
+            return f"tshark -r {pcap} -T fields -e ip.src -e ip.dst -e ip.proto"
+        return f"network.{function} {pcap}"
+
+    # ---- Logs module ----
+    if module == "logs":
+        log_file = params.get("evtx_file") or params.get("evt_file") or params.get("log_file") or params.get("syslog_file", "")
+        if function == "parse_evtx":
+            return f"python3 -m evtx_dump {log_file}"
+        elif function == "parse_evt":
+            return f"python3 -m python-evt {log_file}"
+        elif function == "parse_syslog":
+            return f"cat {log_file}"
+        return f"logs.{function} {log_file}"
+
+    # ---- Registry module ----
+    if module == "registry":
+        hive = params.get("software_path") or params.get("system_path") or params.get("ntuser_path") or params.get("sam_path") or params.get("hive_path", "")
+        if function == "extract_autoruns":
+            return f"regripper -r {hive} -a autoruns"
+        elif function == "extract_services":
+            return f"regripper -r {hive} -a services"
+        elif function == "parse_hive":
+            return f"regripper -r {hive}"
+        return f"registry.{function} {hive}"
+
+    # ---- Bulk Extractor ----
+    if module == "bulk_extractor":
+        image = params.get("image", "")
+        outdir = params.get("output_dir", "/tmp/bulk_extractor_out")
+        return f"bulk_extractor -o {outdir} {image}"
+
+    # ---- dc3dd ----
+    if module == "dc3dd":
+        image = params.get("image", "")
+        return f"dc3dd if={image}"
+
+    # ---- VSS module ----
+    if module == "vss":
+        image = params.get("image", "")
+        return f"vshadowinfo {image}"
+
+    # ---- Browser module ----
+    if module == "browser":
+        profile_path = params.get("profile_path") or params.get("directory") or params.get("evidence_dir", "")
+        return f"browser.{function} {profile_path}"
+
+    # ---- SQLite module ----
+    if module == "sqlite":
+        db_path = params.get("db_path") or params.get("database") or params.get("file_path", "")
+        return f"sqlite3 {db_path} .dump"
+
+    # ---- Email module ----
+    if module == "email":
+        mbox = params.get("mbox") or params.get("email_file") or params.get("file_path", "")
+        return f"email.{function} {mbox}"
+
+    # ---- JumpList ----
+    if module == "jumplist":
+        directory = params.get("directory", "")
+        return f"jumplist.{function} {directory}"
+
+    # ---- Scheduled tasks ----
+    if module == "scheduled":
+        evidence_dir = params.get("evidence_dir", "")
+        return f"scheduled.{function} {evidence_dir}"
+
+    # ---- Plaso ----
+    if module == "plaso":
+        image = params.get("image") or params.get("source", "")
+        return f"log2timeline.py --storage-file {params.get('storage_file', 'plaso.dump')} {image}"
+
+    # ---- Mobile ----
+    if module == "mobile":
+        mobile_dir = params.get("mobile", "") or params.get("backup_dir", "") or params.get("directory", "")
+        return f"mobile.{function} {mobile_dir}"
+
+    # ---- Photorec ----
+    if module == "photorec":
+        image = params.get("disk_image") or params.get("image", "")
+        return f"photorec /d {params.get('output_dir', '/tmp/photorec')} {image}"
+
+    # ---- Zeek ----
+    if module == "zeek":
+        pcap = params.get("pcap_file") or params.get("pcap", "")
+        return f"zeek -r {pcap}"
+
+    # ---- Generic fallback ----
+    # Build a descriptive string from params
+    param_str = " ".join(f"{k}={v}" for k, v in sorted(params.items()) if not k.startswith("_"))
+    return f"{module}.{function} {param_str}"
+
+
 def _commit_step_with_custody(
     step_record: dict,
     evidence_file: str,
@@ -280,6 +456,8 @@ def _commit_step_with_custody(
         json.dumps(step_record.get("params", {}), sort_keys=True, default=str).encode()
     ).hexdigest()[:16]
 
+    raw_command = step_record.get("raw_command", "")
+
     custody = {
         "step_key": step_key,
         "playbook": playbook_id,
@@ -288,6 +466,7 @@ def _commit_step_with_custody(
         "evidence_file": evidence_file,
         "evidence_sha256": evidence_sha256,
         "params_hash": params_hash,
+        "raw_command": raw_command,
         "status": step_record.get("status", "unknown"),
         "committed_at": datetime.now().isoformat(),
         "execution_hash": step_record.get("execution_hash", ""),
@@ -309,6 +488,8 @@ def _commit_step_with_custody(
         f"[{step_record.get('status', 'unknown')}] "
         f"ev={ev_name} sha256={evidence_sha256[:12]}"
     )
+    if raw_command:
+        commit_msg += f"\ncmd: {raw_command[:200]}"
     return safe_git_commit(commit_msg, base_path=str(case_work_dir))
 
 
@@ -3079,6 +3260,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 "module": module,
                                 "function": function,
                                 "params": params,
+                                "raw_command": _reconstruct_raw_command(module, function, params),
                                 "evidence_file": item,
                                 "device_id": dev_id,
                                 "owner": dev.get("owner"),
@@ -3110,6 +3292,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         step_record = {
                                             "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
                                             "module": module, "function": function, "params": params,
+                                            "raw_command": _reconstruct_raw_command(module, function, params),
                                             "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
                                             "status": "skipped", "error": f"dependency {dep} not met",
                                             "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
@@ -3125,6 +3308,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 "module": module,
                                 "function": function,
                                 "params": params,
+                                "raw_command": _reconstruct_raw_command(module, function, params),
                                 "evidence_file": item,
                                 "device_id": dev_id,
                                 "owner": dev.get("owner"),
@@ -3346,10 +3530,28 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         step_record["needs_review"] = True
                                         step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
                                         _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
+                                        # Demote to unverified
+                                        if step_record.get("status") == "completed":
+                                            step_record["status"] = "completed_unverified"
+                                            steps_unverified += 1
                                         # Skip further critic processing for this step
-                                    elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is False:
+
+                                    # Verdict-based: REJECTED → unverified immediately
+                                    elif isinstance(critic_val, dict) and critic_val.get("verdict") == "REJECTED":
+                                        issue_str = critic_val.get("verdict_reason", "Critic rejected this step")
+                                        _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} — {issue_str}")
+                                        if step_record.get("status") == "completed":
+                                            step_record["status"] = "completed_unverified"
+                                            step_record["needs_review"] = True
+                                            step_record["unverified_reason"] = issue_str
+                                            steps_unverified += 1
+
+                                    # Verdict-based: REQUIRES_REVIEW or passes_sanity=False → attempt self-correction
+                                    elif (isinstance(critic_val, dict) and
+                                          (critic_val.get("verdict") == "REQUIRES_REVIEW" or
+                                           critic_val.get("passes_sanity") is False)):
                                         issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
-                                        short = "; ".join(str(i) for i in issues[:2]) if issues else "sanity check failed"
+                                        short = "; ".join(str(i) for i in issues[:2]) if issues else (critic_val.get("verdict", "sanity check failed"))
                                         _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
 
                                         # Self-correction: Manager generates revised analysis → re-validate with Critic
@@ -3373,7 +3575,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                     raw_output=json.dumps(result, default=str)[:8000],
                                                     geoff_analysis=corrected_analysis,
                                                 )
-                                                if isinstance(critic_retry, dict) and critic_retry.get("passes_sanity") is True:
+                                                if isinstance(critic_retry, dict) and (critic_retry.get("passes_sanity") is True or critic_retry.get("verdict") == "APPROVED"):
                                                     # Correction accepted — update step with corrected interpretation
                                                     step_record["forensicator"]["analyst_note"] = correction.get("analyst_note", forensicator_notes.get("analyst_note"))
                                                     step_record["forensicator"]["threat_indicators"] = correction.get("threat_indicators", forensicator_notes.get("threat_indicators", []))
@@ -3404,7 +3606,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 playbook_id=playbook_id, module=module, function=function,
                                                 device_id=dev_id, reason=issues[:5],
                                             )
-                                    elif isinstance(critic_val, dict) and critic_val.get("passes_sanity") is True:
+                                    elif isinstance(critic_val, dict) and (critic_val.get("passes_sanity") is True or critic_val.get("verdict") == "APPROVED"):
                                         _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
                                     # Validate IOC formats from step result
                                     try:
@@ -3934,7 +4136,18 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     break
 
         # Critic summary
-        critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and c.get("valid", False))
+        critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and (
+            c.get("verdict") == "APPROVED" or c.get("valid", False)
+        ))
+        critic_rejected = sum(1 for c in critic_results if isinstance(c, dict) and (
+            c.get("verdict") == "REJECTED"
+        ))
+        critic_review = sum(1 for c in critic_results if isinstance(c, dict) and (
+            c.get("verdict") == "REQUIRES_REVIEW" or (
+                c.get("verdict") not in ("APPROVED", "REJECTED", "REQUIRES_REVIEW")
+                and not c.get("valid", False)
+            )
+        ))
         critic_total = len(critic_results)
         critic_pct = (critic_approved / critic_total * 100) if critic_total > 0 else 100.0
         needs_review_count = sum(1 for f in findings_writer.all_records() if f.get("needs_review"))
@@ -3975,6 +4188,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "steps_failed": steps_failed,
             "steps_skipped": steps_skipped,
             "critic_approval_pct": round(critic_pct, 1),
+            "critic_approved": critic_approved,
+            "critic_rejected": critic_rejected,
+            "critic_review": critic_review,
             "steps_needs_review": needs_review_count,
             "findings_detail": findings_writer.all_records(),
             "findings_jsonl": str(findings_writer._path),

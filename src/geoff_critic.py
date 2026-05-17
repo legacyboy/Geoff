@@ -297,13 +297,43 @@ class GeoffCritic:
     def validate_tool_output(self, tool_name: str, tool_params: Dict,
                             raw_output: str, geoff_analysis: str) -> Dict[str, Any]:
         """
-        Sanity check: does the analysis claim something contradicted by or
-        absent from the raw output? That's it.
+        Validate tool output: check for hallucinations, nonsense, empty output,
+        IOC presence in raw data, and produce an explicit verdict.
+
+        Returns:
+            Dict with verdict (APPROVED/REQUIRES_REVIEW/REJECTED), hallucinations,
+            nonsense, invalid_iocs, passes_sanity, and metadata.
         """
         safe_tool_name = str(tool_name).replace("\n", " ").replace("\r", " ")[:100]
         safe_raw = str(raw_output)[:3000]
         safe_analysis = str(geoff_analysis).replace("\n", "\n  ")[:5000]
-        sanity_prompt = f"""You are a sanity checker. Compare the raw tool output to the analysis.
+
+        # ---- Pre-check: empty or near-empty output ----
+        raw_stripped = str(raw_output).strip()
+        too_short = len(raw_stripped) < 15  # less than 15 chars of output
+
+        # Extract claimed IOCs from analysis for cross-check against raw output
+        claimed_iocs = []
+        if geoff_analysis:
+            claimed_iocs.extend(re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', geoff_analysis))
+            claimed_iocs.extend(re.findall(r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b', geoff_analysis))
+            claimed_iocs.extend(re.findall(r'\b[0-9a-f]{32}\b', geoff_analysis, re.I))
+            claimed_iocs.extend(re.findall(r'\b[0-9a-f]{40}\b', geoff_analysis, re.I))
+            claimed_iocs.extend(re.findall(r'\b[0-9a-f]{64}\b', geoff_analysis, re.I))
+        # Filter out non-IOC domain-like strings (e.g. common tool names)
+        claimed_iocs = [i for i in claimed_iocs if i not in (
+            'localhost', 'local', 'domain', 'timeout', 'error',
+            'stdout', 'stderr', 'bytes', 'sectors', 'partitions',
+        )]
+
+        # Check which claimed IOCs actually appear in raw output
+        missing_iocs = []
+        for ioc in claimed_iocs:
+            if ioc not in raw_stripped:
+                missing_iocs.append(ioc)
+
+        # ---- LLM call for detailed sanity check ----
+        sanity_prompt = f"""You are a forensic validation critic. Your job is to issue an explicit verdict on whether this tool output and analysis are trustworthy.
 
 TOOL: {safe_tool_name}
 RAW OUTPUT (excerpt):
@@ -316,46 +346,96 @@ Answer these questions:
 1. Does the analysis claim something NOT present in the raw output? (hallucination)
 2. Is there any obvious nonsense? (impossible values, contradictory claims)
 3. Are any claimed IOCs (IPs, hashes, timestamps, URLs) invalid format?
+4. Does the raw output contain meaningful data (non-empty, no only-error messages)?
+5. **What is your overall verdict?** Choose one:
+   - APPROVED: analysis is correct, output is meaningful, no issues found
+   - REQUIRES_REVIEW: minor issues (some missing context, ambiguous data, or minor hallucinations that don't affect overall conclusion)
+   - REJECTED: major issues (critical hallucinations, empty output, nonsense claims)
 
 Respond in JSON:
 {{
     "hallucinations": ["list claims not in raw output, or empty list"],
     "nonsense": ["list obvious nonsense, or empty list"],
     "invalid_iocs": ["list IOCs with invalid format, or empty list"],
-    "passes_sanity": true/false
+    "passes_sanity": true/false,
+    "verdict": "APPROVED" or "REQUIRES_REVIEW" or "REJECTED",
+    "verdict_reason": "Brief explanation of why this verdict was chosen"
 }}"""
 
         critic_response = self._call_critic_llm(sanity_prompt)
 
         # If critic LLM was unavailable after retries, mark as needs_review
         if not critic_response or not critic_response.strip():
-            return {
+            result = {
                 "hallucinations": [],
                 "nonsense": [],
                 "invalid_iocs": [],
                 "passes_sanity": None,
                 "needs_review": True,
                 "unverified_reason": "Ollama timeout - critic validation failed",
+                "verdict": "REQUIRES_REVIEW",
+                "verdict_reason": "Ollama unavailable after retries",
                 "parse_error": True,
                 "raw_critic_response": "Ollama unavailable after retries",
-                "tool_name": tool_name,
-                "timestamp": datetime.now().isoformat(),
             }
+        else:
+            try:
+                json_match = re.search(r'\{.*\}', critic_response, re.DOTALL)
+                if json_match:
+                    result = json.loads(json_match.group())
+                else:
+                    result = json.loads(critic_response)
+            except Exception:
+                result = {
+                    "hallucinations": [],
+                    "nonsense": [],
+                    "passes_sanity": None,
+                    "verdict": "REQUIRES_REVIEW",
+                    "verdict_reason": "Failed to parse LLM response",
+                    "parse_error": True,
+                    "raw_critic_response": critic_response[:500]
+                }
 
-        try:
-            json_match = re.search(r'\{.*\}', critic_response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
+        # ---- Post-processing: logic-based checks that override the LLM if needed ----
+
+        # 1. Empty output detection (if output is too short, that's always a problem)
+        if too_short:
+            result["empty_output"] = True
+            # Downgrade verdict if LLM missed this
+            if result.get("verdict") == "APPROVED":
+                result["verdict"] = "REJECTED"
+                result["verdict_reason"] = f"Output is too short ({len(raw_stripped)} chars) — no meaningful data produced"
+                result["passes_sanity"] = False
+                if "Empty/insufficient output" not in result.get("nonsense", []):
+                    result.setdefault("nonsense", []).append("Empty/insufficient output")
+
+        # 2. IOC presence verification
+        if missing_iocs:
+            result["claimed_iocs_missing_from_raw"] = missing_iocs
+            # Downgrade verdict if analysis claims IOCs not in raw output
+            if result.get("verdict") == "APPROVED" and missing_iocs:
+                result["verdict"] = "REQUIRES_REVIEW"
+                result["verdict_reason"] = f"Analysis claims {len(missing_iocs)} IOC(s) not found in raw output"
+                result["passes_sanity"] = False
+
+        # 3. Derive verdict from passes_sanity if LLM didn't provide one
+        if "verdict" not in result or result.get("verdict") not in ("APPROVED", "REQUIRES_REVIEW", "REJECTED"):
+            ps = result.get("passes_sanity")
+            if ps is True:
+                result["verdict"] = "APPROVED"
+                result["verdict_reason"] = "Sanity check passed"
+            elif ps is False:
+                result["verdict"] = "REJECTED"
+                result["verdict_reason"] = "Sanity check failed"
             else:
-                result = json.loads(critic_response)
-        except Exception:
-            result = {
-                "hallucinations": [],
-                "nonsense": [],
-                "passes_sanity": None,
-                "parse_error": True,
-                "raw_critic_response": critic_response[:500]
-            }
+                result["verdict"] = "REQUIRES_REVIEW"
+                result["verdict_reason"] = "Sanity check inconclusive"
+
+        # 4. Default passes_sanity if missing
+        if "passes_sanity" not in result:
+            result["passes_sanity"] = True if result.get("verdict") == "APPROVED" else (
+                False if result.get("verdict") == "REJECTED" else None
+            )
 
         # Add metadata
         result.update({

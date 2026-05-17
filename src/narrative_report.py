@@ -1999,6 +1999,140 @@ Write the following sections. ACCURACY RULES:
 
         return "\n".join(lines)
 
+    def _render_detailed_steps(self, report_json: dict) -> str:
+        """Render detailed step-by-step execution log showing actual CLI commands,
+        raw output excerpts, critic verdicts, and status for every step."""
+        findings = report_json.get("findings_detail", [])
+        if not findings:
+            return "No step execution data available."
+
+        lines = []
+        lines.append("This section documents every forensic tool execution performed during the investigation, "
+                      "including the exact CLI commands, raw output excerpts, and validation results. "
+                      "This is the authoritative record of 'what ran, what it said, and whether we trust it.'\n")
+
+        # Group findings by playbook
+        from collections import OrderedDict
+        by_pb = OrderedDict()
+        for f in findings:
+            pb = f.get("playbook", "Unknown")
+            by_pb.setdefault(pb, []).append(f)
+
+        total = len(findings)
+        completed = sum(1 for f in findings if f.get("status") == "completed")
+        unverified = sum(1 for f in findings if f.get("status") == "completed_unverified")
+        failed = sum(1 for f in findings if f.get("status") == "failed")
+        skipped = sum(1 for f in findings if f.get("status") == "skipped")
+
+        lines.append(f"**Summary:** {total} total steps — {completed} verified, {unverified} unverified, "
+                     f"{failed} failed, {skipped} skipped\n")
+
+        for pb_id, pb_steps in by_pb.items():
+            pb_name = report_json.get("playbook_names", {}).get(pb_id, pb_id)
+            lines.append(f"\n### Playbook: {pb_name} ({pb_id})\n")
+            lines.append(f"**Steps in this playbook:** {len(pb_steps)}\n")
+            for i, f in enumerate(pb_steps, 1):
+                module = f.get("module", "?")
+                function = f.get("function", "?")
+                status = f.get("status", "unknown")
+                evidence = Path(f.get("evidence_file", "")).name if f.get("evidence_file") else "N/A"
+                device = f.get("device_id", "N/A")
+                raw_cmd = f.get("raw_command", "")
+                step_key = f.get("step_key", "")
+
+                # Status badge
+                status_badge = {
+                    "completed": "✅ Completed",
+                    "completed_unverified": "⚠️ Completed (Unverified)",
+                    "failed": "❌ Failed",
+                    "skipped": "⏭️ Skipped",
+                    "running": "🔄 Running",
+                    "error": "❌ Error",
+                }.get(status, status)
+
+                lines.append(f"#### Step {i}: `{module}.{function}`\n")
+                lines.append(f"- **Evidence:** `{evidence}` (device: {device})")
+                lines.append(f"- **Status:** {status_badge}")
+                if step_key:
+                    lines.append(f"- **Step Key:** `{step_key}`")
+
+                # CLI command
+                if raw_cmd:
+                    lines.append(f"\n**Command:**")
+                    lines.append(f"```bash\n{raw_cmd}\n```")
+                else:
+                    # Fallback: reconstruct from module/function/params
+                    params = f.get("params", {})
+                    param_str = " ".join(f"{k}={v}" for k, v in sorted(params.items()) if not k.startswith("_"))
+                    lines.append(f"\n**Command:** `{module}.{function} {param_str}`")
+
+                # Raw output excerpt
+                result = f.get("result", {})
+                if isinstance(result, dict):
+                    stdout = result.get("stdout", "")
+                    stderr = result.get("stderr", "")
+                    output_text = stdout or stderr or ""
+                    if output_text:
+                        excerpt = output_text[:500]
+                        if len(output_text) > 500:
+                            excerpt += "\n[...truncated...]"
+                        lines.append(f"\n**Raw Output (first 500 chars):**")
+                        lines.append(f"```\n{excerpt}\n```")
+                    else:
+                        lines.append(f"\n**Raw Output:** *(empty)*")
+                else:
+                    lines.append(f"\n**Raw Output:** `{str(result)[:300]}`")
+
+                # Forensicator / Critic assessment
+                forensicator = f.get("forensicator", {})
+                if isinstance(forensicator, dict):
+                    note = forensicator.get("analyst_note")
+                    sig = forensicator.get("significance", "")
+                    ti = forensicator.get("threat_indicators", [])
+                    if note:
+                        lines.append(f"\n**Forensicator ({sig}):** {note}")
+                    if ti:
+                        lines.append(f"  - **Threat Indicators:** {', '.join(ti[:5])}")
+
+                critic = f.get("critic", {})
+                if isinstance(critic, dict):
+                    verdict = critic.get("verdict", "N/A")
+                    v_reason = critic.get("verdict_reason", "")
+                    hallucinations = critic.get("hallucinations", [])
+                    nonsense = critic.get("nonsense", [])
+                    invalid_iocs = critic.get("invalid_iocs", [])
+                    needs_review = critic.get("needs_review", False)
+
+                    if verdict == "APPROVED":
+                        critic_badge = "✅ APPROVED"
+                    elif verdict == "REQUIRES_REVIEW":
+                        critic_badge = "⚠️ REQUIRES REVIEW"
+                    elif verdict == "REJECTED":
+                        critic_badge = "❌ REJECTED"
+                    else:
+                        critic_badge = f"**Verdict:** {verdict}"
+
+                    lines.append(f"\n**Critic:** {critic_badge}")
+                    if v_reason:
+                        lines.append(f"  - **Reason:** {v_reason}")
+                    if hallucinations:
+                        lines.append(f"  - **Hallucinations:** {'; '.join(str(h)[:100] for h in hallucinations[:3])}")
+                    if nonsense:
+                        lines.append(f"  - **Nonsense:** {'; '.join(str(n)[:100] for n in nonsense[:3])}")
+                    if invalid_iocs:
+                        lines.append(f"  - **Invalid IOCs:** {', '.join(str(i)[:100] for i in invalid_iocs[:3])}")
+                    if needs_review:
+                        lines.append(f"  - ⚠️ Needs human review")
+
+                # Error info for failed steps
+                error = f.get("error")
+                if error:
+                    lines.append(f"\n**Error:** {str(error)[:200]}")
+
+                lines.append("")  # blank line after each step
+
+        return "\n".join(lines)
+
     def _render_markdown(self, sections: dict,
                           report_json: dict) -> str:
         """Render all sections into a Markdown document."""
@@ -2035,6 +2169,12 @@ Write the following sections. ACCURACY RULES:
 ## MITRE ATT&CK Matrix
 
 {self._render_mitre_matrix(mitres, kill_phases)}
+
+---
+
+## Detailed Step-by-Step Execution
+
+{self._render_detailed_steps(report_json)}
 
 ---
 
