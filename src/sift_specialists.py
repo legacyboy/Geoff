@@ -1343,20 +1343,26 @@ class STRINGS_Specialist:
             }
 
             # Regex patterns
-            url_re = re.compile(r'https?://[^\s"\'\)\]>]+')
+            url_re = re.compile(r'https?://[^\s"\'\)\]]+')
             ip_re = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\b')
-            email_re = re.compile(r'[\w\.\-]+@[\w\.\-]+\.\w{2,}')
+            # Email: min 3-char local part, letter-digit domain labels, validated TLDs
+            email_re = re.compile(
+                r'\b[a-zA-Z0-9][a-zA-Z0-9._%+-]{2,}@'
+                r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
+                r'(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*'
+                r'\.(?:com|org|net|edu|gov|[a-zA-Z]{2,3})\b'
+            )
             registry_re = re.compile(r'(HKLM|HKCU|HKEY_[A-Z_]+)\\[A-Za-z0-9_\\]+')
             win_path_re = re.compile(r'[A-Za-z]:\\[^\s"\'\)\]>]+')
             unix_path_re = re.compile(r'/(?:etc|tmp|var|usr|home|bin|opt|root)/[^\s"\'\)\]>]+')
             domain_re = re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
 
-            # Suspicious string patterns
+            # Suspicious string patterns (word-boundary matched)
             suspicious_keywords = [
-                'password', 'passwd', 'login', 'cmd.exe', 'powershell', 'wscript',
-                'cscript', 'mimikatz', 'lsass', 'ntds.dit', 'shadow', 'dump',
+                'passwd', 'cmd.exe', 'powershell', 'wscript',
+                'cscript', 'mimikatz', 'lsass', 'ntds.dit',
                 'inject', 'shellcode', 'keylog', 'rootkit', 'backdoor',
-                'beacon', 'c2', 'exfil', 'encrypt', 'decrypt', 'ransom'
+                'beacon', 'exfil', 'encrypt', 'decrypt', 'ransom'
             ]
 
             seen = set()
@@ -1367,10 +1373,15 @@ class STRINGS_Specialist:
                         iocs['urls'].append(url)
                         seen.add(url)
 
-                # IPs (filter loopback, RFC1918, link-local, and broadcast)
+                # IPs (filter loopback, RFC1918, link-local, broadcast, version strings)
                 for ip in ip_re.findall(s):
                     octets = ip.split('.')
                     second = int(octets[1]) if len(octets) > 1 and octets[1].isdigit() else 0
+                    # Reject version strings like 7.0.2.7 where all 4 octets are single digits
+                    # Exception for well-known public DNS servers
+                    all_single = all(len(o) == 1 for o in octets)
+                    if all_single and ip not in {'8.8.8.8', '1.1.1.1', '8.8.4.4', '1.0.0.1'}:
+                        continue
                     is_private = (
                         ip.startswith(('0.', '127.', '169.254.', '255.'))
                         or ip.startswith('10.')
@@ -1405,13 +1416,14 @@ class STRINGS_Specialist:
                         iocs['file_paths'].append(path)
                         seen.add(path)
 
-                # Suspicious keywords
-                s_lower = s.lower()
-                for kw in suspicious_keywords:
-                    if kw in s_lower and s not in seen:
-                        iocs['suspicious_strings'].append(s)
-                        seen.add(s)
-                        break
+                # Suspicious keywords (word-boundary matched, min length 6)
+                if len(s) >= 6:
+                    s_lower = s.lower()
+                    for kw in suspicious_keywords:
+                        if re.search(r'\b' + re.escape(kw) + r'\b', s_lower) and s not in seen:
+                            iocs['suspicious_strings'].append(s)
+                            seen.add(s)
+                            break
 
             return {
                 'tool': 'strings',

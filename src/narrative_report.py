@@ -1478,6 +1478,30 @@ class NarrativeReportGenerator:
     _PRIV_IP = re.compile(
         r'^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|0\.0\.0\.0|255\.)')
 
+    # URL noise filter — known ad/tracking, SSL infra, and CDN patterns
+    _NOISE_URL_DOMAINS = (
+        'doubleclick.net', 'atwola.com', 'cdn.channel.aol.com', 'ads.cnn.com',
+        'googlesyndication.com', 'googleadservices.com', 'quantserve.com',
+        'scorecardresearch.com',
+    )
+    _NOISE_URL_KEYWORDS = (
+        'crl.', 'ocsp.', 'verisign', 'thawte', 'globalsign',
+        'blogger.com', 'blogspot.com', 'googleusercontent.com',
+    )
+
+    def _is_noise_url(self, url: str) -> bool:
+        """Return True if the URL is noise (ads, SSL infra, CDN, etc.) and should be excluded."""
+        if not url or not isinstance(url, str):
+            return True
+        url_lower = url.lower()
+        for domain in self._NOISE_URL_DOMAINS:
+            if domain in url_lower:
+                return True
+        for kw in self._NOISE_URL_KEYWORDS:
+            if kw in url_lower:
+                return True
+        return False
+
     def _extract_iocs(self, report_json: dict,
                       behavioral_flags: dict) -> Dict[str, List[str]]:
         """Extract and deduplicate IOCs from all evidence sources.
@@ -1501,7 +1525,13 @@ class NarrativeReportGenerator:
             # Public IPv4
             for m in re.finditer(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b', text):
                 ip = m.group(0)
-                if all(0 <= int(x) <= 255 for x in ip.split('.')):
+                octets = ip.split('.')
+                if all(0 <= int(x) <= 255 for x in octets):
+                    # Reject version strings like 7.0.2.7 where all 4 octets are single digits
+                    # Exception for well-known public DNS servers
+                    all_single = all(len(o) == 1 for o in octets)
+                    if all_single and ip not in {'8.8.8.8', '1.1.1.1', '8.8.4.4', '1.0.0.1'}:
+                        continue
                     if not self._PRIV_IP.match(ip):
                         buckets["ip_addresses"].add(ip)
             # MD5 / SHA1 / SHA256 hashes
@@ -1509,9 +1539,16 @@ class NarrativeReportGenerator:
                 h = m.group(0).lower()
                 if len(h) in (32, 40, 64):
                     buckets["file_hashes"].add(h)
-            # URLs
+            # URLs (with noise filtering)
             for m in re.finditer(r'https?://[^\s"\'<>\r\n]{4,}', text):
-                buckets["urls"].add(m.group(0).rstrip('.,)'))
+                url = m.group(0).rstrip('.,)')
+                # Clean control characters (\x00-\x08, \x0b, \x0c, \x0e-\x1f)
+                cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', url)
+                if len(cleaned) < 4:
+                    continue
+                # Apply noise filter
+                if not self._is_noise_url(cleaned):
+                    buckets["urls"].add(cleaned)
             # Windows registry keys
             for m in re.finditer(
                     r'(?:HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)'
@@ -1527,9 +1564,13 @@ class NarrativeReportGenerator:
                 p = m.group(0).rstrip('.,)')
                 if len(p) >= 10 and _is_valid_file_path(p):
                     buckets["file_paths"].add(p)
-            # Email addresses
+            # Email addresses (min 3-char local part, validated TLDs)
             for m in re.finditer(
-                    r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', text):
+                    r'\b[a-zA-Z0-9][a-zA-Z0-9._%+-]{2,}@'
+                    r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
+                    r'(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*'
+                    r'\.(?:com|org|net|edu|gov|[a-zA-Z]{2,3})\b',
+                    text):
                 buckets["email_addresses"].add(m.group(0).lower())
 
         # Source 1: triage indicator hits
