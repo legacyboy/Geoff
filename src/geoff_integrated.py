@@ -125,7 +125,7 @@ orchestrator = ExtendedOrchestrator(EVIDENCE_BASE_DIR)
 remnux_orchestrator = REMNUX_Orchestrator()
 
 # Initialize Critic for validation
-geoff_critic = GeoffCritic(OLLAMA_URL, LLM_MODEL)
+geoff_critic = GeoffCritic(OLLAMA_URL, AGENT_MODELS["critic"])
 validation_pipeline = ValidationPipeline(orchestrator, geoff_critic)
 
 # Initialize Forensicator for tool execution (multi-agent architecture)

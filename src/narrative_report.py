@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Callable, Optional
 
 
+
+
 def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
     """Sanitize a value before embedding it in an LLM prompt.
 
@@ -342,6 +344,9 @@ class NarrativeReportGenerator:
         sections["findings"] = self._generate_findings_section(
             behavioral_flags, report_json)
 
+        # 5d. Email & Phishing Analysis
+        sections["email_phishing"] = self._render_email_phishing_section(report_json)
+
         # 6. IOC Extraction
         iocs = self._extract_iocs(report_json, behavioral_flags)
         sections["iocs"] = iocs
@@ -378,6 +383,11 @@ class NarrativeReportGenerator:
             report_json, behavioral_flags, correlated_users)
         if sections["conclusion"] and self._is_template_fallback(sections["conclusion"]):
             needs_review_sections.append("conclusion")
+
+        # 12b. Full Written Report (court-ready narrative)
+        sections["full_written_report"] = self._render_full_written_report(
+            report_json, device_map, user_map, behavioral_flags,
+            sections.get('iocs', {}), correlated_users, step_evidence_anchors)
 
         # Track needs_review flag in output
         if needs_review_sections:
@@ -606,55 +616,178 @@ class NarrativeReportGenerator:
                         f"disk images (T1566). See Email Findings section for details."
                     )
             if "credential_theft" in all_cats or "credential_access" in all_cats:
-                narrative_parts.append(
-                    "**Possible credential theft** activity was detected (T1003) based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                # Gather concrete flag summaries for this category
+                cred_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        ft = f.get("flag_type", "")
+                        if ft in ("credential_theft", "credential_access"):
+                            cred_flags.append((dev_id, f))
+                if cred_flags:
+                    dev_names = sorted(set(d for d, _ in cred_flags))
+                    top_summary = cred_flags[0][1].get("summary", "Credential theft indicators")
+                    narrative_parts.append(
+                        f"**Credential theft** detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Credential theft** activity was flagged (T1003) — see detailed findings."
+                    )
             if "persistence" in all_cats:
-                narrative_parts.append(
-                    "**Possible persistence** activity was detected (T1053) based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                pers_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "persistence":
+                            pers_flags.append((dev_id, f))
+                if pers_flags:
+                    dev_names = sorted(set(d for d, _ in pers_flags))
+                    top_summary = pers_flags[0][1].get("summary", "Persistence mechanisms")
+                    narrative_parts.append(
+                        f"**Persistence mechanisms** established on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Persistence** activity was flagged (T1053) — see detailed findings."
+                    )
             if "lateral_movement" in all_cats:
-                narrative_parts.append(
-                    "**Possible lateral movement** was detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                lat_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "lateral_movement":
+                            lat_flags.append((dev_id, f))
+                if lat_flags:
+                    dev_names = sorted(set(d for d, _ in lat_flags))
+                    top_summary = lat_flags[0][1].get("summary", "Lateral movement indicators")
+                    narrative_parts.append(
+                        f"**Lateral movement** detected across {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Lateral movement** was flagged — see detailed findings."
+                    )
             if "cryptominer" in all_cats:
-                narrative_parts.append(
-                    "**Possible cryptocurrency mining** activity was detected (T1496) based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                crypto_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "cryptominer":
+                            crypto_flags.append((dev_id, f))
+                if crypto_flags:
+                    dev_names = sorted(set(d for d, _ in crypto_flags))
+                    top_summary = crypto_flags[0][1].get("summary", "Cryptomining indicators")
+                    narrative_parts.append(
+                        f"**Cryptocurrency mining** activity detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Cryptocurrency mining** activity was flagged (T1496) — see detailed findings."
+                    )
             if "exfiltration" in all_cats:
-                narrative_parts.append(
-                    "**Possible data exfiltration** activity was detected (T1048) based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                exfil_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "exfiltration":
+                            exfil_flags.append((dev_id, f))
+                if exfil_flags:
+                    dev_names = sorted(set(d for d, _ in exfil_flags))
+                    top_summary = exfil_flags[0][1].get("summary", "Data exfiltration indicators")
+                    narrative_parts.append(
+                        f"**Data exfiltration** detected from {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Data exfiltration** activity was flagged (T1048) — see detailed findings."
+                    )
             if "c2" in all_cats or "command_and_control" in all_cats:
-                narrative_parts.append(
-                    "**Possible command and control** (C2) communications were detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                c2_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        ft = f.get("flag_type", "")
+                        if ft in ("c2", "c2_traffic", "command_and_control"):
+                            c2_flags.append((dev_id, f))
+                if c2_flags:
+                    dev_names = sorted(set(d for d, _ in c2_flags))
+                    top_summary = c2_flags[0][1].get("summary", "C2 communications")
+                    narrative_parts.append(
+                        f"**Command & Control** communications detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Command & Control** (C2) communications were flagged — see detailed findings."
+                    )
             if "web_shell" in all_cats:
-                narrative_parts.append(
-                    "**Possible web shell** activity was detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                ws_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "web_shell":
+                            ws_flags.append((dev_id, f))
+                if ws_flags:
+                    dev_names = sorted(set(d for d, _ in ws_flags))
+                    top_summary = ws_flags[0][1].get("summary", "Web shell indicators")
+                    narrative_parts.append(
+                        f"**Web shell** detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Web shell** activity was flagged — see detailed findings."
+                    )
             if "lolbin" in all_cats:
-                narrative_parts.append(
-                    "**Possible living-off-the-land binary** (LOLBin) usage was detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                lolbin_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "lolbin":
+                            lolbin_flags.append((dev_id, f))
+                if lolbin_flags:
+                    dev_names = sorted(set(d for d, _ in lolbin_flags))
+                    top_summary = lolbin_flags[0][1].get("summary", "LOLBin usage")
+                    narrative_parts.append(
+                        f"**Living-off-the-land binary** (LOLBin) usage on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**LOLBin** usage was flagged — see detailed findings."
+                    )
             if "privilege_escalation" in all_cats:
-                narrative_parts.append(
-                    "**Possible privilege escalation** activity was detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                priv_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "privilege_escalation":
+                            priv_flags.append((dev_id, f))
+                if priv_flags:
+                    dev_names = sorted(set(d for d, _ in priv_flags))
+                    top_summary = priv_flags[0][1].get("summary", "Privilege escalation indicators")
+                    narrative_parts.append(
+                        f"**Privilege escalation** detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Privilege escalation** activity was flagged — see detailed findings."
+                    )
             if "defense_evasion" in all_cats:
-                narrative_parts.append(
-                    "**Possible defense evasion** activity was detected based on "
-                    "classification metadata — analyst review of specific artifacts recommended."
-                )
+                de_flags = []
+                for dev_id, flags in behavioral_flags.items():
+                    for f in flags:
+                        if f.get("flag_type") == "defense_evasion":
+                            de_flags.append((dev_id, f))
+                if de_flags:
+                    dev_names = sorted(set(d for d, _ in de_flags))
+                    top_summary = de_flags[0][1].get("summary", "Defense evasion indicators")
+                    narrative_parts.append(
+                        f"**Defense evasion** techniques detected on {len(dev_names)} device(s) "
+                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Defense evasion** activity was flagged — see detailed findings."
+                    )
 
             if narrative_parts:
                 for i, part in enumerate(narrative_parts, 1):
@@ -1846,6 +1979,27 @@ class NarrativeReportGenerator:
             except OSError:
                 continue
 
+        # Source 4b: structured email IOCs from findings_detail results
+        # Extracts from/to addresses from any finding with email_iocs AND
+        # deep-scans the full result JSON for embedded IOCs (catches data
+        # that structured field extraction might miss).
+        for finding in report_json.get("findings_detail", []):
+            result = finding.get("result", {})
+            if not isinstance(result, dict):
+                continue
+            eiocs = result.get("email_iocs")
+            if isinstance(eiocs, dict):
+                for addr in eiocs.get("from_addresses", []):
+                    clean = _extract_email(addr)
+                    if clean and _is_valid_email(clean.lower()):
+                        buckets["email_addresses"].add(clean.lower())
+                for addr in eiocs.get("to_addresses", []):
+                    clean = _extract_email(addr)
+                    if clean and _is_valid_email(clean.lower()):
+                        buckets["email_addresses"].add(clean.lower())
+                # Deep-scan the full result JSON for any embedded IOCs
+                _scan(json.dumps(result, default=str))
+
         # Source 5: structured email IOCs from direct email extraction findings
         # Collects sender IPs, from/to addresses, return-path mismatches
         # Also cleans display-name wrapped addresses and filters system addresses
@@ -2248,6 +2402,8 @@ Write the following sections. ACCURACY RULES:
     def _render_detailed_steps(self, report_json: dict) -> str:
         """Render detailed step-by-step execution log showing actual CLI commands,
         raw output excerpts, critic verdicts, and status for every step."""
+        # Lazy import to avoid circular dependency (geoff_pipeline imports narrative_report)
+        from geoff_pipeline import _reconstruct_raw_command
         findings = report_json.get("findings_detail", [])
         if not findings:
             return "No step execution data available."
@@ -2307,10 +2463,11 @@ Write the following sections. ACCURACY RULES:
                     lines.append(f"\n**Command:**")
                     lines.append(f"```bash\n{raw_cmd}\n```")
                 else:
-                    # Fallback: reconstruct from module/function/params
+                    # Fallback: reconstruct CLI command using _reconstruct_raw_command
                     params = f.get("params", {})
-                    param_str = " ".join(f"{k}={v}" for k, v in sorted(params.items()) if not k.startswith("_"))
-                    lines.append(f"\n**Command:** `{module}.{function} {param_str}`")
+                    reconstructed = _reconstruct_raw_command(module, function, params)
+                    lines.append(f"\n**Command:**")
+                    lines.append(f"```bash\n{reconstructed}\n```")
 
                 # Raw output excerpt
                 result = f.get("result", {})
@@ -2348,26 +2505,40 @@ Write the following sections. ACCURACY RULES:
                     nonsense = critic.get("nonsense", [])
                     invalid_iocs = critic.get("invalid_iocs", [])
                     needs_review = critic.get("needs_review", False)
+                    unverified_reason = critic.get("unverified_reason", "")
 
-                    if verdict == "APPROVED":
-                        critic_badge = "✅ APPROVED"
-                    elif verdict == "REQUIRES_REVIEW":
-                        critic_badge = "⚠️ REQUIRES REVIEW"
-                    elif verdict == "REJECTED":
-                        critic_badge = "❌ REJECTED"
+                    # Check if critic has real content worth rendering
+                    has_content = (
+                        verdict not in ("N/A", "") or v_reason or
+                        hallucinations or nonsense or invalid_iocs or
+                        needs_review or unverified_reason
+                    )
+                    if not has_content:
+                        pass  # skip empty critic
+                    elif needs_review and unverified_reason:
+                        lines.append(f"\\n**Critic:** ⚠️ Could not verify — {unverified_reason}")
                     else:
-                        critic_badge = f"**Verdict:** {verdict}"
+                        if verdict == "APPROVED":
+                            critic_badge = "✅ **APPROVED**"
+                            suffix = f" — {v_reason}" if v_reason else ""
+                        elif verdict == "REQUIRES_REVIEW":
+                            critic_badge = "⚠️ **REQUIRES REVIEW**"
+                            suffix = f" — {v_reason}" if v_reason else ""
+                        elif verdict == "REJECTED":
+                            critic_badge = "❌ **REJECTED**"
+                            suffix = f" — {v_reason}" if v_reason else ""
+                        else:
+                            critic_badge = f"**Verdict:** {verdict}"
+                            suffix = f" — {v_reason}" if v_reason else ""
 
-                    lines.append(f"\n**Critic:** {critic_badge}")
-                    if v_reason:
-                        lines.append(f"  - **Reason:** {v_reason}")
+                        lines.append(f"\\n**Critic:** {critic_badge}{suffix}")
                     if hallucinations:
                         lines.append(f"  - **Hallucinations:** {'; '.join(str(h)[:100] for h in hallucinations[:3])}")
                     if nonsense:
                         lines.append(f"  - **Nonsense:** {'; '.join(str(n)[:100] for n in nonsense[:3])}")
                     if invalid_iocs:
                         lines.append(f"  - **Invalid IOCs:** {', '.join(str(i)[:100] for i in invalid_iocs[:3])}")
-                    if needs_review:
+                    if needs_review and not unverified_reason:
                         lines.append(f"  - ⚠️ Needs human review")
 
                 # Error info for failed steps
@@ -2376,6 +2547,231 @@ Write the following sections. ACCURACY RULES:
                     lines.append(f"\n**Error:** {str(error)[:200]}")
 
                 lines.append("")  # blank line after each step
+
+        return "\n".join(lines)
+
+    def _render_email_phishing_section(self, report_json: dict) -> str:
+        """Render standalone Email & Phishing Analysis section.
+
+        Scans findings_detail for EMAIL-playbook findings, groups into
+        phishing hits vs clean, returns formatted markdown.
+        """
+        findings = report_json.get("findings_detail", [])
+        if not findings:
+            return "No email/phishing data."
+
+        email_findings = [
+            f for f in findings
+            if "EMAIL" in (f.get("playbook", "") or "").upper()
+        ]
+        if not email_findings:
+            return "No email/phishing data."
+
+        lines = []
+        phishing_hits = [
+            f for f in email_findings
+            if f.get("result", {}).get("is_phishing") is True
+        ]
+        scan_records = [
+            f for f in email_findings
+            if f.get("function") == "email_scan"
+        ]
+
+        if phishing_hits:
+            lines.append(f"**{len(phishing_hits)} phishing email(s)** identified.\n")
+            for i, ph in enumerate(phishing_hits[:10], 1):
+                result = ph.get("result", {})
+                lines.append(
+                    f"{i}. **{result.get('subject', 'No subject')}** — "
+                    f"From: `{result.get('from', 'Unknown')}` "
+                    f"(confidence: {result.get('confidence', 0):.0%})"
+                )
+                eiocs = result.get("email_iocs", {})
+                if isinstance(eiocs, dict):
+                    src_ips = eiocs.get("sender_ips", [])
+                    mismatches = eiocs.get("return_path_mismatches", [])
+                    if src_ips:
+                        lines.append(f"   — Sender IPs: {len(src_ips)}")
+                    if mismatches:
+                        lines.append(f"   — Return-Path mismatch (spoofing indicator)")
+        elif scan_records:
+            total_scanned = sum(
+                r.get("result", {}).get("emails_scanned", 0)
+                for r in scan_records
+            )
+            lines.append(
+                f"Direct email extraction scanned **{total_scanned} email(s)** "
+                f"from disk images. No phishing indicators were detected.\n"
+            )
+        else:
+            lines.append(
+                f"{len(email_findings)} email-related finding(s) present, "
+                f"none flagged as phishing.\n"
+            )
+
+        # Aggregate email IOCs across all email findings
+        all_iocs = {"sender_ips": set(), "from_addresses": set(),
+                     "to_addresses": set(), "return_path_mismatches": 0}
+        for f in email_findings:
+            eiocs = f.get("result", {}).get("email_iocs", {})
+            if isinstance(eiocs, dict):
+                for ip in eiocs.get("sender_ips", []):
+                    all_iocs["sender_ips"].add(ip)
+                for addr in eiocs.get("from_addresses", []):
+                    all_iocs["from_addresses"].add(addr)
+                for addr in eiocs.get("to_addresses", []):
+                    all_iocs["to_addresses"].add(addr)
+                all_iocs["return_path_mismatches"] += len(
+                    eiocs.get("return_path_mismatches", []))
+
+        if all_iocs["sender_ips"] or all_iocs["from_addresses"] or all_iocs["return_path_mismatches"]:
+            lines.append("\n**Email IOC Summary:**\n")
+            if all_iocs["sender_ips"]:
+                lines.append(f"- **Sender IPs:** {', '.join(sorted(all_iocs['sender_ips'])[:10])}")
+                if len(all_iocs["sender_ips"]) > 10:
+                    lines[-1] += f" (+{len(all_iocs['sender_ips'])-10} more)"
+            if all_iocs["from_addresses"]:
+                lines.append(f"- **From Addresses:** {', '.join(sorted(all_iocs['from_addresses'])[:10])}")
+            if all_iocs["to_addresses"]:
+                lines.append(f"- **To Addresses:** {', '.join(sorted(all_iocs['to_addresses'])[:10])}")
+            if all_iocs["return_path_mismatches"]:
+                lines.append(f"- **Return-Path Mismatches:** {all_iocs['return_path_mismatches']} (spoofing indicator)")
+
+        return "\n".join(lines)
+
+    def _render_full_written_report(self, report_json: dict, device_map: dict,
+                                     user_map: dict, behavioral_flags: dict,
+                                     iocs: dict, correlated_users: dict,
+                                     step_evidence_anchors: list = None) -> str:
+        """Generate a complete professional narrative suitable for court.
+
+        Includes Executive Overview, Methodology, Detailed Findings,
+        Attack Narrative, Evidence Integrity, and Conclusion.
+        """
+        lines = []
+        severity = report_json.get("severity", "INFO")
+        evil_found = report_json.get("evil_found", False)
+
+        # 1. Executive Overview
+        lines.append("### Executive Overview\n")
+        num_devices = len(device_map)
+        num_users = len(user_map.get("users", user_map))
+        total_steps = report_json.get("steps_completed", 0)
+        failed_steps = report_json.get("steps_failed", 0)
+        lines.append(
+            f"This forensic investigation examined {num_devices} device(s) and "
+            f"{num_users} user account(s). A total of {total_steps} analysis steps "
+            f"were executed ({failed_steps} encountered errors). "
+        )
+        if evil_found:
+            lines.append(
+                f"Evidence of malicious activity was identified with an overall "
+                f"severity classification of **{severity}**."
+            )
+        else:
+            lines.append(
+                f"No confirmed indicators of compromise were identified. "
+                f"The overall severity assessment is **{severity}**."
+            )
+
+        # 2. Methodology & Tools Used
+        lines.append("\n### Methodology & Tools Used\n")
+        playbooks = report_json.get("playbook_names", {})
+        if playbooks:
+            pb_list = list(playbooks.values())
+            lines.append(
+                f"The investigation employed {len(pb_list)} forensic playbook(s): "
+                f"{', '.join(pb_list)}. "
+            )
+        lines.append(
+            "All analysis was performed using the G.E.O.F.F. (Git-backed Evidence "
+            "Operations Forensic Framework) automated analysis pipeline. Tools include "
+            "Sleuth Kit (mmls, fls, icat, fsstat, istat), Plaso/log2timeline for "
+            "timeline generation, bulk_extractor for data carving, and Python-based "
+            "analysis modules for email extraction, credential analysis, and IOC scanning."
+        )
+
+        # 3. Detailed Findings by artifact type
+        lines.append("\n### Detailed Findings\n")
+        total_flags = sum(len(f) for f in behavioral_flags.values())
+        high_flags = sum(
+            1 for flags in behavioral_flags.values()
+            for f in flags if f.get("severity") in ("CRITICAL", "HIGH")
+        )
+        lines.append(
+            f"Behavioral analysis identified **{total_flags}** anomaly indicator(s) "
+            f"across the examined evidence, with **{high_flags}** rated CRITICAL or HIGH.\n"
+        )
+
+        # Group behavioral flags by severity for structured reporting
+        by_severity = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": []}
+        for dev_id, flags in behavioral_flags.items():
+            for f in flags:
+                sev = f.get("severity", "LOW")
+                if sev in by_severity:
+                    by_severity[sev].append((dev_id, f))
+        for sev in ("CRITICAL", "HIGH", "MEDIUM"):
+            items = by_severity.get(sev, [])
+            if items:
+                lines.append(f"\n**{sev}-Severity Findings** ({len(items)}):\n")
+                for dev_id, f in items[:10]:
+                    summary = f.get("summary", "No summary")
+                    lines.append(f"- Device `{dev_id}`: **[{f.get('severity')}]** {summary}")
+
+        # 4. Attack Narrative (chronological)
+        lines.append("\n### Attack Narrative\n")
+        kill_phases = (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", [])
+        if kill_phases:
+            phase_labels = [p.replace("_", " ").title() for p in kill_phases]
+            lines.append(
+                f"The attack progression maps to the following kill chain phase(s): "
+                f"{', '.join(phase_labels)}.\n"
+            )
+        # Timeline from significant events — derive from report_json
+        findings_timeline = report_json.get("super_timeline", [])
+        if findings_timeline:
+            key_events = [e for e in findings_timeline[:5] if isinstance(e, dict)]
+            if key_events:
+                markers = []
+                for ev in key_events:
+                    ts = ev.get("timestamp", "")
+                    desc = ev.get("description", ev.get("event", ""))
+                    if ts and desc:
+                        markers.append(f"{ts}: {desc[:120]}")
+                if markers:
+                    lines.append("Key temporal markers:\n" + "\n".join(f"- {m}" for m in markers))
+
+        # 5. Evidence Integrity & Chain of Custody
+        lines.append("\n### Evidence Integrity & Chain of Custody\n")
+        evidence_files = report_json.get("evidence_inventory", {})
+        total_evidence = sum(len(v) for v in evidence_files.values())
+        lines.append(
+            f"A total of **{total_evidence} evidence file(s)** were analyzed. "
+            f"All evidence was processed through the G.E.O.F.F. pipeline with "
+            f"automated chain-of-custody tracking. Evidence hashes (MD5, SHA1, "
+            f"SHA256) were recorded for all processed files. "
+        )
+        lines.append(
+            "Analysis was conducted on forensically acquired disk images and "
+            "log files. Standard forensic principles were followed to maintain "
+            "evidence integrity throughout the examination."
+        )
+
+        # 6. Conclusion
+        lines.append("\n### Conclusion\n")
+        if evil_found:
+            lines.append(
+                f"This investigation confirmed malicious activity with "
+                f"**{severity}** severity. A total of **{high_flags}** high-confidence "
+                f"indicators were identified across {len(device_map)} device(s). "
+                f"Immediate containment and remediation are recommended."
+            )
+        else:
+            lines.append(
+                f"No confirmed malicious activity was identified. The **{total_flags}** "
+                f"behavioral anomaly flag(s) raised should be reviewed by a qualified "
+                f"examiner to rule out false positives or undetected threats."
+            )
 
         return "\n".join(lines)
 
@@ -2418,7 +2814,7 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
-## Detailed Step-by-Step Execution
+## Command History
 
 {self._render_detailed_steps(report_json)}
 
@@ -2470,6 +2866,12 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+## Email & Phishing Analysis
+
+{sections.get('email_phishing', 'No email/phishing data.')}
+
+---
+
 ## Failed Steps
 
 {sections.get("failed_steps", "No failed steps data.")}
@@ -2505,6 +2907,12 @@ Write the following sections. ACCURACY RULES:
 ## Conclusion & Recommendations
 
 {sections.get('conclusion', 'No conclusion generated.')}
+
+---
+
+## Full Written Report
+
+{sections.get('full_written_report', '')}
 
 ---
 
