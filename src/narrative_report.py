@@ -96,12 +96,95 @@ _FORENSIC_METADATA_KEYWORDS = [
 
 
 def _is_valid_file_path(path: str) -> bool:
-    """Reject paths that contain forensic acquisition metadata bleed-through."""
+    """Reject paths that are garbage (acquisition metadata, command args, temp artifacts)."""
     if len(path) < 3:
         return False
     for kw in _FORENSIC_METADATA_KEYWORDS:
         if kw in path:
             return False
+    # Reject paths shorter than 15 chars (too generic, e.g. D:\jsonOutput)
+    if len(path) < 15:
+        return False
+    # Reject paths where the last component has spaces AND non-alphanumeric chars
+    # This catches things like c:\temp --xml c (space + --xml c)
+    parts = path.split('\\')
+    last = parts[-1] if parts else ''
+    if ' ' in last and not all(c.isalnum() or c in ' ._-' for c in last):
+        return False
+    # Reject paths that look like command arguments
+    cmd_args = (' --', ' -o ', ' -f ', ' -out ', ' -input ', ' -output ', ' -xml ')
+    for arg in cmd_args:
+        if arg in path:
+            return False
+    # Reject paths where the ONLY folder is temp/tmp (not meaningful IOCs)
+    folders = [p for p in parts[:-1] if p]
+    if len(folders) == 1 and folders[0].lower() in ('temp', 'tmp'):
+        return False
+    # Reject .lnk paths in C:\Temp\ or C:\Users\*\AppData\Local\Temp
+    if path.lower().endswith('.lnk'):
+        pl = path.lower()
+        if pl.startswith('c:\\temp\\') or '\\appdata\\local\\temp' in pl:
+            return False
+    return True
+
+
+# Known valid email TLDs — rejects word-like pseudo-TLDs (cnn, msn, aol etc.)
+_VALID_EMAIL_TLDS = {
+    'com', 'org', 'net', 'edu', 'gov', 'mil', 'int',
+    # 2-letter country code TLDs
+    'us', 'uk', 'de', 'jp', 'fr', 'au', 'ca', 'it', 'es', 'nl', 'ru', 'br', 'cn',
+    'in', 'io', 'tv', 'me', 'co', 'cc', 'eu', 'ch', 'se', 'no', 'dk', 'fi', 'be',
+    'at', 'pl', 'cz', 'hu', 'gr', 'pt', 'ro', 'bg', 'hr', 'sk', 'si', 'lt', 'lv',
+    'ee', 'is', 'lu', 'mt', 'cy', 'mx', 'ar', 'cl', 'pe', 'za', 'eg', 'ng', 'ke',
+    'ma', 'tn', 'dz', 'ae', 'sa', 'qa', 'om', 'kw', 'bh', 'jo', 'lb', 'ir', 'pk',
+    'bd', 'lk', 'np', 'th', 'vn', 'my', 'sg', 'ph', 'id', 'kr', 'tw', 'hk',
+    'nz', 'ie', 'il', 'tr', 'ua', 'hr', 'ba', 'rs', 'me', 'mk', 'al', 'by', 'kz',
+    'uz', 'tm', 'az', 'ge', 'am',
+    # Valid 3-letter non-word gTLDs
+    'biz', 'pro', 'info', 'name', 'mobi', 'tel', 'asia', 'cat', 'jobs', 'aero',
+}
+
+_SYSTEM_EMAIL_LOCALPARTS = frozenset({
+    'mailer-daemon', 'postmaster', 'root',
+    'administrator', 'noreply', 'no-reply',
+})
+
+
+def _extract_email(raw: str) -> Optional[str]:
+    """Extract clean email from a raw address, handling 'Display Name <email>' format."""
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    # Handle "Display Name <email>" format — capture anything inside <...>
+    m = re.search(r'<([^>]+)>', raw)
+    if m:
+        return m.group(1).strip()
+    return raw
+
+
+def _is_valid_email(email: str) -> bool:
+    """Check if an email address has a valid TLD and isn't a system/routing address."""
+    if not email or not isinstance(email, str):
+        return False
+    email = email.lower().strip()
+    parts = email.split('@')
+    if len(parts) != 2:
+        return False
+    local, domain = parts
+    # Reject system/routing addresses
+    if local in _SYSTEM_EMAIL_LOCALPARTS:
+        return False
+    # Must have at least domain.tld (2+ domain parts)
+    dom_parts = domain.split('.')
+    if len(dom_parts) < 2:
+        return False
+    tld = dom_parts[-1]
+    # For 2-3 char TLDs: must be in known list (rejects .cnn, .msn, .aol etc.)
+    if len(tld) <= 3 and tld not in _VALID_EMAIL_TLDS:
+        return False
+    # Reject single-char domain component before TLD (like c.msn)
+    if len(dom_parts) == 2 and len(dom_parts[0]) == 1:
+        return False
     return True
 
 
@@ -135,7 +218,7 @@ class NarrativeReportGenerator:
     )
 
     def _call_llm_with_retry(self, prompt: str, context: str = "", agent_type: str = "manager",
-                              max_retries: int = 3, backoff: list = None) -> str | None:
+                              max_retries: int = 3, backoff: list = None) -> Optional[str]:
         """Call LLM with retry and error detection.
 
         Returns the LLM response text, or None if all retries fail or the
@@ -1512,12 +1595,12 @@ class NarrativeReportGenerator:
         """
         buckets: Dict[str, set] = {
             "ip_addresses":  set(),
-            "file_hashes":   set(),
             "urls":          set(),
             "registry_keys": set(),
             "file_paths":    set(),
             "email_addresses": set(),
         }
+        file_hashes_dict: Dict[str, dict] = {}
 
         def _scan(text: str) -> None:
             if not text or not isinstance(text, str):
@@ -1534,11 +1617,19 @@ class NarrativeReportGenerator:
                         continue
                     if not self._PRIV_IP.match(ip):
                         buckets["ip_addresses"].add(ip)
-            # MD5 / SHA1 / SHA256 hashes
+            # MD5 / SHA1 / SHA256 hashes (store with context placeholders)
             for m in re.finditer(r'\b[0-9a-fA-F]{32,64}\b', text):
                 h = m.group(0).lower()
                 if len(h) in (32, 40, 64):
-                    buckets["file_hashes"].add(h)
+                    algo = {32: 'md5', 40: 'sha1', 64: 'sha256'}[len(h)]
+                    if h not in file_hashes_dict:
+                        file_hashes_dict[h] = {
+                            "hash": h,
+                            "algorithm": algo,
+                            "filename": "",
+                            "path": "",
+                            "source_image": "",
+                        }
             # URLs (with noise filtering)
             for m in re.finditer(r'https?://[^\s"\'<>\r\n]{4,}', text):
                 url = m.group(0).rstrip('.,)')
@@ -1564,14 +1655,16 @@ class NarrativeReportGenerator:
                 p = m.group(0).rstrip('.,)')
                 if len(p) >= 10 and _is_valid_file_path(p):
                     buckets["file_paths"].add(p)
-            # Email addresses (min 3-char local part, validated TLDs)
+            # Email addresses — loose regex, validated by _is_valid_email
             for m in re.finditer(
                     r'\b[a-zA-Z0-9][a-zA-Z0-9._%+-]{2,}@'
                     r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
                     r'(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*'
-                    r'\.(?:com|org|net|edu|gov|[a-zA-Z]{2,3})\b',
+                    r'\.[a-zA-Z]{2,}\b',
                     text):
-                buckets["email_addresses"].add(m.group(0).lower())
+                email = m.group(0).lower()
+                if _is_valid_email(email):
+                    buckets["email_addresses"].add(email)
 
         # Source 1: triage indicator hits
         for hit in report_json.get("indicator_hits", []):
@@ -1587,12 +1680,65 @@ class NarrativeReportGenerator:
                     for v in ev.values():
                         _scan(str(v) if v is not None else "")
 
-        # Source 3: tool stdout (capped to first 100KB to avoid scanning huge outputs)
+        # Source 3: tool stdout (capped to first 100KB) + hash enrichment
         for finding in report_json.get("findings_detail", []):
             result = finding.get("result", {})
             if isinstance(result, dict):
-                _scan((result.get("stdout", "") or "")[:102400])
-                _scan((result.get("raw_output", "") or "")[:102400])
+                stdout = (result.get("stdout", "") or "")[:102400]
+                raw_output = (result.get("raw_output", "") or "")[:102400]
+                _scan(stdout)
+                _scan(raw_output)
+
+                # Enrich file hashes with context from this finding
+                if stdout or raw_output:
+                    combined = (stdout + "\n" + raw_output).lower()
+                    source_image = str(finding.get("evidence_file", "") or "")
+
+                    # Check finding function/params for filename context
+                    fn = ""
+                    fpath = ""
+                    func = finding.get("function", "")
+                    params = finding.get("params", {}) or {}
+                    if func in ("extract_file", "export_file", "recover_files",
+                                "carve", "file_info", "hash_file"):
+                        if params.get("path"):
+                            fpath = str(params["path"])
+                        if params.get("filename"):
+                            fn = str(params["filename"])
+                        elif params.get("file_name"):
+                            fn = str(params["file_name"])
+                        elif params.get("inode"):
+                            fpath = f"inode {params['inode']}"
+
+                    for h, entry in file_hashes_dict.items():
+                        if h not in combined:
+                            continue
+                        # Set source image if not already set
+                        if source_image and not entry["source_image"]:
+                            entry["source_image"] = source_image
+                        # Set filename from finding params
+                        if fn and not entry["filename"]:
+                            entry["filename"] = fn
+                        if fpath and not entry["path"]:
+                            entry["path"] = fpath
+                        # Try to find filename in stdout context near the hash
+                        if not entry["filename"]:
+                            idx = combined.find(h)
+                            if idx >= 0:
+                                ctx_start = max(0, idx - 400)
+                                ctx_end = min(len(combined), idx + 400)
+                                ctx = combined[ctx_start:ctx_end]
+                                fn_match = re.search(
+                                    r"[A-Za-z0-9_][A-Za-z0-9._-]{1,60}\."
+                                    r"(?:exe|dll|sys|docx?|xlsx?|pptx?|pdf|txt|html?|js|vbs|ps1|bat|cmd|"
+                                    r"jpg|png|gif|zip|rar|7z|py|pl|php|asp|swf|jar|class|tmp|lnk|scr|pif|"
+                                    r"com|cpl|drv|ocx|fon|dat|log|pst|ost|eml|msg|rtf|xml|json|csv|cfg|ini|"
+                                    r"key|reg|pem|crt|cer|p12|pfx|psd|sql|mdb|db|sqlite|vhd|vmdk|vdi|ova|"
+                                    r"iso|img|bin|raw|dd|e01|e02|aff|l01|lx01|ad1|zipx|gz|bz2|xz|tar|"
+                                    r"msi|cab|dmg|pkg|apk|deb|rpm|sh|elf|so|jar|war|ear)",
+                                    ctx, re.IGNORECASE)
+                                if fn_match:
+                                    entry["filename"] = fn_match.group(0)
 
         # Source 4: raw text evidence files (syslogs, evtx_logs, other_files)
         # Capped at 512KB per file to limit memory use
@@ -1616,8 +1762,8 @@ class NarrativeReportGenerator:
                 continue
 
         # Source 5: structured email IOCs from direct email extraction findings
-        # Collects sender IPs, spoofed domains, and return-path mismatches
-        # from findings_detail results that contain email_iocs dicts
+        # Collects sender IPs, from/to addresses, return-path mismatches
+        # Also cleans display-name wrapped addresses and filters system addresses
         email_iocs_agg: Dict[str, list] = {
             "sender_ips": [],
             "from_addresses": [],
@@ -1647,12 +1793,22 @@ class NarrativeReportGenerator:
             for addr in eiocs.get("from_addresses", []):
                 if addr not in seen["from_addresses"]:
                     seen["from_addresses"].add(addr)
-                    buckets["email_addresses"].add(str(addr).lower())
+                    # Extract clean email from display-name wrappers and validate
+                    clean = _extract_email(addr)
+                    if clean:
+                        clean_lower = clean.lower()
+                        if _is_valid_email(clean_lower):
+                            buckets["email_addresses"].add(clean_lower)
 
             for addr in eiocs.get("to_addresses", []):
                 if addr not in seen["to_addresses"]:
                     seen["to_addresses"].add(addr)
-                    buckets["email_addresses"].add(str(addr).lower())
+                    # Extract clean email and validate
+                    clean = _extract_email(addr)
+                    if clean:
+                        clean_lower = clean.lower()
+                        if _is_valid_email(clean_lower):
+                            buckets["email_addresses"].add(clean_lower)
 
             for rp in eiocs.get("return_paths", []):
                 if rp not in seen["return_paths"]:
@@ -1682,7 +1838,12 @@ class NarrativeReportGenerator:
         email_iocs_agg["urls_in_body"] = sorted(seen["urls_in_body"])
         email_iocs_agg["spoofed_domains"] = sorted(seen["spoofed_domains"])
 
-        result_dict = {k: sorted(v) for k, v in buckets.items() if v}
+        # Convert file_hashes dict to list for final output
+        if file_hashes_dict:
+            buckets["file_hashes"] = list(file_hashes_dict.values())
+
+        result_dict = {k: sorted(v) if isinstance(v, set) else v
+                       for k, v in buckets.items() if v}
         if any(v for v in email_iocs_agg.values()):
             result_dict["email_iocs"] = email_iocs_agg
 
@@ -2356,7 +2517,34 @@ Write the following sections. ACCURACY RULES:
             values = iocs.get(key, [])
             if not values:
                 continue
-            lines.append(f"**{label}** ({len(values)})\n")
+
+            if key == "file_hashes":
+                # File hashes are dicts with hash/algorithm/filename/path/source_image
+                lines.append(f"**{label}** ({len(values)})\\n")
+                for v in values[:50]:
+                    h = v.get("hash", "")
+                    algo = v.get("algorithm", "")
+                    fn = v.get("filename", "") or "(unknown)"
+                    p = v.get("path", "") or "-"
+                    si = v.get("source_image", "") or ""
+                    if fn and fn != "(unknown)":
+                        line_parts = [f"**Hash**: `{h}`"]
+                        line_parts.append(f"**Algo**: {algo}")
+                        line_parts.append(f"**File**: {fn}")
+                        if p and p != "-":
+                            line_parts.append(f"**Path**: {p}")
+                        if si:
+                            line_parts.append(f"**Image**: {si}")
+                        lines.append(" • ".join(line_parts) + "\n")
+                    else:
+                        lines.append(f" • `{h}` ({algo})")
+                if len(values) > 50:
+                    lines.append(f"*(+{len(values)-50} more — see findings_jsonl)*")
+                lines.append("")
+                continue
+
+            # Standard rendering for non-hash IOCs
+            lines.append(f"**{label}** ({len(values)})\\n")
             lines.append("| Value |")
             lines.append("|-------|")
             for v in values[:50]:  # cap at 50 per category
