@@ -364,6 +364,22 @@ def check_mobile_tools() -> None:
                 "Android Debug Bridge not found — live Android extraction unavailable. "
                 "Install: sudo apt install adb")
 
+    # APK reverse engineering — apktool
+    if _which("apktool"):
+        _record("Mobile forensics (Android)", "apktool", PASS)
+    else:
+        _record("Mobile forensics (Android)", "apktool", WARN,
+                "apktool not found — APK reverse engineering unavailable. "
+                "Install: sudo apt install apktool")
+
+    # Android decompiler — jadx
+    if _which("jadx"):
+        _record("Mobile forensics (Android)", "jadx", PASS)
+    else:
+        _record("Mobile forensics (Android)", "jadx", WARN,
+                "jadx not found — Android Java decompilation unavailable. "
+                "Install: sudo apt install jadx")
+
     # iLEAPP — iOS artifact parser
     ileapp_found = any(
         _which(b) or Path(p).exists()
