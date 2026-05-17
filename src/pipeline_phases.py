@@ -1134,6 +1134,33 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
+        # Phase 1d: VSS (Volume Shadow Copy) Mount & Discover
+        # After the primary mount/discover phase, scan each disk image for VSS
+        # snapshots and walk those too — deleted/previous-version files in VSS
+        # are critical for ransomware, cleared logs, and persistence traces.
+        # ------------------------------------------------------------------
+        ckpt_vss_file = case_work_dir / "checkpoint_vss.json"
+        if _ckpt_phase_done(ckpt, "vss_discover"):
+            vss_result = json.loads(ckpt_vss_file.read_text())
+            _fe_log(job_id, "  [CKPT] Skipping VSS discover — loaded from checkpoint")
+        else:
+            _ckpt_mark_phase(ckpt, "vss_discover", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            vss_result = _mount_vss_snapshots(inventory, image_offsets, evidence_path.name, job_id)
+            _atomic_write(ckpt_vss_file, json.dumps(vss_result, default=str))
+            _ckpt_mark_phase(ckpt, "vss_discover", "complete", "checkpoint_vss.json")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # Log VSS results
+        vss_snapshots = vss_result.get("vss_snapshot_count", 0)
+        vss_images = vss_result.get("vss_images_processed", 0)
+        if vss_snapshots > 0:
+            _fe_log(job_id, f"  📸 VSS: {vss_images} image(s) with {vss_snapshots} total snapshot(s) processed")
+        _vss_findings = vss_result.get("vss_findings", [])
+        if _vss_findings:
+            _fe_log(job_id, f"  📸 VSS: {len(_vss_findings)} classified artifacts found across {vss_snapshots} snapshots")
+
+        # ------------------------------------------------------------------
         # Phase 2: Prepare Case Work Directory (subdirs for stable dir)
         # ------------------------------------------------------------------
         case_name = evidence_path.name
@@ -2053,6 +2080,28 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             if _email_skipped_bad_path:
                 _fe_log(job_id, f"  ⚠ {_email_skipped_bad_path} email file(s) have :: internal-ref paths — PST extraction may have failed")
 
+        # --- Attribute VSS evidence to devices ---
+        # Files discovered inside VSS snapshots need to be attributed to their
+        # owning devices so the full playbook suite runs against shadow copies.
+        _vss_findings_attr = vss_result.get("vss_findings", [])
+        _vss_attributed = 0
+        if _vss_findings_attr:
+            for _vf in _vss_findings_attr:
+                _vf_src_img = _vf.get("image")
+                _vf_full_path = _vf.get("full_path")
+                _vf_vss_label = _vf.get("_source_label", "VSS")
+                if not _vf_src_img or not _vf_full_path:
+                    continue
+                # Find the device that owns the source disk image
+                for _dev_id, _dev in device_map.items():
+                    if _vf_src_img in _dev.get("evidence_files", []):
+                        if _vf_full_path not in _dev["evidence_files"]:
+                            _dev["evidence_files"].append(_vf_full_path)
+                            _vss_attributed += 1
+                        break
+            if _vss_attributed:
+                _fe_log(job_id, f"  📸 VSS attribution: {_vss_attributed} VSS file(s) assigned to devices for full playbook processing")
+
         # Build per-device evidence lookup
         device_evidence = {}  # device_id -> {ev_type: [paths]}
         for dev_id, dev in device_map.items():
@@ -2248,6 +2297,29 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 "max_retries": 2,
                                 "started_at": datetime.now().isoformat(),
                             }
+
+                            # --- Tag VSS-sourced evidence in step records ---
+                            # When a step processes evidence from a VSS mount point,
+                            # tag it so findings from shadow copies are distinguishable
+                            # from live filesystem findings in reports and analysis.
+                            if vss_snapshots > 0 and _vss_findings:
+                                _vss_item = str(item)
+                                # VSS mount points follow the pattern: .../mounts/<case>/<img>_vss<N>/...
+                                if "_vss" in _vss_item and _vss_item.startswith("/home/sansforensics/cases/mounts/"):
+                                    step_record["_source_vss"] = True
+                                    # Extract VSS number from path: ..._vss<N>/
+                                    _vss_num_match = re.search(r'_vss(\d+)', _vss_item)
+                                    if _vss_num_match:
+                                        step_record["_source_label"] = f"VSS#{_vss_num_match.group(1)}"
+                                    else:
+                                        step_record["_source_label"] = "VSS"
+                                # Also check vss_findings for exact match (belt-and-suspenders)
+                                else:
+                                    for _vf in _vss_findings:
+                                        if _vf.get("full_path") == _vss_item:
+                                            step_record["_source_vss"] = True
+                                            step_record["_source_label"] = _vf.get("_source_label", "VSS")
+                                            break
 
                             # Persist running state before execution (crash recovery)
                             try:

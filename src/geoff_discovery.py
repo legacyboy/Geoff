@@ -34,6 +34,7 @@ from geoff_config import (
 )
 
 from sift_specialists import SLEUTHKIT_Specialist
+from sift_specialists_extended import VSS_Specialist
 
 from geoff_utils import (
     _fe_log,
@@ -173,7 +174,7 @@ SEVERITY_MAP = {
 # ===========================================================================
 
 
-__all__ = ["SEVERITY_MAP", "TRIAGE_PATTERNS", "_all_inventory_paths", "_classify_unprocessed", "_compute_indicator_confidence", "_content_scan", "_detect_partition_offsets", "_extract_archive", "_extract_match_context", "_inventory_evidence", "_inventory_evidence_with_ai", "_is_indicator_match", "_list_extracted_files", "_mount_and_discover", "_resolve_e01_path", "_run_device_discovery", "_scan_filenames_for_indicators", "_scan_triage_indicators", "_strings_scan", "_tool_available", "_validate_inventory_classification"]
+__all__ = ["SEVERITY_MAP", "TRIAGE_PATTERNS", "_all_inventory_paths", "_classify_unprocessed", "_compute_indicator_confidence", "_content_scan", "_detect_partition_offsets", "_extract_archive", "_extract_match_context", "_inventory_evidence", "_inventory_evidence_with_ai", "_is_indicator_match", "_list_extracted_files", "_mount_and_discover", "_mount_vss_snapshots", "_resolve_e01_path", "_run_device_discovery", "_scan_filenames_for_indicators", "_scan_triage_indicators", "_strings_scan", "_tool_available", "_validate_inventory_classification"]
 
 def _detect_partition_offsets(disk_images: list, device_map: dict,
                                ckpt: dict, ckpt_offsets_file: Path,
@@ -2297,3 +2298,331 @@ def _classify_unprocessed(
         })
 
     return unprocessed
+
+
+# ===========================================================================
+# VSS (Volume Shadow Copy) mount and discover
+# ===========================================================================
+
+def _mount_vss_snapshots(inventory: dict, image_offsets: dict,
+                          case_name: str, job_id: str = None) -> dict:
+    """Mount VSS (Volume Shadow Copy) snapshots for each disk image and
+    classify files found inside.
+
+    Returns a dict with:
+      vss_evidence:  dict of evidence_type -> [paths found inside VSS mounts]
+      vss_findings:  list of finding dicts with _source_vss tag
+      vss_images_processed: int count of images with VSS snapshots found
+      vss_snapshot_count: int total number of VSS snapshots processed
+    """
+    _fe_log(job_id, "📸 VSS: Scanning disk images for Volume Shadow Copies")
+
+    disk_images = inventory.get("disk_images", [])
+    if not disk_images:
+        _fe_log(job_id, "  No disk images — VSS scan skipped")
+        return {
+            "vss_evidence": {}, "vss_findings": [],
+            "vss_images_processed": 0, "vss_snapshot_count": 0,
+        }
+
+    # Evidence type buckets for VSS-discovered artifacts
+    vss_evidence = {
+        "nested_disk_images": [],
+        "email_files": [],
+        "sqlite_dbs": [],
+        "browser_artifacts": [],
+        "archives_inside": [],
+        "registry_hives": [],
+        "evtx_logs": [],
+        "evt_logs": [],
+        "documents": [],
+        "memory_dumps_inside": [],
+    }
+    vss_findings = []
+
+    # Classification pattern sets (same as _mount_and_discover)
+    disk_ext = frozenset({'.e01', '.ee01', '.e02', '.e03', '.e04',
+                           '.dd', '.raw', '.img', '.001', '.002',
+                           '.aff', '.aff4', '.ex01',
+                           '.vmdk', '.vhd', '.vhdx', '.qcow2', '.qcow',
+                           '.iso', '.dmg'})
+    mem_ext  = frozenset({'.vmem', '.mem', '.dmp', '.core', '.lime', '.mdmp', '.hdmp'})
+    email_ext = frozenset({'.pst', '.ost', '.dbx', '.eml', '.mbox', '.msg', '.emlx',
+                            '.msf', '.oab', '.olk14', '.olk15', '.pab', '.nst'})
+    archive_ext = frozenset({'.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.lz',
+                              '.cab', '.arj', '.lzh', '.ace'})
+    registry_names = frozenset({
+        'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
+        'usrclass.dat', 'default', 'system.sav', 'software.sav',
+        'components', 'bcd-template', 'drivers',
+    })
+    evtx_ext = frozenset({'.evtx'})
+    evt_ext  = frozenset({'.evt'})
+    doc_ext  = frozenset({
+        '.docx', '.doc', '.docm', '.dotx', '.dotm',
+        '.xlsx', '.xls', '.xlsm', '.xltx', '.xltm',
+        '.pptx', '.ppt', '.pptm', '.potx', '.potm',
+        '.pdf', '.odt', '.ods', '.odp', '.rtf',
+        '.one', '.onetoc2',
+    })
+
+    # Browser artifact filenames
+    _browser_filenames = frozenset({
+        'places.sqlite', 'cookies.sqlite', 'cookies.db',
+        'bookmarks', 'downloads.sqlite', 'formhistory.sqlite',
+        'permissions.sqlite', 'sessionstore.js', 'sessionstore.jsonlz4',
+        'sessionstore-backups', 'login data', 'web data', 'favicons',
+        'top sites', 'shortcuts',
+    })
+
+    # Memory dump filenames (exact)
+    _memory_file_names = frozenset({
+        'hiberfil.sys', 'pagefile.sys', 'swapfile.sys',
+        'memory.dmp', 'kernel.dmp',
+    })
+
+    mount_base = f"/home/sansforensics/cases/mounts/{case_name}"
+    os.makedirs(mount_base, exist_ok=True)
+
+    vss_spec = VSS_Specialist()
+    images_processed = 0
+    total_snapshots = 0
+    _MAX_FILES_PER_VSS = 20000  # Safety cap per snapshot
+
+    for img_path in disk_images:
+        offset = image_offsets.get(img_path)
+        if offset is None:
+            _fe_log(job_id, f"  ⚠ No partition offset for {Path(img_path).name} — skipping VSS")
+            continue
+
+        img_stem = Path(img_path).stem
+        _fe_log(job_id, f"  📸 VSS: Checking {Path(img_path).name} for shadow copies...")
+
+        # Step 1: List VSS snapshots
+        list_result = vss_spec.list_vss(img_path)
+        if list_result.get('status') != 'success':
+            _fe_log(job_id, f"    No VSS snapshots or vshadowmount unavailable for {Path(img_path).name}")
+            continue
+
+        vss_nums = list_result.get('vss_numbers', [])
+        if not vss_nums:
+            _fe_log(job_id, f"    No VSS snapshots found in {Path(img_path).name}")
+            continue
+
+        _fe_log(job_id, f"    Found {len(vss_nums)} VSS snapshot(s): {vss_nums}")
+        images_processed += 1
+
+        # Step 2: Mount and walk each VSS snapshot
+        for vss_num in vss_nums:
+            mount_point = f"{mount_base}/{img_stem}_vss{vss_num}"
+            os.makedirs(mount_point, exist_ok=True)
+
+            mount_result = vss_spec.mount_vss(img_path, vss_num, mount_point)
+            if mount_result.get('status') != 'success':
+                _fe_log(job_id, f"    ✗ Failed to mount VSS#{vss_num} for {Path(img_path).name}")
+                continue
+
+            total_snapshots += 1
+            _active_mounts.append(mount_point)
+            _fe_log(job_id, f"    📌 VSS#{vss_num} mounted @ {mount_point}")
+
+            # Step 3: Walk the VSS filesystem and classify files
+            file_count = 0
+            classified_count = 0
+            try:
+                for root, dirs, files in os.walk(mount_point):
+                    for f in files:
+                        full_path = os.path.join(root, f)
+                        if not os.path.isfile(full_path):
+                            continue
+
+                        file_count += 1
+                        if file_count > _MAX_FILES_PER_VSS:
+                            break
+
+                        name = os.path.basename(full_path)
+                        name_lower = name.lower()
+                        ext_lower = os.path.splitext(name_lower)[1]
+                        path_lower = full_path.lower()
+
+                        header_type = _detect_file_type_from_header(full_path)
+
+                        matched_ev_type = None
+                        matched_filename = name
+
+                        # Primary: content-based detection
+                        if header_type in ("ewf_disk_image", "vmdk_image", "vhd_image",
+                                           "qcow2_image", "iso_image", "dmg_image"):
+                            matched_ev_type = "nested_disk_images"
+                        elif header_type == "registry_hive":
+                            matched_ev_type = "registry_hives"
+                        elif header_type == "memory_dump":
+                            matched_ev_type = "memory_dumps_inside"
+
+                        # Secondary: extension-based
+                        if matched_ev_type is None:
+                            if ext_lower in disk_ext:
+                                matched_ev_type = "nested_disk_images"
+                            elif ext_lower in mem_ext:
+                                matched_ev_type = "memory_dumps_inside"
+                            elif ext_lower in email_ext:
+                                matched_ev_type = "email_files"
+                            elif ext_lower in archive_ext:
+                                matched_ev_type = "archives_inside"
+                            elif ext_lower in evtx_ext:
+                                matched_ev_type = "evtx_logs"
+                            elif ext_lower in evt_ext:
+                                matched_ev_type = "evt_logs"
+                            elif ext_lower in doc_ext:
+                                matched_ev_type = "documents"
+
+                        # Tertiary: filename patterns
+                        if matched_ev_type is None:
+                            if name_lower in _memory_file_names:
+                                matched_ev_type = "memory_dumps_inside"
+                            elif name_lower in registry_names:
+                                matched_ev_type = "registry_hives"
+                            elif name_lower in _browser_filenames:
+                                matched_ev_type = "browser_artifacts"
+                            elif (ext_lower in ('.sqlite', '.sqlite3', '.db', '.db3')
+                                  and name_lower not in registry_names):
+                                matched_ev_type = "sqlite_dbs"
+
+                        # Quaternary: path-context patterns
+                        if matched_ev_type is None:
+                            if any(pat in path_lower for pat in (
+                                '/chrome/user data/', '/google/chrome/', '/chromium/',
+                                '/firefox/profiles/', '/mozilla/firefox/',
+                                '/microsoft/edge/', '/microsoftedge/',
+                                '/brave/', '/opera/', '/vivaldi/',
+                                '/safari/', '/library/safari/',
+                                '/appdata/local/google/chrome/',
+                                '/appdata/roaming/mozilla/firefox/',
+                                '/.config/google-chrome/', '/.config/chromium/',
+                                '/.mozilla/firefox/', '/.config/brave/',
+                            )):
+                                matched_ev_type = "browser_artifacts"
+                            elif any(pat in path_lower for pat in (
+                                '/system32/config/software',
+                                '/system32/config/system',
+                                '/system32/config/sam',
+                                '/system32/config/security',
+                                '/system32/config/default',
+                                '/system32/config/components',
+                                '/system32/config/bcd-template',
+                                '/system32/config/drivers',
+                                '/users/', '/documents and settings/',
+                            )) and name_lower in registry_names:
+                                matched_ev_type = "registry_hives"
+                            elif any(pat in path_lower for pat in (
+                                '/winevt/logs/', '/system32/config/appevent',
+                                '/system32/config/secevent', '/system32/config/sysevent',
+                            )):
+                                matched_ev_type = "evtx_logs" if '/winevt/logs/' in path_lower else "evt_logs"
+                            elif any(pat in path_lower for pat in (
+                                'outlook', 'thunderbird', 'evolution', 'kmail',
+                                'mutt', 'maildir', 'windows mail', 'outlook express',
+                                '/mail/', '/imapmail/', '/maildir/',
+                                '/appdata/local/microsoft/outlook/',
+                                '/appdata/roaming/thunderbird/',
+                                '/.thunderbird/', '/.local/share/evolution/',
+                                '/library/mail/',
+                            )):
+                                matched_ev_type = "email_files"
+
+                        if matched_ev_type and matched_ev_type in vss_evidence:
+                            if full_path not in vss_evidence[matched_ev_type]:
+                                vss_evidence[matched_ev_type].append(full_path)
+                            vss_findings.append({
+                                "image": img_path,
+                                "vss_number": vss_num,
+                                "mount_point": mount_point,
+                                "internal_path": os.path.relpath(full_path, mount_point),
+                                "full_path": full_path,
+                                "filename": matched_filename,
+                                "evidence_type": matched_ev_type,
+                                "_source_vss": True,
+                                "_source_label": f"VSS#{vss_num}",
+                            })
+                            classified_count += 1
+
+                    if file_count > _MAX_FILES_PER_VSS:
+                        break
+
+            except Exception as walk_exc:
+                _fe_log(job_id, f"    ✗ VSS walk error for VSS#{vss_num} @ {mount_point}: {walk_exc}")
+
+            _fe_log(job_id, f"    VSS#{vss_num}: classified {classified_count} files out of {file_count} entries")
+
+    # Step 4: Merge VSS-discovered evidence into inventory
+    _merge_count = 0
+    for ev_type, paths in vss_evidence.items():
+        if not paths:
+            continue
+
+        if ev_type == "nested_disk_images":
+            for p in paths:
+                if p not in inventory["disk_images"]:
+                    inventory["disk_images"].append(p)
+                    _merge_count += 1
+        elif ev_type == "email_files":
+            for p in paths:
+                if p not in inventory["other_files"]:
+                    inventory["other_files"].append(p)
+                    _merge_count += 1
+        elif ev_type == "sqlite_dbs":
+            for p in paths:
+                if p not in inventory["other_files"]:
+                    inventory["other_files"].append(p)
+                    _merge_count += 1
+        elif ev_type == "browser_artifacts":
+            for p in paths:
+                if p not in inventory["other_files"]:
+                    inventory["other_files"].append(p)
+                    _merge_count += 1
+        elif ev_type == "archives_inside":
+            for p in paths:
+                if p not in inventory["other_files"]:
+                    inventory["other_files"].append(p)
+                    _merge_count += 1
+        elif ev_type == "registry_hives":
+            for p in paths:
+                if p not in inventory["registry_hives"]:
+                    inventory["registry_hives"].append(p)
+                    _merge_count += 1
+        elif ev_type == "evtx_logs":
+            for p in paths:
+                if p not in inventory.get("evtx_logs", []):
+                    inventory.setdefault("evtx_logs", []).append(p)
+                    _merge_count += 1
+        elif ev_type == "evt_logs":
+            for p in paths:
+                if p not in inventory.get("evt_logs", []):
+                    inventory.setdefault("evt_logs", []).append(p)
+                    _merge_count += 1
+        elif ev_type == "documents":
+            for p in paths:
+                if p not in inventory["other_files"]:
+                    inventory["other_files"].append(p)
+                    _merge_count += 1
+        elif ev_type == "memory_dumps_inside":
+            for p in paths:
+                if p not in inventory["memory_dumps"]:
+                    inventory["memory_dumps"].append(p)
+                    _merge_count += 1
+
+    # Store VSS findings in inventory for downstream reference
+    inventory["vss_findings"] = vss_findings
+
+    _fe_log(job_id, f"  📸 VSS Mount & Discover complete: {images_processed} images, "
+             f"{total_snapshots} snapshots, {_merge_count} new evidence items in inventory")
+    for ev_type, paths in vss_evidence.items():
+        if paths:
+            _fe_log(job_id, f"    {ev_type}: {len(paths)} found in VSS")
+
+    return {
+        "vss_evidence": vss_evidence,
+        "vss_findings": vss_findings,
+        "vss_images_processed": images_processed,
+        "vss_snapshot_count": total_snapshots,
+    }
