@@ -429,7 +429,7 @@ class DISASSEMBLY_Specialist:
         """Analyze binary with radare2 (static analysis only)"""
         # Run radare2 in batch mode: auto-analyze, list imports, list strings
         cmd_args = ['-q', '-e', 'scr.color=0', '-c', 'aaa; ii; izz', target_file]
-        result = _run_tool('radare2', cmd_args, timeout=300)
+        result = _run_tool('radare2', cmd_args, timeout=600)
         if result['status'] != 'success':
             return result
 
@@ -496,14 +496,14 @@ class DISASSEMBLY_Specialist:
         a subcommand like 'extract'.
         """
         # Try v2.x / v3.x positional: floss <file>
-        result = _run_tool('floss', [target_file], timeout=300)
+        result = _run_tool('floss', [target_file], timeout=600)
         if result['status'] == 'success':
             pass  # good, proceed to parsing
         elif (result['status'] == 'error'
               and ('No such command' in str(result.get('error', ''))
                    or 'No such command' in str(result.get('stderr', '')))):
             # floss expects a subcommand — try 'extract'
-            result = _run_tool('floss', ['extract', target_file], timeout=300)
+            result = _run_tool('floss', ['extract', target_file], timeout=600)
         if result['status'] != 'success':
             return result
 

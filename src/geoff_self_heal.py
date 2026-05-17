@@ -398,7 +398,7 @@ def call_llm(user_message, context="", agent_type="manager"):
                     "stream": False,
                     "options": {"temperature": 0.3}
                 },
-                timeout=300  # 5 min — cloud models can be slow
+                timeout=600  # 5 min — cloud models can be slow
             )
             if response.status_code == 200:
                 result_text = response.json().get('response', 'Hmm, let me check that again.')

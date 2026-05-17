@@ -847,7 +847,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                         try:
                                             icat_shell = subprocess.run(
                                                 ["bash", "-c", icat_cmd],
-                                                capture_output=True, text=True, timeout=300,
+                                                capture_output=True, text=True, timeout=600,
                                             )
                                             if (icat_shell.returncode == 0 and os.path.isfile(out_path)
                                                     and os.path.getsize(out_path) > 0):
@@ -873,7 +873,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                             try:
                                                 icat_shell2 = subprocess.run(
                                                     ["bash", "-c", icat_cmd2],
-                                                    capture_output=True, text=True, timeout=300,
+                                                    capture_output=True, text=True, timeout=600,
                                                 )
                                                 if (icat_shell2.returncode == 0 and os.path.isfile(out_path)
                                                         and os.path.getsize(out_path) > 0):
@@ -998,7 +998,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                             out_name = Path(fname).stem + ".eml"
                                         out_path = os.path.join(str(extract_dir), out_name)
                                         with open(out_path, "wb") as fh:
-                                            subprocess.run(["icat", "-o", str(offset), sk_dev, inode], stdout=fh, stderr=subprocess.DEVNULL, timeout=300)
+                                            subprocess.run(["icat", "-o", str(offset), sk_dev, inode], stdout=fh, stderr=subprocess.DEVNULL, timeout=600)
                                         if os.path.getsize(out_path) > 100:
                                             _fe_log(job_id, f"  \U0001f4e5 Extracted {Path(fname).name} ({os.path.getsize(out_path)} bytes)")
                                             if out_path not in inventory.get("other_files", []):
@@ -1236,7 +1236,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                     f"{shlex.quote(_found_inode)} > {shlex.quote(_op)}")
                         _icat_r = subprocess.run(
                             ["bash", "-c", _icat_sh],
-                            capture_output=True, text=True, timeout=300,
+                            capture_output=True, text=True, timeout=600,
                         )
                         if (_icat_r.returncode == 0 and os.path.isfile(_op)
                                 and os.path.getsize(_op) > 0):
@@ -1427,7 +1427,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
         _fe_log(job_id, f"  \U0001f4e5 Post-scan discovered PST: {pst_path}")
         eml_dir = tempfile.mkdtemp(prefix="pst_post_extract_")
         try:
-            rp = subprocess.run(["readpst", "-M", "-o", eml_dir, pst_path], capture_output=True, text=True, timeout=300)
+            rp = subprocess.run(["readpst", "-M", "-o", eml_dir, pst_path], capture_output=True, text=True, timeout=600)
             if rp.returncode == 0:
                 for root, dirs, files in os.walk(eml_dir):
                     for fn in files:

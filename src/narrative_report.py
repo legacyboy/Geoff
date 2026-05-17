@@ -99,6 +99,34 @@ def _is_valid_file_path(path: str) -> bool:
     """Reject paths that are garbage (acquisition metadata, command args, temp artifacts)."""
     if len(path) < 3:
         return False
+    # Reject paths containing non-printable ASCII control chars (0x00-0x1F, 0x7F) or non-ASCII bytes
+    for ch in path:
+        code = ord(ch)
+        if code <= 0x1F or code == 0x7F or code > 0x7E:
+            return False
+    # Known short system directories that are legitimate
+    _KNOWN_SHORT_DIRS = {
+        'program files', 'windows', 'system32', 'users', 'documents and settings',
+        'temp', 'programdata', 'program files (x86)', 'syswow64', 'system',
+        'config', 'drivers', 'etc', 'bin', 'lib', 'usr', 'var', 'opt', 'sbin',
+        'inetpub', 'perflogs', 'recovery', '$recycle.bin',
+        'system volume information', 'boot', 'sources', 'python310', 'python311',
+        'python312', 'python313', 'node_modules',
+    }
+    # Reject paths where directory component names are 1-2 chars (random binary noise)
+    # unless they're known short system directories
+    sep_positions = [i for i, ch in enumerate(path) if ch == '\\']
+    prev = 0
+    for sep in sep_positions:
+        seg = path[prev:sep]
+        # Skip empty segments and drive letters (e.g. "C:")
+        if seg and ':' not in seg and len(seg) <= 2 and seg.lower() not in _KNOWN_SHORT_DIRS:
+            return False
+        prev = sep + 1
+    # Check the last segment too (after final backslash)
+    last_seg = path[prev:] if prev < len(path) else ''
+    if last_seg and ':' not in last_seg and len(last_seg) <= 2 and last_seg.lower() not in _KNOWN_SHORT_DIRS:
+        return False
     for kw in _FORENSIC_METADATA_KEYWORDS:
         if kw in path:
             return False
@@ -1565,18 +1593,75 @@ class NarrativeReportGenerator:
     _NOISE_URL_DOMAINS = (
         'doubleclick.net', 'atwola.com', 'cdn.channel.aol.com', 'ads.cnn.com',
         'googlesyndication.com', 'googleadservices.com', 'quantserve.com',
-        'scorecardresearch.com',
+        'scorecardresearch.com', 'googletagmanager.com', 'google-analytics.com',
+        'googleadservices.com', 'googlesyndication.com', 'moatads.com',
+        'outbrain.com', 'taboola.com', 'criteo.com', 'rubiconproject.com',
+        'pubmatic.com', 'openx.net', 'casalemedia.com', 'agkn.com',
+        'adsrvr.org', 'adsymptotic.com', 'exponential.com', 'burstnet.com',
+        'contextweb.com', 'bluekai.com', 'demdex.net', 'rlcdn.com',
+        'adsafeprotected.com', '2mdn.net', 'adform.net', 'adnxs.com',
+        'adzerk.net', 'tribalfusion.com', 'turn.com', 'invitemedia.com',
+        'media6degrees.com', 'specificmedia.com', 'tidaltv.com',
+        'telemetry.mozilla.org', 'incoming.telemetry.mozilla.org',
+        'sessions.bugsnag.com', 'notify.bugsnag.com',
     )
     _NOISE_URL_KEYWORDS = (
         'crl.', 'ocsp.', 'verisign', 'thawte', 'globalsign',
         'blogger.com', 'blogspot.com', 'googleusercontent.com',
+        'gravatar.com', 'feeds.feedburner.com', 'clickserve.',
+        'adservice.', 'adserver.', 'adsystem.',
     )
 
     def _is_noise_url(self, url: str) -> bool:
-        """Return True if the URL is noise (ads, SSL infra, CDN, etc.) and should be excluded."""
+        """Return True if the URL is noise (ads, SSL infra, CDN, binary artifacts, etc.) and should be excluded."""
         if not url or not isinstance(url, str):
             return True
+        # Reject if too short (fragments, binary noise)
+        if len(url) < 8:
+            return True
         url_lower = url.lower()
+        # Reject URLs containing non-printable control characters or non-ASCII
+        for ch in url_lower:
+            code = ord(ch)
+            if code <= 0x1F or code == 0x7F or code > 0x7E:
+                return True
+        # Reject concatenated URLs (two protocol schemes smushed together)
+        # e.g. http://a.comhttp://b.com or https://x.comhttps://y.com
+        # Count occurrences of '://' — more than 1 means concatenation
+        if url_lower.count('://') > 1:
+            return True
+        # Reject URLs where a second http/https appears after the first's domain
+        # e.g. http://a.comhttp://b... but NOT legitimate URL params containing http
+        http_positions = [m.start() for m in __import__('re').finditer(r'https?://', url_lower)]
+        if len(http_positions) > 1:
+            # Check if they're truly concatenated (no proper separator like & or ? between them)
+            first_end = url_lower.find('://', http_positions[0]) + 3
+            slash_after_domain = url_lower.find('/', first_end)
+            if slash_after_domain == -1:
+                slash_after_domain = len(url_lower)
+            # If there's no '&' or '?' between the end of first domain and second protocol, it's concatenated
+            between = url_lower[first_end:http_positions[1]]
+            if '&' not in between and '?' not in between and ' ' not in between:
+                return True
+        # Reject URLs without a proper dot in the domain (single-segment pseudo-TLDs aren't real)
+        # Extract domain between :// and next /
+        proto_end = url_lower.find('://')
+        if proto_end >= 0:
+            domain_start = proto_end + 3
+            domain_end = url_lower.find('/', domain_start)
+            if domain_end == -1:
+                domain_end = url_lower.find('?', domain_start)
+            if domain_end == -1:
+                domain_end = len(url_lower)
+            domain = url_lower[domain_start:domain_end]
+            # No dot in domain means it's not a real URL (e.g. http://abcdefg)
+            if '.' not in domain:
+                return True
+        # Reject URLs containing binary/hex-like noise patterns (long hex strings without proper structure)
+        # Random hex segments appearing as path components suggest binary data artifact
+        hex_segments = __import__('re').findall(r'[0-9a-f]{16,}', url_lower)
+        if hex_segments and len(hex_segments) >= 2:
+            return True
         for domain in self._NOISE_URL_DOMAINS:
             if domain in url_lower:
                 return True
@@ -1631,11 +1716,11 @@ class NarrativeReportGenerator:
                             "source_image": "",
                         }
             # URLs (with noise filtering)
-            for m in re.finditer(r'https?://[^\s"\'<>\r\n]{4,}', text):
+            for m in re.finditer(r'https?://[^\s"\'<>\r\n]{8,}', text):
                 url = m.group(0).rstrip('.,)')
                 # Clean control characters (\x00-\x08, \x0b, \x0c, \x0e-\x1f)
                 cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', url)
-                if len(cleaned) < 4:
+                if len(cleaned) < 8:
                     continue
                 # Apply noise filter
                 if not self._is_noise_url(cleaned):

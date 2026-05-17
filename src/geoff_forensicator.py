@@ -150,7 +150,7 @@ def _call_ollama_with_retry(url, prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_r
                     "stream": False,
                     "options": {"temperature": 0.1}
                 },
-                timeout=300  # 5 min — cloud models can be slow
+                timeout=600  # 5 min — cloud models can be slow
             )
             if response.status_code == 200:
                 result_text = response.json().get('response', '')
@@ -456,7 +456,7 @@ Assess this result. Respond ONLY in valid JSON (no extra text):
                 full_cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout
+                timeout=600  # 5 minute timeout
             )
 
             end_time = datetime.now()

@@ -2343,7 +2343,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             # Retry logic for transient failures
                             # Catches BOTH exceptions AND error-status results
                             # (orchestrator returns {"status": "error"} dicts, not exceptions)
-                            MAX_RETRIES = 2
+                            MAX_RETRIES = 3
                             for attempt in range(MAX_RETRIES + 1):
                                 try:
                                     result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
@@ -3471,7 +3471,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
             # Step 3: fls -r to find .pst/.ost files
             fls_r = subprocess.run(
                 ["fls", "-o", str(offset), "-r", device],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=600,
             )
             if fls_r.returncode != 0:
                 _fe_log(job_id, f"    fls failed: {fls_r.stderr[:200]}")
@@ -3511,7 +3511,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                     with open(pst_out, "wb") as fh:
                         icat_r = subprocess.run(
                             ["icat", "-o", str(offset), device, inode],
-                            stdout=fh, stderr=subprocess.PIPE, timeout=300,
+                            stdout=fh, stderr=subprocess.PIPE, timeout=600,
                         )
                     if icat_r.returncode != 0 or os.path.getsize(pst_out) == 0:
                         _fe_log(job_id, f"      icat failed: {icat_r.stderr.decode()[:200] if icat_r.stderr else 'empty output'}")
@@ -3528,7 +3528,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                 # Attempt A: readpst -M
                 rpst_r = subprocess.run(
                     ["readpst", "-M", "-o", eml_dir, pst_out],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=600,
                 )
                 if rpst_r.returncode == 0:
                     pst_converted_ok = True
@@ -3544,7 +3544,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         os.makedirs(eml_dir, exist_ok=True)
                         pff_r = subprocess.run(
                             ["pffexport", "-d", eml_dir, pst_out],
-                            capture_output=True, text=True, timeout=300,
+                            capture_output=True, text=True, timeout=600,
                         )
                         if pff_r.returncode == 0:
                             pff_items = list(Path(eml_dir).rglob("*"))

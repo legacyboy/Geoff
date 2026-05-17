@@ -268,7 +268,7 @@ class SLEUTHKIT_Specialist:
                 'timestamp': datetime.now().isoformat()
             }
         try:
-            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=300)
+            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=600)
             return {
                 'tool': tool,
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -986,7 +986,7 @@ class VOLATILITY_Specialist:
 
         cmd = [self.volatility_path, '-f', memory_dump, '-q', plugin]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             # Check if volatility returned any useful output
             stdout = result.stdout
             stderr = result.stderr
@@ -1060,7 +1060,7 @@ class VOLATILITY_Specialist:
                 be_dir = tempfile.mkdtemp(prefix='geoff_be_')
                 be_r = subprocess.run(
                     [be, '-o', be_dir, memory_dump],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=600,
                 )
                 if be_r.returncode == 0:
                     be_results = {}
@@ -1250,7 +1250,7 @@ class VOLATILITY_Specialist:
         for _pid in pids:
             cmd = [self.volatility_path, '-f', memory_dump, '-q', 'windows.memmap.Memmap', '--pid', str(_pid), '--dump', '-D', output_dir]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
                 results.append({
                     'pid': _pid,
                     'status': 'success' if result.returncode == 0 else 'error',

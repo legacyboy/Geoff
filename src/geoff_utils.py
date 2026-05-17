@@ -402,7 +402,7 @@ class FindingsWriter:
 # safe_run / safe_git_commit
 # ---------------------------------------------------------------------------
 
-def safe_run(cmd, timeout=300, **kwargs):
+def safe_run(cmd, timeout=600, **kwargs):
     """Wrapper for subprocess.run with default timeout. Always returns a dict.
     Truncates stdout and stderr at MAX_STDOUT_SIZE to prevent memory blowup.
     Always includes stderr in the result for diagnostics."""
@@ -993,7 +993,7 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
             result = safe_run(
                 ["tshark", "-r", pcap_str, "-T", "fields", "-e", "ip.src", "-e", "ip.dst",
                  "-e", "_ws.col.Protocol", "-E", "separator=,", "-q"],
-                timeout=300
+                timeout=600
             )
             if result.get("code") == 0 and result.get("stdout"):
                 for line in result["stdout"].strip().split("\n"):
@@ -1011,7 +1011,7 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
             dns_result = safe_run(
                 ["tshark", "-r", pcap_str, "-Y", "dns", "-T", "fields",
                  "-e", "ip.src", "-e", "dns.qry.name", "-e", "dns.a", "-E", "separator=,", "-q"],
-                timeout=300
+                timeout=600
             )
             if dns_result.get("code") == 0 and dns_result.get("stdout"):
                 for line in dns_result["stdout"].strip().split("\n"):
@@ -1028,7 +1028,7 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
                 ["tshark", "-r", pcap_str, "-Y", "dhcp", "-T", "fields",
                  "-e", "ip.src", "-e", "dhcp.option.hostname", "-e", "dhcp.option.requested_ip",
                  "-e", "dhcp.hw.mac_addr", "-E", "separator=,", "-q"],
-                timeout=300
+                timeout=600
             )
             if dhcp_result.get("code") == 0 and dhcp_result.get("stdout"):
                 for line in dhcp_result["stdout"].strip().split("\n"):
@@ -1106,7 +1106,7 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
         try:
             result = safe_run(
                 ["vol", "-f", str(mem_path), "windows.netscan.NetScan", "--output", "csv"],
-                timeout=300
+                timeout=600
             )
             if result.get("code") == 0 and result.get("stdout"):
                 for line in result["stdout"].strip().split("\n"):
@@ -1116,7 +1116,7 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
             # Also try netscan (vol2)
             result2 = safe_run(
                 ["volatility", "-f", str(mem_path), "netscan"],
-                timeout=300
+                timeout=600
             )
             if result2.get("code") == 0 and result2.get("stdout"):
                 for line in result2["stdout"].strip().split("\n"):

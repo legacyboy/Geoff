@@ -1156,23 +1156,23 @@ class NETWORK_Specialist:
         try:
             # 1. Protocol hierarchy
             cmd1 = ['tshark', '-r', pcap_file, '-q', '-z', 'io,phs']
-            r1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=300)
+            r1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=600)
             protocols = self._parse_protocol_hierarchy(r1.stdout) if r1.returncode == 0 else []
 
             # 2. TCP conversations
             cmd2 = ['tshark', '-r', pcap_file, '-q', '-z', 'conv,tcp']
-            r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
+            r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=600)
             conversations = self._parse_conversations(r2.stdout, 'tcp') if r2.returncode == 0 else []
 
             # 3. DNS queries
             cmd3 = ['tshark', '-r', pcap_file, '-Y', 'dns', '-T', 'fields',
                     '-e', 'dns.qry.name', '-e', 'dns.a']
-            r3 = subprocess.run(cmd3, capture_output=True, text=True, timeout=300)
+            r3 = subprocess.run(cmd3, capture_output=True, text=True, timeout=600)
             dns_queries = self._parse_dns_queries(r3.stdout) if r3.returncode == 0 else []
 
             # 4. Unique IPs
             cmd4 = ['tshark', '-r', pcap_file, '-T', 'fields', '-e', 'ip.src', '-e', 'ip.dst']
-            r4 = subprocess.run(cmd4, capture_output=True, text=True, timeout=300)
+            r4 = subprocess.run(cmd4, capture_output=True, text=True, timeout=600)
             all_ips: set = set()
             if r4.returncode == 0:
                 for line in r4.stdout.split('\n'):
@@ -1280,7 +1280,7 @@ class NETWORK_Specialist:
                    '-e', 'http.request.method',
                    '-e', 'http.request.uri',
                    '-e', 'http.host']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             http_requests = self._parse_http_requests(result.stdout) if result.returncode == 0 else []
 
             # HTTP response status codes
@@ -1289,7 +1289,7 @@ class NETWORK_Specialist:
                     '-e', 'http.response.code',
                     '-e', 'http.response.phrase',
                     '-e', 'http.host']
-            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
+            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=600)
             http_responses: List[Dict[str, str]] = []
             if result2.returncode == 0:
                 for line in result2.stdout.splitlines():
@@ -3827,7 +3827,7 @@ class MOBILE_Specialist:
         if ileapp_bin.endswith('.py'):
             cmd = ['python3'] + cmd
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             rc = r.returncode
             stdout_tail = r.stdout[-2000:]
             stderr_tail = r.stderr[-500:]
@@ -3875,7 +3875,7 @@ class MOBILE_Specialist:
         if aleapp_bin.endswith('.py'):
             cmd = ['python3'] + cmd
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             rc = r.returncode
             stdout_tail = r.stdout[-2000:]
             stderr_tail = r.stderr[-500:]
@@ -6050,7 +6050,7 @@ class EMAIL_Specialist:
             # --- Attempt 1: readpst ---
             r = self._run(
                 ["readpst", "-M", "-o", readpst_dir, actual_path],
-                timeout=300,
+                timeout=600,
             )
             if r["returncode"] == 0:
                 pst_parsed_ok = True
@@ -6064,7 +6064,7 @@ class EMAIL_Specialist:
                     os.makedirs(readpst_dir, exist_ok=True)
                     pff_r = subprocess.run(
                         ["pffexport", "-d", readpst_dir, actual_path],
-                        capture_output=True, text=True, timeout=300,
+                        capture_output=True, text=True, timeout=600,
                     )
                     if pff_r.returncode == 0:
                         # pffexport outputs files into the directory; check for content
@@ -8295,7 +8295,7 @@ class MEMORY_Specialist:
                 if self.volatility2_path:
                     v2_result = subprocess.run(
                         [self.volatility2_path, '-f', memory_dump, 'imageinfo'],
-                        capture_output=True, text=True, timeout=300
+                        capture_output=True, text=True, timeout=600
                     )
                     if v2_result.returncode == 0:
                         for line in v2_result.stdout.split('\n'):
@@ -8394,7 +8394,7 @@ class MEMORY_Specialist:
             else:
                 plugin = 'windows.pslist.PsList'
                 cmd = [vol_bin, '-f', memory_dump, plugin]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             return {
                 'tool': f"{os_info['vol_version']}.pslist",
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -8418,7 +8418,7 @@ class MEMORY_Specialist:
             else:
                 plugin = 'windows.netscan.NetScan'
                 cmd = [vol_bin, '-f', memory_dump, plugin]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             return {
                 'tool': f"{os_info['vol_version']}.{plugin}",
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -8441,7 +8441,7 @@ class MEMORY_Specialist:
             else:
                 plugin = 'windows.malfind.Malfind'
                 cmd = [vol_bin, '-f', memory_dump, plugin]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             return {
                 'tool': f"{os_info['vol_version']}.malfind",
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -8464,7 +8464,7 @@ class MEMORY_Specialist:
             else:
                 plugin = 'windows.registry.hivelist.HiveList'
                 cmd = [vol_bin, '-f', memory_dump, plugin]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             return {
                 'tool': f"{os_info['vol_version']}.hivelist",
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -8487,7 +8487,7 @@ class MEMORY_Specialist:
             else:
                 plugin = 'windows.lsadump.Lsadump'
                 cmd = [vol_bin, '-f', memory_dump, plugin]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             return {
                 'tool': f"{os_info['vol_version']}.credentials",
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -8506,7 +8506,7 @@ class MEMORY_Specialist:
             vol_bin = self.volatility3_path or 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.dlllist'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.dlllist',
@@ -8527,7 +8527,7 @@ class MEMORY_Specialist:
             vol_bin = self.volatility3_path or 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.memmap'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.memmap',
@@ -8839,7 +8839,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.cmdline'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.cmdline',
@@ -8860,7 +8860,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.dlllist'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.dlllist',
@@ -8902,7 +8902,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.lsadump'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.lsadump',
@@ -8924,7 +8924,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.malfind'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.malfind',
@@ -8946,7 +8946,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.netscan'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.netscan',
@@ -8988,7 +8988,7 @@ class WINDOWS_Specialist:
             vol_bin = 'vol'
             result = subprocess.run(
                 [vol_bin, '-f', memory_dump, 'windows.registry.hivelist'],
-                capture_output=True, text=True, timeout=300
+                capture_output=True, text=True, timeout=600
             )
             return {
                 'tool': 'volatility3.windows.registry.hivelist',
