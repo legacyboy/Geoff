@@ -199,6 +199,34 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
     _ckpt_mark_phase(ckpt, "partition_offsets", "running")
     _ckpt_save(Path(ckpt.get("_case_dir", "/tmp")), ckpt)
 
+    # -----------------------------------------------------------------------
+    # qemu-img conversion for virtual disk formats not natively supported by
+    # SleuthKit (.vhdx, .qcow2, .vdi). Convert to raw image alongside the
+    # original, then use the raw copy for SleuthKit operations.
+    # -----------------------------------------------------------------------
+    _QEMU_CONVERT_EXTS = {".vhdx", ".qcow2", ".vdi"}
+    _qemu_img = shutil.which("qemu-img")
+
+    for dev_id, dev in device_map.items():
+        for i, img in enumerate(dev.get("evidence_files", [])):
+            if img not in disk_images:
+                continue
+            ext = Path(img).suffix.lower()
+            if ext in _QEMU_CONVERT_EXTS and _qemu_img:
+                raw_img = str(Path(img).parent / f"{Path(img).stem}.raw")
+                if not Path(raw_img).exists():
+                    _fe_log(job_id, f"  Converting {Path(img).name} to raw for SleuthKit compatibility...")
+                    conv_cmd = [_qemu_img, "convert", "-O", "raw", img, raw_img]
+                    conv_result = subprocess.run(conv_cmd, capture_output=True, text=True, timeout=600)
+                    if conv_result.returncode == 0:
+                        dev["evidence_files"][i] = raw_img
+                        _fe_log(job_id, f"  qemu-img: {Path(img).name} → {Path(raw_img).name}")
+                        # Also register the raw image as a disk image if not already
+                        if raw_img not in disk_images:
+                            disk_images.append(raw_img)
+                    else:
+                        _fe_log(job_id, f"  ⚠ qemu-img conversion failed for {Path(img).name}: {conv_result.stderr[:200]}")
+
     for dev_id, dev in device_map.items():
         for img in dev.get("evidence_files", []):
             if img not in disk_images:

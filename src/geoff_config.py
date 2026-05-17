@@ -348,8 +348,13 @@ _EVIDENCE_TYPE_MAP = {
     ".evtx": "evtx", ".evt": "evt",
     ".hive": "hive", ".dat": "registry",
     ".eml": "email", ".mbox": "email", ".pst": "email",
-    ".ab": "other_files",
+    ".ab": "mobile_backups",
 }
+
+# NOTE: Virtual disk formats .vhdx, .qcow2, .vdi are NOT supported natively by
+# SleuthKit tools. When these file extensions are encountered, geoff_discovery.py
+# will attempt to convert them to raw format using 'qemu-img convert -O raw'
+# before passing to SleuthKit operations. Ensure qemu-utils is installed.
 
 
 def _infer_evidence_type(path: str) -> str:
@@ -956,8 +961,8 @@ PLAYBOOK_STEPS = {
             ("sqlite", "analyze_sqlite", {"db_path": "{file}"}),
         ],
         "registry_hives": [
-            ("registry", "extract_sam_users", {"sam_path": "{hive}"}),
-            ("registry", "extract_domain_accounts", {"system_path": "{hive}"}),
+            ("registry", "extract_users", {"hive_path": "{hive}"}),
+            ("registry", "parse_hive", {"hive_path": "{hive}"}),
         ],
     },
     # PB-SIFT-035 Note: Active Directory DC Forensics currently runs SQLite analysis

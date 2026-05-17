@@ -7574,6 +7574,16 @@ class PHOTOREC_Specialist:
             except OSError:
                 pass
 
+    def carve_files(self, image: str, output_dir: str,
+                    file_types: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Carve files from disk image — alias for recover_files with simpler API.
+
+        PhotoRec/foremost-based file carving for recovering deleted files,
+        documents, images, archives from unallocated space. Delegates to the
+        photorec→foremost→scalpel chain via recover_files().
+        """
+        return self.recover_files(image, output_dir, file_types=file_types)
+
 
 # ---------------------------------------------------------------------------
 # BULK_EXTRACTOR_Specialist
@@ -7723,16 +7733,6 @@ class ZEEK_Specialist:
 # ---------------------------------------------------------------------------
 # VSS (Volume Shadow Copy) Specialist
 # ---------------------------------------------------------------------------
-
-    def carve_files(self, image: str, output_dir: str, file_types: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Carve files from disk image — alias for recover_files with simpler API.
-
-        PhotoRec/foremost-based file carving for recovering deleted files,
-        documents, images, archives from unallocated space.
-        """
-        return self.recover_files(image, output_dir, file_types=file_types)
-
-
 
 class VSS_Specialist:
     """Specialist for Volume Shadow Copy extraction and analysis."""

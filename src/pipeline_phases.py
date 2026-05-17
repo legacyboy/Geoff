@@ -1604,6 +1604,42 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-032")
             _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
 
+        # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-015, PB-SIFT-034, PB-SIFT-035, PB-SIFT-036) ---
+
+        # Data Staging (PB-SIFT-015) — trigger when disk_images or other_files with archives are found
+        archive_exts = {".zip", ".rar", ".7z", ".tar", ".gz", ".tar.gz", ".tgz", ".bz2", ".tar.bz2"}
+        has_archives = any(
+            any(str(f).lower().endswith(ext) for ext in archive_exts)
+            for f in inventory.get("other_files", [])
+        )
+        if inventory["disk_images"] or has_archives:
+            execution_plan.append("PB-SIFT-015")
+            _fe_log(job_id, "  PB-SIFT-015: Data Staging analysis queued")
+
+        # Network Device Forensics (PB-SIFT-034) — trigger when config files found
+        config_exts = {".cfg", ".conf", ".config"}
+        has_configs = any(
+            any(str(f).lower().endswith(ext) for ext in config_exts)
+            or "startup-config" in str(f).lower()
+            or "running-config" in str(f).lower()
+            for f in inventory.get("other_files", [])
+        )
+        if has_configs:
+            execution_plan.append("PB-SIFT-034")
+            _fe_log(job_id, "  PB-SIFT-034: Network Device Forensics queued")
+
+        # Active Directory DC Forensics (PB-SIFT-035) — trigger when registry hives present
+        if inventory["registry_hives"]:
+            execution_plan.append("PB-SIFT-035")
+            _fe_log(job_id, f"  PB-SIFT-035: Active Directory DC Forensics queued ({len(inventory['registry_hives'])} hive(s))")
+
+        # PCAP Network Forensics (PB-SIFT-036) — trigger when pcaps present
+        if inventory["pcaps"]:
+            execution_plan.append("PB-SIFT-036")
+            _fe_log(job_id, f"  PB-SIFT-036: PCAP Network Forensics queued ({len(inventory['pcaps'])} capture(s))")
+
+        # --- END NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-015/034-036) ---
+
         # Container Forensics — detect Docker/container artifacts
         container_patterns = {
             "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
