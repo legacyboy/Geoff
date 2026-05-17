@@ -89,7 +89,7 @@ if [[ "$SKIP_DEPS" == false ]]; then
             libbde-utils libpst-utils libguestfs-tools qemu-utils \
             bulk-extractor dc3dd cryptsetup testdisk \
             libvshadow-utils libpff-utils \
-            libmagic1 libmagic-dev ent apktool jadx 2>/dev/null || true
+            libmagic1 libmagic-dev ent apktool jadx dislocker 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
         for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd vshadowmount photorec ent apktool jadx; do

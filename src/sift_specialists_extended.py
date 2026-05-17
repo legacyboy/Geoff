@@ -594,6 +594,78 @@ class REGISTRY_Specialist:
             'timestamp': datetime.now().isoformat(),
         }
 
+    def extract_amcache(self, amcache_path: str) -> Dict[str, Any]:
+        """Extract AmCache entries – installed applications, drivers, and file metadata."""
+        meta, raw = self._run_regripper(amcache_path, 'amcache')
+        entries = _parse_kv_lines(raw)
+        timestamps = _extract_timestamps(raw)
+        return {
+            'tool': 'regripper',
+            'hive': amcache_path,
+            'plugin': 'amcache',
+            'status': meta.get('status', 'error'),
+            'entries': entries[:500],
+            'entry_count': len(entries),
+            'timestamps': timestamps,
+            'timestamp_count': len(timestamps),
+            'errors': meta.get('errors', ''),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_srum(self, srum_path: str) -> Dict[str, Any]:
+        """Extract SRUM data – application resource usage, network connections, timestamps."""
+        meta, raw = self._run_regripper(srum_path, 'srum')
+        entries = _parse_kv_lines(raw)
+        timestamps = _extract_timestamps(raw)
+        return {
+            'tool': 'regripper',
+            'hive': srum_path,
+            'plugin': 'srum',
+            'status': meta.get('status', 'error'),
+            'entries': entries[:500],
+            'entry_count': len(entries),
+            'timestamps': timestamps,
+            'timestamp_count': len(timestamps),
+            'errors': meta.get('errors', ''),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_shimcache(self, system_path: str) -> Dict[str, Any]:
+        """Extract ShimCache (AppCompatCache) – application execution history."""
+        meta, raw = self._run_regripper(system_path, 'appcompatcache')
+        entries = _parse_kv_lines(raw)
+        timestamps = _extract_timestamps(raw)
+        return {
+            'tool': 'regripper',
+            'hive': system_path,
+            'plugin': 'appcompatcache',
+            'status': meta.get('status', 'error'),
+            'entries': entries[:500],
+            'entry_count': len(entries),
+            'timestamps': timestamps,
+            'timestamp_count': len(timestamps),
+            'errors': meta.get('errors', ''),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+    def extract_recentfilecache(self, recentfilecache_path: str) -> Dict[str, Any]:
+        """Extract RecentFileCache entries – recently accessed executables per user."""
+        meta, raw = self._run_regripper(recentfilecache_path, 'recentfilecache')
+        entries = _parse_kv_lines(raw)
+        timestamps = _extract_timestamps(raw)
+        return {
+            'tool': 'regripper',
+            'hive': recentfilecache_path,
+            'plugin': 'recentfilecache',
+            'status': meta.get('status', 'error'),
+            'entries': entries[:500],
+            'entry_count': len(entries),
+            'timestamps': timestamps,
+            'timestamp_count': len(timestamps),
+            'errors': meta.get('errors', ''),
+            'timestamp': datetime.now().isoformat(),
+        }
+
     def extract_domain_accounts(self, system_path: str, software_path: str = None) -> Dict[str, Any]:
         """Extract domain-joined accounts and cached credentials info from SYSTEM/SECURITY."""
         meta_sys, raw_sys = self._run_regripper(system_path, 'compname')
@@ -5702,11 +5774,12 @@ class SQLITE_Specialist:
         """Analyze any SQLite database for forensic artifacts.
 
         Pipeline:
-          1. Introspect schema via sqlite_master
-          2. Auto-detect artifact types via table/column fingerprints
-          3. Extract rows with timestamps → timeline events
-          4. Extract URLs, emails, IPs → IOC candidates
-          5. Flag unknown schemas for optional LLM analysis
+          1. Check for and checkpoint WAL/SHM files (Fix 5)
+          2. Introspect schema via sqlite_master
+          3. Auto-detect artifact types via table/column fingerprints
+          4. Extract rows with timestamps → timeline events
+          5. Extract URLs, emails, IPs → IOC candidates
+          6. Flag unknown schemas for optional LLM analysis
 
         Returns a structured dict with timeline events, IOCs, and classification.
         """
@@ -5719,6 +5792,38 @@ class SQLITE_Specialist:
                 'error': 'Database file not found',
                 'timestamp': datetime.now().isoformat(),
             }
+
+        # --- Fix 5: Check for WAL/SHM files and checkpoint ---
+        db_dir = p.parent
+        db_stem = p.stem
+        wal_path = db_dir / f"{db_stem}-wal"
+        shm_path = db_dir / f"{db_stem}-shm"
+        # Also check the common pattern: dbname.db-wal
+        wal_path2 = db_dir / f"{p.name}-wal"
+        shm_path2 = db_dir / f"{p.name}-shm"
+        # Copy WAL/SHM alongside the DB if found
+        _wal_copied = None
+        _shm_copied = None
+        for wp in [wal_path, wal_path2]:
+            if wp.exists():
+                _wal_copied = str(wp)
+                print(f"[SQLITE] Found WAL file: {wp.name} — will checkpoint before analysis")
+                break
+        for sp in [shm_path, shm_path2]:
+            if sp.exists():
+                _shm_copied = str(sp)
+                print(f"[SQLITE] Found SHM file: {sp.name}")
+                break
+        # Checkpoint the WAL into the main DB
+        if _wal_copied:
+            try:
+                import sqlite3 as _sqlite3
+                _ck_conn = _sqlite3.connect(str(p))
+                _ck_conn.execute("PRAGMA wal_checkpoint(FULL);")
+                _ck_conn.close()
+                print(f"[SQLITE] WAL checkpointed into {p.name}")
+            except Exception as _ck_e:
+                print(f"[SQLITE] WAL checkpoint failed for {p.name}: {_ck_e}")
 
         # Phase 1: Read schema
         schema = self._read_schema(db_path)
@@ -7681,7 +7786,9 @@ class ZEEK_Specialist:
         self.zeek_path = shutil.which('zeek')
 
     def analyze_pcap(self, pcap_file: str, output_dir: str) -> Dict[str, Any]:
-        """Run Zeek on a PCAP file to extract connections, DNS, HTTP, SSL events."""
+        """Run Zeek on a PCAP file to extract connections, DNS, HTTP, SSL events.
+        Also extracts transferred files (file carving) via zeek's file analysis framework.
+        """
         if not self.zeek_path:
             return {'tool': 'zeek', 'status': 'error', 'error': 'zeek not found',
                     'timestamp': datetime.now().isoformat()}
@@ -7689,7 +7796,15 @@ class ZEEK_Specialist:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         try:
-            cmd = [self.zeek_path, '-C', '-r', pcap_file, str(output_dir)]
+            # Enable file extraction via Zeek's file analysis framework
+            # This carves transferred binaries (malware downloads, documents, etc.)
+            file_extract_dir = os.path.join(output_dir, "extract_files")
+            Path(file_extract_dir).mkdir(parents=True, exist_ok=True)
+
+            cmd = [self.zeek_path, '-C', '-r', pcap_file, 
+                   'frameworks/files/extract-all-files',
+                   f'FileExtract::prefix={file_extract_dir}/',
+                   str(output_dir)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
             log_files = list(Path(output_dir).glob('*.log'))
@@ -7708,6 +7823,13 @@ class ZEEK_Specialist:
                 elif 'ssl' in name:
                     ssl_log = str(lf)
 
+            # Collect extracted files (file carving results)
+            extracted_files = []
+            if os.path.isdir(file_extract_dir):
+                for ef in Path(file_extract_dir).rglob('*'):
+                    if ef.is_file():
+                        extracted_files.append(str(ef))
+
             return {
                 'tool': 'zeek',
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -7720,6 +7842,8 @@ class ZEEK_Specialist:
                 'dns_log': dns_log,
                 'http_log': http_log,
                 'ssl_log': ssl_log,
+                'extracted_files': extracted_files,
+                'extracted_file_count': len(extracted_files),
                 'timestamp': datetime.now().isoformat(),
                 'stderr': result.stderr[:2000] if result.stderr else '',
             }

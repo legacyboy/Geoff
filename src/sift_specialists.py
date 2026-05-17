@@ -7,6 +7,9 @@ Each specialist handles a specific forensic domain with structured output parsin
 import json
 import subprocess
 import re
+import os
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
@@ -984,17 +987,94 @@ class VOLATILITY_Specialist:
         cmd = [self.volatility_path, '-f', memory_dump, '-q', plugin]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            # Check if volatility returned any useful output
+            stdout = result.stdout
+            stderr = result.stderr
+
+            # Detect failure conditions: no output, or error messages about profile/symbols
+            no_output = not stdout.strip()
+            profile_error = any(pat in stderr.lower() for pat in [
+                'symbol', 'profile', 'not found', 'no suitable', 'error',
+                'failed to find', 'unsupported', 'unknown', 'could not',
+                'no mapping', 'no config', 'invalid',
+            ])
+
+            if result.returncode != 0 or no_output or profile_error:
+                # Volatility failed — fall back to strings and bulk_extractor
+                _fe_log(f"[VOLATILITY] {plugin} failed for {Path(memory_dump).name} — falling back to strings/bulk_extractor")
+                fallback_result = self._fallback_analysis(memory_dump, plugin)
+                fallback_result['volatility_error'] = stderr[:500] if stderr else 'No output from volatility'
+                fallback_result['volatility_returncode'] = result.returncode
+                return fallback_result
+
             return {
                 'tool': 'volatility',
                 'plugin': plugin,
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
-                'stdout': result.stdout,
-                'stderr': result.stderr,
+                'stdout': stdout,
+                'stderr': stderr,
                 'timestamp': datetime.now().isoformat()
             }
         except Exception as e:
             return {'tool': 'volatility', 'plugin': plugin, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def _fallback_analysis(self, memory_dump: str, plugin: str) -> Dict[str, Any]:
+        """Fallback when Volatility fails: use strings and bulk_extractor on raw memory."""
+        results = {
+            'tool': 'volatility_fallback',
+            'plugin': plugin,
+            'status': 'success',
+            'memory_dump': memory_dump,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        # Run strings to extract IPs, URLs, and process names
+        try:
+            strings_r = subprocess.run(
+                ['strings', '-a', '-n', '8', memory_dump],
+                capture_output=True, text=True, timeout=120,
+            )
+            if strings_r.returncode == 0:
+                text = strings_r.stdout
+                # Extract IP addresses
+                ip_pattern = re.compile(r'\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b')
+                ips = list(set(ip_pattern.findall(text)))[:100]
+                # Extract URLs
+                url_pattern = re.compile(r'https?://[^\s<>"\')\]]+', re.IGNORECASE)
+                urls = list(set(url_pattern.findall(text)))[:100]
+                # Extract process names (common patterns)
+                proc_pattern = re.compile(r'([a-zA-Z0-9_]+\.(?:exe|dll|sys|com|bat|ps1))', re.IGNORECASE)
+                procs = list(set(proc_pattern.findall(text)))[:200]
+                results['strings_ips'] = ips
+                results['strings_urls'] = urls
+                results['strings_processes'] = procs
+                results['strings_length'] = len(text)
+        except Exception as e:
+            results['strings_error'] = str(e)
+
+        # Run bulk_extractor for more thorough carving
+        try:
+            be = shutil.which('bulk_extractor')
+            if be:
+                be_dir = tempfile.mkdtemp(prefix='geoff_be_')
+                be_r = subprocess.run(
+                    [be, '-o', be_dir, memory_dump],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if be_r.returncode == 0:
+                    be_results = {}
+                    for be_file in ['url.txt', 'email.txt', 'ip.txt', 'domain.txt', 'telephone.txt']:
+                        be_path = os.path.join(be_dir, be_file)
+                        if os.path.isfile(be_path):
+                            with open(be_path) as f:
+                                be_results[be_file.replace('.txt', '')] = [l.strip() for l in f.readlines() if l.strip()][:100]
+                    results['bulk_extractor'] = be_results
+                shutil.rmtree(be_dir, ignore_errors=True)
+        except Exception as e:
+            results['bulk_extractor_error'] = str(e)
+
+        return results
 
     def _parse_table_output(self, stdout: str) -> List[Dict[str, str]]:
         """Parse Volatility's tabular output into structured records"""

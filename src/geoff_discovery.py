@@ -473,6 +473,198 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
         img_stem = Path(img_path).stem
         mount_point = f"{mount_base}/{img_stem}_p{offset}"
 
+        # --- Multi-partition enumeration via mmls ---
+        # Enumerate ALL partitions so dual-boot/GPT disks don't miss partitions
+        all_partitions = []  # list of (start_sector, description, fs_type)
+        try:
+            mmls_r = subprocess.run(
+                ["mmls", img_path], capture_output=True, text=True, timeout=30,
+            )
+            if mmls_r.returncode == 0:
+                for mmls_line in mmls_r.stdout.splitlines():
+                    mmls_line = mmls_line.strip()
+                    if not mmls_line or mmls_line.startswith("Slot") or mmls_line.startswith("---") or mmls_line.startswith("Offset") or mmls_line.startswith("Units"):
+                        continue
+                    parts = mmls_line.split()
+                    # mmls format:  slot: start end length desc
+                    # Or:  start end length desc
+                    start_sector = None
+                    desc_parts = []
+                    # Try format with slot prefix
+                    m1 = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
+                    if m1:
+                        start_sector = int(m1.group(1))
+                        desc = m1.group(4).strip()
+                    else:
+                        m2 = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
+                        if m2:
+                            start_sector = int(m2.group(1))
+                            desc = m2.group(4).strip()
+                    if start_sector is not None and start_sector > 0:
+                        desc_lower = desc.lower()
+                        fs_type = ""
+                        for fs_name in ["ntfs", "ext", "fat", "hfs", "hfs+", "linux", "windows"]:
+                            if fs_name in desc_lower:
+                                fs_type = fs_name
+                                break
+                        all_partitions.append((start_sector, desc, fs_type))
+                if all_partitions:
+                    _fe_log(job_id, f"  📋 mmls: {len(all_partitions)} partition(s) found for {Path(img_path).name}")
+                    for ps, pd, pf in all_partitions:
+                        _fe_log(job_id, f"      Sector {ps}: {pd}")
+                    # Use first filesystem partition if the existing offset is the same
+                    # but also collect all others
+        except Exception as mmls_e:
+            _fe_log(job_id, f"  ⚠ mmls enumeration failed for {Path(img_path).name}: {mmls_e}")
+
+        # Build list of (offset, description) tuples to mount
+        mount_offsets = []
+        if all_partitions:
+            for ps, pd, pf in all_partitions:
+                if pf:  # Only mount partitions with recognized filesystems
+                    mount_offsets.append((ps * 512, pd))
+        if not mount_offsets:
+            # Fallback: just the original offset
+            mount_offsets.append((byte_offset, "primary"))
+
+        _fe_log(job_id, f"  📋 Will mount {len(mount_offsets)} partition(s) for {Path(img_path).name}")
+        _partition_offsets_tracked = {}  # partition_mount_point -> sector_offset
+
+        # --- BitLocker detection ---
+        # Check for BitLocker header signature ("bdmv" at offset 3) on the raw volume
+        _is_bitlocker = False
+        try:
+            with open(img_path, "rb") as _bf:
+                _bf.seek(3)
+                _bheader = _bf.read(4)
+                if _bheader == b"bdmv":
+                    _is_bitlocker = True
+                    _fe_log(job_id, f"  🔒 BitLocker detected on {Path(img_path).name} (bdmv signature)")
+        except Exception:
+            pass
+
+        if _is_bitlocker:
+            _blk_mount_point = f"{mount_base}/{img_stem}_blk_{offset}"
+            os.makedirs(_blk_mount_point, exist_ok=True)
+            _dislocker = shutil.which("dislocker")
+            if _dislocker:
+                _fe_log(job_id, f"  🔓 Attempting dislocker mount...")
+                try:
+                    # dislocker-file to get a decrypted volume
+                    _dl_result = subprocess.run(
+                        [_dislocker, "-v", "-V", img_path, "-f", _blk_mount_point],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    _dl_file = os.path.join(_blk_mount_point, "dislocker-file")
+                    if _dl_result.returncode == 0 and os.path.exists(_dl_file):
+                        _fe_log(job_id, f"  🔓 BitLocker decrypted via dislocker: {_dl_file}")
+                        # Mount the decrypted volume
+                        _dl_mount = f"{_blk_mount_point}/mnt"
+                        os.makedirs(_dl_mount, exist_ok=True)
+                        _dm_r = subprocess.run(
+                            ["sudo", "mount", "-o", "ro,loop", _dl_file, _dl_mount],
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        if _dm_r.returncode == 0:
+                            _active_mounts.append(_dl_mount)
+                            _fe_log(job_id, f"  📌 Mounted decrypted BitLocker volume @ {_dl_mount}")
+                            # Override mount_point to the decrypted mount
+                            mount_point = _dl_mount
+                            mounted = True
+                        else:
+                            _fe_log(job_id, f"  ⚠ dislocker: could not mount decrypted volume: {_dm_r.stderr.strip()[:200]}")
+                    else:
+                        _fe_log(job_id, f"  ⚠ dislocker mount failed (no key available): {_dl_result.stderr.strip()[:200]}")
+                        # Flag as encrypted in findings (even without key, record it)
+                        nuclear_findings.append({
+                            "image": img_path,
+                            "note": "ENCRYPTED — BitLocker volume requires key",
+                            "evidence_type": "bitlocker_encrypted",
+                        })
+                except Exception as _bl_e:
+                    _fe_log(job_id, f"  ⚠ dislocker error: {_bl_e}")
+                    nuclear_findings.append({
+                        "image": img_path,
+                        "note": f"ENCRYPTED — BitLocker volume requires key (dislocker error: {str(_bl_e)[:100]})",
+                        "evidence_type": "bitlocker_encrypted",
+                    })
+            else:
+                _fe_log(job_id, f"  ⚠ dislocker not installed — BitLocker volume cannot be decrypted")
+                nuclear_findings.append({
+                    "image": img_path,
+                    "note": "ENCRYPTED — BitLocker volume requires dislocker tool",
+                    "evidence_type": "bitlocker_encrypted",
+                })
+            # If BitLocker was detected and decryption failed, still try standard mount as fallback
+            if not mounted:
+                _fe_log(job_id, f"  ⚠ Continuing with standard mount attempt as fallback for {Path(img_path).name}")
+
+        # --- APFS volume enumeration ---
+        # After mounting an APFS image, enumerate all APFS volumes
+        _is_apfs = False
+        _apfs_volumes = []
+        try:
+            # Check for APFS magic (NXSB) at offset 0 of container
+            with open(img_path, "rb") as _af:
+                _aheader = _af.read(4)
+                if _aheader == b"NXSB" or _aheader == b"BSXN":
+                    _is_apfs = True
+                    _fe_log(job_id, f"  🍎 APFS container detected on {Path(img_path).name}")
+        except Exception:
+            pass
+
+        if _is_apfs:
+            _fsapfsinfo = shutil.which("fsapfsinfo")
+            if _fsapfsinfo:
+                try:
+                    _apfs_result = subprocess.run(
+                        [_fsapfsinfo, img_path],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if _apfs_result.returncode == 0:
+                        # Parse output for volume names
+                        _vol_re = re.compile(r'Name:\s+(.+)')
+                        _vol_offset_re = re.compile(r'Volume\s+(\d+)\s+\(offset\s+(\d+)\)')
+                        for _apline in _apfs_result.stdout.splitlines():
+                            _vm = _vol_re.search(_apline)
+                            if _vm:
+                                _vol_name = _vm.group(1).strip()
+                                _apfs_volumes.append({"name": _vol_name, "offset": None})
+                            _vom = _vol_offset_re.search(_apline)
+                            if _vom:
+                                _vidx = int(_vom.group(1))
+                                _voff = int(_vom.group(2))
+                                if _vidx < len(_apfs_volumes):
+                                    _apfs_volumes[_vidx]["offset"] = _voff
+                        _fe_log(job_id, f"  🍎 APFS volumes found: {[v['name'] for v in _apfs_volumes]}")
+                except Exception as _apfs_e:
+                    _fe_log(job_id, f"  ⚠ fsapfsinfo error: {_apfs_e}")
+            else:
+                # Fallback: try apfs-fuse directly
+                _apfs_fuse = shutil.which("apfs-fuse")
+                if _apfs_fuse:
+                    _fe_log(job_id, f"  🍎 Using apfs-fuse for APFS mounting")
+                    _apfs_mount = f"{mount_base}/{img_stem}_apfs"
+                    os.makedirs(_apfs_mount, exist_ok=True)
+                    try:
+                        _afuse_r = subprocess.run(
+                            [_apfs_fuse, img_path, _apfs_mount],
+                            capture_output=True, text=True, timeout=60,
+                        )
+                        if _afuse_r.returncode == 0:
+                            _active_mounts.append(_apfs_mount)
+                            _fe_log(job_id, f"  📌 apfs-fuse mounted @ {_apfs_mount}")
+                            # List sub-volumes
+                            for _d in Path(_apfs_mount).iterdir():
+                                if _d.is_dir():
+                                    _apfs_volumes.append({"name": _d.name, "offset": None,
+                                                         "mount": str(_d), "fuse": True})
+                    except Exception as _afuse_e:
+                        _fe_log(job_id, f"  ⚠ apfs-fuse error: {_afuse_e}")
+
+        for pidx, (part_byte_offset, part_desc) in enumerate(mount_offsets):
+            part_mount_point = f"{mount_base}/{img_stem}_p{part_byte_offset // 512}"
+
         # Try common fallback if first mount attempt fails
         offsets_to_try = [byte_offset]
         if offset == 63:
@@ -1064,6 +1256,99 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                 subprocess.run(["umount", _efb_dir], capture_output=True, timeout=10)
                 shutil.rmtree(_efb_dir, ignore_errors=True)
 
+        # --- Multi-partition: mount and walk remaining partitions ---
+        # After the primary partition is processed, mount any additional partitions
+        # found by mmls enumeration (dual-boot/GPT disks)
+        if len(mount_offsets) > 1:
+            _fe_log(job_id, f"  📋 Processing {len(mount_offsets)-1} additional partition(s)...")
+            for pidx2, (part_byte_offset2, part_desc2) in enumerate(mount_offsets):
+                if pidx2 == 0 and mounted:
+                    # Primary partition already processed above
+                    continue
+                part_sector = part_byte_offset2 // 512
+                part_mount_point2 = f"{mount_base}/{img_stem}_p{part_sector}"
+                _fe_log(job_id, f"  📋 Additional partition #{pidx2}: sector {part_sector} ({part_desc2})")
+                os.makedirs(part_mount_point2, exist_ok=True)
+                try:
+                    # Try direct mount for raw DD images
+                    direct_r2 = subprocess.run(
+                        ["sudo", "mount", "-o", f"ro,loop,offset={part_byte_offset2}",
+                         img_path, part_mount_point2],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if direct_r2.returncode == 0:
+                        chk2 = subprocess.run(["mount"], capture_output=True, text=True, timeout=10)
+                        if part_mount_point2 in chk2.stdout:
+                            _active_mounts.append(part_mount_point2)
+                            _fe_log(job_id, f"  📌 Mounted additional partition @ {part_mount_point2}")
+                            # Track partition offset
+                            _partition_offsets_tracked[part_mount_point2] = part_sector
+                            # Walk this partition for evidence files
+                            try:
+                                for root2, dirs2, files2 in os.walk(part_mount_point2):
+                                    for f2 in files2:
+                                        full_path2 = os.path.join(root2, f2)
+                                        if not os.path.isfile(full_path2):
+                                            continue
+                                        name2 = os.path.basename(full_path2)
+                                        name2_lower = name2.lower()
+                                        ext2 = os.path.splitext(name2_lower)[1]
+                                        path2_lower = full_path2.lower()
+                                        header_type2 = _detect_file_type_from_header(full_path2)
+                                        matched_ev_type2 = None
+                                        if header_type2 in ("ewf_disk_image", "vmdk_image", "vhd_image", "qcow2_image", "iso_image", "dmg_image"):
+                                            matched_ev_type2 = "nested_disk_images"
+                                        elif header_type2 == "registry_hive":
+                                            matched_ev_type2 = "registry_hives"
+                                        elif header_type2 == "pcap":
+                                            matched_ev_type2 = "archives_inside"
+                                        elif header_type2 == "memory_dump":
+                                            matched_ev_type2 = "memory_dumps_inside"
+                                        if matched_ev_type2 is None:
+                                            if ext2 in disk_ext:
+                                                matched_ev_type2 = "nested_disk_images"
+                                            elif ext2 in mem_ext:
+                                                matched_ev_type2 = "memory_dumps_inside"
+                                            elif ext2 in email_ext:
+                                                matched_ev_type2 = "email_files"
+                                            elif ext2 in archive_ext:
+                                                matched_ev_type2 = "archives_inside"
+                                            elif ext2 in evtx_ext:
+                                                matched_ev_type2 = "evtx_logs"
+                                            elif ext2 in evt_ext:
+                                                matched_ev_type2 = "evt_logs"
+                                            elif ext2 in doc_ext:
+                                                matched_ev_type2 = "documents"
+                                            elif name2_lower in _memory_file_names:
+                                                matched_ev_type2 = "memory_dumps_inside"
+                                            elif name2_lower in registry_names:
+                                                matched_ev_type2 = "registry_hives"
+                                            elif name2_lower in _browser_filenames:
+                                                matched_ev_type2 = "browser_artifacts"
+                                            elif ext2 in ('.sqlite', '.sqlite3', '.db', '.db3') and name2_lower not in registry_names:
+                                                matched_ev_type2 = "sqlite_dbs"
+                                            elif any(pat in path2_lower for pat in ('/chrome/user data/', '/firefox/profiles/', '/microsoft/edge/', '/safari/', '/appdata/local/google/chrome/', '/.mozilla/firefox/', '/library/safari/')):
+                                                matched_ev_type2 = "browser_artifacts"
+                                        if matched_ev_type2 and matched_ev_type2 in new_evidence:
+                                            if full_path2 not in new_evidence[matched_ev_type2]:
+                                                new_evidence[matched_ev_type2].append(full_path2)
+                                            nuclear_findings.append({
+                                                "image": img_path,
+                                                "mount_point": part_mount_point2,
+                                                "internal_path": os.path.relpath(full_path2, part_mount_point2),
+                                                "full_path": full_path2,
+                                                "filename": name2,
+                                                "evidence_type": matched_ev_type2,
+                                                "partition": part_sector,
+                                            })
+                            except Exception as walk_e2:
+                                _fe_log(job_id, f"  ⚠ Walk error on additional partition {part_mount_point2}: {walk_e2}")
+                    else:
+                        err2 = direct_r2.stderr.strip()[:200]
+                        _fe_log(job_id, f"  ⚠ Could not mount additional partition {part_sector}: {err2}")
+                except Exception as mount_e2:
+                    _fe_log(job_id, f"  ⚠ Additional partition mount error {part_sector}: {mount_e2}")
+
     # ------------------------------------------------------------------
     # Merge discovered evidence into inventory (real filesystem paths)
     # ------------------------------------------------------------------
@@ -1251,6 +1536,43 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             continue
 
         # FALLBACK: Extension-based classification for known types
+        # But first, use `file -b --mime-type` to verify the MIME type matches
+        mime_type = ""
+        try:
+            mime_result = subprocess.run(
+                ["file", "-b", "--mime-type", str(item)],
+                capture_output=True, text=True, timeout=10
+            )
+            if mime_result.returncode == 0:
+                mime_type = mime_result.stdout.strip()
+        except Exception:
+            pass
+
+        # Map MIME types to evidence categories
+        _mime_to_ev_type = {
+            "application/x-ms-dos-executable": "other_files",
+            "application/vnd.microsoft.portable-executable": "other_files",
+            "application/x-executable": "other_files",
+            "application/x-sharedlib": "other_files",
+            "application/x-object": "other_files",
+            "application/x-dosexec": "other_files",
+            "text/plain": "other_files",
+            "image/": "other_files",
+            "video/": "other_files",
+            "audio/": "other_files",
+        }
+
+        if mime_type:
+            # Detect conflicting classifications — spoofed extension
+            if ext in disk_ext and "disk" not in mime_type and "filesystem" not in mime_type and "application/octet-stream" not in mime_type:
+                _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .{ext} extension but MIME is {mime_type}")
+            if ext in mem_ext and "core" not in mime_type and "octet-stream" not in mime_type and "application/x" not in mime_type:
+                _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .{ext} extension but MIME is {mime_type}")
+            if ext == ".evtx" and "xml" not in mime_type and "octet-stream" not in mime_type:
+                _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .evtx extension but MIME is {mime_type}")
+            if ext == ".evt" and "octet-stream" in mime_type and header_type != "unknown":
+                _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .evt extension but MIME is {mime_type}")
+
         if ext in disk_ext:
             inventory["disk_images"].append(str(item))
         elif ext in mem_ext:
@@ -1426,10 +1748,33 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None,
         extracted_files = []
 
         if header[:2] == b'PK':
-            # ZIP archive
-            with zipfile.ZipFile(archive_path, 'r') as zf:
-                zf.extractall(extract_dir)
-            extracted_files = _list_extracted_files(extract_dir)
+            # ZIP archive — may be password protected
+            try:
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    zf.extractall(extract_dir)
+                extracted_files = _list_extracted_files(extract_dir)
+            except (RuntimeError, zipfile.BadZipFile) as zip_err:
+                err_str = str(zip_err).lower()
+                if "password" in err_str or "encrypted" in err_str:
+                    # Try common forensic passwords
+                    _fe_log(job_id, f"  🔐 ZIP is password protected — trying common passwords...")
+                    _passwords = ["infected", "malware", "virus", "password", "123456", ""]
+                    _unlocked = False
+                    for pw in _passwords:
+                        try:
+                            with zipfile.ZipFile(archive_path, 'r') as zf:
+                                zf.extractall(extract_dir, pwd=pw.encode() if pw else None)
+                            _fe_log(job_id, f"  🔓 ZIP unlocked with password: '{pw or '(empty)'}'")
+                            _unlocked = True
+                            break
+                        except (RuntimeError, zipfile.BadZipFile):
+                            continue
+                    if _unlocked:
+                        extracted_files = _list_extracted_files(extract_dir)
+                    else:
+                        return {"status": "error", "error": f"PASSWORD PROTECTED — archive requires password: {archive.name}"}
+                else:
+                    return {"status": "error", "error": f"ZIP extraction failed: {zip_err}"}
 
         elif header[:2] == b'\x1f\x8b':
             # GZIP compressed (tar.gz or single .gz file)
@@ -1457,8 +1802,30 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None,
                 timeout=3600
             )
             if result["code"] != 0:
-                return {"status": "error", "error": f"7z extraction failed: {result['stderr'][:200]}"}
-            extracted_files = _list_extracted_files(extract_dir)
+                # Check if password is required
+                stderr_lower = (result.get('stderr', '') or '').lower()
+                stdout_lower = (result.get('stdout', '') or '').lower()
+                if 'password' in stderr_lower or 'wrong password' in stdout_lower or 'can not open encrypted' in stderr_lower:
+                    _fe_log(job_id, f"  🔐 7z is password protected — trying common passwords...")
+                    _passwords = ["infected", "malware", "virus", "password", "123456", ""]
+                    _unlocked = False
+                    for pw in _passwords:
+                        pw_result = safe_run(
+                            ["7z", "x", "-y", f"-p{pw}", f"-o{extract_dir}", archive_path],
+                            timeout=3600
+                        )
+                        if pw_result["code"] == 0:
+                            _fe_log(job_id, f"  🔓 7z unlocked with password: '{pw or '(empty)'}'")
+                            _unlocked = True
+                            break
+                    if _unlocked:
+                        extracted_files = _list_extracted_files(extract_dir)
+                    else:
+                        return {"status": "error", "error": f"PASSWORD PROTECTED — 7z archive requires password: {archive.name}"}
+                else:
+                    return {"status": "error", "error": f"7z extraction failed: {result['stderr'][:200]}"}
+            else:
+                extracted_files = _list_extracted_files(extract_dir)
 
         else:
             return {"status": "error", "error": f"Unknown archive format: {archive.name}"}

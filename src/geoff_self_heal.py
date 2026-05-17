@@ -33,6 +33,48 @@ from geoff_utils import (
 from geoff_critic import HealCache, ErrorContext, HealDecision
 
 # ---------------------------------------------------------------------------
+# Token-bucket rate limiter (shared with geoff_forensicator.py pattern)
+# ---------------------------------------------------------------------------
+_sh_rate_limiter = {
+    "tokens": 10,
+    "max_tokens": 10,
+    "refill_rate": 0.5,
+    "last_refill": time.time(),
+    "lock": __import__("threading").Lock(),
+}
+
+def _sh_rate_limit():
+    """Token-bucket rate limiter: waits if needed before allowing a call."""
+    with _sh_rate_limiter["lock"]:
+        now = time.time()
+        elapsed = now - _sh_rate_limiter["last_refill"]
+        _sh_rate_limiter["tokens"] = min(
+            _sh_rate_limiter["max_tokens"],
+            _sh_rate_limiter["tokens"] + elapsed * _sh_rate_limiter["refill_rate"]
+        )
+        _sh_rate_limiter["last_refill"] = now
+        if _sh_rate_limiter["tokens"] < 1:
+            wait_time = (1 - _sh_rate_limiter["tokens"]) / _sh_rate_limiter["refill_rate"]
+            _sh_rate_limiter["tokens"] = 0
+            _sh_rate_limiter["last_refill"] = now + wait_time
+        else:
+            wait_time = 0
+            _sh_rate_limiter["tokens"] -= 1
+    if wait_time > 0:
+        print(f"[GEOFF] Rate limited — waiting {wait_time:.1f}s for token bucket")
+        time.sleep(wait_time)
+
+def _parse_retry_after(response) -> float:
+    """Parse Retry-After header from HTTP response."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return float(retry_after)
+        except ValueError:
+            return 60
+    return 0
+
+# ---------------------------------------------------------------------------
 # Module-level references set by importing module
 # ---------------------------------------------------------------------------
 
@@ -341,6 +383,8 @@ def call_llm(user_message, context="", agent_type="manager"):
             print(f"[GEOFF] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s", file=sys.stderr)
             return None
 
+        _sh_rate_limit()  # Rate limit before API call
+
         try:
             model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
 
@@ -372,6 +416,16 @@ def call_llm(user_message, context="", agent_type="manager"):
             elif response.status_code in (401, 403):
                 print(f"[GEOFF] LLM HTTP {response.status_code} — bad auth, giving up immediately", file=sys.stderr)
                 return None
+            elif response.status_code == 429:
+                retry_after = _parse_retry_after(response)
+                wait_time = max(retry_after, _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)])
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait_time, remaining)
+                if actual_wait <= 0:
+                    return None
+                print(f"[GEOFF] HTTP 429 rate limited, retry {attempt+1} after {actual_wait:.0f}s (Retry-After: {retry_after})", file=sys.stderr)
+                time.sleep(actual_wait)
+                continue
             elif 500 <= response.status_code < 600:
                 # Server errors: brief retry (3 attempts with 10s backoff)
                 if attempt < 3:
@@ -450,6 +504,8 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
             print(f"[MANAGER] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
             return ""
 
+        _sh_rate_limit()
+
         try:
             model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
             response = requests.post(
@@ -474,6 +530,16 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
             elif response.status_code in (401, 403):
                 print(f"[MANAGER] LLM HTTP {response.status_code} — bad auth, giving up immediately")
                 return ""
+            elif response.status_code == 429:
+                retry_after = _parse_retry_after(response)
+                wait_time = max(retry_after, _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)])
+                remaining = _MAX_RETRY_TIME - elapsed
+                actual_wait = min(wait_time, remaining)
+                if actual_wait <= 0:
+                    return ""
+                print(f"[MANAGER] HTTP 429 rate limited, retry {attempt+1} after {actual_wait:.0f}s (Retry-After: {retry_after})")
+                time.sleep(actual_wait)
+                continue
             elif 500 <= response.status_code < 600:
                 if attempt < 3:
                     wait = 10
