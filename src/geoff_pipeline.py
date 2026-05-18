@@ -57,7 +57,14 @@ from geoff_utils import *
 from geoff_models import *
 from geoff_self_heal import *
 from geoff_discovery import *
+from geoff_phase34 import (
+    parse_windows_event_logs,
+    analyze_registry_persistence,
+    generate_body_file,
+)
+from geoff_classifier import classify_case, summarize_classification
 from geoff_critic import GeoffCritic
+from geoff_mitre import map_findings_to_mitre
 
 # Wire module-level references for orchestrator routing
 import geoff_utils as _gu
@@ -82,8 +89,24 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     Uses a hash of the evidence path to produce a stable work directory name.
     Restarting with the same evidence path resumes the investigation from the
     last checkpoint.
+
+    If evidence_path is None, derives it by looking for E01/E02 files under
+    EVIDENCE_BASE_DIR / case_name and passing the parent directory to find_evil.
     """
-    _ev_key = hashlib.sha256(str(Path(evidence_path).resolve()).encode()).hexdigest()[:12]
+    if evidence_path is None:
+        case_dir = Path(EVIDENCE_BASE_DIR) / case_name
+        if case_dir.is_dir():
+            for ext in ['.E01', '.E02', '.dd', '.raw', '.img']:
+                matches = list(case_dir.glob(f'*{ext}'))
+                if matches:
+                    evidence_path = str(case_dir)  # pass the directory, not the file
+                    break
+        if evidence_path is None:
+            _ev_key = case_name
+        else:
+            _ev_key = hashlib.sha256(str(Path(evidence_path).resolve()).encode()).hexdigest()[:12]
+    else:
+        _ev_key = hashlib.sha256(str(Path(evidence_path).resolve()).encode()).hexdigest()[:12]
     case_work_dir = f"{case_name}_{_ev_key}"
     case_work_path = Path(CASES_WORK_DIR) / case_work_dir
     resuming = case_work_path.exists()
@@ -1725,6 +1748,16 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
     confidence_modifiers = None
     super_timeline_path = None
 
+    # Pending findings buffers — initialized unconditionally to prevent
+    # NameError on checkpoint resume (phases that completed in a prior
+    # run skip their buffer-initialization code, but the flush loop after
+    # findings_writer init references these variables unconditionally).
+    _pending_sig_findings = []
+    _pending_gdrive_findings = []
+    _pending_net_share_findings = []
+    _pending_fat_recovery_findings = []
+    _pending_usnjrnl_findings = []
+
     # --- Checkpoint/Recovery: derive or use stable case work directory ---
     if case_work_dir is None:
         _ev_key = hashlib.sha256(str(evidence_path.resolve()).encode()).hexdigest()[:12]
@@ -2131,6 +2164,878 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
+        # A002 — Post-Mount Second-Pass Inventory Sweep
+        # ------------------------------------------------------------------
+        # Walks every active mount point searching for artifact paths that
+        # the initial extension-based inventory cannot discover — email
+        # databases (OST, PST, Windows.edb), browser history DBs (Chrome,
+        # Firefox), cloud sync artifacts (Google Drive), Recycle Bin
+        # metadata ($Recycle.Bin $I*), Prefetch files, and anti-forensics
+        # tool artifacts (Eraser, CCleaner).  Newly discovered artifacts
+        # are merged back into the inventory so downstream playbooks
+        # (PB-SIFT-022 Browser Forensics, PB-SIFT-023 Email Forensics,
+        # PB-SIFT-030 Cloud Sync Artifacts, etc.) can act on them.
+        # Checkpoint-aware and non-fatal on failure.
+        if not _ckpt_phase_done(ckpt, "post_mount_sweep"):
+            _fe_log(job_id, "  [POST-MOUNT-SWEEP] Starting second-pass inventory sweep …")
+            _ckpt_mark_phase(ckpt, "post_mount_sweep", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                sweep_result = post_mount_inventory_sweep(
+                    inventory=inventory,
+                    case_work_dir=str(case_work_dir),
+                    job_id=job_id,
+                )
+                # Merge discovered artifacts into inventory (already done
+                # inside the function — this is just audit logging).
+                total_discovered = sum(len(v) for v in sweep_result.values())
+                categories_found = [cat for cat, paths in sweep_result.items() if paths]
+                if categories_found:
+                    _fe_log(job_id, f"  [POST-MOUNT-SWEEP] Discovered {total_discovered} artifact(s) "
+                                     f"across {len(categories_found)} categor(ies): {', '.join(categories_found)}")
+                else:
+                    _fe_log(job_id, "  [POST-MOUNT-SWEEP] No embedded artifacts found on mounted partitions")
+                _ckpt_mark_phase(ckpt, "post_mount_sweep", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [POST-MOUNT-SWEEP] Second-pass sweep failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "post_mount_sweep", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A011 — Network Share Forensics
+        # ------------------------------------------------------------------
+        # Analyzes network share/mapped drive artifacts from registry (NTUSER.DAT
+        # HKCU\\Network and MountPoints2), Prefetch (NET.EXE-*.pf), and PowerShell
+        # history (net use commands). Runs after mount so that mounted partitions
+        # are accessible for NTUSER.DAT and Prefetch enumeration.
+        # Checkpoint-aware, non-fatal on failure.
+        # Findings are buffered and flushed after findings_writer initialization.
+        if not _ckpt_phase_done(ckpt, "network_shares"):
+            _fe_log(job_id, "  [NET-SHARE] Beginning network share forensics …")
+            _ckpt_mark_phase(ckpt, "network_shares", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            _pending_net_share_findings = []
+            try:
+                net_share_result = analyze_network_shares(
+                    inventory=inventory, job_id=job_id,
+                )
+                if net_share_result:
+                    # Store in inventory for downstream reference
+                    inventory["_network_shares"] = net_share_result
+
+                    # Generate findings for each mapped drive
+                    for drive in net_share_result.get("mapped_drives", []):
+                        step_key = f"A011:mapped_drive:{drive['letter']}"
+                        _pending_net_share_findings.append({
+                            "playbook": "PB-SIFT-007",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                step_key.encode()
+                            ).hexdigest()[:12],
+                            "module": "network_share_forensics",
+                            "function": "analyze_network_shares",
+                            "params": {"drive_letter": drive["letter"]},
+                            "raw_command": "analyze_network_shares()",
+                            "evidence_file": "",
+                            "device_id": "all",
+                            "owner": "unknown",
+                            "status": "completed",
+                            "severity": "HIGH" if drive.get("persistent") else "MEDIUM",
+                            "result": {
+                                "status": "success",
+                                "artifact": "mapped_network_drive",
+                                "drive_letter": drive["letter"],
+                                "remote_path": drive.get("remote_path", ""),
+                                "provider_name": drive.get("provider_name", ""),
+                                "persistent": drive.get("persistent", False),
+                            },
+                            "evidence_chain": {
+                                "artifact": f"mapped_drive:{drive['letter']}",
+                                "evidence_file": "",
+                                "tool": "reglookup",
+                                "playbook": "PB-SIFT-007",
+                                "significance": "HIGH - Network share mapped drive" if drive.get("persistent") else "MEDIUM - Network drive mapping",
+                                "analyst_note": (
+                                    f"Network drive {drive['letter']}: mapped to "
+                                    f"{drive.get('remote_path', 'unknown')} "
+                                    f"({'persistent' if drive.get('persistent') else 'non-persistent'})"
+                                ),
+                                "threat_indicators": [
+                                    f"network_share:mapped_drive:{drive['letter']}",
+                                    f"network_share:remote_path:{drive.get('remote_path', '')}",
+                                ],
+                                "follow_up_needed": bool(drive.get("persistent")),
+                                "follow_up_reason": (
+                                    "Persistent mapped network drive — potential data exfiltration vector"
+                                    if drive.get("persistent") else ""
+                                ),
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+
+                    # Generate findings for MRU network connections
+                    for conn in net_share_result.get("mru_connections", []):
+                        conn_path = conn.get("path", "")
+                        if not conn_path:
+                            continue
+                        step_key = f"A011:mru_connection:{hashlib.md5(conn_path.encode()).hexdigest()[:12]}"
+                        _pending_net_share_findings.append({
+                            "playbook": "PB-SIFT-007",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                step_key.encode()
+                            ).hexdigest()[:12],
+                            "module": "network_share_forensics",
+                            "function": "analyze_network_shares",
+                            "params": {"mru_path": conn_path},
+                            "raw_command": "analyze_network_shares()",
+                            "evidence_file": "",
+                            "device_id": "all",
+                            "owner": "unknown",
+                            "status": "completed",
+                            "severity": "MEDIUM",
+                            "result": {
+                                "status": "success",
+                                "artifact": "network_share_mru",
+                                "network_path": conn_path,
+                                "last_accessed": conn.get("last_accessed", ""),
+                            },
+                            "evidence_chain": {
+                                "artifact": f"network_share_mru:{conn_path[:50]}",
+                                "evidence_file": "",
+                                "tool": "reglookup",
+                                "playbook": "PB-SIFT-007",
+                                "significance": "MEDIUM - Network share MRU entry",
+                                "analyst_note": (
+                                    f"Network share MRU connection: {conn_path} "
+                                    f"(last accessed {conn.get('last_accessed', 'unknown')})"
+                                ),
+                                "threat_indicators": [
+                                    f"network_share:mru:{conn_path}",
+                                ],
+                                "follow_up_needed": False,
+                                "follow_up_reason": "",
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+
+                    # Generate findings for net use commands (prefetch)
+                    for net_cmd in net_share_result.get("net_commands", []):
+                        step_key = f"A011:net_command:{hashlib.md5(net_cmd.get('command', '').encode()).hexdigest()[:12]}"
+                        _pending_net_share_findings.append({
+                            "playbook": "PB-SIFT-007",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                step_key.encode()
+                            ).hexdigest()[:12],
+                            "module": "network_share_forensics",
+                            "function": "analyze_network_shares",
+                            "params": {"prefetch_file": net_cmd.get("prefetch_file", "")},
+                            "raw_command": "analyze_network_shares()",
+                            "evidence_file": net_cmd.get("prefetch_file", ""),
+                            "device_id": "all",
+                            "owner": "unknown",
+                            "status": "completed",
+                            "severity": "MEDIUM",
+                            "result": {
+                                "status": "success",
+                                "artifact": "net_use_command",
+                                "command": net_cmd.get("command", ""),
+                                "timestamp": net_cmd.get("timestamp", ""),
+                            },
+                            "evidence_chain": {
+                                "artifact": f"net_use:{net_cmd.get('command', '')[:50]}",
+                                "evidence_file": net_cmd.get("prefetch_file", ""),
+                                "tool": "prefetch_analysis",
+                                "playbook": "PB-SIFT-007",
+                                "significance": "MEDIUM - NET.EXE execution (net use)",
+                                "analyst_note": (
+                                    f"NET.EXE execution detected: {net_cmd.get('command', '')} "
+                                    f"at {net_cmd.get('timestamp', 'unknown')}"
+                                ),
+                                "threat_indicators": [
+                                    "network_share:net_use_prefetch",
+                                ],
+                                "follow_up_needed": False,
+                                "follow_up_reason": "",
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+
+                    # Generate findings for PowerShell net use commands
+                    for ps_cmd in net_share_result.get("powershell_commands", []):
+                        step_key = f"A011:powershell_net_use:{hashlib.md5(ps_cmd.get('command', '').encode()).hexdigest()[:12]}"
+                        _pending_net_share_findings.append({
+                            "playbook": "PB-SIFT-007",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                step_key.encode()
+                            ).hexdigest()[:12],
+                            "module": "network_share_forensics",
+                            "function": "analyze_network_shares",
+                            "params": {"history_file": ps_cmd.get("history_file", "")},
+                            "raw_command": "analyze_network_shares()",
+                            "evidence_file": ps_cmd.get("history_file", ""),
+                            "device_id": "all",
+                            "owner": "unknown",
+                            "status": "completed",
+                            "severity": "MEDIUM",
+                            "result": {
+                                "status": "success",
+                                "artifact": "powershell_net_use",
+                                "command": ps_cmd.get("command", ""),
+                                "history_file": ps_cmd.get("history_file", ""),
+                            },
+                            "evidence_chain": {
+                                "artifact": f"powershell_net_use:{ps_cmd.get('command', '')[:50]}",
+                                "evidence_file": ps_cmd.get("history_file", ""),
+                                "tool": "powershell_history_analysis",
+                                "playbook": "PB-SIFT-007",
+                                "significance": "MEDIUM - PowerShell net use command",
+                                "analyst_note": (
+                                    f"PowerShell net use command: {ps_cmd.get('command', '')} "
+                                    f"(from {Path(ps_cmd.get('history_file', '')).name})"
+                                ),
+                                "threat_indicators": [
+                                    "network_share:powershell_net_use",
+                                ],
+                                "follow_up_needed": False,
+                                "follow_up_reason": "",
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+
+                    _fe_log(job_id, f"  [NET-SHARE] Buffered {len(_pending_net_share_findings)} finding(s) for findings writer")
+
+                    # Also scan mounted partitions for files accessed via network shares
+                    net_share_files = find_network_drive_files(
+                        inventory=inventory,
+                        network_shares=net_share_result,
+                        job_id=job_id,
+                    )
+                    if net_share_files:
+                        _fe_log(job_id, f"  [NET-SHARE] Found {len(net_share_files)} network-accessed file(s)")
+                        inventory["_network_share_files"] = net_share_files
+
+                else:
+                    _fe_log(job_id, "  [NET-SHARE] No network share artifacts found")
+
+                _ckpt_mark_phase(ckpt, "network_shares", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [NET-SHARE] Network share forensics failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "network_shares", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A012 — FAT/exFAT Formatted Media Recovery
+        # ------------------------------------------------------------------
+        # Recovers deleted files from quick-formatted FAT12/16/32 and exFAT
+        # partitions using Sleuth Kit (fls -rd, icat) and photorec carving.
+        # Also detects USB format events via backup boot sector presence.
+        # Runs after mount so that disk images and offsets are available.
+        # Checkpoint-aware, non-fatal on failure.
+        if not _ckpt_phase_done(ckpt, "formatted_media_recovery"):
+            _fe_log(job_id, "  [FAT-RECOV] Beginning FAT/exFAT formatted media recovery …")
+            _ckpt_mark_phase(ckpt, "formatted_media_recovery", "running")
+            _ckpt_save(case_work_dir, ckpt)
+
+            # Buffer findings — findings_writer not yet initialized
+            _pending_fat_recovery_findings = []
+
+            try:
+                # (a) Run FAT recovery on all disk images
+                fat_result = recover_formatted_fat(
+                    disk_images=inventory.get("disk_images", []),
+                    device_map=device_map,
+                    image_offsets=image_offsets,
+                    output_dir=str(case_work_dir / "output" / "fat_recovery"),
+                    job_id=job_id,
+                )
+
+                if fat_result.get("recovered_entries"):
+                    recovered = fat_result["recovered_entries"]
+                    _fe_log(job_id, f"  [FAT-RECOV] Total {len(recovered)} recovered entries across all images")
+                    inventory["_fat_recovered_entries"] = recovered
+
+                    # Generate findings for each recovered entry
+                    for entry in recovered[:50]:  # Cap at 50 findings per run
+                        entry_name = entry.get("name", "unknown")
+                        step_key = f"A012:recovered_fat:{hashlib.md5(entry_name.encode()).hexdigest()[:12]}"
+                        _pending_fat_recovery_findings.append({
+                            "playbook": "PB-SIFT-013",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                f"PB-SIFT-013:fat_recovery:{entry_name}".encode()
+                            ).hexdigest()[:12],
+                            "module": "fat_recovery",
+                            "function": "recover_formatted_fat",
+                            "params": {"entry_name": entry_name},
+                            "raw_command": "recover_formatted_fat()",
+                            "evidence_file": entry.get("recovered_path", ""),
+                            "device_id": "all",
+                            "owner": "unknown",
+                            "status": "completed",
+                            "severity": "HIGH" if entry.get("deleted_flag") else "MEDIUM",
+                            "result": {
+                                "status": "success",
+                                "artifact": "formatted_media_recovered_file",
+                                "name": entry_name,
+                                "size": entry.get("size", 0),
+                                "deleted": entry.get("deleted_flag", False),
+                                "recovered_path": entry.get("recovered_path", ""),
+                                "fs_type": fat_result.get("fs_type", ""),
+                                "formatted": fat_result.get("formatted", False),
+                            },
+                            "evidence_chain": {
+                                "artifact": f"fat_recovered:{entry_name}",
+                                "evidence_file": entry.get("recovered_path", ""),
+                                "tool": "sleuthkit",
+                                "playbook": "PB-SIFT-013",
+                                "significance": "HIGH - File recovered from formatted partition",
+                                "analyst_note": (
+                                    f"File '{entry_name}' ({entry.get('size', 0)} bytes) "
+                                    f"recovered from {fat_result.get('fs_type', 'FAT')} "
+                                    f"{'formatted' if fat_result.get('formatted') else ''} partition"
+                                ),
+                                "threat_indicators": [
+                                    f"fat_recovery:{entry_name}",
+                                ],
+                                "follow_up_needed": True,
+                                "follow_up_reason": (
+                                    "File recovered from formatted partition — "
+                                    "potential anti-forensics / evidence destruction"
+                                ),
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+
+                # (b) Detect USB format events
+                usb_result = detect_usb_format(
+                    device_map=device_map,
+                    job_id=job_id,
+                )
+
+                if usb_result.get("format_detected"):
+                    _fe_log(job_id, f"  [FAT-RECOV] ⚠ USB format detected via {usb_result['tool_used']}")
+                    inventory["_usb_format_detected"] = usb_result
+
+                    step_key = "A012:usb_format_detected"
+                    _pending_fat_recovery_findings.append({
+                        "playbook": "PB-SIFT-013",
+                        "step_key": step_key,
+                        "execution_hash": hashlib.md5(
+                            "A012:usb_format_detected".encode()
+                        ).hexdigest()[:12],
+                        "module": "fat_recovery",
+                        "function": "detect_usb_format",
+                        "params": {},
+                        "raw_command": "detect_usb_format()",
+                        "evidence_file": "",
+                        "device_id": "all",
+                        "owner": "unknown",
+                        "status": "completed",
+                        "severity": "HIGH",
+                        "result": {
+                            "status": "success",
+                            "artifact": "usb_format_event",
+                            "format_detected": True,
+                            "format_time": usb_result.get("format_time", ""),
+                            "tool_used": usb_result.get("tool_used", ""),
+                        },
+                        "evidence_chain": {
+                            "artifact": "usb_format_event",
+                            "evidence_file": "",
+                            "tool": usb_result.get("tool_used", ""),
+                            "playbook": "PB-SIFT-013",
+                            "significance": "HIGH - USB device format detected",
+                            "analyst_note": (
+                                f"USB device format detected via {usb_result['tool_used']}"
+                                f"{' at ' + usb_result['format_time'] if usb_result['format_time'] else ''}"
+                            ),
+                            "threat_indicators": [
+                                "anti_forensics:usb_format",
+                            ],
+                            "follow_up_needed": True,
+                            "follow_up_reason": (
+                                "USB device was formatted — possible anti-forensics "
+                                "to destroy evidence of data exfiltration"
+                            ),
+                        },
+                        "started_at": datetime.now().isoformat(),
+                        "completed_at": datetime.now().isoformat(),
+                    })
+
+                if fat_result.get("formatted") or usb_result.get("format_detected"):
+                    # Add ANTI-FORENSICS confidence modifier — will be applied
+                    # when confidence_modifiers list is initialized later in phase 3.
+                    # Store in inventory for the phase-3 logic to pick up.
+                    inventory["_format_anti_forensics"] = True
+
+                _fe_log(job_id, f"  [FAT-RECOV] Completed — formatted={fat_result.get('formatted', False)}, "
+                                f"entries={len(fat_result.get('recovered_entries', []))}, "
+                                f"usb_format={usb_result.get('format_detected', False)}")
+                _ckpt_mark_phase(ckpt, "formatted_media_recovery", "complete")
+
+            except Exception as e:
+                _fe_log(job_id, f"  [FAT-RECOV] Formatted media recovery failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "formatted_media_recovery", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A003 — Email Artifact Discovery on Mounted Partitions
+        # ------------------------------------------------------------------
+        # Searches inside every active mount point for email-related files
+        # (.pst, .ost, .eml, .msg, .edb, etc.).  Found artifacts are added
+        # to the evidence inventory.  If any are discovered the Email
+        # Forensics playbook (PB-SIFT-023) is triggered later during the
+        # playbook planning phase.
+        if not _ckpt_phase_done(ckpt, "email_artifact_search"):
+            _fe_log(job_id, "  [EMAIL] Searching mounted partitions for email artifacts …")
+            _ckpt_mark_phase(ckpt, "email_artifact_search", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                email_found = search_email_artifacts(inventory, job_id=job_id)
+                if email_found:
+                    inventory["_email_artifacts_found"] = email_found
+                    _fe_log(job_id, f"  [EMAIL] {len(email_found)} email artifact(s) discovered")
+                _ckpt_mark_phase(ckpt, "email_artifact_search", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [EMAIL] Email artifact search failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "email_artifact_search", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A008 — Browser History Enhancement (IE/Edge) on Mounted Partitions
+        # ------------------------------------------------------------------
+        # Searches every active mount point for IE/Edge WebCacheV01.dat (ESE DB)
+        # and legacy index.dat history files.  Extracts URLs, timestamps,
+        # visit counts via esedbexport or strings.  Then cross-references
+        # extracted entries against an exfiltration/anti-forensics keyword
+        # list, flagging matches with HIGH confidence.
+        # Checkpoint-aware, non-fatal on failure.
+        if not _ckpt_phase_done(ckpt, "browser_history"):
+            _fe_log(job_id, "  [BROWSER] Beginning IE/Edge browser history extraction …")
+            _ckpt_mark_phase(ckpt, "browser_history", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                ie_edge_entries = parse_ie_webcache(
+                    inventory=inventory,
+                    job_id=job_id,
+                )
+                if ie_edge_entries:
+                    # Store in inventory for downstream reference
+                    inventory["_ie_edge_history"] = ie_edge_entries
+                    _fe_log(job_id, f"  [BROWSER] Extracted {len(ie_edge_entries)} IE/Edge history entries")
+
+                # Cross-reference against exfiltration/anti-forensics keywords
+                flagged_terms = parse_browser_search_terms(
+                    history_entries=ie_edge_entries,
+                    job_id=job_id,
+                )
+                if flagged_terms:
+                    inventory["_browser_search_flags"] = flagged_terms
+                    _fe_log(job_id, f"  [BROWSER] Flagged {len(flagged_terms)} browser search term(s) with HIGH confidence")
+                    # Log some examples
+                    for ft in flagged_terms[:5]:
+                        _fe_log(job_id, f"    🔍 [{ft['category']}] {ft['url'][:80]} → {ft['matched_keywords']}")
+
+                _ckpt_mark_phase(ckpt, "browser_history", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [BROWSER] Browser history extraction failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "browser_history", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A010 — Google Drive Cloud Sync Forensics
+        # ------------------------------------------------------------------
+        # Walks mounted partitions looking for Google Drive sync artifacts
+        # (snapshot.db, sync_config.db, sync_log.log, Google Drive folder).
+        # Parses SQLite cloud_entry tables and sync logs to enumerate synced
+        # files, account emails, and upload/download events.
+        # Checkpoint-aware, non-fatal on failure.
+        if not _ckpt_phase_done(ckpt, "google_drive"):
+            _fe_log(job_id, "  [GDRIVE] Beginning Google Drive cloud sync forensics …")
+            _ckpt_mark_phase(ckpt, "google_drive", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            # Buffer for flush after findings_writer init
+            _pending_gdrive_findings = []
+            try:
+                gdrive_result = parse_google_drive(job_id=job_id)
+
+                if gdrive_result["artifacts_found"]:
+                    # Store in inventory for downstream use
+                    inventory["_google_drive"] = gdrive_result
+                    _fe_log(job_id, f"  [GDRIVE] Found {len(gdrive_result['files'])} file(s), "
+                                     f"{len(gdrive_result['sync_log_entries'])} log entry(ies), "
+                                     f"account: {gdrive_result['account_email'] or 'N/A'}")
+
+                    # Also run registry check
+                    gdrive_reg = check_google_drive_registry(
+                        inventory=inventory, job_id=job_id,
+                    )
+                    if gdrive_reg["account_email"] or gdrive_reg["cache_path"]:
+                        inventory.setdefault("_google_drive_registry", {})
+                        inventory["_google_drive_registry"] = gdrive_reg
+                        _fe_log(job_id, f"  [GDRIVE] Registry email={gdrive_reg['account_email'] or 'N/A'}, "
+                                         f"cache={gdrive_reg['cache_path'] or 'N/A'}")
+
+                    # Buffer findings for flush after findings_writer init
+                    # Focus on shared files and upload events as high-value findings
+                    for gf in gdrive_result["files"]:
+                        if gf.get("shared") or gf.get("doc_id"):
+                            step_key = f"A010:gdrive_file:{gf.get('doc_id', 'unknown')[:20]}"
+                            _pending_gdrive_findings.append({
+                                "playbook": "PB-SIFT-030",
+                                "step_key": step_key,
+                                "execution_hash": hashlib.md5(
+                                    step_key.encode()
+                                ).hexdigest()[:12],
+                                "module": "google_drive",
+                                "function": "parse_google_drive",
+                                "params": {"google_drive_file": gf.get("filename", "")},
+                                "raw_command": "parse_google_drive()",
+                                "evidence_file": "",
+                                "device_id": "all",
+                                "owner": gdrive_result.get("account_email", "unknown"),
+                                "status": "completed",
+                                "severity": "HIGH" if gf.get("shared") else "MEDIUM",
+                                "result": {
+                                    "status": "success",
+                                    "artifact": "google_drive_file",
+                                    "filename": gf.get("filename", ""),
+                                    "size": gf.get("size", 0),
+                                    "modified": gf.get("modified", ""),
+                                    "shared": gf.get("shared", False),
+                                    "doc_id": gf.get("doc_id", ""),
+                                    "account_email": gdrive_result.get("account_email", ""),
+                                },
+                                "evidence_chain": {
+                                    "artifact": "google_drive_cloud_entry",
+                                    "evidence_file": "",
+                                    "tool": "parse_google_drive",
+                                    "playbook": "PB-SIFT-030",
+                                    "significance": "HIGH - Cloud synced file" if gf.get("shared") else "MEDIUM - Local cloud file",
+                                    "analyst_note": (
+                                        f"Google Drive file '{gf.get('filename', 'unknown')}' "
+                                        f"({gf.get('size', 0)} bytes, modified {gf.get('modified', 'unknown')}) "
+                                        f"{'was SHARED' if gf.get('shared') else 'synced'}"
+                                        f" with account {gdrive_result.get('account_email', 'unknown')}"
+                                    ),
+                                    "threat_indicators": [
+                                        f"google_drive:{'shared' if gf.get('shared') else 'synced'}:{gf.get('filename', '')}",
+                                    ],
+                                    "follow_up_needed": bool(gf.get("shared")),
+                                    "follow_up_reason": (
+                                        "Shared cloud file — potential data leakage indicator"
+                                        if gf.get("shared") else ""
+                                    ),
+                                },
+                                "started_at": datetime.now().isoformat(),
+                                "completed_at": datetime.now().isoformat(),
+                            })
+
+                    # Flag upload events from sync log
+                    for sle in gdrive_result.get("sync_log_entries", []):
+                        if sle.get("event") in ("upload", "delete"):
+                            step_key = f"A010:gdrive_sync:{sle['event']}:{hashlib.md5(sle['details'].encode()).hexdigest()[:12]}"
+                            _pending_gdrive_findings.append({
+                                "playbook": "PB-SIFT-030",
+                                "step_key": step_key,
+                                "execution_hash": hashlib.md5(
+                                    step_key.encode()
+                                ).hexdigest()[:12],
+                                "module": "google_drive",
+                                "function": "parse_google_drive",
+                                "params": {"sync_event": sle["event"]},
+                                "raw_command": "parse_google_drive()",
+                                "evidence_file": "",
+                                "device_id": "all",
+                                "owner": gdrive_result.get("account_email", "unknown"),
+                                "status": "completed",
+                                "severity": "HIGH" if sle["event"] == "upload" else "MEDIUM",
+                                "result": {
+                                    "status": "success",
+                                    "artifact": "google_drive_sync_log",
+                                    "event": sle["event"],
+                                    "timestamp": sle.get("timestamp", ""),
+                                    "details": sle.get("details", ""),
+                                },
+                                "evidence_chain": {
+                                    "artifact": "google_drive_sync_log",
+                                    "tool": "parse_google_drive",
+                                    "playbook": "PB-SIFT-030",
+                                    "significance": "HIGH - Cloud upload event" if sle["event"] == "upload" else "MEDIUM",
+                                    "analyst_note": f"Google Drive {sle['event']} event at {sle.get('timestamp', 'unknown')}: {sle.get('details', '')[:150]}",
+                                    "threat_indicators": [f"google_drive:{sle['event']}"],
+                                    "follow_up_needed": sle["event"] == "upload",
+                                    "follow_up_reason": "Cloud upload event — potential exfiltration indicator" if sle["event"] == "upload" else "",
+                                },
+                                "started_at": datetime.now().isoformat(),
+                                "completed_at": datetime.now().isoformat(),
+                            })
+
+                    _fe_log(job_id, f"  [GDRIVE] Buffered {len(_pending_gdrive_findings)} finding(s) for findings writer")
+                else:
+                    _fe_log(job_id, "  [GDRIVE] No Google Drive artifacts found")
+
+                _ckpt_mark_phase(ckpt, "google_drive", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [GDRIVE] Google Drive forensics failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "google_drive", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A001 — User Identification from SAM + NTUSER.DAT
+        # ------------------------------------------------------------------
+        # Run after mount/discover (images are mounted) to extract local user
+        # accounts from SAM hives and enumerate profile directories.
+        # Merges results with the existing user_map from device discovery.
+        if not _ckpt_phase_done(ckpt, "user_extraction"):
+            _fe_log(job_id, "  [USERS] Beginning local user extraction from mounted images …")
+            _ckpt_mark_phase(ckpt, "user_extraction", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                sam_user_map = extract_local_users(
+                    inventory=inventory,
+                    image_offsets=image_offsets,
+                    case_name=evidence_path.name,
+                    case_work_dir=str(case_work_dir),
+                    job_id=job_id,
+                )
+                # Merge with existing user_map from device discovery
+                if user_map is None:
+                    user_map = {}
+                for uname, udata in sam_user_map.items():
+                    if uname not in user_map:
+                        user_map[uname] = udata
+                    else:
+                        # Enrich existing entry with SAM data if available
+                        existing = user_map[uname]
+                        if udata.get("sid") and not existing.get("sid"):
+                            existing["sid"] = udata["sid"]
+                        if udata.get("profile_path") and not existing.get("profile_path"):
+                            existing["profile_path"] = udata["profile_path"]
+                        if udata.get("last_login") and not existing.get("last_login"):
+                            existing["last_login"] = udata["last_login"]
+                _fe_log(job_id, f"  [USERS] Merged user map: {len(user_map)} total user(s)")
+            except Exception as e:
+                _fe_log(job_id, f"  [USERS] User extraction failed (non-fatal): {e}")
+            _ckpt_mark_phase(ckpt, "user_extraction", "complete")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A006 — File Signature vs Extension Mismatch Detection
+        # ------------------------------------------------------------------
+        # Walks user profile directories and scans documents with `file -b`,
+        # cross-referencing magic header type against file extension.  Flags
+        # mismatches that indicate anti-forensics / malware delivery through
+        # disguised files (e.g. PE with .jpg, docx with .mp3, xlsx with .png).
+        # Runs after mount/discover + user extraction so that profile paths
+        # inside mounted disk images are available for scanning.
+        if not _ckpt_phase_done(ckpt, "signature_mismatch_scan"):
+            _fe_log(job_id, "  [SIG-SCAN] Beginning file signature vs extension scan …")
+            _ckpt_mark_phase(ckpt, "signature_mismatch_scan", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                sig_mismatches = scan_file_signatures(
+                    user_map=user_map,
+                    inventory=inventory,
+                    case_name=evidence_path.name,
+                    job_id=job_id,
+                    max_files=5000,
+                )
+                if sig_mismatches:
+                    _fe_log(job_id, f"  [SIG-SCAN] Found {len(sig_mismatches)} signature mismatch(es)")
+                    # Write full results to case work dir
+                    sig_path = case_work_dir / "signature_mismatches.json"
+                    _atomic_write(sig_path, json.dumps(sig_mismatches, indent=2, default=str))
+                    # Buffer findings locally — findings_writer not yet initialized
+                    _pending_sig_findings = []
+                    for sm in sig_mismatches:
+                        step_key = f"A006:signature_mismatch:{Path(sm['path']).name}"
+                        sev = sm.get("severity", "MEDIUM")
+                        _pending_sig_findings.append({
+                            "playbook": "PB-SIFT-008",
+                            "step_key": step_key,
+                            "execution_hash": hashlib.md5(
+                                f"A006:signature_mismatch:{sm['path']}:{sm['actual_type']}"
+                                .encode()
+                            ).hexdigest()[:12],
+                            "module": "files",
+                            "function": "signature_mismatch_scan",
+                            "params": {"path": sm["path"]},
+                            "raw_command": f"file -b '{sm['path']}'",
+                            "evidence_file": sm["path"],
+                            "device_id": device_map.get("host-unknown", {}).get("device_id", "unknown"),
+                            "owner": sm.get("username", "unknown"),
+                            "status": "completed",
+                            "severity": sev,
+                            "result": {
+                                "status": "success",
+                                "mismatch": sm,
+                                "expected_type": sm["expected_type"],
+                                "actual_type": sm["actual_type"],
+                                "extension": sm["extension"],
+                                "severity": sev,
+                            },
+                            "evidence_chain": {
+                                "artifact": "signature_mismatch",
+                                "evidence_file": sm["path"],
+                                "tool": "file_signature_scan",
+                                "playbook": "PB-SIFT-008",
+                                "significance": sev,
+                                "analyst_note": (
+                                    f"File {Path(sm['path']).name} has extension {sm['extension']} "
+                                    f"but magic header indicates {sm['actual_type']} "
+                                    f"(expected {sm['expected_type']})"
+                                ),
+                                "threat_indicators": [
+                                    f"signature_mismatch:{sm['extension']}→{sm['actual_type']}"
+                                ],
+                                "follow_up_needed": sev in ("CRITICAL", "HIGH"),
+                                "follow_up_reason": (
+                                    "Possible malware delivery via disguised file — "
+                                    "manual review recommended"
+                                    if sev in ("CRITICAL", "HIGH") else ""
+                                ),
+                            },
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now().isoformat(),
+                        })
+                else:
+                    _fe_log(job_id, "  [SIG-SCAN] No signature mismatches found")
+                _ckpt_mark_phase(ckpt, "signature_mismatch_scan", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [SIG-SCAN] Signature mismatch scan failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "signature_mismatch_scan", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # A007 — $UsnJrnl Change Journal Forensics
+        # ------------------------------------------------------------------
+        # Parses the NTFS change journal on mounted disk images to detect
+        # file renames, deletions, and data overwrites — key indicators of
+        # anti-forensics activity (timestomping, evidence deletion, malware
+        # self-deletion).  Runs after mount/discover so that the volume
+        # is accessible at its mount point.
+        if not _ckpt_phase_done(ckpt, "usnjrnl_parse"):
+            _fe_log(job_id, "  [USNJRNL] Beginning $UsnJrnl change journal analysis …")
+            _ckpt_mark_phase(ckpt, "usnjrnl_parse", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                # Look for the $UsnJrnl:$J stream on every active mount point
+                usn_records = []
+                with _state_lock:
+                    mount_points = list(_active_mounts) if _active_mounts else []
+                if not mount_points:
+                    _fe_log(job_id, "  [USNJRNL] No active mounts — skipping")
+                else:
+                    for mp in mount_points:
+                        journal_candidates = [
+                            Path(mp) / "$Extend" / "$UsnJrnl:$J",
+                        ]
+                        jpath = None
+                        for cand in journal_candidates:
+                            if cand.exists() and cand.is_file():
+                                jpath = str(cand)
+                                break
+                        if jpath is None:
+                            _fe_log(job_id,
+                                    f"  [USNJRNL] No $UsnJrnl:$J found at {mp}")
+                            continue
+                        _fe_log(job_id, f"  [USNJRNL] Found journal at {jpath}")
+                        batch = parse_usnjrnl(
+                            journal_path=jpath,
+                            max_records=10_000_000,
+                            job_id=job_id,
+                        )
+                        if batch:
+                            usn_records.extend(batch)
+                            # Buffer findings — flush after findings_writer init
+                            for rec in batch:
+                                fname = rec.get("filename", "")
+                                if not fname:
+                                    continue
+                                rlabel = rec.get("reason_label", "")
+                                ts = rec.get("timestamp", "")
+                                step_key = (f"A007:usnjrnl:{rlabel}:"
+                                            f"{fname}:{ts[:19]}")
+                                _pending_usnjrnl_findings.append({
+                                    "playbook": "PB-SIFT-012",
+                                    "step_key": step_key,
+                                    "execution_hash": hashlib.md5(
+                                        step_key.encode()
+                                    ).hexdigest()[:12],
+                                    "module": "usnjrnl",
+                                    "function": "parse_usnjrnl",
+                                    "params": {"mount_point": mp},
+                                    "raw_command": (
+                                        f"parse_usnjrnl(journal_path={jpath})"
+                                    ),
+                                    "evidence_file": jpath,
+                                    "device_id": "all",
+                                    "owner": "SYSTEM",
+                                    "status": "completed",
+                                    "result": rec,
+                                    "severity": (
+                                        "HIGH"
+                                        if rlabel in ("FILE_DELETE",
+                                                      "DATA_OVERWRITE")
+                                        else "MEDIUM"
+                                    ),
+                                    "started_at": datetime.now().isoformat(),
+                                    "completed_at": datetime.now().isoformat(),
+                                    "evidence_chain": {
+                                        "artifact": (
+                                            f"usnjrnl:{rlabel}:{fname}"
+                                        ),
+                                        "evidence_file": jpath,
+                                        "tool": "parse_usnjrnl",
+                                        "playbook": "PB-SIFT-012",
+                                        "significance": (
+                                            "HIGH"
+                                            if rlabel in (
+                                                "FILE_DELETE",
+                                                "DATA_OVERWRITE")
+                                            else "MEDIUM"
+                                        ),
+                                        "analyst_note": (
+                                            f"$UsnJrnl record: {rlabel} "
+                                            f"on {fname} at {ts}"
+                                        ),
+                                        "threat_indicators": [
+                                            f"usnjrnl:{rlabel}"
+                                        ],
+                                        "follow_up_needed": rlabel in (
+                                            "FILE_DELETE",
+                                            "DATA_OVERWRITE",
+                                            "RENAME_OLD_NAME",
+                                            "RENAME_NEW_NAME",
+                                        ),
+                                        "follow_up_reason": (
+                                            f"$UsnJrnl {rlabel} event on "
+                                            f"{fname} — may indicate "
+                                            f"anti-forensics or malware "
+                                            f"activity"
+                                        ),
+                                    },
+                                })
+                    _fe_log(job_id,
+                            f"  [USNJRNL] Total findings: "
+                            f"{len(usn_records)} record(s)")
+                _ckpt_mark_phase(ckpt, "usnjrnl_parse", "complete")
+            except Exception as e:
+                _fe_log(job_id,
+                        f"  [USNJRNL] $UsnJrnl parse failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "usnjrnl_parse", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
         # Phase 2: Prepare Case Work Directory (subdirs for stable dir)
         # ------------------------------------------------------------------
         case_name = evidence_path.name
@@ -2246,6 +3151,36 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Run PB-SIFT-000 (Triage) first to get the execution plan.
         # Then execute ONLY the playbooks listed in that plan.
         findings_writer = FindingsWriter(case_work_dir / "findings.jsonl", job_id=job_id)
+        # Flush any buffered A006 signature-mismatch findings
+        if _pending_sig_findings:
+            for rec in _pending_sig_findings:
+                findings_writer.append(rec)
+            _fe_log(job_id, f"  [SIG-SCAN] Flushed {len(_pending_sig_findings)} buffered signature-mismatch finding(s) to findings_writer")
+            del _pending_sig_findings[:]
+        # Flush any buffered A010 Google Drive findings
+        if _pending_gdrive_findings:
+            for rec in _pending_gdrive_findings:
+                findings_writer.append(rec)
+            _fe_log(job_id, f"  [GDRIVE] Flushed {len(_pending_gdrive_findings)} buffered Google Drive finding(s) to findings_writer")
+            del _pending_gdrive_findings[:]
+        # Flush any buffered A011 network share findings
+        if _pending_net_share_findings:
+            for rec in _pending_net_share_findings:
+                findings_writer.append(rec)
+            _fe_log(job_id, f"  [NET-SHARE] Flushed {len(_pending_net_share_findings)} buffered network share finding(s) to findings_writer")
+            del _pending_net_share_findings[:]
+        # Flush any buffered A012 FAT recovery findings
+        if _pending_fat_recovery_findings:
+            for rec in _pending_fat_recovery_findings:
+                findings_writer.append(rec)
+            _fe_log(job_id, f"  [FAT-RECOV] Flushed {len(_pending_fat_recovery_findings)} buffered FAT recovery finding(s) to findings_writer")
+            del _pending_fat_recovery_findings[:]
+        # Flush any buffered A007 $UsnJrnl findings
+        if _pending_usnjrnl_findings:
+            for rec in _pending_usnjrnl_findings:
+                findings_writer.append(rec)
+            _fe_log(job_id, f"  [USNJRNL] Flushed {len(_pending_usnjrnl_findings)} buffered $UsnJrnl finding(s) to findings_writer")
+            del _pending_usnjrnl_findings[:]
         exec_cache = _ExecResultCache(path=case_work_dir / "exec_cache.json")
         critic_results = []
         playbooks_run = []
@@ -2316,6 +3251,91 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         skipped_playbooks = []
         confidence_modifiers = []
         anti_forensics_detected = False
+
+        # ------------------------------------------------------------------
+        # A009 — Anti-Forensics Tool Signature Detection (checkpoint-aware phase)
+        # ------------------------------------------------------------------
+        if not _ckpt_phase_done(ckpt, "anti_forensics_detection"):
+            _fe_log(job_id, "  [AF-DETECT] Beginning anti-forensics tool signature detection …")
+            _ckpt_mark_phase(ckpt, "anti_forensics_detection", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                af_results = detect_anti_forensics(
+                    inventory=inventory,
+                    mount_points=list(_active_mounts) if _active_mounts else None,
+                    device_map=device_map,
+                    job_id=job_id,
+                )
+                if af_results:
+                    any_detected = False
+                    for tool_name, tool_result in af_results.items():
+                        if tool_result.get("detected"):
+                            any_detected = True
+                            step_key = f"A009:anti_forensics:{tool_name}"
+                            findings_writer.append({
+                                "playbook": "PB-SIFT-012",
+                                "step_key": step_key,
+                                "execution_hash": hashlib.md5(
+                                    f"PB-SIFT-012:anti_forensics:detect_{tool_name}:{json.dumps(tool_result, sort_keys=True, default=str)}".encode()
+                                ).hexdigest()[:12],
+                                "module": "anti_forensics",
+                                "function": f"detect_{tool_name}",
+                                "params": {},
+                                "raw_command": f"anti_forensics.detect_{tool_name}",
+                                "evidence_file": tool_result.get("evidence", [None])[0] if tool_result.get("evidence") else "",
+                                "device_id": "all",
+                                "owner": "SYSTEM",
+                                "status": "completed",
+                                "result": {
+                                    "tool": tool_name,
+                                    "detected": True,
+                                    "evidence_count": len(tool_result.get("evidence", [])),
+                                    "evidence": tool_result.get("evidence", []),
+                                    "confidence": tool_result.get("confidence", "LOW"),
+                                    "execution_count": tool_result.get("execution_count", 0),
+                                    "anti_forensics_detected": True,
+                                },
+                                "started_at": datetime.now().isoformat(),
+                                "completed_at": datetime.now().isoformat(),
+                                "evidence_chain": {
+                                    "artifact": f"anti_forensics.{tool_name}",
+                                    "evidence_file": str(tool_result.get("evidence", [])),
+                                    "tool": "anti_forensics.detect_" + tool_name,
+                                    "playbook": "PB-SIFT-012",
+                                    "significance": "HIGH",
+                                    "analyst_note": f"Anti-forensics tool '{tool_name}' detected: {len(tool_result.get('evidence', []))} artifact(s) found, confidence={tool_result.get('confidence', 'LOW')}",
+                                    "threat_indicators": [f"anti-forensics:{tool_name}"],
+                                    "follow_up_needed": True,
+                                    "follow_up_reason": f"Anti-forensics tool {tool_name} execution artifacts found — evidence may be compromised",
+                                },
+                            })
+                            _fe_log(job_id, f"  [AF-DETECT] ⚠ {tool_name}: DETECTED ({tool_result.get('confidence', 'LOW')} confidence, {tool_result.get('execution_count', 0)} executions)")
+                            _audit_append(case_work_dir, "anti_forensics_detected",
+                                          tool=tool_name, confidence=tool_result.get("confidence", "LOW"),
+                                          evidence_count=len(tool_result.get("evidence", [])),
+                                          execution_count=tool_result.get("execution_count", 0))
+                    if any_detected:
+                        anti_forensics_detected = True
+                        if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
+                            confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                        cascaded_now = _apply_anti_forensics_cascade(findings_writer)
+                        _fe_log(job_id, f"  [AF-DETECT] ⚠ Anti-forensics tools detected — cascade tagged {cascaded_now} findings")
+                    else:
+                        _fe_log(job_id, "  [AF-DETECT] No anti-forensics tools detected")
+                else:
+                    _fe_log(job_id, "  [AF-DETECT] No results returned (scan returned empty)")
+                _ckpt_mark_phase(ckpt, "anti_forensics_detection", "complete")
+            except Exception as e:
+                _fe_log(job_id, f"  [AF-DETECT] Anti-forensics detection failed (non-fatal): {e}")
+                _ckpt_mark_phase(ckpt, "anti_forensics_detection", "failed")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # Apply ANTI-FORENSICS confidence modifier if formatted media was detected
+        # by A012 FAT recovery (quick-format suggests deliberate evidence destruction)
+        if inventory.get("_format_anti_forensics"):
+            if "ANTI-FORENSICS" not in confidence_modifiers:
+                confidence_modifiers.append("ANTI-FORENSICS")
+                _fe_log(job_id, "  [FAT-RECOV] ⚠ Added ANTI-FORENSICS confidence modifier (formatted media detected)")
 
         # --- Scan triage_findings for artifacts INSIDE disk images ---
         # The fls/list_files results from PB-SIFT-001 are in triage_findings.
@@ -2806,10 +3826,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     _fe_log(job_id, "  PB-SIFT-022: nuclear — Windows image, browser likely")
 
             # Email Forensics — queue if email files found inside
-            if _nuclear_ev.get("email_files") or _disk_artifacts.get("email"):
+            _mounted_email = inventory.get("_email_artifacts_found", [])
+            if _nuclear_ev.get("email_files") or _disk_artifacts.get("email") or _mounted_email:
                 if "PB-SIFT-023" not in execution_plan:
                     execution_plan.append("PB-SIFT-023")
-                    _fe_log(job_id, f"  PB-SIFT-023: nuclear — {len(_nuclear_ev.get('email_files', []))} email file(s) inside image")
+                    _fe_log(job_id, f"  PB-SIFT-023: nuclear — {len(_nuclear_ev.get('email_files', []))} email file(s) inside image"
+                            f"{' + ' + str(len(_mounted_email)) + ' mounted' if _mounted_email else ''}")
             elif os_type == "windows":
                 if "PB-SIFT-023" not in execution_plan:
                     execution_plan.append("PB-SIFT-023")
@@ -3204,6 +4226,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
                         item_stem = Path(item).stem
                         for module, function, raw_params in step_templates:
+                            # A009 — Anti-forensics steps handled by dedicated checkpoint phase; skip here
+                            if module == "anti_forensics":
+                                continue
                             # Filter mobile steps by device type
                             if playbook_id == "PB-SIFT-021":
                                 device_type = (dev.get("device_type") or "").lower()
@@ -3539,6 +4564,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     # Verdict-based: REJECTED → unverified immediately
                                     elif isinstance(critic_val, dict) and critic_val.get("verdict") == "REJECTED":
                                         issue_str = critic_val.get("verdict_reason", "Critic rejected this step")
+                                        issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
                                         _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} — {issue_str}")
                                         if step_record.get("status") == "completed":
                                             step_record["status"] = "completed_unverified"
@@ -3563,10 +4589,30 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         )
                                         corrected = False
                                         if correction:
+                                            # Re-call forensicator with critic feedback
+                                            critic_feedback_summary = "; ".join(str(i) for i in issues[:3]) if issues else issue_str
+                                            forensicator_retry = None
+                                            try:
+                                                forensicator_retry = geoff_forensicator.interpret_step_result(
+                                                    playbook_id=playbook_id,
+                                                    module=module,
+                                                    function=function,
+                                                    params=params,
+                                                    result=result,
+                                                    device_context={"device_id": dev_id, "os_type": os_type},
+                                                    critic_feedback=critic_feedback_summary,
+                                                )
+                                                if forensicator_retry and forensicator_retry.get("analyst_note"):
+                                                    _fe_log(job_id, f"  ↑ Forensicator re-analysis complete")
+                                                    step_record["forensicator"] = forensicator_retry
+                                            except Exception as fre:
+                                                _fe_log(job_id, f"  ⚠ Forensicator re-analysis failed: {fre}")
+                                            forensicator_note = (forensicator_retry.get("analyst_note", "") if forensicator_retry else correction.get("analyst_note", ""))
+                                            forensicator_indicators = (forensicator_retry.get("threat_indicators", []) if forensicator_retry else correction.get("threat_indicators", []))
                                             corrected_analysis = (
                                                 f"Find Evil auto-run (corrected): {playbook_id} → {module}.{function}\n"
-                                                f"Corrected analysis: {correction.get('analyst_note', '')}\n"
-                                                f"Corrected indicators: {', '.join(correction.get('threat_indicators', []))}"
+                                                f"Corrected analysis: {forensicator_note}\n"
+                                                f"Corrected indicators: {', '.join(forensicator_indicators)}"
                                             )
                                             try:
                                                 critic_retry = geoff_critic.validate_tool_output(
@@ -4135,6 +5181,272 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 if classification == "Data Exfil":
                     break
 
+        # ------------------------------------------------------------------
+        # Phase 4a: Multi-Label Case Classification (A004)
+        # ------------------------------------------------------------------
+        _classification_detail = {}
+        if _ckpt_phase_done(ckpt, "multi_label_classify"):
+            _fe_log(job_id, "  [CKPT] Skipping multi-label classification — loaded from checkpoint")
+        else:
+            _ckpt_mark_phase(ckpt, "multi_label_classify", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                # Collect all findings from findings_writer
+                all_records = findings_writer.all_records() if hasattr(findings_writer, 'all_records') else []
+                class_results = classify_case(
+                    findings=all_records,
+                    indicator_hits=indicator_hits,
+                    behavioral_flags=all_behavioral_flags,
+                )
+                _classification_detail = summarize_classification(class_results)
+                if _classification_detail.get("all"):
+                    # Override hardcoded classification with classifier output
+                    if _classification_detail["confidence"] > 0.3:
+                        classification = _classification_detail["primary"]
+                        # Re-derive evil_found from classifier: confident primary OR severity >= MEDIUM
+                        if _classification_detail["confidence"] > 0.3 or overall_severity in ("CRITICAL", "HIGH", "MEDIUM"):
+                            evil_found = True
+                    _fe_log(job_id, f"  [CLASSIFY] Primary: {_classification_detail['primary']} "
+                                    f"(conf: {_classification_detail['confidence']}), "
+                                    f"Secondary: {', '.join(_classification_detail['secondary'][:3]) or 'none'}")
+                else:
+                    _fe_log(job_id, "  [CLASSIFY] No threat classification from findings")
+            except Exception as _cl_err:
+                _fe_log(job_id, f"  [CLASSIFY] Error (non-fatal): {_cl_err}")
+            _ckpt_mark_phase(ckpt, "multi_label_classify", "complete")
+            _ckpt_save(case_work_dir, ckpt)
+
+        # ------------------------------------------------------------------
+        # Phase 4b: Campaign Temporal Correlation (A013)
+        # ------------------------------------------------------------------
+        campaign_results = {}
+        if _ckpt_phase_done(ckpt, "campaign_patterns"):
+            _fe_log(job_id, "  [CKPT] Skipping campaign pattern detection — loaded from checkpoint")
+        else:
+            _ckpt_mark_phase(ckpt, "campaign_patterns", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                all_records = findings_writer.all_records() if hasattr(findings_writer, 'all_records') else []
+                campaign_results = detect_campaign_patterns(
+                    findings=all_records,
+                    indicator_hits=indicator_hits,
+                    device_map=device_map if device_map is not None else {},
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+                if campaign_results.get("campaign_detected"):
+                    evil_found = True
+                    _fe_log(job_id, f"  [CAMPAIGN] Campaign patterns detected: {campaign_results['campaign_summary']}")
+            except Exception as _cp_err:
+                _fe_log(job_id, f"  [CAMPAIGN] Error (non-fatal): {_cp_err}")
+            # detect_campaign_patterns marks checkpoint complete internally.
+
+        # ------------------------------------------------------------------
+        # Phase 4c: Negative Space Analysis (A014)
+        # ------------------------------------------------------------------
+        negative_space_results = {}
+        if _ckpt_phase_done(ckpt, "negative_space"):
+            _fe_log(job_id, "  [CKPT] Skipping negative space analysis — loaded from checkpoint")
+        else:
+            _ckpt_mark_phase(ckpt, "negative_space", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                negative_space_results = analyze_negative_space(
+                    device_map=device_map if device_map is not None else {},
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+                if negative_space_results.get("negative_space_detected"):
+                    evil_found = True
+                    _fe_log(job_id, f"  [NEG-SPACE] {negative_space_results['negative_space_summary']}")
+            except Exception as _ns_err:
+                _fe_log(job_id, f"  [NEG-SPACE] Error (non-fatal): {_ns_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4d: Recycle Bin $I/$R Parser (A015)
+        # ------------------------------------------------------------------
+        recycle_bin_results = {}
+        if _ckpt_phase_done(ckpt, "recycle_bin"):
+            _fe_log(job_id, "  [CKPT] Skipping recycle bin parsing — loaded from checkpoint")
+        else:
+            _ckpt_mark_phase(ckpt, "recycle_bin", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                recycle_bin_results = parse_recycle_bin(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+                if recycle_bin_results.get("suspicious_deletions"):
+                    evil_found = True
+                    _fe_log(job_id, f"  [RECYCLE-BIN] {len(recycle_bin_results['suspicious_deletions'])} suspicious deletions")
+            except Exception as _rb_err:
+                _fe_log(job_id, f"  [RECYCLE-BIN] Error (non-fatal): {_rb_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4e: IMAPI Burn Log Finder (A016)
+        # ------------------------------------------------------------------
+        imapi_results = {}
+        if not _ckpt_phase_done(ckpt, "imapi_burn_logs"):
+            _ckpt_mark_phase(ckpt, "imapi_burn_logs", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                imapi_results = find_imapi_burn_logs(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _im_err:
+                _fe_log(job_id, f"  [IMAPI] Error (non-fatal): {_im_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4f: VSS Auto-Mount Checker (A017)
+        # ------------------------------------------------------------------
+        vss_mount_results = {}
+        if not _ckpt_phase_done(ckpt, "vss_auto_mount"):
+            _ckpt_mark_phase(ckpt, "vss_auto_mount", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                vss_mount_results = check_vss_auto_mount(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _vss_err:
+                _fe_log(job_id, f"  [VSS-CHK] Error (non-fatal): {_vss_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4g: Windows.edb Path Finder (A018)
+        # ------------------------------------------------------------------
+        edb_results = {}
+        if not _ckpt_phase_done(ckpt, "windows_edb"):
+            _ckpt_mark_phase(ckpt, "windows_edb", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                edb_results = find_windows_edb_paths(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _edb_err:
+                _fe_log(job_id, f"  [EDB] Error (non-fatal): {_edb_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4h: Unprocessed Files Handler (A019)
+        # ------------------------------------------------------------------
+        unproc_results = {}
+        if not _ckpt_phase_done(ckpt, "unprocessed_files"):
+            _ckpt_mark_phase(ckpt, "unprocessed_files", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                # Collect paths that the pipeline has already processed so
+                # handle_unprocessed_files can identify genuinely untouched files.
+                _phase4h_processed = set()
+                for _rec in findings_writer.all_records():
+                    _ef = _rec.get("evidence_file")
+                    if _ef:
+                        _phase4h_processed.add(str(_ef))
+                unproc_results = handle_unprocessed_files(
+                    inventory=inventory,
+                    processed_paths=_phase4h_processed,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _up_err:
+                _fe_log(job_id, f"  [UNPROC] Error (non-fatal): {_up_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4i: Cross-Device Timeline Stub (A020)
+        # ------------------------------------------------------------------
+        xdev_tl_results = {}
+        if not _ckpt_phase_done(ckpt, "cross_device_timeline"):
+            _ckpt_mark_phase(ckpt, "cross_device_timeline", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                all_records = findings_writer.all_records() if hasattr(findings_writer, 'all_records') else []
+                xdev_tl_results = cross_device_timeline_stub(
+                    device_map=device_map if device_map is not None else {},
+                    findings=all_records,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _xdev_err:
+                _fe_log(job_id, f"  [XDEV-TL] Error (non-fatal): {_xdev_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4j: Windows Event Log Parsing (A021)
+        # ------------------------------------------------------------------
+        event_log_results = {}
+        if not _ckpt_phase_done(ckpt, "event_logs"):
+            _ckpt_mark_phase(ckpt, "event_logs", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                event_log_results = parse_windows_event_logs(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+                if event_log_results.get("by_severity", {}).get("CRITICAL", 0) > 0:
+                    evil_found = True
+            except Exception as _evtx_err:
+                _fe_log(job_id, f"  [EVTX] Error (non-fatal): {_evtx_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4k: Registry Persistence Analysis (A022)
+        # ------------------------------------------------------------------
+        registry_results = {}
+        if not _ckpt_phase_done(ckpt, "registry_persistence"):
+            _ckpt_mark_phase(ckpt, "registry_persistence", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                registry_results = analyze_registry_persistence(
+                    mount_points=mount_points,
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+                if registry_results.get("high_risk_count", 0) > 0:
+                    evil_found = True
+                    _fe_log(job_id, f"  [REG-PERSIST] {registry_results['high_risk_count']} high-risk persistence entries")
+            except Exception as _reg_err:
+                _fe_log(job_id, f"  [REG-PERSIST] Error (non-fatal): {_reg_err}")
+
+        # ------------------------------------------------------------------
+        # Phase 4l: Unified Timeline Body File (A023)
+        # ------------------------------------------------------------------
+        timeline_results = {}
+        if not _ckpt_phase_done(ckpt, "generate_timeline"):
+            _ckpt_mark_phase(ckpt, "generate_timeline", "running")
+            _ckpt_save(case_work_dir, ckpt)
+            try:
+                _report_dir = Path(case_work_dir) / "reports"
+                timeline_results = generate_body_file(
+                    findings_writer=findings_writer,
+                    report_dir=str(_report_dir),
+                    job_id=job_id,
+                    case_work_dir=case_work_dir,
+                    ckpt=ckpt,
+                )
+            except Exception as _tl_err:
+                _fe_log(job_id, f"  [TIMELINE] Error (non-fatal): {_tl_err}")
+
         # Critic summary
         critic_approved = sum(1 for c in critic_results if isinstance(c, dict) and (
             c.get("verdict") == "APPROVED" or c.get("valid", False)
@@ -4266,6 +5578,55 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "ips_map": ips_map,
             "connection_map": connection_map_results.get("connection_map", []),
             "external_contacts": connection_map_results.get("external_contacts", []),
+            # Phase 3+4 results
+            "classification_detail": _classification_detail,
+            "campaign_analysis": {
+                "campaign_detected": campaign_results.get("campaign_detected", False),
+                "multi_day_patterns": campaign_results.get("multi_day_patterns", []),
+                "off_hours_clusters": campaign_results.get("off_hours_clusters", []),
+                "tool_chains": campaign_results.get("tool_chains", []),
+                "campaign_summary": campaign_results.get("campaign_summary", ""),
+            },
+            "negative_space_analysis": {
+                "negative_space_detected": negative_space_results.get("negative_space_detected", False),
+                "missing_vss": negative_space_results.get("missing_vss", []),
+                "cleared_logs": negative_space_results.get("cleared_logs", []),
+                "missing_artifacts": negative_space_results.get("missing_artifacts", []),
+                "timeline_gaps": negative_space_results.get("timeline_gaps", []),
+                "negative_space_summary": negative_space_results.get("negative_space_summary", ""),
+            },
+            "recycle_bin_analysis": {
+                "recycle_bin_found": recycle_bin_results.get("recycle_bin_found", False),
+                "deleted_file_count": recycle_bin_results.get("total_deleted", 0),
+                "suspicious_deletions": recycle_bin_results.get("suspicious_deletions", []),
+            },
+            "imapi_analysis": {
+                "logs_found": imapi_results.get("imapi_logs_found", False),
+                "log_files": imapi_results.get("log_files", []),
+                "total_burn_events": imapi_results.get("total_burn_events", 0),
+            },
+            "vss_mount_analysis": {
+                "vss_available": vss_mount_results.get("vss_available", False),
+                "vss_snapshots_found": vss_mount_results.get("vss_snapshots_found", 0),
+                "vss_mountable": vss_mount_results.get("vss_mountable", False),
+                "vss_scan_result": vss_mount_results.get("vss_scan_result", ""),
+            },
+            "windows_edb_analysis": {
+                "edb_found": edb_results.get("edb_found", False),
+                "edb_paths": edb_results.get("edb_paths", []),
+                "edb_sizes": edb_results.get("edb_sizes", []),
+            },
+            "unprocessed_files_analysis": {
+                "total_unprocessed": unproc_results.get("total_unprocessed", 0),
+                "unprocessed_by_category": unproc_results.get("unprocessed_by_category", {}),
+                "summary": unproc_results.get("summary", ""),
+            },
+            "cross_device_timeline": {
+                "devices_with_activity": xdev_tl_results.get("devices_with_activity", 0),
+                "device_time_ranges": xdev_tl_results.get("device_time_ranges", []),
+                "cross_device_events": xdev_tl_results.get("cross_device_events", []),
+                "timeline_stub_note": xdev_tl_results.get("timeline_stub_note", ""),
+            },
         }
 
         # --- Post-run retry: reprocess unprocessed files with relaxed limits ---
@@ -4366,6 +5727,27 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 report["narrative_report_path"] = None
         else:
             report["narrative_report_path"] = None
+
+        # ------------------------------------------------------------------
+        # Phase 5d: MITRE ATT&CK Binding
+        # ------------------------------------------------------------------
+        _update_job(99, "mitre_mapping", "Mapping findings to MITRE ATT&CK techniques")
+        mitre_results = []
+        try:
+            all_findings = findings_writer.all_records()
+            mitre_results = map_findings_to_mitre(all_findings)
+            report["mitre_techniques"] = mitre_results
+            _fe_log(job_id, f"[MITRE] Mapped {len(mitre_results)} techniques from {len(all_findings)} findings")
+            if mitre_results:
+                for mt in mitre_results:
+                    _fe_log(job_id, f"  ├ {mt['technique_id']} — {mt['technique_name']} (confidence: {mt['confidence']})")
+            else:
+                _fe_log(job_id, "  No MITRE ATT&CK techniques identified from findings")
+        except Exception as e:
+            _fe_log(job_id, f"[MITRE] Mapping failed (non-fatal): {e}")
+            report["mitre_techniques"] = []
+        _ckpt_mark_phase(ckpt, "mitre_mapping", "complete" if mitre_results is not None else "failed")
+        _ckpt_save(case_work_dir, ckpt)
 
         # Write report
         report_path = case_work_dir / "reports" / "find_evil_report.json"
