@@ -42,7 +42,7 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 AI_EVIDENCE_CLASSIFICATION = os.environ.get("GEOFF_AI_CLASSIFICATION", "true").lower() == "true"
 
 # Email file extensions — used to filter non-email files from email analysis dispatch
-_EMAIL_EXTENSIONS = frozenset({'.eml', '.mbox', '.pst', '.ost', '.msg', '.emlx', '.dbx'})
+_EMAIL_EXTENSIONS = frozenset({'.eml', '.mbox', '.pst', '.ost', '.msg', '.emlx', '.dbx', '.edb'})
 
 # Threading locks
 _log_lock = threading.Lock()
@@ -73,7 +73,7 @@ from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
 from evidence_classifier import AIEvidenceClassifier, classify_with_ai
 
-__all__ = ["ACTIVE_PROFILE", "AGENT_MODELS", "AI_EVIDENCE_CLASSIFICATION", "CASES_WORK_DIR", "CHECKPOINT_FILE", "COMMON_LEGACY_OFFSETS", "EVIDENCE_BASE_DIR", "GEOFF_API_KEY", "LLM_MODEL", "MAX_STDOUT_SIZE", "MITRE_TAGS", "OLLAMA_API_KEY", "OLLAMA_URL", "PASS2_TRIGGER_PLAYBOOK_MAP", "PLAYBOOK_NAMES", "PLAYBOOK_NAMES_PASS2", "PLAYBOOK_STEPS", "PLAYBOOK_STEPS_PASS2", "PROFILES_PATH", "SRC_DIR", "STRICT_MODE", "_EMAIL_EXTENSIONS", "_EVIDENCE_TYPE_MAP", "_MAX_IN_MEMORY_FINDINGS", "_UNSAFE_PATH_CHARS", "_active_evidence_dir", "_atomic_append", "_atomic_write", "_hash_file", "_infer_evidence_type", "_log_lock", "_profile_models", "_resolve_dir", "_sanitize_path", "_state_lock", "_validate_evidence_path", "load_profile", "ollama_base_url", "ollama_headers"]
+__all__ = ["ACTIVE_PROFILE", "AGENT_MODELS", "AI_EVIDENCE_CLASSIFICATION", "CASES_WORK_DIR", "CHECKPOINT_FILE", "COMMON_LEGACY_OFFSETS", "EVIDENCE_BASE_DIR", "GEOFF_API_KEY", "LLM_MODEL", "MAX_STDOUT_SIZE", "MITRE_TAGS", "OLLAMA_API_KEY", "OLLAMA_URL", "PASS2_TRIGGER_PLAYBOOK_MAP", "PLAYBOOK_NAMES", "PLAYBOOK_NAMES_PASS2", "PLAYBOOK_STEPS", "PLAYBOOK_STEPS_PASS2", "PROFILES_PATH", "SRC_DIR", "STRICT_MODE", "THREAT_TAXONOMY", "_EMAIL_EXTENSIONS", "_EVIDENCE_TYPE_MAP", "_MAX_IN_MEMORY_FINDINGS", "_UNSAFE_PATH_CHARS", "_active_evidence_dir", "_atomic_append", "_atomic_write", "_hash_file", "_infer_evidence_type", "_log_lock", "_profile_models", "_resolve_dir", "_sanitize_path", "_state_lock", "_validate_evidence_path", "load_profile", "ollama_base_url", "ollama_headers"]
 
 
 
@@ -94,7 +94,7 @@ STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 
 AI_EVIDENCE_CLASSIFICATION = os.environ.get("GEOFF_AI_CLASSIFICATION", "true").lower() == "true"
 
-_EMAIL_EXTENSIONS = frozenset({'.eml', '.mbox', '.pst', '.ost', '.msg', '.emlx', '.dbx'})
+_EMAIL_EXTENSIONS = frozenset({'.eml', '.mbox', '.pst', '.ost', '.msg', '.emlx', '.dbx', '.edb'})
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ _EVIDENCE_TYPE_MAP = {
     ".pcap": "pcap", ".pcapng": "pcap", ".cap": "pcap",
     ".evtx": "evtx", ".evt": "evt",
     ".hive": "hive", ".dat": "registry",
-    ".eml": "email", ".mbox": "email", ".pst": "email",
+    ".eml": "email", ".mbox": "email", ".pst": "email", ".ost": "email", ".msg": "email", ".edb": "email",
     ".ab": "mobile_backups",
 }
 
@@ -392,6 +392,20 @@ MITRE_TAGS = {
     "rootkit":           ["T1014", "T1543.003"],
     "ot_attack":         ["T0855", "T0816", "T0879"],
     "phishing":          ["T1566", "T1534"],
+}
+
+# ---------------------------------------------------------------------------
+# Threat Taxonomy — Multi-Label Case Classification Engine
+# ---------------------------------------------------------------------------
+
+THREAT_TAXONOMY = {
+    "Malware": {"score_weight": 1.0, "indicators": ["executable", "persistence", "c2", "network_scan"]},
+    "Data Leakage": {"score_weight": 1.0, "indicators": ["renamed_files", "cloud_sync", "email_exfil", "usb_copy"]},
+    "Insider Threat": {"score_weight": 1.2, "indicators": ["off_hours", "anti_forensics", "renamed_files", "usb_copy", "network_share_access"]},
+    "Ransomware": {"score_weight": 1.0, "indicators": ["encryption", "ransom_note", "mass_rename"]},
+    "Phishing": {"score_weight": 0.8, "indicators": ["email_suspicious", "downloaded_executable", "credentials_harvesting"]},
+    "APT": {"score_weight": 1.2, "indicators": ["c2", "lateral_movement", "persistence", "data_exfil", "multi_stage"]},
+    "Policy Violation": {"score_weight": 0.6, "indicators": ["off_hours", "personal_software", "unauthorized_hardware"]},
 }
 
 # ---------------------------------------------------------------------------
@@ -547,6 +561,8 @@ PLAYBOOK_STEPS = {
         "registry_hives": [
             ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
             ("registry", "extract_mounted_devices", {"system_path": "{hive}"}),
+            # A011 — Network Share Forensics: analyze mapped drives & MRU connections
+            ("network_share_forensics", "analyze_network_shares", {"inventory": "{hive}"}),
         ],
     },
     "PB-SIFT-008": {  # Malware Hunting
@@ -557,6 +573,8 @@ PLAYBOOK_STEPS = {
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
             ("bulk_extractor", "scan_image", {"image": "{image}", "output_dir": "{output_dir}/bulk_extractor"}),
+            # A006 — File Signature vs Extension Mismatch Detection
+            ("files", "signature_mismatch_scan", {"output_dir": "{output_dir}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -614,12 +632,23 @@ PLAYBOOK_STEPS = {
             ("scheduled", "detect_backdoors", {"evidence_dir": "{image}"}),
             ("vss", "list_vss", {"image": "{image}"}),
             ("vss", "extract_vss_files", {"image": "{image}", "output_dir": "{output_dir}/vss"}),
+            # A009 — Anti-Forensics Tool Signature Detection
+            # Eraser: Prefetch ERASER.EXE-*.pf, Eraser task logs at %LocalAppData%\\Eraser\\*.log, UserAssist
+            ("anti_forensics", "detect_eraser", {"image": "{image}"}),
+            # CCleaner: Prefetch CCLEANER*.EXE-*.pf, CCleaner.ini at Program Files, UserAssist, Uninstall keys
+            ("anti_forensics", "detect_ccleaner", {"image": "{image}"}),
+            # SDelete: Prefetch SDELETE.EXE-*.pf, EID 4663 access_mask patterns
+            ("anti_forensics", "detect_sdelete", {"image": "{image}"}),
+            # General: $UsnJrnl large-scale deletion, VSS deletion artifacts
+            ("anti_forensics", "detect_general_anti_forensics", {"image": "{image}"}),
+            # A007 — $UsnJrnl Change Journal Forensics (parsed inline in pipeline)
+            ("usnjrnl", "parse_usnjrnl", {"image": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-013": {  # Insider Threat
+    "PB-SIFT-013": {  # Insider Threat — includes USB/Removable Media forensics
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
@@ -634,6 +663,12 @@ PLAYBOOK_STEPS = {
         ],
         "memory_dumps": [
             ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+        ],
+        "disk_images": [
+            ("fat_recovery", "recover_formatted_fat", {
+                "disk_image": "{image}",
+                "offset": "{offset}",
+            }),
         ],
     },
     "PB-SIFT-014": {  # Linux Forensics
@@ -812,6 +847,22 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "extract_browser_artifacts", {"image": "{image}", "offset": "{offset}"}),
         ],
+        "mounted_search": [  # Post-mount IE/Edge history artifact discovery
+            ("browser", "parse_ie_webcache", {
+                "search_paths": [
+                    "Users\\\\{user}\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\WebCache\\\\WebCacheV01.dat",
+                    "Users\\\\{user}\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\History\\\\index.dat",
+                ],
+            }),
+            ("browser", "parse_browser_search_terms", {
+                "keyword_list": [
+                    "leak", "exfil", "exfiltrate", "anti-forensic", "anti_forensic",
+                    "wipe", "delete", "eraser", "ccleaner", "bleachbit", "shred",
+                    "timestomp", "log clear", "wevtutil", "drop table",
+                    "secure delete", "overwrite", "evidence wipe",
+                ],
+            }),
+        ],
         "other_files": [
             ("browser", "extract_history", {"db_path": "{file}"}),
             ("browser", "extract_cookies", {"db_path": "{file}"}),
@@ -824,7 +875,17 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "extract_email_artifacts", {"image": "{image}", "offset": "{offset}"}),
         ],
-        "other_files": [  # NOTE: processes .pst/.ost/.dbx/.mbox/.eml files
+        "mounted_search": [  # Post-mount email artifact discovery phase
+            ("email", "search_email_artifacts", {
+                "patterns": ["*.pst", "*.ost", "*.eml", "*.msg", "*.edb"],
+                "search_paths": [
+                    "Users\\{user}\\AppData\\Local\\Microsoft\\Outlook\\",
+                    "Users\\{user}\\Documents\\Outlook Files\\",
+                    "ProgramData\\Microsoft\\Search\\Data\\Applications\\Windows\\",
+                ],
+            }),
+        ],
+        "other_files": [  # NOTE: processes .pst/.ost/.dbx/.mbox/.eml/.msg/.edb files
             ("email", "analyze_pst", {"pst_path": "{file}"}),
             ("email", "parse_dbx", {"dbx_path": "{file}"}),
             ("email", "analyze_mbox", {"mbox_path": "{file}"}),
@@ -912,6 +973,7 @@ PLAYBOOK_STEPS = {
             ("cloud", "analyze_icloud", {"db_path": "{file}"}),
             ("cloud", "analyze_box", {"db_path": "{file}"}),
             ("cloud", "detect_exfiltration", {"evidence_path": "{file}"}),
+            ("google_drive", "google_drive_scan", {"_phase": "gdrive"}),
         ],
     },
     "PB-SIFT-031": {  # Enterprise Collaboration — triggered by Teams/Slack/Discord/Skype/Zoom artifacts
