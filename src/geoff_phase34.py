@@ -842,6 +842,8 @@ def handle_unprocessed_files(
                 reason = "archive_not_extracted"
             elif ext in (".pf", ".db", ".dat", ".xml"):
                 reason = "forensic_artifact_no_direct_handler"
+            elif ext in (".hive", ".hve"):
+                reason = "registry_hive_not_dispatched_to_playbook"
             else:
                 reason = "file_type_not_covered_by_playbooks"
 

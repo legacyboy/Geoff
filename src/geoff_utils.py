@@ -1053,19 +1053,25 @@ def _extract_ips_from_evidence(inventory, case_work_dir):
     # ------------------------------------------------------------------
     for hive_path in inventory.get("registry_hives", []) or []:
         try:
-            import subprocess as _sp
-            result = _sp.run(
-                ["reglookup", "-p", "/Microsoft/Windows NT/CurrentVersion/NetworkList/Signatures", str(hive_path)],
-                capture_output=True, text=True, timeout=60
-            )
-            if result.returncode == 0:
-                ips = _re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', result.stdout)
-                for ip in ips:
-                    try:
-                        ipaddress.ip_address(ip)
-                        ips_by_device[hive_path]["ipv4"].add(ip)
-                    except ValueError:
-                        pass
+            import regipy.registry as _ri
+            hive = _ri.RegistryHive(str(hive_path))
+            try:
+                sig_key = hive.get_key(r"Microsoft\Windows NT\CurrentVersion\NetworkList\Signatures")
+                for subkey in sig_key.iter_subkeys():
+                    for val in subkey.iter_values():
+                        vdata = str(val.value) if val.value is not None else ""
+                        ips = _re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', vdata)
+                        for ip in ips:
+                            try:
+                                ipaddress.ip_address(ip)
+                                ips_by_device.setdefault(str(hive_path), {"ipv4": set(), "ipv6": set(), "macs": set(), "hostnames": set()})
+                                ips_by_device[str(hive_path)]["ipv4"].add(ip)
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+        except ImportError:
+            _log_info("regipy not available — skipping registry IP extraction")
         except Exception as e:
             _log_info(f"IP mapping registry failed for {hive_path}: {e}")
 

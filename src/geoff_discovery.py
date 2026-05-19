@@ -650,6 +650,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                             '.msf', '.oab', '.olk14', '.olk15', '.pab', '.nst'})
     archive_ext = frozenset({'.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.lz',
                               '.cab', '.arj', '.lzh', '.ace'})
+    hive_ext = frozenset({'.hive', '.hve', '.dat', '.pol', '.blf', '.regtrans-ms'})
     registry_names = frozenset({
         'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
         'usrclass.dat', 'default', 'system.sav', 'software.sav',
@@ -1283,6 +1284,8 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                             matched_ev_type = "evtx_logs"
                         elif ext_lower in evt_ext:
                             matched_ev_type = "evt_logs"
+                        elif ext_lower in hive_ext:
+                            matched_ev_type = "registry_hives"
                         elif ext_lower in doc_ext:
                             matched_ev_type = "documents"
 
@@ -2602,6 +2605,7 @@ def _mount_vss_snapshots(inventory: dict, image_offsets: dict,
                             '.msf', '.oab', '.olk14', '.olk15', '.pab', '.nst'})
     archive_ext = frozenset({'.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz', '.lz',
                               '.cab', '.arj', '.lzh', '.ace'})
+    hive_ext = frozenset({'.hive', '.hve', '.dat', '.pol', '.blf', '.regtrans-ms'})
     registry_names = frozenset({
         'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
         'usrclass.dat', 'default', 'system.sav', 'software.sav',
@@ -2724,6 +2728,8 @@ def _mount_vss_snapshots(inventory: dict, image_offsets: dict,
                                 matched_ev_type = "evtx_logs"
                             elif ext_lower in evt_ext:
                                 matched_ev_type = "evt_logs"
+                            elif ext_lower in hive_ext:
+                                matched_ev_type = "registry_hives"
                             elif ext_lower in doc_ext:
                                 matched_ev_type = "documents"
 
@@ -2890,7 +2896,7 @@ def extract_local_users(inventory: dict, image_offsets: dict,
     """Extract local user accounts from SAM hives and profile directories.
 
     Walks the mount points of each disk image to enumerate \\Users\\*
-    profile directories, then uses icat + reglookup on the SAM hive to
+    profile directories, then uses icat + regipy on the SAM hive to
     resolve usernames to SIDs.  Writes user_map.json to the case work
     directory and returns a dict that subsequent specialists can use to
     tag findings with a username.
@@ -2993,7 +2999,7 @@ def extract_local_users(inventory: dict, image_offsets: dict,
     _fe_log(job_id, f"  [USERS] Found {sum(len(v) for v in profile_meta.values())} profile dir(s) across {len(profile_meta)} mount(s)")
 
     # ------------------------------------------------------------------
-    # Phase B: Extract SAM hive via icat and parse with reglookup
+    # Phase B: Extract SAM hive via icat and parse with regipy
     # ------------------------------------------------------------------
     for img_path in disk_images:
         offset = image_offsets.get(img_path)
@@ -3047,65 +3053,57 @@ def extract_local_users(inventory: dict, image_offsets: dict,
             sam_raw = icat_result.stdout
             _fe_log(job_id, f"  [USERS] Extracted SAM ({len(sam_raw)} bytes) from {Path(img_path).name}")
 
-            # Write SAM to temp file for reglookup
+            # Write SAM to temp file for regipy parsing
             tmp_sam = tempfile.NamedTemporaryFile(suffix=".sam", delete=False)
             try:
                 tmp_sam.write(sam_raw)
                 tmp_sam.close()
 
-                # reglookup — parse SAM registry hive
-                reg_cmd = ["reglookup", tmp_sam.name]
-                reg_result = subprocess.run(
-                    reg_cmd, capture_output=True, text=True, timeout=60,
-                )
-
-                if reg_result.returncode != 0:
-                    _fe_log(job_id, f"  [USERS] reglookup failed for SAM: {reg_result.stderr[:200]}")
-                    continue
-
-                # Parse reglookup output
+                # regipy — parse SAM registry hive
                 username_rids: dict = {}  # username → hex RID string
                 domain_part = ""          # e.g., "3623811015-3361044348-30300820"
-                for reg_line in reg_result.stdout.splitlines():
-                    if reg_line.startswith("#") or not reg_line.strip():
-                        continue
-                    parts = reg_line.split("|")
-                    if len(parts) < 3:
-                        continue
-                    key_path = parts[0].strip()
-                    value_name = parts[1].strip()
-                    value_data = parts[2].strip() if len(parts) > 2 else ""
+                try:
+                    import regipy.registry
+                    sam_hive = regipy.registry.RegistryHive(tmp_sam.name)
 
-                    # Match: SAM\SAM\Domains\Account\Users\Names\<username>
-                    # The (default) value contains the RID as a hex string
-                    uname_match = re.match(
-                        r'SAM\\\\SAM\\\\Domains\\\\Account\\\\Users\\\\Names\\\\(.+)',
-                        key_path,
-                    )
-                    if uname_match and value_name in ("(default)", ""):
-                        try:
-                            rid_int = int(value_data, 16) if value_data else 0
-                            if rid_int > 0:
-                                username_rids[uname_match.group(1)] = f"{rid_int:08x}"
-                        except (ValueError, TypeError):
-                            pass
+                    # Walk SAM\SAM\Domains\Account\Users\Names for usernames
+                    try:
+                        names_key = sam_hive.get_key(r"SAM\Domains\Account\Users\Names")
+                        for subkey in names_key.iter_subkeys():
+                            uname = subkey.name
+                            # Default value of the subkey contains the RID as a REG_NONE binary
+                            for val in subkey.iter_values():
+                                if val.name == "" or val.name is None:
+                                    # val.value is the RID binary — 4 bytes little-endian
+                                    try:
+                                        if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 4:
+                                            rid_int = int.from_bytes(val.value[:4], 'little')
+                                            if rid_int > 0:
+                                                username_rids[uname] = f"{rid_int:08x}"
+                                    except (ValueError, TypeError):
+                                        pass
+                    except Exception as e_names:
+                        _fe_log(job_id, f"  [USERS] regipy: could not read Names key: {e_names}")
 
-                    # Extract domain identifier from SAM\SAM\Domains\Account\F key
-                    # The F value contains binary data; domain subauthorities are at offset 0x30
-                    if not domain_part and re.match(
-                        r'SAM\\\\SAM\\\\Domains\\\\Account\\\\F',
-                        key_path,
-                    ):
-                        if value_name in ("(default)", ""):
-                            try:
-                                raw_bytes = bytes.fromhex(value_data)
-                                if len(raw_bytes) >= 0x3C:
-                                    sub1 = int.from_bytes(raw_bytes[0x30:0x34], 'little')
-                                    sub2 = int.from_bytes(raw_bytes[0x34:0x38], 'little')
-                                    sub3 = int.from_bytes(raw_bytes[0x38:0x3C], 'little')
+                    # Extract domain identifier from SAM\SAM\Domains\Account\F
+                    try:
+                        f_key = sam_hive.get_key(r"SAM\Domains\Account\F")
+                        for val in f_key.iter_values():
+                            if val.name == "" or val.name is None:
+                                if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 0x3C:
+                                    sub1 = int.from_bytes(val.value[0x30:0x34], 'little')
+                                    sub2 = int.from_bytes(val.value[0x34:0x38], 'little')
+                                    sub3 = int.from_bytes(val.value[0x38:0x3C], 'little')
                                     domain_part = f"{sub1}-{sub2}-{sub3}"
-                            except (ValueError, TypeError, IndexError):
-                                pass
+                    except Exception:
+                        pass
+
+                except ImportError:
+                    _fe_log(job_id, "  [USERS] regipy not available — skipping SAM parsing")
+                    continue
+                except Exception as e_hive:
+                    _fe_log(job_id, f"  [USERS] regipy SAM parsing failed: {e_hive}")
+                    continue
 
                 # Build user_map entries from SAM data
                 img_stem = Path(img_path).stem
@@ -4589,87 +4587,77 @@ def analyze_network_shares(inventory: dict, job_id: str = None) -> dict:
 
     _fe_log(job_id, "  [NET-SHARE] Beginning network share forensics …")
 
-    # --- a. Extract HKCU\\Network\\* from NTUSER.DAT via reglookup ---
+    # --- a. Extract HKCU\\Network\\* from NTUSER.DAT via regipy ---
     ntuser_paths = _find_ntuser_files(inventory)
     if not ntuser_paths:
         _fe_log(job_id, "  [NET-SHARE] No NTUSER.DAT files found — registry analysis skipped")
     else:
         _fe_log(job_id, f"  [NET-SHARE] Found {len(ntuser_paths)} NTUSER.DAT hive(s) for registry analysis")
+        try:
+            import regipy.registry
+            _has_regipy = True
+        except ImportError:
+            _has_regipy = False
+            _fe_log(job_id, "  [NET-SHARE] regipy not available — registry analysis skipped")
+
         for hive_path in ntuser_paths:
+            if not _has_regipy:
+                break
             try:
-                # Query HKCU\\Network for mapped drive letters
                 hive_label = Path(hive_path).name
-                reg_cmd = [
-                    "reglookup", "-p",
-                    "/Microsoft/Windows/CurrentVersion/Explorer/MountPoints2",
-                    hive_path,
-                ]
-                r = safe_run(reg_cmd, timeout=60)
-                if r["code"] == 0 and r["stdout"].strip():
-                    records = _parse_reglookup_csv(r["stdout"])
-                    # Filter for MRU network locations (subkeys under MountPoints2)
-                    for rec in records:
-                        rpath = rec.get("path", "")
-                        rval = rec.get("value", "")
-                        rdata = rec.get("data", "")
-                        if "MountPoints2" in rpath and rval:
-                            # Extract network path from the subkey name
-                            # MountPoints2 subkeys contain UNC paths encoded with #
-                            path_parts = rpath.split("\\")
-                            # The last meaningful segment is the network path encoding
-                            for part in path_parts:
-                                if "#" in part and "\\" not in part:
-                                    # Decode # to \\ for UNC paths
-                                    decoded = part.replace("#", "\\")
-                                    result["mru_connections"].append({
-                                        "path": decoded,
-                                        "last_accessed": rdata if rdata else "",
-                                        "source_hive": hive_label,
-                                    })
-                                    break
+                hive = regipy.registry.RegistryHive(hive_path)
 
+                # Query MountPoints2 for MRU network locations
+                try:
+                    mp2_key = hive.get_key(r"Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2")
+                    for subkey in mp2_key.iter_subkeys():
+                        # Subkeys under MountPoints2 encode UNC paths with # instead of \\
+                        sk_name = subkey.name
+                        if "#" in sk_name:
+                            decoded = sk_name.replace("#", "\\")
+                            # Try to get last-written timestamp from the subkey
+                            last_accessed = ""
+                            try:
+                                last_accessed = subkey.timestamp.isoformat() if hasattr(subkey, 'timestamp') else ""
+                            except Exception:
+                                pass
+                            result["mru_connections"].append({
+                                "path": decoded,
+                                "last_accessed": last_accessed,
+                                "source_hive": hive_label,
+                            })
                     _fe_log(job_id, f"  [NET-SHARE] {hive_label}: found {len(result['mru_connections'])} MountPoints2 MRU connection(s)")
+                except Exception as e_mp2:
+                    _fe_log(job_id, f"  [NET-SHARE] {hive_label}: no MountPoints2 key ({e_mp2})")
 
-                # Query HKCU\\Network for mapped drive letters
-                reg_cmd2 = [
-                    "reglookup", "-p",
-                    "/Network",
-                    hive_path,
-                ]
-                r2 = safe_run(reg_cmd2, timeout=60)
-                if r2["code"] == 0 and r2["stdout"].strip():
-                    records2 = _parse_reglookup_csv(r2["stdout"])
+                # Query HKCU\Network for mapped drive letters
+                try:
+                    net_key = hive.get_key(r"Network")
                     mapped = {}
-                    for rec in records2:
-                        rpath = rec.get("path", "")
-                        rval = rec.get("value", "")
-                        rdata = rec.get("data", "")
-                        if rval and rdata:
-                            # Extract drive letter from path: /Network/<letter>
-                            parts = rpath.split("/")
-                            for i, p in enumerate(parts):
-                                if p == "Network" and i + 1 < len(parts):
-                                    letter = parts[i + 1]
-                                    if letter not in mapped:
-                                        mapped[letter] = {
-                                            "letter": letter,
-                                            "remote_path": "",
-                                            "provider_name": "",
-                                            "last_connected": "",
-                                        }
-                                    if rval.lower() == "remotepath":
-                                        mapped[letter]["remote_path"] = rdata
-                                    elif rval.lower() == "providername":
-                                        mapped[letter]["provider_name"] = rdata
-                                    elif rval.lower() in ("connectiontype", "connectflags"):
-                                        mapped[letter]["last_connected"] = rdata
-                                    break
-
+                    for letter_subkey in net_key.iter_subkeys():
+                        letter = letter_subkey.name.upper()[:1]  # Drive letter
+                        if letter not in mapped:
+                            mapped[letter] = {
+                                "letter": letter,
+                                "remote_path": "",
+                                "provider_name": "",
+                                "last_connected": "",
+                            }
+                        for val in letter_subkey.iter_values():
+                            vname = (val.name or "").lower()
+                            vdata = str(val.value)[:512] if val.value is not None else ""
+                            if vname == "remotepath":
+                                mapped[letter]["remote_path"] = vdata
+                            elif vname == "providername":
+                                mapped[letter]["provider_name"] = vdata
+                            elif vname in ("connectiontype", "connectflags"):
+                                mapped[letter]["last_connected"] = vdata
                     for drive_info in mapped.values():
                         result["mapped_drives"].append(drive_info)
-
                     if mapped:
                         _fe_log(job_id, f"  [NET-SHARE] {hive_label}: found {len(mapped)} mapped drive(s) in registry")
+                except Exception as e_net:
+                    _fe_log(job_id, f"  [NET-SHARE] {hive_label}: no Network key ({e_net})")
 
                 # --- e. Check registry for mapped drive persistence ---
                 # Persistent mapped drives are indicated by the presence of

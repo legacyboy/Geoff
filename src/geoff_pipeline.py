@@ -2312,7 +2312,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "evidence_chain": {
                                 "artifact": f"mapped_drive:{drive['letter']}",
                                 "evidence_file": "",
-                                "tool": "reglookup",
+                                "tool": "regipy",
                                 "playbook": "PB-SIFT-007",
                                 "significance": "HIGH - Network share mapped drive" if drive.get("persistent") else "MEDIUM - Network drive mapping",
                                 "analyst_note": (
@@ -2364,7 +2364,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "evidence_chain": {
                                 "artifact": f"network_share_mru:{conn_path[:50]}",
                                 "evidence_file": "",
-                                "tool": "reglookup",
+                                "tool": "regipy",
                                 "playbook": "PB-SIFT-007",
                                 "significance": "MEDIUM - Network share MRU entry",
                                 "analyst_note": (
@@ -5397,7 +5397,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "negative_space", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 negative_space_results = analyze_negative_space(
                     device_map=device_map if device_map is not None else {},
                     mount_points=mount_points,
@@ -5421,7 +5421,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "recycle_bin", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 recycle_bin_results = parse_recycle_bin(
                     mount_points=mount_points,
                     job_id=job_id,
@@ -5442,7 +5442,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "imapi_burn_logs", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 imapi_results = find_imapi_burn_logs(
                     mount_points=mount_points,
                     job_id=job_id,
@@ -5460,7 +5460,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "vss_auto_mount", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 vss_mount_results = check_vss_auto_mount(
                     mount_points=mount_points,
                     job_id=job_id,
@@ -5478,7 +5478,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "windows_edb", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 edb_results = find_windows_edb_paths(
                     mount_points=mount_points,
                     job_id=job_id,
@@ -5540,7 +5540,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "event_logs", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 event_log_results = parse_windows_event_logs(
                     mount_points=mount_points,
                     job_id=job_id,
@@ -5560,7 +5560,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "registry_persistence", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
-                mount_points = list(_active_mounts.values()) if hasattr(_active_mounts, 'values') else []
+                mount_points = list(_active_mounts) if _active_mounts else []
                 registry_results = analyze_registry_persistence(
                     mount_points=mount_points,
                     job_id=job_id,
