@@ -2142,6 +2142,37 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "partition_offsets", "complete", "checkpoint_offsets.json")
             _ckpt_save(case_work_dir, ckpt)
 
+        # ── Phase 1 Critic validation ──
+        # Validate that partition offsets are plausible and disk inventory
+        # is not contaminated by forensic metadata bleed-through.
+        if geoff_critic and image_offsets:
+            try:
+                _p1_inv_summary = {
+                    "disk_images": len(inventory.get("disk_images", [])),
+                    "memory_dumps": len(inventory.get("memory_dumps", [])),
+                    "pcaps": len(inventory.get("pcaps", [])),
+                    "registry_hives": len(inventory.get("registry_hives", [])),
+                    "partition_offsets": {str(Path(k).name): v for k, v in image_offsets.items() if k != "_candidates"},
+                }
+                _p1_critic = geoff_critic.validate_tool_output(
+                    tool_name="phase1.inventory_and_partitions",
+                    tool_params=_p1_inv_summary,
+                    raw_output=json.dumps(_p1_inv_summary, indent=2),
+                    geoff_analysis=f"Phase 1 inventory: {len(inventory.get('disk_images', []))} disk images, "
+                                 f"{len(image_offsets)} partition offsets detected. "
+                                 f"Offsets: {list(image_offsets.keys())}",
+                )
+                if isinstance(_p1_critic, dict):
+                    _fe_log(job_id, f"  ✓ Phase 1 Critic: {_p1_critic.get('verdict', 'N/A')}")
+                    if _p1_critic.get("verdict") == "REJECTED":
+                        _fe_log(job_id, f"  ✗ Phase 1 Critic REJECTED: {_p1_critic.get('verdict_reason', 'unknown')}")
+                    _atomic_write(
+                        case_work_dir / "phase1_critic_validation.json",
+                        json.dumps(_p1_critic, default=str, indent=2),
+                    )
+            except Exception as _p1_ce:
+                _fe_log_with_exception(job_id, "  ⚠ Phase 1 Critic validation failed", _p1_ce)
+
         # Mount & Discover — checkpoint for disk walk dedup
         ckpt_mounts_file = case_work_dir / "checkpoint_mounts.json"
         if _ckpt_phase_done(ckpt, "mount_discover"):
@@ -5692,6 +5723,49 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         if _email_result and isinstance(_email_result, dict) and _email_result.get("email_iocs"):
             report["email_iocs"] = _email_result["email_iocs"].copy()
             report["email_direct_findings"] = True
+
+        # ------------------------------------------------------------------
+        # Phase 5b-1: Final IOC Critic Validation
+        # Run the Critic over the entire final IOC set to catch any forensic
+        # metadata, version strings, or other noise that slipped through
+        # per-step validation. This is the last gate before the report.
+        # ------------------------------------------------------------------
+        _update_job(97, "ioc_validation", "Final Critic validation on IOCs before report")
+        if geoff_critic:
+            try:
+                _final_iocs = report.get("iocs", {})
+                if _final_iocs:
+                    _ioc_format_val = geoff_critic.validate_ioc_formats(_final_iocs)
+                    if _ioc_format_val.get("format_issue_count", 0) > 0:
+                        _fe_log(job_id, f"  ⚠ Final IOC Critic: {_ioc_format_val['format_issue_count']} IOCs with format issues")
+                        # Store validation alongside report for traceability
+                        _atomic_write(
+                            case_work_dir / "final_ioc_critic_validation.json",
+                            json.dumps(_ioc_format_val, default=str, indent=2),
+                        )
+                    else:
+                        _fe_log(job_id, "  ✓ Final IOC Critic: all IOCs passed format validation")
+                # Also validate the indicator_hits for forensic metadata contamination
+                if indicator_hits:
+                    _ih_raw = "\n".join(
+                        h.get("raw_match", "") or h.get("pattern", "") or ""
+                        for h in indicator_hits[:50]
+                    )
+                    _ih_analysis = f"{len(indicator_hits)} indicator hits across {len(set(h.get('playbook','') for h in indicator_hits))} playbooks"
+                    _ih_critic = geoff_critic.validate_tool_output(
+                        tool_name="phase1.indicator_hits",
+                        tool_params={"count": len(indicator_hits)},
+                        raw_output=_ih_raw[:3000],
+                        geoff_analysis=_ih_analysis,
+                    )
+                    if isinstance(_ih_critic, dict) and _ih_critic.get("verdict") == "REJECTED":
+                        _fe_log(job_id, f"  ✗ Indicator hits Critic REJECTED: {_ih_critic.get('verdict_reason', 'unknown')}")
+                    _atomic_write(
+                        case_work_dir / "indicator_hits_critic_validation.json",
+                        json.dumps(_ih_critic, default=str, indent=2),
+                    )
+            except Exception as _ioc_val_err:
+                _fe_log_with_exception(job_id, "  ⚠ Final IOC Critic validation failed", _ioc_val_err)
 
         # ------------------------------------------------------------------
         # Phase 5c: Narrative Report

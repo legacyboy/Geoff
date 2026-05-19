@@ -1899,7 +1899,17 @@ class NarrativeReportGenerator:
                         _scan(str(v) if v is not None else "")
 
         # Source 3: tool stdout (capped to first 100KB) + hash enrichment
+        # CRITICAL: Skip findings where the Critic REJECTED the step output.
+        # REJECTED findings contain hallucinated or forensic-metadata noise that
+        # pollutes the IOC section if included unfiltered.
         for finding in report_json.get("findings_detail", []):
+            # Gate: reject Critic-REJECTED findings from IOC extraction
+            critic = finding.get("critic", {})
+            if isinstance(critic, dict) and critic.get("verdict") == "REJECTED":
+                continue
+            # Also skip completed_unverified steps — these lack Critic validation
+            if finding.get("status") == "completed_unverified" and finding.get("needs_review"):
+                continue
             result = finding.get("result", {})
             if isinstance(result, dict):
                 stdout = (result.get("stdout", "") or "")[:102400]
@@ -1984,6 +1994,12 @@ class NarrativeReportGenerator:
         # deep-scans the full result JSON for embedded IOCs (catches data
         # that structured field extraction might miss).
         for finding in report_json.get("findings_detail", []):
+            # Gate: skip Critic-REJECTED and unverified-needs-review findings
+            _fc = finding.get("critic", {})
+            if isinstance(_fc, dict) and _fc.get("verdict") == "REJECTED":
+                continue
+            if finding.get("status") == "completed_unverified" and finding.get("needs_review"):
+                continue
             result = finding.get("result", {})
             if not isinstance(result, dict):
                 continue
@@ -2015,6 +2031,12 @@ class NarrativeReportGenerator:
         seen = {k: set() for k in email_iocs_agg}
 
         for finding in report_json.get("findings_detail", []):
+            # Gate: skip Critic-REJECTED and unverified-needs-review findings
+            _fc = finding.get("critic", {})
+            if isinstance(_fc, dict) and _fc.get("verdict") == "REJECTED":
+                continue
+            if finding.get("status") == "completed_unverified" and finding.get("needs_review"):
+                continue
             result = finding.get("result", {})
             if not isinstance(result, dict):
                 continue
@@ -2085,6 +2107,41 @@ class NarrativeReportGenerator:
                        for k, v in buckets.items() if v}
         if any(v for v in email_iocs_agg.values()):
             result_dict["email_iocs"] = email_iocs_agg
+
+        # ── Post-extraction Critic validation on IOCs ──
+        # Run format validation on the final IOC set to catch any remaining
+        # noise that slipped through per-finding Critic checks. This catches
+        # forensic metadata, version strings disguised as IPs, and other
+        # bleed-through that per-step Critic may have missed.
+        try:
+            from geoff_critic import GeoffCritic
+            _critic = GeoffCritic()
+            _format_val = _critic.validate_ioc_formats(result_dict)
+            if _format_val.get("format_issue_count", 0) > 0:
+                _bad_values = {issue["value"] for issue in _format_val.get("format_issues", [])}
+                # Remove invalid IOCs from all buckets
+                for key in ["ip_addresses", "urls", "email_addresses", "registry_keys", "file_paths"]:
+                    if key in result_dict and isinstance(result_dict[key], list):
+                        result_dict[key] = [v for v in result_dict[key] if v not in _bad_values]
+                # Also filter file_hashes
+                if "file_hashes" in result_dict and isinstance(result_dict["file_hashes"], list):
+                    result_dict["file_hashes"] = [
+                        h for h in result_dict["file_hashes"]
+                        if h.get("hash", "") not in _bad_values
+                    ]
+                # Also filter email_iocs
+                if "email_iocs" in result_dict and isinstance(result_dict["email_iocs"], dict):
+                    for ek in ["from_addresses", "to_addresses", "return_paths", "urls_in_body"]:
+                        if ek in result_dict["email_iocs"] and isinstance(result_dict["email_iocs"][ek], list):
+                            result_dict["email_iocs"][ek] = [
+                                v for v in result_dict["email_iocs"][ek] if v not in _bad_values
+                            ]
+                # Log how many were removed
+                _removed = _format_val.get("format_issue_count", 0)
+                print(f"[REPORT] IOC format validation removed {_removed} invalid IOCs")
+        except Exception as _ioc_val_err:
+            # Non-fatal — if Critic is unavailable, just use unvalidated IOCs
+            print(f"[REPORT] IOC format validation skipped: {_ioc_val_err}")
 
         return result_dict
 
