@@ -3126,6 +3126,21 @@ Write the following sections. ACCURACY RULES:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _full_written_report_banner(sections: dict) -> str:
+        """Return a warning banner if the full written report needs review."""
+        if sections.get('needs_review'):
+            reason = sections.get('needs_review_reason', 'LLM generation failed, template fallback used')
+            failed = sections.get('needs_review_sections', [])
+            failed_str = ', '.join(failed) if failed else 'one or more sections'
+            return (
+                "> ⚠️ **Needs Review**: This full written report may contain "
+                "template-fallback content because "
+                f"{reason} (affected: {failed_str}). "
+                "A qualified examiner should review and supplement before court submission."
+            )
+        return ""
+
     def _render_markdown(self, sections: dict,
                           report_json: dict) -> str:
         """Render all sections into a Markdown document."""
@@ -3174,6 +3189,14 @@ Write the following sections. ACCURACY RULES:
 ## Executive Summary
 
 {sections.get('executive_summary', 'No summary generated.')}
+
+---
+
+## Full Written Forensic Examination Report
+
+{self._full_written_report_banner(sections)}
+
+{sections.get('full_written_report', '')}
 
 ---
 
@@ -3258,12 +3281,6 @@ Write the following sections. ACCURACY RULES:
 ## Conclusion & Recommendations
 
 {sections.get('conclusion', 'No conclusion generated.')}
-
----
-
-# Formal Examination Report
-
-{sections.get('full_written_report', '')}
 
 ---
 
