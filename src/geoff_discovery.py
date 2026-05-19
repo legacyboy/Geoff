@@ -404,13 +404,92 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                job_id: str = None) -> dict:
     """Detect partition offsets for each disk image using mmls.
 
-    Tries SLEUTHKIT_Specialist, direct mmls invocation, and fallback offsets.
-    Uses self-healing for hard failures.  Checkpoint-aware: skips when
-    partition_offsets phase is already complete.
+    Detection strategy (in order):
+    1. For E01/E02 images: ewfmount first, then mmls on ewf1 device
+    2. SLEUTHKIT_Specialist on the image (handles E01 natively)
+    3. Direct mmls on the image with multiple partition-table types
+    4. LLM self-healing
+    5. Smart fallback: 2048 (GPT/4K-aligned) → 63 (legacy DOS) → 0
 
+    Checkpoint-aware: skips when partition_offsets phase is already complete.
     Returns dict: image_path → start_sector.
     """
     image_offsets = {}
+    # Track ewfmount dirs for cleanup
+    _ewf_mount_dirs = []
+
+    def _resolve_e01(img_path: str) -> str:
+        """If img_path is an E02/E03 segment, return the base E01 path."""
+        for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
+            if img_path.endswith(seg):
+                base = img_path[:-4]
+                e01 = base + ".E01"
+                if os.path.isfile(e01):
+                    return e01
+                e01_lower = base + ".e01"
+                if os.path.isfile(e01_lower):
+                    return e01_lower
+        return img_path
+
+    def _is_ewf_image(img_path: str) -> bool:
+        """Check if image is an EnCase/EWF image (.E01, .E02, .Ex01, .EE01)."""
+        ext = Path(img_path).suffix.lower()
+        return ext in ('.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01')
+
+    def _parse_mmls_output(stdout: str) -> list:
+        """Parse mmls output into list of (start_sector, description) tuples.
+
+        Handles multiple mmls output formats:
+          - Slot-prefixed: 002:  000:000   0000000063   0009510479   0009510417   NTFS...
+          - DOS/MBR:       000: 0000063 020948759 020948697 NTFS (0x07)
+          - Simple:         start end length desc
+        """
+        partitions = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith('DOS') or line.startswith('Slot') \
+               or line.startswith('---') or line.startswith('Offset') \
+               or line.startswith('Units') or line == '':
+                continue
+            if line.startswith('0') and '-------' in line:
+                continue
+            if line.startswith('0') and 'Meta' in line[:20]:
+                continue
+            # Slot-prefixed format: 002:  000:000   0000000063   0009510479   0009510417   NTFS...
+            m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if m:
+                partitions.append((int(m.group(1)), m.group(4).strip()))
+                continue
+            # DOS/MBR format: 000: 0000063 020948759 020948697 NTFS (0x07)
+            m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+            if m:
+                partitions.append((int(m.group(1)), m.group(4).strip()))
+                continue
+            # Simple format: start end length desc
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    partitions.append((int(parts[0]), ' '.join(parts[3:])))
+                except ValueError:
+                    pass
+        return partitions
+
+    def _find_first_partition_offset(partitions: list, img_name: str) -> int:
+        """Given parsed partitions, find the best partition offset.
+
+        Priority: NTFS/ext/HFS/FAT > first non-zero partition > None
+        """
+        # First try recognized filesystem partitions
+        for start, desc in partitions:
+            desc_lower = desc.lower()
+            if any(fs in desc_lower for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
+                if start > 0:
+                    return start
+        # Fall back to first non-meta partition
+        for start, desc in partitions:
+            if start > 0:
+                return start
+        return None
 
     if _ckpt_phase_done(ckpt, "partition_offsets"):
         try:
@@ -455,57 +534,159 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
         for img in dev.get("evidence_files", []):
             if img not in disk_images:
                 continue
+            img_name = Path(img).name
+            _fe_log(job_id, f"  🔍 Detecting partition offset for {img_name}")
             try:
-                # Try SLEUTHKIT specialist first
-                try:
-                    from sift_specialists import SLEUTHKIT_Specialist
-                    specialist = SLEUTHKIT_Specialist(evidence_path=img)
-                    mmls_result = specialist.analyze_partition_table(img)
-                except Exception:
-                    mmls_result = {"status": "error", "stderr": "SLEUTHKIT_Specialist unavailable"}
-
-                if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
-                    # Find first NTFS/ext4/HFS+ partition
-                    for part in mmls_result["partitions"]:
-                        desc = part.get("description", "").lower()
-                        start = part.get("start_sector", 0)
-                        if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                            image_offsets[img] = start
-                            _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start}")
-                            break
-                    if img not in image_offsets and mmls_result["partitions"]:
-                        for part in mmls_result["partitions"]:
-                            start = part.get("start_sector", 0)
-                            if start > 0:
-                                image_offsets[img] = start
-                                _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (first partition)")
-                                break
-
-                if img not in image_offsets:
-                    # Try direct mmls invocation as a last-resort fallback
+                # ────────────────────────────────────────────────────────────
+                # Strategy 1: For EWF (E01/E02/...) images, ewfmount first
+                # then run mmls on the ewf1 device. This is the most reliable
+                # approach for EnCase images — avoids SleuthKit's native EWF
+                # parser issues with multi-segment images.
+                # ────────────────────────────────────────────────────────────
+                if _is_ewf_image(img):
+                    ewf_raw_dir = f"/tmp/geoff_ewf_offset_{os.getpid()}_{hash(img) % 100000}"
                     try:
-                        raw_mmls = subprocess.run(
-                            ['mmls', img], capture_output=True, text=True, timeout=30
+                        os.makedirs(ewf_raw_dir, exist_ok=True)
+                        # Resolve E02+ segments to the base E01 for ewfmount
+                        e01_path = _resolve_e01(img)
+                        _fe_log(job_id, f"  📦 ewfmount: mounting {Path(e01_path).name} → {ewf_raw_dir}")
+                        ewf_result = subprocess.run(
+                            ["ewfmount", e01_path, ewf_raw_dir],
+                            capture_output=True, text=True, timeout=60,
                         )
-                        if raw_mmls.returncode == 0:
-                            for line in raw_mmls.stdout.splitlines():
-                                line = line.strip()
-                                m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                if m:
-                                    desc = m.group(4).lower()
-                                    start = int(m.group(1))
-                                    if any(fs in desc for fs in ['ntfs', 'ext', 'fat', 'hfs']) and start > 0:
-                                        image_offsets[img] = start
-                                        _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {start} (direct mmls fallback)")
-                                        break
-                    except Exception:
-                        pass
+                        if ewf_result.returncode == 0:
+                            ewf1_path = f"{ewf_raw_dir}/ewf1"
+                            if os.path.exists(ewf1_path):
+                                _fe_log(job_id, f"  📦 ewfmount OK, running mmls on ewf1 device")
+                                try:
+                                    mmls_r = subprocess.run(
+                                        ["mmls", ewf1_path],
+                                        capture_output=True, text=True, timeout=60,
+                                    )
+                                    if mmls_r.returncode == 0:
+                                        partitions = _parse_mmls_output(mmls_r.stdout)
+                                        offset = _find_first_partition_offset(partitions, img_name)
+                                        if offset is not None:
+                                            image_offsets[img] = offset
+                                            _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls)")
+                                        else:
+                                            _fe_log(job_id, f"  ⚠ mmls on ewf1 returned no valid partitions for {img_name}")
+                                    else:
+                                        _fe_log(job_id, f"  ⚠ mmls on ewf1 failed for {img_name}: {mmls_r.stderr.strip()[:200]}")
+                                        # Try mmls with explicit partition table types
+                                        for pt_type in ["gpt", "dos", "mac", "bsd"]:
+                                            try:
+                                                mmls_t = subprocess.run(
+                                                    ["mmls", "-t", pt_type, ewf1_path],
+                                                    capture_output=True, text=True, timeout=30,
+                                                )
+                                                if mmls_t.returncode == 0:
+                                                    partitions = _parse_mmls_output(mmls_t.stdout)
+                                                    offset = _find_first_partition_offset(partitions, img_name)
+                                                    if offset is not None:
+                                                        image_offsets[img] = offset
+                                                        _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls -t {pt_type})")
+                                                        break
+                                            except Exception:
+                                                pass
+                                except subprocess.TimeoutExpired:
+                                    _fe_log(job_id, f"  ⚠ mmls on ewf1 timed out for {img_name}")
+                                except Exception as e:
+                                    _fe_log(job_id, f"  ⚠ mmls on ewf1 crashed for {img_name}: {e}")
+                                _ewf_mount_dirs.append(ewf_raw_dir)
+                            else:
+                                _fe_log(job_id, f"  ⚠ ewfmount succeeded but ewf1 device not found at {ewf1_path}")
+                                _ewf_mount_dirs.append(ewf_raw_dir)
+                        else:
+                            _fe_log(job_id, f"  ⚠ ewfmount failed for {img_name}: {ewf_result.stderr.strip()[:200]}")
+                            # Cleanup empty mount dir
+                            try:
+                                os.rmdir(ewf_raw_dir)
+                            except OSError:
+                                pass
+                    except subprocess.TimeoutExpired:
+                        _fe_log(job_id, f"  ⚠ ewfmount timed out for {img_name}")
+                        _ewf_mount_dirs.append(ewf_raw_dir)
+                    except Exception as e:
+                        _fe_log(job_id, f"  ⚠ ewfmount crashed for {img_name}: {e}")
+                        try:
+                            os.rmdir(ewf_raw_dir)
+                        except OSError:
+                            pass
 
+                # ────────────────────────────────────────────────────────────
+                # Strategy 2: SLEUTHKIT_Specialist (may handle E01 natively)
+                # ────────────────────────────────────────────────────────────
                 if img not in image_offsets:
-                    # LLM-powered self-healing
-                    _pd_err = f"mmls failed to identify partitions for {Path(img).name}"
-                    if mmls_result and mmls_result.get("stderr"):
-                        _pd_err += f": {str(mmls_result['stderr'])[:200]}"
+                    try:
+                        from sift_specialists import SLEUTHKIT_Specialist
+                        specialist = SLEUTHKIT_Specialist(evidence_path=img)
+                        mmls_result = specialist.analyze_partition_table(img)
+                    except Exception as e:
+                        _fe_log(job_id, f"  ⚠ SLEUTHKIT_Specialist unavailable for {img_name}: {e}")
+                        mmls_result = {"status": "error", "stderr": str(e)[:200]}
+
+                    if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
+                        offset = _find_first_partition_offset(
+                            [(p.get("start_sector", 0), p.get("description", ""))
+                             for p in mmls_result["partitions"]],
+                            img_name,
+                        )
+                        if offset is not None:
+                            image_offsets[img] = offset
+                            _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (SLEUTHKIT_Specialist)")
+
+                # ────────────────────────────────────────────────────────────
+                # Strategy 3: Direct mmls on raw image, with -t type fallbacks
+                # ────────────────────────────────────────────────────────────
+                if img not in image_offsets:
+                    # Try default mmls first
+                    for mmls_target, mmls_label in [(img, "raw-image")]:
+                        try:
+                            raw_mmls = subprocess.run(
+                                ['mmls', mmls_target],
+                                capture_output=True, text=True, timeout=30,
+                            )
+                            if raw_mmls.returncode == 0:
+                                partitions = _parse_mmls_output(raw_mmls.stdout)
+                                offset = _find_first_partition_offset(partitions, img_name)
+                                if offset is not None:
+                                    image_offsets[img] = offset
+                                    _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (direct mmls on {mmls_label})")
+                                    break
+                        except subprocess.TimeoutExpired:
+                            _fe_log(job_id, f"  ⚠ mmls timed out on {mmls_label} for {img_name}")
+                        except Exception:
+                            pass
+
+                    # If default mmls failed, try with explicit partition table types
+                    if img not in image_offsets:
+                        for pt_type in ["gpt", "dos", "mac", "bsd"]:
+                            try:
+                                mmls_t = subprocess.run(
+                                    ["mmls", "-t", pt_type, img],
+                                    capture_output=True, text=True, timeout=30,
+                                )
+                                if mmls_t.returncode == 0:
+                                    partitions = _parse_mmls_output(mmls_t.stdout)
+                                    offset = _find_first_partition_offset(partitions, img_name)
+                                    if offset is not None:
+                                        image_offsets[img] = offset
+                                        _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (mmls -t {pt_type})")
+                                        break
+                            except Exception:
+                                pass
+
+                # ────────────────────────────────────────────────────────────
+                # Strategy 4: LLM self-healing
+                # ────────────────────────────────────────────────────────────
+                if img not in image_offsets:
+                    _pd_err = f"mmls failed to identify partitions for {img_name}"
+                    _pd_err_detail = ""
+                    if 'mmls_result' in dir() and mmls_result and mmls_result.get("stderr"):
+                        _pd_err_detail = str(mmls_result['stderr'])[:200]
+                        _pd_err += f": {_pd_err_detail}"
+                    _fe_log(job_id, f"  ⚠ All partition detection strategies failed for {img_name}: {_pd_err}")
                     if _attempt_heal is not None:
                         healed = _attempt_heal(
                             module="system",
@@ -517,14 +698,24 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                             evidence_type="disk_image",
                         )
                         if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
-                            _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped for {Path(img).name}: {healed.get('_skip_reason', 'LLM skip')}")
+                            _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped for {img_name}: {healed.get('_skip_reason', 'LLM skip')}")
                             continue
-                    # Fallback: common legacy offset
-                    image_offsets[img] = 63
-                    _fe_log(job_id, f"Partition detection failed for {Path(img).name}, using legacy offset 63 (DOS partition table)")
+
+                    # ────────────────────────────────────────────────────────
+                    # Strategy 5: Smart fallback offsets
+                    # Priority: 2048 (GPT/4K-aligned, most modern images) →
+                    #            63 (legacy DOS/MBR, pre-Vista) →
+                    #            0 (whole-disk filesystem)
+                    # ────────────────────────────────────────────────────────
+                    for fallback_offset in COMMON_LEGACY_OFFSETS:
+                        image_offsets[img] = fallback_offset
+                        _fe_log(job_id, f"  ⚠ Partition detection failed for {img_name}, "
+                                 f"using fallback offset {fallback_offset} "
+                                 f"({'GPT/4K-aligned' if fallback_offset == 2048 else 'legacy DOS/MBR' if fallback_offset == 63 else 'whole-disk'})")
+                        break
 
             except Exception as e:
-                _fe_log(job_id, f"Partition detection crashed for {Path(img).name}: {e}")
+                _fe_log(job_id, f"Partition detection crashed for {img_name}: {e}")
                 if _attempt_heal is not None:
                     healed = _attempt_heal(
                         module="system",
@@ -536,10 +727,27 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                         evidence_type="disk_image",
                     )
                     if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
-                        _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped after crash for {Path(img).name}")
+                        _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped after crash for {img_name}")
                         continue
-                image_offsets[img] = 63
-                _fe_log(job_id, f"  using legacy offset 63 as fallback")
+                # Smart fallback on crash too
+                for fallback_offset in COMMON_LEGACY_OFFSETS:
+                    image_offsets[img] = fallback_offset
+                    _fe_log(job_id, f"  ⚠ Using fallback offset {fallback_offset} for {img_name} after crash")
+                    break
+
+    # ────────────────────────────────────────────────────────────────────
+    # Cleanup ewfmount dirs (unmount + rmdir)
+    # ────────────────────────────────────────────────────────────────────
+    for ewf_dir in _ewf_mount_dirs:
+        try:
+            subprocess.run(["fusermount", "-u", ewf_dir], capture_output=True, text=True, timeout=15)
+            subprocess.run(["umount", ewf_dir], capture_output=True, text=True, timeout=15)
+        except Exception:
+            pass
+        try:
+            os.rmdir(ewf_dir)
+        except OSError:
+            pass
 
     # Save checkpoint
     if image_offsets:
@@ -700,47 +908,108 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
 
         # --- Multi-partition enumeration via mmls ---
         # Enumerate ALL partitions so dual-boot/GPT disks don't miss partitions
+        # For EWF (E01) images: try ewfmount first for reliable mmls results
         all_partitions = []  # list of (start_sector, description, fs_type)
-        try:
-            mmls_r = subprocess.run(
-                ["mmls", img_path], capture_output=True, text=True, timeout=30,
-            )
-            if mmls_r.returncode == 0:
-                for mmls_line in mmls_r.stdout.splitlines():
-                    mmls_line = mmls_line.strip()
-                    if not mmls_line or mmls_line.startswith("Slot") or mmls_line.startswith("---") or mmls_line.startswith("Offset") or mmls_line.startswith("Units"):
-                        continue
-                    parts = mmls_line.split()
-                    # mmls format:  slot: start end length desc
-                    # Or:  start end length desc
-                    start_sector = None
-                    desc_parts = []
-                    # Try format with slot prefix
-                    m1 = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
-                    if m1:
-                        start_sector = int(m1.group(1))
-                        desc = m1.group(4).strip()
+        _mmls_targets = []  # list of (path, label) to try mmls on
+
+        # For EWF images, ewfmount first then mmls on ewf1
+        _ewf_mount_dir_enum = None
+        _is_ewf = Path(img_path).suffix.lower() in ('.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01')
+        if _is_ewf:
+            _mmls_e01 = _resolve_e01_path(img_path)
+            _ewf_mount_dir_enum = f"/tmp/geoff_ewf_enum_{os.getpid()}_{hash(img_path) % 100000}"
+            try:
+                os.makedirs(_ewf_mount_dir_enum, exist_ok=True)
+                _ewf_r = subprocess.run(
+                    ["ewfmount", _mmls_e01, _ewf_mount_dir_enum],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if _ewf_r.returncode == 0:
+                    _ewf1 = f"{_ewf_mount_dir_enum}/ewf1"
+                    if os.path.exists(_ewf1):
+                        _mmls_targets.append((_ewf1, "ewf1-mounted"))
+                        _fe_log(job_id, f"  📦 ewfmount for mmls enumeration: {Path(_mmls_e01).name}")
                     else:
-                        m2 = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
-                        if m2:
-                            start_sector = int(m2.group(1))
-                            desc = m2.group(4).strip()
-                    if start_sector is not None and start_sector > 0:
-                        desc_lower = desc.lower()
-                        fs_type = ""
-                        for fs_name in ["ntfs", "ext", "fat", "hfs", "hfs+", "linux", "windows"]:
-                            if fs_name in desc_lower:
-                                fs_type = fs_name
-                                break
-                        all_partitions.append((start_sector, desc, fs_type))
-                if all_partitions:
-                    _fe_log(job_id, f"  📋 mmls: {len(all_partitions)} partition(s) found for {Path(img_path).name}")
-                    for ps, pd, pf in all_partitions:
-                        _fe_log(job_id, f"      Sector {ps}: {pd}")
-                    # Use first filesystem partition if the existing offset is the same
-                    # but also collect all others
-        except Exception as mmls_e:
-            _fe_log(job_id, f"  ⚠ mmls enumeration failed for {Path(img_path).name}: {mmls_e}")
+                        _fe_log(job_id, f"  ⚠ ewfmount succeeded but ewf1 not found at {_ewf1}")
+                else:
+                    _fe_log(job_id, f"  ⚠ ewfmount for enumeration failed: {_ewf_r.stderr.strip()[:200]}")
+                    try:
+                        os.rmdir(_ewf_mount_dir_enum)
+                        _ewf_mount_dir_enum = None
+                    except OSError:
+                        pass
+            except subprocess.TimeoutExpired:
+                _fe_log(job_id, f"  ⚠ ewfmount for enumeration timed out")
+                try:
+                    os.rmdir(_ewf_mount_dir_enum)
+                    _ewf_mount_dir_enum = None
+                except OSError:
+                    pass
+            except Exception as _ewf_e:
+                _fe_log(job_id, f"  ⚠ ewfmount for enumeration crashed: {_ewf_e}")
+                try:
+                    os.rmdir(_ewf_mount_dir_enum)
+                    _ewf_mount_dir_enum = None
+                except OSError:
+                    pass
+
+        # Always try the raw image path too (or as the primary target for non-EWF images)
+        _mmls_targets.append((img_path, "raw-image"))
+
+        for _mmls_target, _mmls_label in _mmls_targets:
+            try:
+                mmls_r = subprocess.run(
+                    ["mmls", _mmls_target], capture_output=True, text=True, timeout=30,
+                )
+                if mmls_r.returncode == 0:
+                    for mmls_line in mmls_r.stdout.splitlines():
+                        mmls_line = mmls_line.strip()
+                        if not mmls_line or mmls_line.startswith("Slot") or mmls_line.startswith("---") or mmls_line.startswith("Offset") or mmls_line.startswith("Units"):
+                            continue
+                        start_sector = None
+                        desc = ""
+                        # Try format with slot prefix
+                        m1 = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
+                        if m1:
+                            start_sector = int(m1.group(1))
+                            desc = m1.group(4).strip()
+                        else:
+                            m2 = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', mmls_line)
+                            if m2:
+                                start_sector = int(m2.group(1))
+                                desc = m2.group(4).strip()
+                            if start_sector is not None and start_sector > 0:
+                                desc_lower = desc.lower()
+                                fs_type = ""
+                                for fs_name in ["ntfs", "ext", "fat", "hfs", "hfs+", "linux", "windows"]:
+                                    if fs_name in desc_lower:
+                                        fs_type = fs_name
+                                        break
+                                all_partitions.append((start_sector, desc, fs_type))
+                    if all_partitions:
+                        _fe_log(job_id, f"  📋 mmls ({_mmls_label}): {len(all_partitions)} partition(s) found for {Path(img_path).name}")
+                        for ps, pd, pf in all_partitions:
+                            _fe_log(job_id, f"      Sector {ps}: {pd}")
+                        break  # Found partitions, no need to try next mmls target
+                else:
+                    if mmls_r.returncode != 0 and mmls_r.stderr:
+                        _fe_log(job_id, f"  ⚠ mmls ({_mmls_label}) failed for {Path(img_path).name}: {mmls_r.stderr.strip()[:200]}")
+            except subprocess.TimeoutExpired:
+                _fe_log(job_id, f"  ⚠ mmls ({_mmls_label}) timed out for {Path(img_path).name}")
+            except Exception as mmls_e:
+                _fe_log(job_id, f"  ⚠ mmls ({_mmls_label}) failed for {Path(img_path).name}: {mmls_e}")
+
+        # Cleanup ewfmount dir from enumeration (we'll remount for actual mounting)
+        if _ewf_mount_dir_enum:
+            try:
+                subprocess.run(["fusermount", "-u", _ewf_mount_dir_enum], capture_output=True, text=True, timeout=15)
+                subprocess.run(["umount", _ewf_mount_dir_enum], capture_output=True, text=True, timeout=15)
+            except Exception:
+                pass
+            try:
+                os.rmdir(_ewf_mount_dir_enum)
+            except OSError:
+                pass
 
         # Build list of (offset, description) tuples to mount
         mount_offsets = []

@@ -391,7 +391,8 @@ def _infer_evidence_type(path: str) -> str:
 # Partition offset fallbacks
 # ---------------------------------------------------------------------------
 
-COMMON_LEGACY_OFFSETS = [63, 0, 32256]
+COMMON_LEGACY_OFFSETS = [2048, 63, 0, 32256]
+# Note: 2048 is GPT/4K-aligned (most modern images), 63 is legacy DOS/MBR (pre-Vista)
 
 
 # ---------------------------------------------------------------------------
