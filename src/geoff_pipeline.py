@@ -57,6 +57,7 @@ from geoff_utils import *
 from geoff_models import *
 from geoff_self_heal import *
 from geoff_discovery import *
+from sift_specialists import SLEUTHKIT_Specialist
 from geoff_phase34 import (
     parse_windows_event_logs,
     analyze_registry_persistence,

@@ -106,31 +106,69 @@ class SLEUTHKIT_Specialist:
             'timestamp': datetime.now().isoformat()
         }
 
-    def _find_image_segments(self, image_path: str) -> List[str]:
-        """Find all segments of a split DD image (e.g. SCHARDT.001, .002, .003).
+    @staticmethod
+    def _resolve_e01_path(image_path: str) -> str:
+        """If image_path is an E02/E03/... segment, return the corresponding E01 path.
 
-        Looks for files in the same directory with incrementing numeric suffixes
-        matching the basename pattern. For single files (E01, single DD), returns [image_path].
+        SleuthKit tools (mmls, fls, icat, etc.) require the E01 file as the
+        primary reference for EnCase images — passing an E02 directly will fail.
         """
+        p = Path(image_path)
+        # Match .E02, .E03, .E04, .E05 (case-insensitive)
+        for seg in ('.E02', '.E03', '.E04', '.E05', '.e02', '.e03', '.e04', '.e05'):
+            if image_path.endswith(seg):
+                e01 = image_path[:-4] + '.E01'
+                if os.path.isfile(e01):
+                    return e01
+                # Try lowercase
+                e01_lower = image_path[:-4] + '.e01'
+                if os.path.isfile(e01_lower):
+                    return e01_lower
+                break
+        return image_path
+
+    def _find_image_segments(self, image_path: str) -> List[str]:
+        """Find all segments of a split or EnCase disk image.
+
+        For EnCase images (.E01/.E02/...), resolves E02+ back to E01 first,
+        then collects all segments (.E01, .E02, ...) so SleuthKit can find
+        the complete image set.
+
+        For split DD images (.001, .002, ...), finds all sibling segments.
+        For single files (.img, .dd, .raw, etc.), returns [image_path].
+        """
+        # --- EnCase segment resolution ---
+        # If we were given an E02/E03/... file, we MUST resolve to E01 first
+        # because mmls/fls/icat require the E01 as the primary reference.
+        image_path = self._resolve_e01_path(image_path)
         p = Path(image_path)
         if not p.exists():
             return [image_path]
 
-        # If it's an E01 file (or similar single-file format), return as-is
-        if p.suffix.lower() in ('.e01', '.e02', '.e03', '.img', '.dd', '.bin', '.raw'):
-            # Check if this looks like a segment file (ends with .NNN)
-            stem = p.stem
-            # Check if the extension is like .001, .002, etc.
+        # EnCase images: collect all .E01/.E02/... segments in order
+        if p.suffix.lower() in ('.e01', '.e02', '.e03', '.e04', '.e05',
+                                 '.ee01', '.ex01'):
+            base = p.stem  # e.g. "nps-2009-domexusers.redacted" from "nps-2009-domexusers.redacted.E01"
+            dir_path = p.parent
+            segments = []
+            for f in sorted(dir_path.iterdir()):
+                if (f.is_file() and f.stem == base
+                        and f.suffix.lower() in ('.e01', '.e02', '.e03', '.e04', '.e05',
+                                                  '.ee01', '.ex01')):
+                    segments.append(str(f))
+            if segments:
+                return segments
+            return [image_path]
+
+        # --- Split DD images (.001, .002, ...) ---
+        if p.suffix.lower() in ('.img', '.dd', '.bin', '.raw'):
             segment_suffix = p.suffix
             if segment_suffix and re.match(r'^\d+$', segment_suffix.lstrip('.')):
-                # This file looks like a segment — find siblings
-                base_name = p.stem  # e.g. SCHARDT
+                base_name = p.stem
                 dir_path = p.parent
-                # Find all files matching base_name.NNN in same directory
                 segments = []
                 for f in sorted(dir_path.iterdir()):
                     if f.is_file() and f.stem == base_name:
-                        # Verify the suffix is numeric
                         ext = f.suffix.lstrip('.')
                         if ext.isdigit():
                             segments.append(str(f))
@@ -139,7 +177,7 @@ class SLEUTHKIT_Specialist:
                 return [image_path]
             return [image_path]
 
-        # For non-standard extensions, try segment detection anyway
+        # Non-standard extensions: try segment detection anyway
         stem = p.stem
         segment_suffix = p.suffix
         if segment_suffix and re.match(r'^\d+$', segment_suffix.lstrip('.')):
