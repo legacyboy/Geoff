@@ -1155,18 +1155,13 @@ function renderMatrix(filter) {
     const maxRows = Math.max(...tacticNames.map(t => MITRE_DATA[t].techniques.length));
 
     // Build grid template: first column for tactic headers, rest for technique columns
-    const colTemplate = '180px ' + tacticNames.map(() => '1fr').join(' ');
+    const colTemplate = tacticNames.map(() => '1fr').join(' ');
     const grid = document.createElement('div');
     grid.className = 'matrix-table';
     grid.style.gridTemplateColumns = colTemplate;
 
     // Row 0: Tactic headers (with empty first cell)
-    const cornerCell = document.createElement('div');
-    cornerCell.className = 'tactic-header';
-    cornerCell.style.background = 'var(--bg-deep)';
-    cornerCell.style.border = '1px solid var(--border)';
-    cornerCell.innerHTML = '<div class="tactic-name" style="color:var(--text-muted);">TECHNIQUE</div>';
-    grid.appendChild(cornerCell);
+
 
     tacticNames.forEach(tacticName => {
         const data = MITRE_DATA[tacticName];
@@ -1183,18 +1178,6 @@ function renderMatrix(filter) {
     // Rows: one per technique index
     for (let row = 0; row < maxRows; row++) {
         // Row label
-        const rowLabel = document.createElement('div');
-        rowLabel.className = 'tactic-header';
-        rowLabel.style.background = 'var(--bg-deep)';
-        rowLabel.style.border = '1px solid var(--border)';
-        rowLabel.style.display = 'flex';
-        rowLabel.style.alignItems = 'center';
-        rowLabel.style.justifyContent = 'center';
-        rowLabel.style.fontSize = '10px';
-        rowLabel.style.color = 'var(--text-muted)';
-        rowLabel.style.fontFamily = "'JetBrains Mono', monospace";
-        rowLabel.textContent = String(row + 1).padStart(2, '0');
-        grid.appendChild(rowLabel);
 
         tacticNames.forEach(tacticName => {
             const data = MITRE_DATA[tacticName];
