@@ -3775,6 +3775,32 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-036", "reason": "No PCAP files in evidence"})
 
+        # IoT Device Forensics (PB-SIFT-037) — triggered by IoT device images,
+        # config dumps, or directory naming patterns indicating IoT devices
+        _iot_detected = False
+        _iot_keywords = ["arlo", "echo", "alexa", "smartthings", "wink", "ismartalarm", "ismart",
+                         "nest", "ring", "ecobee", "philips.*hue", "roku", "chromecast",
+                         "android.*tv", "apple.*tv", "raspberry", "arduino", "esp8266", "esp32",
+                         "iot", "smart.*home", "home.*automation", "camera", "sensor", "hub"]
+        # Check evidence directory name
+        _case_name_lower = evidence_path.name.lower() if evidence_path else ""
+        if any(re.search(kw, _case_name_lower) for kw in _iot_keywords):
+            _iot_detected = True
+        # Check inventory files for IoT indicators
+        if not _iot_detected:
+            for _f in inventory.get("other_files", []) + inventory.get("disk_images", []):
+                _f_stem = Path(str(_f)).stem.lower()
+                _f_parent = Path(str(_f)).parent.name.lower()
+                if any(kw in _f_stem or kw in _f_parent for kw in ["arlo", "echo", "alexa", "smartthings",
+                       "wink", "ismartalarm", "nest", "ring", "iot", "hub", "sensor"]):
+                    _iot_detected = True
+                    break
+        if _iot_detected:
+            execution_plan.append("PB-SIFT-037")
+            _fe_log(job_id, "  PB-SIFT-037: IoT Device Forensics queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-037", "reason": "No IoT device artifacts detected"})
+
         # ===== End Newly Wired Playbook Triggers =====
 
         # Add malware playbooks when:

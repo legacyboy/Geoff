@@ -39,6 +39,7 @@ Playbooks are numbered following the MITRE ATT&CK kill chain order.
 | **PB-SIFT-034** | Network Device Forensics | Router/switch/firewall config tampering, Cisco/Junos/PAN-OS/FortiGate log analysis, firmware integrity, ARP/MAC/VLAN analysis, SNMP abuse, BGP route injection. Runs when network device evidence present. | ✅ Active |
 | **PB-SIFT-035** | Active Directory / DC Forensics | DCSync (EID 4662), Golden/Silver Ticket (EID 4768/4769 encryption type analysis), Kerberoasting, AS-REP Roasting, domain persistence (AdminSDHolder, DCShadow, skeleton key), GPO abuse, PtH/PtT detection. Runs when domain controller is in scope. | ✅ Active |
 | **PB-SIFT-036** | PCAP & Network Forensics | Full packet capture analysis: protocol distribution, DNS tunneling, TLS JA3/JA3S fingerprinting, C2 beacon timing, data exfiltration volume, SMB lateral movement, Zeek log analysis, NetFlow. Runs when PCAP files are in evidence. | ✅ Active |
+| **PB-SIFT-037** | IoT Device Forensics | Consumer IoT device analysis: smart home hubs, cameras, voice assistants (Arlo, Echo, SmartThings, Wink), firmware images, and companion app configs. Runs when IoT artifacts are detected. | ✅ Active |
 
 ---
 When starting a new case, Geoff must:
@@ -58,5 +59,6 @@ When starting a new case, Geoff must:
 14. PB-SIFT-034 is included when network device evidence is present: router/switch config exports, TACACS+ logs, firmware images, or Palo Alto/Fortinet/Cisco log bundles.
 15. PB-SIFT-035 is included when a domain controller is in scope: NTDS.dit, DC event logs, SYSVOL forensics, or AD database files.
 16. PB-SIFT-036 is included when PCAP files or Zeek log directories are in the evidence inventory.
+17. PB-SIFT-037 is included when IoT device evidence is detected: smart home hub images, camera config dumps, IoT firmware files, companion app databases, or directories named after IoT devices (arlo, echo, smartthings, wink).
 
 **Location:** `playbooks/` (relative to project root)

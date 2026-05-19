@@ -469,6 +469,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-034": "Network Device Forensics",
     "PB-SIFT-035": "Active Directory DC Forensics",
     "PB-SIFT-036": "PCAP Network Forensics",
+    "PB-SIFT-037": "IoT Device Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1057,6 +1058,15 @@ PLAYBOOK_STEPS = {
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
+        ],
+    },
+    "PB-SIFT-037": {  # IoT Device Forensics — triggered by IoT device images/directories
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("sleuthkit", "fsstat", {"image": "{image}"}),
+        ],
+        "other_files": [
+            ("strings", "extract_strings", {"target_file": "{file}"}),
         ],
     },
 }
