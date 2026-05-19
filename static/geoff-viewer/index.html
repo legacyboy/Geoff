@@ -1,25 +1,1269 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Geoff — Evidence Graph</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/geoff-viewer/styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geoff DFIR — Force-Directed Graph</title>
+<style>
+  :root {
+    --g-bg: #0B1220;
+    --g-bg-2: #0F172A;
+    --g-surface: #1E293B;
+    --g-surface-2: #172033;
+    --g-border: #334155;
+    --g-border-soft: #1F2A3F;
+    --g-text: #F1F5F9;
+    --g-text-dim: #94A3B8;
+    --g-text-mute: #64748B;
+    --g-blue: #3B82F6;
+    --g-green: #10B981;
+    --g-amber: #F59E0B;
+    --g-red: #EF4449;
+    --g-pink: #EC4899;
+    --g-purple: #A78BFA;
+    --g-cyan: #06B6D4;
+    --node-user: #10B981;
+    --node-device-pc: #3B82F6;
+    --node-device-server: #A78BFA;
+    --node-device-mobile: #F59E0B;
+    --node-dump: #06B6D4;
+    --node-external: #EF4449;
+    --node-service: #EC4899;
+    --node-finding: #F97316;
+    --edge-normal: #475569;
+    --edge-user: #10B981;
+    --edge-lateral: #F59E0B;
+    --edge-exfil: #EC4899;
+    --edge-attack: #EF4449;
+    --edge-memdump: #06B6D4;
+    --font-sans: "Inter","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --font-mono: "SF Mono","Fira Code","Cascadia Code",Menlo,Consolas,monospace;
+    --radius: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--g-bg);
+    color: var(--g-text);
+    height: 100vh; overflow: hidden;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app {
+    display: flex; flex-direction: column; height: 100vh;
+  }
+
+  /* Header */
+  #header {
+    background: var(--g-bg-2);
+    border-bottom: 1px solid var(--g-border-soft);
+    padding: 0 16px; height: 48px;
+    display: flex; align-items: center; gap: 12px;
+    flex-shrink: 0;
+  }
+  #header .logo { font-weight: 600; font-size: 15px; color: var(--g-cyan); }
+  #header .tag { font-size: 11px; color: var(--g-text-mute); }
+  #header .case-name { color: var(--g-text-dim); font-size: 12px; margin-left: 4px; }
+  .header-spacer { flex: 1; }
+
+  /* Controls */
+  #controls {
+    display: flex; align-items: center; gap: 8px;
+  }
+  #controls button, #controls label {
+    padding: 4px 10px; border-radius: var(--radius);
+    background: var(--g-surface); border: 1px solid var(--g-border);
+    color: var(--g-text-dim); cursor: pointer; font-size: 11px;
+    transition: all 120ms; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  #controls button:hover { background: var(--g-surface-2); border-color: var(--g-border); color: var(--g-text); }
+  #controls button.active { background: rgba(239,68,68,0.15); border-color: var(--g-red); color: #FCA5A5; }
+  #controls button.active-attack { background: rgba(239,68,68,0.2); border-color: var(--g-red); color: var(--g-red); }
+  #controls input {
+    background: var(--g-surface); border: 1px solid var(--g-border);
+    color: var(--g-text); padding: 4px 10px; border-radius: var(--radius);
+    font-size: 11px; font-family: var(--font-sans); width: 160px;
+    outline: none;
+  }
+  #controls input:focus { border-color: var(--g-blue); }
+  #controls select {
+    background: var(--g-surface); border: 1px solid var(--g-border);
+    color: var(--g-text-dim); padding: 4px 8px; border-radius: var(--radius);
+    font-size: 11px; outline: none; cursor: pointer;
+  }
+  #controls select:focus { border-color: var(--g-blue); }
+
+  /* Main layout */
+  #main {
+    display: flex; flex: 1; overflow: hidden;
+  }
+  #graph-container {
+    flex: 1; position: relative; overflow: hidden;
+  }
+  #graph-container svg {
+    width: 100%; height: 100%; display: block;
+  }
+
+  /* Detail panel */
+  #detail-panel {
+    width: 360px; min-width: 300px;
+    background: var(--g-bg-2);
+    border-left: 1px solid var(--g-border-soft);
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: width 200ms;
+  }
+  #detail-panel.collapsed { width: 0; min-width: 0; border: none; }
+
+  #detail-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--g-border-soft);
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0;
+  }
+  #detail-header .title { font-size: 12px; font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #detail-header .close-btn { background: none; border: none; color: var(--g-text-mute); cursor: pointer; padding: 2px; font-size: 16px; line-height: 1; }
+  #detail-header .close-btn:hover { color: var(--g-text); }
+
+  #detail-body {
+    flex: 1; overflow-y: auto; padding: 12px 16px;
+    font-size: 12px;
+  }
+  #detail-body .section { margin-bottom: 12px; }
+  #detail-body .section-title {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--g-text-mute); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  #detail-body .k { color: var(--g-text-mute); font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; }
+  #detail-body .v { color: var(--g-text); font-size: 12px; padding: 2px 0; }
+  #detail-body .v.dim { color: var(--g-text-dim); }
+  #detail-body .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  #detail-body .finding {
+    background: var(--g-surface); border-radius: var(--radius);
+    padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+    border-left: 3px solid var(--g-border);
+    transition: all 120ms;
+  }
+  #detail-body .finding:hover { background: var(--g-surface-2); }
+  #detail-body .finding.sev-CRITICAL { border-left-color: var(--g-red); }
+  #detail-body .finding.sev-HIGH { border-left-color: var(--g-amber); }
+  #detail-body .finding.sev-MEDIUM { border-left-color: var(--g-blue); }
+  #detail-body .finding-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  #detail-body .finding-summary { color: var(--g-text-dim); font-size: 11px; line-height: 1.4; }
+  #detail-body .finding-evidence { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--g-border-soft); }
+  #detail-body .finding-evidence .ek { color: var(--g-text-mute); font-size: 10px; font-family: var(--font-mono); }
+  #detail-body .finding-evidence .ev { color: var(--g-text-dim); font-size: 11px; word-break: break-all; margin-bottom: 4px; }
+
+  #detail-body .empty { color: var(--g-text-mute); text-align: center; padding: 24px 0; font-size: 11px; line-height: 1.5; }
+  #detail-body .json-preview {
+    background: var(--g-surface); padding: 8px 10px; border-radius: var(--radius);
+    font-family: var(--font-mono); font-size: 10px; color: var(--g-text-dim);
+    max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+    line-height: 1.5;
+  }
+  #detail-body .view-details-btn {
+    display: inline-block; padding: 6px 14px; margin-top: 8px;
+    background: rgba(59,130,246,0.15); border: 1px solid var(--g-blue);
+    color: var(--g-blue); border-radius: var(--radius); cursor: pointer;
+    font-size: 11px; text-decoration: none;
+    transition: all 120ms;
+  }
+  #detail-body .view-details-btn:hover { background: rgba(59,130,246,0.25); }
+
+  /* D3 specific */
+  .link-line { fill: none; stroke-width: 1.5; stroke-opacity: 0.6; }
+  .link-line.attack-path { stroke-width: 2.5; stroke-opacity: 0.9; stroke-dasharray: 6 4; }
+  .link-line.user { stroke: var(--node-user); stroke-dasharray: 3 3; }
+  .link-line.owns { stroke: var(--node-user); stroke-width: 2; }
+  .link-line.seen-on { stroke: var(--g-text-mute); stroke-dasharray: 2 4; }
+  .link-line.lateral { stroke: var(--edge-lateral); stroke-dasharray: 6 3; }
+  .link-line.exfil { stroke: var(--edge-exfil); }
+  .link-line.memdump { stroke: var(--edge-memdump); stroke-dasharray: 4 4; }
+  .link-line.external { stroke: var(--edge-exfil); stroke-opacity: 0.4; }
+  .link-line.finding { stroke: var(--node-finding); stroke-dasharray: 4 3; }
+
+  .link-label { font-size: 8px; fill: var(--g-text-mute); text-anchor: middle; pointer-events: none; }
+
+  .node-group { cursor: pointer; transition: opacity 200ms; }
+  .node-group.dimmed { opacity: 0.2; }
+  .node-group .node-shadow { opacity: 0; transition: opacity 200ms; }
+  .node-group:hover .node-shadow, .node-group.selected .node-shadow { opacity: 0.3; }
+  .node-group .node-highlight { opacity: 0; transition: opacity 200ms; }
+  .node-group.selected .node-highlight { opacity: 1; }
+
+  .node-bg { stroke-width: 1.5; transition: stroke-width 200ms; }
+  .node-group.selected .node-bg { stroke-width: 3; }
+  .node-group.hovered .node-bg { stroke-width: 2.5; }
+
+  .node-text { font-size: 10px; fill: var(--g-text); text-anchor: middle; pointer-events: none; }
+  .node-sublabel { font-size: 8px; fill: var(--g-text-mute); text-anchor: middle; pointer-events: none; }
+
+  .attack-arrow { fill: var(--g-red); pointer-events: none; }
+
+  .attack-step {
+    fill: rgba(239,68,68,0.12);
+    stroke: var(--g-red);
+    stroke-width: 1;
+    stroke-dasharray: 3 2;
+    cursor: pointer;
+    transition: fill 200ms;
+  }
+  .attack-step:hover { fill: rgba(239,68,68,0.25); }
+  .attack-step-label { font-size: 7px; fill: #FCA5A5; text-anchor: middle; pointer-events: none; }
+
+  .tooltip {
+    position: absolute;
+    background: var(--g-surface);
+    border: 1px solid var(--g-border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--g-text);
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 280px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    opacity: 0;
+    transition: opacity 120ms;
+  }
+  .tooltip.visible { opacity: 1; }
+
+  /* Legend */
+  #legend {
+    position: absolute; bottom: 16px; left: 16px;
+    background: rgba(15,23,42,0.85);
+    border: 1px solid var(--g-border-soft);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 10px;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    z-index: 10;
+  }
+  #legend .li { display: inline-flex; align-items: center; gap: 4px; color: var(--g-text-dim); }
+  #legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+  /* Loading */
+  #loading {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--g-bg);
+    z-index: 100;
+    transition: opacity 300ms;
+  }
+  #loading.hidden { opacity: 0; pointer-events: none; }
+  #loading .spinner { width: 24px; height: 24px; border: 2px solid var(--g-border); border-top-color: var(--g-cyan); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading .msg { color: var(--g-text-dim); font-size: 12px; text-align: center; }
+
+  .severity-pill { font-size: 9px; padding: 1px 6px; border-radius: 3px; font-weight: 500; }
+  .severity-pill.CRITICAL { background: rgba(239,68,68,0.15); color: #FCA5A5; }
+  .severity-pill.HIGH { background: rgba(245,158,11,0.15); color: #FDE68A; }
+  .severity-pill.MEDIUM { background: rgba(59,130,246,0.15); color: #93C5FD; }
+  .severity-pill.LOW { background: rgba(148,163,184,0.15); color: #CBD5E1; }
+  .severity-pill.INFO { background: rgba(100,116,139,0.15); color: var(--g-text-mute); }
+</style>
 </head>
 <body>
-  <div id="root"></div>
+<div id="app">
+  <div id="header">
+    <span class="logo">G.E.O.F.F.</span>
+    <span class="tag">DFIR · Force-Directed Graph</span>
+    <span class="case-name" id="case-name"></span>
+    <div class="header-spacer"></div>
+    <div id="controls">
+      <input type="text" id="search-input" placeholder="🔍 Search nodes…" title="Filter graph by name, type, or value">
+      <select id="type-filter">
+        <option value="">All types</option>
+        <option value="user">Users/Accounts</option>
+        <option value="pc">Workstations</option>
+        <option value="server">Servers</option>
+        <option value="mobile">Mobile</option>
+        <option value="memdump">Memory Dumps</option>
+        <option value="finding">Findings</option>
+        <option value="external">External IPs</option>
+        <option value="service">Services</option>
+      </select>
+      <button id="attack-toggle">⚠ Attack Path</button>
+      <button id="reset-zoom">⟲ Reset</button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="graph-container">
+      <div id="loading"><div><div class="spinner"></div><div class="msg">Loading case data…</div></div></div>
+      <svg id="graph-svg"></svg>
+      <div class="tooltip" id="tooltip"></div>
+      <div id="legend">
+        <span class="li"><span class="sw" style="background:var(--node-user);border-radius:50%;width:8px;height:8px"></span> User</span>
+        <span class="li"><span class="sw" style="background:var(--node-device-pc)"></span> PC</span>
+        <span class="li"><span class="sw" style="background:var(--node-device-server)"></span> Server</span>
+        <span class="li"><span class="sw" style="background:var(--node-device-mobile)"></span> Mobile</span>
+        <span class="li"><span class="sw" style="background:var(--node-dump)"></span> Mem Dump</span>
+        <span class="li"><span class="sw" style="background:var(--node-external);border-radius:50%;width:8px;height:8px"></span> External</span>
+        <span class="li"><span class="sw" style="background:var(--node-service)"></span> Service</span>
+        <span class="li"><span class="sw" style="background:var(--node-finding)"></span> Finding</span>
+      </div>
+    </div>
+    <div id="detail-panel">
+      <div id="detail-header">
+        <span class="title" id="detail-title">Select a node</span>
+        <button class="close-btn" id="detail-close">✕</button>
+      </div>
+      <div id="detail-body">
+        <div class="empty">Click a node in the graph to view its details.</div>
+      </div>
+    </div>
+  </div>
+</div>
 
-  <script src="/static/geoff-viewer/data/sample_report.js"></script>
-  <script src="/static/geoff-viewer/vendor/react.production.min.js"></script>
-  <script src="/static/geoff-viewer/vendor/react-dom.production.min.js"></script>
-  <script src="/static/geoff-viewer/vendor/d3.v7.min.js"></script>
+<script src="/static/geoff-viewer/vendor/d3.v7.min.js"></script>
+<script>
+(function() {
+  'use strict';
 
-  <script src="/static/geoff-viewer/components/graph.js"></script>
-  <script src="/static/geoff-viewer/components/detail.js"></script>
-  <script src="/static/geoff-viewer/components/tree.js"></script>
-  <script src="/static/geoff-viewer/components/app.js"></script>
+  // ─── Config ────────────────────────────────────────────────────────────────
+  const API_KEY = (document.querySelector('meta[name="geoff-api-key"]') || {}).content || '';
+  const API_ROOT = window.location.origin;
+
+  function authFetch(url, opts) {
+    opts = opts || {};
+    if (API_KEY) {
+      opts.headers = Object.assign({}, opts.headers || {}, { 'X-API-Key': API_KEY });
+    }
+    return fetch(url, opts);
+  }
+
+  // ─── State ─────────────────────────────────────────────────────────────────
+  let reportData = null;
+  let graphNodes = [];
+  let graphLinks = [];
+  let allAttackPaths = [];
+  let showAttackPath = true;
+  let sim = null;
+  let svg = null;
+  let linkGroup = null;
+  let nodeGroup = null;
+  let labelGroup = null;
+  let selectedNodeId = null;
+  let tooltipTimeout = null;
+
+  // ─── DOM refs ──────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+  const container = $('graph-container');
+  const svgEl = $('graph-svg');
+  const tooltip = $('tooltip');
+  const detailBody = $('detail-body');
+  const detailTitle = $('detail-title');
+  const detailPanel = $('detail-panel');
+  const loading = $('loading');
+  const caseName = $('case-name');
+  const searchInput = $('search-input');
+  const typeFilter = $('type-filter');
+  const attackToggle = $('attack-toggle');
+  const resetZoom = $('reset-zoom');
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
+  function truncate(s, n) { return (s || '').length > n ? (s || '').slice(0, n-1) + '…' : s; }
+
+  function isInternalIP(ip) {
+    if (!ip || typeof ip !== 'string') return false;
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) return false;
+    if (parts[0] === 10) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 127) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    return false;
+  }
+
+  function classifyDevice(dev, devId) {
+    const t = (dev.device_type || '').toLowerCase();
+    const h = (dev.hostname || '').toLowerCase();
+    const did = (devId || '').toLowerCase();
+    const isServer = /dc\d|citadel|server|srv|domain.?controller/i;
+    if (t.includes('server') || h.includes('server') || isServer.test(did) || isServer.test(h)) return 'server';
+    if (t.includes('mobile') || t.includes('ios') || t.includes('android')) return 'mobile';
+    if (t.includes('network') || t.includes('pcap')) return 'network';
+    return 'pc';
+  }
+
+  function getHostname(devId, dev) {
+    if (dev && dev.hostname) return dev.hostname.trim().toLowerCase();
+    const m = (devId || '').toLowerCase().match(/(?:memdump_|memory_|ram_)(.+)/);
+    if (m) return m[1];
+    return (devId || '').toLowerCase();
+  }
+
+  function classifyExfilService(host) {
+    const h = (host || '').toLowerCase();
+    if (h.includes('mega.')) return 'Mega.nz';
+    if (h.includes('gmail') || h.includes('google')) return 'Google';
+    if (h.includes('onedrive') || h.includes('microsoft') || h.includes('sharepoint')) return 'Microsoft/OneDrive';
+    if (h.includes('dropbox')) return 'Dropbox';
+    if (h.includes('aol')) return 'AOL';
+    if (h.includes('yahoo')) return 'Yahoo';
+    if (h.includes('protonmail')) return 'ProtonMail';
+    if (h.includes('icloud')) return 'iCloud';
+    if (h.includes('aws')) return 'AWS';
+    if (h.includes('azure')) return 'Azure';
+    return null;
+  }
+
+  function nodeColor(d) {
+    switch (d.group) {
+      case 'user': return getComputedStyle(document.documentElement).getPropertyValue('--node-user').trim();
+      case 'pc': return getComputedStyle(document.documentElement).getPropertyValue('--node-device-pc').trim();
+      case 'server': return getComputedStyle(document.documentElement).getPropertyValue('--node-device-server').trim();
+      case 'mobile': return getComputedStyle(document.documentElement).getPropertyValue('--node-device-mobile').trim();
+      case 'memdump': return getComputedStyle(document.documentElement).getPropertyValue('--node-dump').trim();
+      case 'finding': return getComputedStyle(document.documentElement).getPropertyValue('--node-finding').trim();
+      case 'external': return getComputedStyle(document.documentElement).getPropertyValue('--node-external').trim();
+      case 'service': return getComputedStyle(document.documentElement).getPropertyValue('--node-service').trim();
+      default: return '#64748B';
+    }
+  }
+
+  function nodeShape(d) {
+    if (d.group === 'user' || d.group === 'external') return 'circle';
+    if (d.group === 'finding') return 'diamond';
+    if (d.group === 'service') return 'rounded';
+    return 'rect';
+  }
+
+  // ─── Build Graph from Report Data ─────────────────────────────────────────
+  function buildGraph(report) {
+    const nodes = [];
+    const links = [];
+    const nodeMap = {};
+    const userMap = report.user_map || {};
+    const deviceMap = report.device_map || {};
+    const flagsByDevice = report.behavioral_flags || {};
+    const attackChain = report.attack_chain || {};
+    const findingsDetail = report.findings_detail || [];
+
+    // Helper to get or create a node
+    function getNode(id, group, label, sublabel, raw) {
+      if (nodeMap[id]) return nodeMap[id];
+      const n = { id, group, label: label || id, sublabel: sublabel || '', raw: raw || {}, x: Math.random() * 800, y: Math.random() * 600 };
+      nodes.push(n);
+      nodeMap[id] = n;
+      return n;
+    }
+
+    // 1. Users
+    Object.entries(userMap).forEach(([name, u]) => {
+      getNode('user:' + name, 'user', u.display_name || name, u.role || 'account', u);
+    });
+
+    // 2. Devices (consolidated by hostname)
+    const devByHost = {};
+    Object.entries(deviceMap).forEach(([devId, dev]) => {
+      const host = getHostname(devId, dev);
+      if (!devByHost[host]) {
+        devByHost[host] = {
+          hostname: host,
+          originalIds: [],
+          evidence_files: [],
+          device_type: dev.device_type || 'unknown',
+          os_type: dev.os_type || 'unknown',
+          os_version: dev.os_version || '',
+          owner: dev.owner,
+          owner_confidence: dev.owner_confidence,
+        };
+      }
+      devByHost[host].originalIds.push(devId);
+      if (dev.evidence_files) devByHost[host].evidence_files.push(...dev.evidence_files);
+      if (dev.device_type && dev.device_type !== 'unknown') devByHost[host].device_type = dev.device_type;
+      if (dev.os_type && dev.os_type !== 'unknown') devByHost[host].os_type = dev.os_type;
+      if (dev.os_version) devByHost[host].os_version = dev.os_version;
+    });
+
+    Object.entries(devByHost).forEach(([host, cd]) => {
+      const kind = classifyDevice(cd, cd.originalIds[0]);
+      getNode('dev:' + host, kind, cd.hostname || host, cd.os_type + (cd.os_version ? ' ' + cd.os_version : ''), cd);
+    });
+
+    // 3. Memory dumps as separate nodes
+    Object.entries(deviceMap).forEach(([devId, dev]) => {
+      const files = dev.evidence_files || [];
+      files.forEach(f => {
+        const ext = f.split('.').pop().toLowerCase();
+        if (['mem', 'vmem', 'lime', 'dmp', 'dump'].includes(ext)) {
+          const host = getHostname(devId, dev);
+          const dumpId = 'memdump:' + devId + ':' + f.split('/').pop();
+          const n = getNode(dumpId, 'memdump', f.split('/').pop(), 'Memory dump from ' + host, { source: host, path: f, deviceId: devId });
+          // Link memory dump to its source host
+          const sourceNode = nodeMap['dev:' + host];
+          if (sourceNode) {
+            links.push({ source: dumpId, target: 'dev:' + host, type: 'memdump', label: 'memory dump' });
+          }
+        }
+      });
+    });
+
+    // 4. External IPs grouped by service
+    const extIPs = new Map();
+    function ipToServiceGroup(ip) {
+      // Try to group by known services
+      // We'll mark some IPs manually; others go to a general "External Service" group
+      return null; // Returns null for ungrouped IPs
+    }
+
+    // Collect external IPs from IOCs and flag evidence
+    const seenExtIPs = new Set();
+    (report.iocs || {}).ip_addresses || [].forEach(ip => {
+      if (!isInternalIP(ip)) {
+        const svc = classifyExfilService(ip);
+        const serviceKey = svc || null;
+        if (!extIPs.has(ip)) extIPs.set(ip, { ip, serviceKey });
+      }
+    });
+    Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+      (flags || []).forEach(f => {
+        const ev = f.evidence || {};
+        [ev.dst_ip, ev.src_ip].forEach(ip => {
+          if (ip && typeof ip === 'string' && !isInternalIP(ip)) {
+            if (!extIPs.has(ip)) {
+              const svc = classifyExfilService(ip) || classifyExfilService(ev.dst_host) || null;
+              extIPs.set(ip, { ip, serviceKey: svc });
+            }
+          }
+        });
+      });
+    });
+
+    // Create service nodes, then external IP nodes linked to services
+    const serviceNodes = new Map();
+    extIPs.forEach((info, ip) => {
+      const svcName = info.serviceKey || 'External Services';
+      if (!serviceNodes.has(svcName)) {
+        const svcNode = getNode('svc:' + svcName, 'service', svcName, svcName === 'External Services' ? 'Grouped external IPs' : 'Suspected exfil service');
+        serviceNodes.set(svcName, svcNode);
+      }
+      const extId = 'ext:' + ip;
+      getNode(extId, 'external', ip, 'External IP', { ip });
+      // Link external IP to its service group
+      links.push({ source: extId, target: 'svc:' + svcName, type: 'external', label: 'belongs to' });
+    });
+
+    // 5. Findings/Indicators
+    Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+      (flags || []).forEach(f => {
+        const findingId = 'finding:' + (f.flag_type || 'unknown') + ':' + devId;
+        getNode(findingId, 'finding', truncate(f.flag_type || 'finding', 20), 'Severity: ' + (f.severity || 'N/A'), f);
+        // Link finding to device
+        const host = getHostname(devId, deviceMap[devId]);
+        const devNode = nodeMap['dev:' + host];
+        if (devNode) {
+          links.push({ source: findingId, target: 'dev:' + host, type: 'finding', label: f.severity || 'info' });
+        }
+      });
+    });
+
+    // 6. User → Device edges
+    Object.entries(userMap).forEach(([name, u]) => {
+      (u.devices || []).forEach(devId => {
+        const host = getHostname(devId, deviceMap[devId]);
+        const devNode = nodeMap['dev:' + host];
+        if (devNode && nodeMap['user:' + name]) {
+          const isOwner = deviceMap[devId] && deviceMap[devId].owner === name;
+          links.push({ source: 'user:' + name, target: 'dev:' + host, type: isOwner ? 'owns' : 'seen-on', label: isOwner ? 'Owner' : 'Seen on' });
+        }
+      });
+    });
+
+    // 7. Device ↔ Device (lateral movement)
+    Object.entries(report.correlated_users || {}).forEach(([name, cu]) => {
+      (cu.lateral_movement_indicators || []).forEach(ind => {
+        const fromHost = getHostname(ind.from_device, deviceMap[ind.from_device]);
+        const toHost = getHostname(ind.to_device, deviceMap[ind.to_device]);
+        if (fromHost && toHost && fromHost !== toHost) {
+          links.push({ source: 'dev:' + fromHost, target: 'dev:' + toHost, type: 'lateral', label: 'Lateral' });
+        }
+      });
+    });
+
+    // 8. Device → External IP (network traffic / exfiltration)
+    Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+      (flags || []).forEach(f => {
+        const ev = f.evidence || {};
+        const ft = (f.flag_type || '').toLowerCase();
+        const isExfil = ft.includes('exfil') || ft.includes('c2') || ft.includes('beacon') || ft.includes('network_traffic');
+        if (!isExfil) return;
+        const dstIp = ev.dst_ip || '';
+        if (dstIp && !isInternalIP(dstIp) && extIPs.has(dstIp)) {
+          const host = getHostname(devId, deviceMap[devId]);
+          links.push({ source: 'dev:' + host, target: 'ext:' + dstIp, type: 'exfil', label: 'C2/Exfil' });
+        }
+      });
+    });
+
+    // 9. Attack Path
+    const attackPathEdges = [];
+    const chainSteps = attackChain.steps || [];
+    if (chainSteps.length > 0) {
+      chainSteps.forEach((step, i) => {
+        const fromHost = step.from_device || step.source;
+        const toHost = step.to_device || step.target;
+        if (fromHost && toHost && fromHost !== toHost) {
+          const srcHost = getHostname(fromHost, deviceMap[fromHost]);
+          const dstHost = getHostname(toHost, deviceMap[toHost]);
+          if (srcHost && dstHost) {
+            attackPathEdges.push({
+              source: 'dev:' + srcHost,
+              target: 'dev:' + dstHost,
+              type: 'attack',
+              label: step.step || step.action || 'Attack step ' + (i+1),
+              stepData: step,
+              stepIndex: i,
+            });
+          }
+        }
+      });
+    }
+
+    // Also derive attack path from standard attack_chain fields
+    const latPath = attackChain.lateral_movement_path || [];
+    latPath.forEach((step, i) => {
+      if (i > 0) {
+        const fromHost = getHostname(latPath[i-1], deviceMap[latPath[i-1]]);
+        const toHost = getHostname(step, deviceMap[step]);
+        if (fromHost && toHost && fromHost !== toHost) {
+          attackPathEdges.push({
+            source: 'dev:' + fromHost,
+            target: 'dev:' + toHost,
+            type: 'attack',
+            label: 'Lateral Movement',
+            stepData: { from_device: latPath[i-1], to_device: step, method: 'lateral_movement' },
+            stepIndex: i,
+          });
+        }
+      }
+    });
+
+    // If no structured steps, try to infer from findings_detail
+    if (attackPathEdges.length === 0) {
+      const attackSteps = [];
+      Object.entries(flagsByDevice).forEach(([devId, flags]) => {
+        (flags || []).forEach(f => {
+          if ((f.flag_type || '').toLowerCase().includes('ransomware') || (f.flag_type || '').toLowerCase().includes('persistence') || (f.flag_type || '').toLowerCase().includes('defense_evasion') || (f.flag_type || '').toLowerCase().includes('credential_access') || (f.flag_type || '').toLowerCase().includes('lateral')) {
+            attackSteps.push({ device: devId, flag: f });
+          }
+        });
+      });
+      // Sort by timestamp
+      attackSteps.sort((a, b) => (a.flag.timestamp || '').localeCompare(b.flag.timestamp || ''));
+      attackSteps.forEach((step, i) => {
+        if (i > 0) {
+          const fromHost = getHostname(attackSteps[i-1].device, deviceMap[attackSteps[i-1].device]);
+          const toHost = getHostname(step.device, deviceMap[step.device]);
+          if (fromHost && toHost && fromHost !== toHost) {
+            attackPathEdges.push({
+              source: 'dev:' + fromHost,
+              target: 'dev:' + toHost,
+              type: 'attack',
+              label: step.flag.flag_type || 'Attack',
+              stepData: step.flag,
+              stepIndex: i,
+            });
+          }
+        }
+      });
+    }
+
+    allAttackPaths = attackPathEdges;
+
+    // Also try to build a complete attack chain from the report's narrative or attack_chain
+    // Build a linear chain: initial_access → execution → persistence → privilege_escalation → defense_evasion → credential_access → discovery → lateral_movement → collection → exfiltration
+    const killChainOrder = ['initial_access','execution','persistence','privilege_escalation','defense_evasion','credential_access','discovery','lateral_movement','collection','exfiltration','impact'];
+    const chainPhases = attackChain.kill_chain_phases || [];
+    if (chainPhases.length > 0) {
+      chainPhases.sort((a, b) => killChainOrder.indexOf(a) - killChainOrder.indexOf(b));
+    }
+
+    // Add attack path edges as regular links with attack type
+    attackPathEdges.forEach(e => {
+      links.push(e);
+    });
+
+    // ─── Resolve string references to node objects ────────────────────────
+    links.forEach(l => {
+      if (typeof l.source === 'string') l.source = nodeMap[l.source];
+      if (typeof l.target === 'string') l.target = nodeMap[l.target];
+    });
+    // Remove links where source/target not found
+    const validLinks = links.filter(l => l.source && l.target && l.source !== l.target);
+
+    return { nodes, links: validLinks, nodeMap, attackPathEdges };
+  }
+
+  // ─── Render the Graph ──────────────────────────────────────────────────────
+  function renderGraph(report) {
+    const graph = buildGraph(report);
+    graphNodes = graph.nodes;
+    graphLinks = graph.links;
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    svg = d3.select(svgEl);
+    svg.selectAll('*').remove();
+
+    // Define arrow markers
+    const defs = svg.append('defs');
+    defs.append('marker')
+      .attr('id', 'arrow-normal')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 22)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#475569');
+    defs.append('marker')
+      .attr('id', 'arrow-attack')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 22)
+      .attr('refY', 0)
+      .attr('markerWidth', 8)
+      .attr('markerHeight', 8)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#EF4449');
+    defs.append('marker')
+      .attr('id', 'arrow-exfil')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 22)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#EC4899');
+
+    // Containers
+    const g = svg.append('g').attr('class', 'main-group');
+    linkGroup = g.append('g').attr('class', 'links');
+    labelGroup = g.append('g').attr('class', 'link-labels');
+    nodeGroup = g.append('g').attr('class', 'nodes');
+
+    // ─── Force simulation ─────────────────────────────────────────────────
+    sim = d3.forceSimulation(graphNodes)
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('link', d3.forceLink(graphLinks).id(d => d.id).distance(120).strength(0.6))
+      .force('collision', d3.forceCollide().radius(40))
+      .alphaDecay(0.02)
+      .on('tick', ticked);
+
+    // ─── Zoom ──────────────────────────────────────────────────────────────
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 5])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+    svg.call(zoom);
+    svg.on('dblclick.zoom', null); // Disable dblclick zoom to allow node interaction
+
+    // ─── Links ─────────────────────────────────────────────────────────────
+    const link = linkGroup.selectAll('line')
+      .data(graphLinks)
+      .join('line')
+      .attr('class', d => {
+        let cls = 'link-line ' + d.type;
+        if (d.type === 'attack') cls += ' attack-path';
+        return cls;
+      })
+      .attr('stroke', d => {
+        switch (d.type) {
+          case 'owns': return '#10B981';
+          case 'seen-on': return '#64748B';
+          case 'lateral': return '#F59E0B';
+          case 'exfil': return '#EC4899';
+          case 'memdump': return '#06B6D4';
+          case 'finding': return '#F97316';
+          case 'external': return '#EC4899';
+          case 'attack': return '#EF4449';
+          default: return '#475569';
+        }
+      })
+      .attr('stroke-dasharray', d => {
+        switch (d.type) {
+          case 'owns': return null;
+          case 'seen-on': return '3 3';
+          case 'lateral': return '6 3';
+          case 'attack': return '6 4';
+          case 'memdump': return '4 4';
+          case 'finding': return '4 3';
+          default: return null;
+        }
+      })
+      .attr('stroke-width', d => d.type === 'attack' ? 2.5 : 1.5)
+      .attr('opacity', d => d.type === 'attack' ? 0.9 : 0.5)
+      .attr('marker-end', d => {
+        if (d.type === 'attack') return 'url(#arrow-attack)';
+        if (d.type === 'exfil') return 'url(#arrow-exfil)';
+        return 'url(#arrow-normal)';
+      });
+
+    // ─── Link labels ───────────────────────────────────────────────────────
+    const linkLabel = labelGroup.selectAll('text')
+      .data(graphLinks.filter(d => d.label && d.type !== 'memdump'))
+      .join('text')
+      .attr('class', 'link-label')
+      .attr('opacity', d => d.type === 'attack' ? 0.9 : 0.4)
+      .text(d => d.label);
+
+    // ─── Nodes ─────────────────────────────────────────────────────────────
+    const node = nodeGroup.selectAll('g')
+      .data(graphNodes)
+      .join('g')
+      .attr('class', 'node-group')
+      .attr('data-id', d => d.id)
+      .style('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', dragStarted)
+        .on('drag', dragged)
+        .on('end', dragEnded)
+      );
+
+    // Node shapes
+    node.each(function(d) {
+      const el = d3.select(this);
+      const cx = 0, cy = 0;
+      const color = nodeColor(d);
+      const r = d.group === 'user' || d.group === 'external' ? 18 : 24;
+
+      // Shadow circle
+      el.append('circle')
+        .attr('class', 'node-shadow')
+        .attr('r', r + 8)
+        .attr('fill', color)
+        .attr('opacity', 0);
+
+      // Highlight circle (for selection)
+      el.append('circle')
+        .attr('class', 'node-highlight')
+        .attr('r', r + 4)
+        .attr('fill', 'none')
+        .attr('stroke', color)
+        .attr('stroke-width', 2)
+        .attr('opacity', 0);
+
+      // Main shape
+      if (d.group === 'user' || d.group === 'external') {
+        el.append('circle')
+          .attr('class', 'node-bg')
+          .attr('r', r)
+          .attr('fill', d.group === 'user' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+      } else if (d.group === 'finding') {
+        // Diamond shape
+        const s = r * 0.85;
+        el.append('polygon')
+          .attr('class', 'node-bg')
+          .attr('points', `0,${-s} ${s},0 0,${s} ${-s},0`)
+          .attr('fill', 'rgba(249,115,22,0.15)')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+      } else if (d.group === 'service') {
+        el.append('rect')
+          .attr('class', 'node-bg')
+          .attr('x', -40).attr('y', -r)
+          .attr('width', 80).attr('height', r * 2)
+          .attr('rx', 10)
+          .attr('fill', 'rgba(236,72,153,0.1)')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+      } else if (d.group === 'memdump') {
+        // Hexagon for memory dumps
+        const s = r;
+        const pts = [];
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 6 + i * Math.PI / 3;
+          pts.push([s * Math.cos(a), s * Math.sin(a)]);
+        }
+        el.append('polygon')
+          .attr('class', 'node-bg')
+          .attr('points', pts.map(p => p.join(',')).join(' '))
+          .attr('fill', 'rgba(6,182,212,0.1)')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+      } else {
+        // Device rectangle
+        const w = d.group === 'server' ? 60 : 50;
+        el.append('rect')
+          .attr('class', 'node-bg')
+          .attr('x', -w/2).attr('y', -r)
+          .attr('width', w).attr('height', r * 2)
+          .attr('rx', 6)
+          .attr('fill', 'rgba(30,41,59,0.9)')
+          .attr('stroke', color)
+          .attr('stroke-width', 1.5);
+      }
+
+      // Label
+      const fontSize = d.group === 'finding' ? 9 : 10;
+      el.append('text')
+        .attr('class', 'node-text')
+        .attr('y', -3)
+        .attr('font-size', fontSize)
+        .text(truncate(d.label, d.group === 'service' ? 12 : 14));
+
+      if (d.sublabel) {
+        el.append('text')
+          .attr('class', 'node-sublabel')
+          .attr('y', 12)
+          .text(truncate(d.sublabel, 16));
+      }
+
+      // Events
+      el.on('click', function(event, d) {
+        event.stopPropagation();
+        selectNode(d.id);
+      });
+      el.on('mouseenter', function(event, d) {
+        d3.select(this).classed('hovered', true);
+        showTooltip(event, d);
+      });
+      el.on('mouseleave', function() {
+        d3.select(this).classed('hovered', false);
+        hideTooltip();
+      });
+    });
+
+    // Click background to deselect
+    svg.on('click', function() {
+      deselectNode();
+    });
+
+    function ticked() {
+      link
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+
+      linkLabel
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2);
+
+      node.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+    }
+
+    function dragStarted(event, d) {
+      if (!event.active) sim.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+    function dragEnded(event, d) {
+      if (!event.active) sim.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    // Apply attack path visibility
+    applyFilters();
+
+    // Initial zoom to fit
+    setTimeout(() => {
+      const bounds = g.node() && g.node().getBBox();
+      if (bounds && bounds.width > 0) {
+        const scale = Math.min(width / (bounds.width + 100), height / (bounds.height + 100), 1.2);
+        const tx = width / 2 - (bounds.x + bounds.width / 2) * scale;
+        const ty = height / 2 - (bounds.y + bounds.height / 2) * scale;
+        svg.transition().duration(500).call(
+          zoom.transform,
+          d3.zoomIdentity.translate(tx, ty).scale(scale)
+        );
+      }
+    }, 100);
+
+    // Re-heat simulation after drag
+    setTimeout(() => {
+      if (sim) sim.alphaTarget(0.1).restart();
+    }, 500);
+    setTimeout(() => {
+      if (sim) sim.alphaTarget(0);
+    }, 2000);
+
+    // Hide loading
+    loading.classList.add('hidden');
+  }
+
+  // ─── Tooltip ───────────────────────────────────────────────────────────────
+  function showTooltip(event, d) {
+    clearTimeout(tooltipTimeout);
+    let html = '<strong>' + d.label + '</strong>';
+    if (d.group === 'user') html += '<br>Type: Account';
+    else if (d.group === 'memdump') html += '<br>Type: Memory Dump<br>Host: ' + (d.raw.source || '');
+    else if (d.group === 'external') html += '<br>Type: External IP';
+    else if (d.group === 'service') html += '<br>Type: Service Group';
+    else if (d.group === 'finding') html += '<br>Type: Finding<br>' + (d.sublabel || '');
+    else html += '<br>Type: ' + d.group;
+    if (d.sublabel) html += '<br>' + d.sublabel;
+    tooltip.innerHTML = html;
+    tooltip.className = 'tooltip visible';
+
+    const rect = container.getBoundingClientRect();
+    let tx = event.pageX - rect.left + 14;
+    let ty = event.pageY - rect.top - 10;
+    const tw = tooltip.offsetWidth;
+    const th = tooltip.offsetHeight;
+    if (tx + tw > rect.width) tx = event.pageX - rect.left - tw - 14;
+    if (ty + th > rect.height) ty = event.pageY - rect.top - th - 10;
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+  }
+
+  function hideTooltip() {
+    clearTimeout(tooltipTimeout);
+    tooltipTimeout = setTimeout(() => {
+      tooltip.className = 'tooltip';
+    }, 100);
+  }
+
+  // ─── Select Node ───────────────────────────────────────────────────────────
+  function selectNode(id) {
+    selectedNodeId = id;
+    nodeGroup.selectAll('.node-group')
+      .classed('selected', d => d.id === id);
+
+    // Dim non-connected nodes
+    if (id) {
+      const connected = new Set([id]);
+      graphLinks.forEach(l => {
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        if (src === id) connected.add(tgt);
+        if (tgt === id) connected.add(src);
+      });
+      nodeGroup.selectAll('.node-group')
+        .classed('dimmed', d => !connected.has(d.id));
+    } else {
+      nodeGroup.selectAll('.node-group').classed('dimmed', false);
+    }
+
+    showDetail(id);
+  }
+
+  function deselectNode() {
+    selectedNodeId = null;
+    nodeGroup.selectAll('.node-group').classed('selected', false).classed('dimmed', false);
+    showDetail(null);
+  }
+
+  function showDetail(id) {
+    if (!id || !reportData) {
+      detailTitle.textContent = 'Select a node';
+      detailBody.innerHTML = '<div class="empty">Click a node in the graph to view its details.</div>';
+      return;
+    }
+
+    const node = graphNodes.find(n => n.id === id);
+    if (!node) {
+      detailTitle.textContent = 'Node not found';
+      detailBody.innerHTML = '<div class="empty">Node data unavailable.</div>';
+      return;
+    }
+
+    detailTitle.textContent = node.label;
+
+    const color = nodeColor(node);
+    const headings = { user: 'Account', pc: 'Workstation', server: 'Server', mobile: 'Mobile Device', memdump: 'Memory Dump', finding: 'Finding', external: 'External IP', service: 'Service Group' };
+
+    let html = '';
+
+    // Basic info
+    html += '<div class="section"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">';
+    html += '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + color + '"></span>';
+    html += '<strong style="font-size:13px;">' + headings[node.group] || node.group + '</strong></div>';
+    html += '<div class="meta-grid">';
+    html += '<div><div class="k">Name</div><div class="v">' + node.label + '</div></div>';
+    if (node.sublabel) html += '<div><div class="k">Details</div><div class="v dim">' + node.sublabel + '</div></div>';
+    if (node.group === 'external' && node.raw.ip) html += '<div><div class="k">IP Address</div><div class="v dim" style="font-family:var(--font-mono)">' + node.raw.ip + '</div></div>';
+    if (node.group === 'memdump' && node.raw.path) html += '<div><div class="k">File Path</div><div class="v dim" style="font-family:var(--font-mono);font-size:10px;word-break:break-all">' + node.raw.path + '</div></div>';
+    html += '</div></div>';
+
+    // Connected nodes
+    const connected = new Set();
+    const connectedData = [];
+    graphLinks.forEach(l => {
+      const src = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+      if (src === id) {
+        connected.add(tgt);
+        connectedData.push({ id: tgt, dir: '→', type: l.type, label: l.label });
+      }
+      if (tgt === id) {
+        connected.add(src);
+        connectedData.push({ id: src, dir: '←', type: l.type, label: l.label });
+      }
+    });
+
+    const connectedNodes = graphNodes.filter(n => connected.has(n.id));
+    if (connectedNodes.length > 0) {
+      html += '<div class="section"><div class="section-title">Connected <span style="font-size:10px;color:var(--g-text-mute)">' + connectedNodes.length + '</span></div>';
+      connectedNodes.forEach(cn => {
+        const edge = connectedData.find(e => e.id === cn.id);
+        const edgeLabel = edge ? edge.label || edge.type : '';
+        html += '<div class="finding" onclick="window._selectNode(\'' + cn.id + '\')" style="cursor:pointer;">';
+        html += '<div class="finding-head"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + nodeColor(cn) + '"></span>';
+        html += '<span style="font-size:12px;">' + cn.label + '</span>';
+        if (edgeLabel) html += '<span style="font-size:9px;color:var(--g-text-mute);margin-left:auto;">' + edgeLabel + '</span>';
+        html += '</div>';
+        html += '<div class="finding-summary">' + (cn.sublabel ? cn.sublabel : cn.group) + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // For findings, show details
+    if (node.group === 'finding' && node.raw) {
+      html += '<div class="section"><div class="section-title">Finding Details</div>';
+      html += '<div><span class="severity-pill ' + (node.raw.severity || 'INFO') + '">' + (node.raw.severity || 'INFO') + '</span>';
+      if (node.raw.summary) html += '<div style="margin-top:6px;color:var(--g-text-dim);font-size:12px;line-height:1.5;">' + node.raw.summary + '</div></div></div>';
+      if (node.raw.explanation) html += '<div style="margin-top:4px;color:var(--g-text-mute);font-size:11px;">' + node.raw.explanation + '</div>';
+
+      // Evidence
+      if (node.raw.evidence) {
+        html += '<div class="section"><div class="section-title">Evidence</div>';
+        Object.entries(node.raw.evidence).forEach(([k, v]) => {
+          html += '<div><span class="ek" style="color:var(--g-text-mute);font-size:10px;font-family:var(--font-mono)">' + k + '</span>';
+          html += '<div class="ev" style="color:var(--g-text-dim);font-size:11px;word-break:break-all;margin-bottom:4px;">' + String(v).slice(0, 200) + '</div></div>';
+        });
+        html += '</div>';
+      }
+
+      // Raw JSON
+      html += '<div class="section"><div class="section-title">Raw Data</div>';
+      html += '<div class="json-preview">' + JSON.stringify(node.raw, null, 2).slice(0, 2000) + '</div></div>';
+    }
+
+    // For users, show user data
+    if (node.group === 'user' && node.raw) {
+      html += '<div class="section"><div class="section-title">Raw Data</div>';
+      html += '<div class="json-preview">' + JSON.stringify(node.raw, null, 2).slice(0, 2000) + '</div></div>';
+    }
+
+    detailBody.innerHTML = html;
+  }
+
+  // Expose selectNode globally for inline onclick
+  window._selectNode = function(id) {
+    selectNode(id);
+  };
+
+  // ─── Filters ───────────────────────────────────────────────────────────────
+  function applyFilters() {
+    const search = searchInput.value.toLowerCase().trim();
+    const typeVal = typeFilter.value;
+
+    if (!linkGroup || !nodeGroup) return;
+
+    // Node visibility
+    nodeGroup.selectAll('.node-group').classed('dimmed', function(d) {
+      let dim = false;
+      if (search) {
+        const match = d.label.toLowerCase().includes(search) ||
+                     (d.sublabel && d.sublabel.toLowerCase().includes(search)) ||
+                     d.id.toLowerCase().includes(search);
+        if (!match) dim = true;
+      }
+      if (typeVal && d.group !== typeVal) dim = true;
+      return dim;
+    });
+
+    // Link visibility (dim if either end is dimmed)
+    linkGroup.selectAll('line').attr('opacity', function(d) {
+      if (d.type === 'attack' && !showAttackPath) return 0;
+      const srcNode = typeof d.source === 'object' ? graphNodes.find(n => n.id === d.source.id) : null;
+      const tgtNode = typeof d.target === 'object' ? graphNodes.find(n => n.id === d.target.id) : null;
+      if (!srcNode || !tgtNode) return 0.1;
+      const srcEl = nodeGroup.select('[data-id="' + srcNode.id + '"]');
+      const tgtEl = nodeGroup.select('[data-id="' + tgtNode.id + '"]');
+      if (srcEl.classed('dimmed') || tgtEl.classed('dimmed')) return 0.05;
+      return d.type === 'attack' ? 0.9 : 0.5;
+    });
+
+    // Link labels
+    labelGroup.selectAll('text').attr('opacity', function(d) {
+      if (d.type === 'attack' && !showAttackPath) return 0;
+      const srcNode = typeof d.source === 'object' ? graphNodes.find(n => n.id === d.source.id) : null;
+      const tgtNode = typeof d.target === 'object' ? graphNodes.find(n => n.id === d.target.id) : null;
+      if (!srcNode || !tgtNode) return 0.1;
+      const srcEl = nodeGroup.select('[data-id="' + srcNode.id + '"]');
+      const tgtEl = nodeGroup.select('[data-id="' + tgtNode.id + '"]');
+      if (srcEl.classed('dimmed') || tgtEl.classed('dimmed')) return 0.05;
+      return 0.6;
+    });
+  }
+
+  // ─── Event Handlers ────────────────────────────────────────────────────────
+  searchInput.addEventListener('input', applyFilters);
+  typeFilter.addEventListener('change', applyFilters);
+
+  attackToggle.addEventListener('click', function() {
+    showAttackPath = !showAttackPath;
+    this.classList.toggle('active-attack', showAttackPath);
+    this.textContent = showAttackPath ? '⚠ Attack Path ON' : '⚠ Attack Path OFF';
+    applyFilters();
+  });
+
+  resetZoom.addEventListener('click', function() {
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const g = svg.select('.main-group');
+    const bounds = g.node() && g.node().getBBox();
+    if (bounds && bounds.width > 0) {
+      const scale = Math.min(width / (bounds.width + 100), height / (bounds.height + 100), 1.5);
+      const tx = width / 2 - (bounds.x + bounds.width / 2) * scale;
+      const ty = height / 2 - (bounds.y + bounds.height / 2) * scale;
+      svg.transition().duration(500).call(
+        d3.zoom().transform,
+        d3.zoomIdentity.translate(tx, ty).scale(scale)
+      );
+    }
+  });
+
+  document.getElementById('detail-close').addEventListener('click', deselectNode);
+
+  // ─── Load Data ─────────────────────────────────────────────────────────────
+  async function loadData() {
+    const params = new URLSearchParams(window.location.search);
+    let caseDir = params.get('case');
+
+    if (caseDir) {
+      caseName.textContent = caseDir;
+      try {
+        const res = await authFetch('/reports/' + encodeURIComponent(caseDir) + '/json');
+        if (!res.ok) throw new Error('Report not found');
+        const data = await res.json();
+        reportData = data;
+        renderGraph(data);
+      } catch (e) {
+        loading.querySelector('.msg').textContent = 'Error: ' + e.message;
+        loading.classList.remove('hidden');
+      }
+    } else {
+      loading.querySelector('.msg').textContent = 'No case specified. Add ?case=CASE_DIR to the URL.';
+    }
+  }
+
+  loadData();
+})();
+</script>
 </body>
 </html>

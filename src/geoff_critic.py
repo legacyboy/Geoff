@@ -294,6 +294,44 @@ class GeoffCritic:
                 continue
         return ""  # All retries exceeded (should not normally reach here)
 
+    # Forensic metadata keywords that indicate IOC bleed-through
+    # (same list used in narrative_report._FORENSIC_METADATA_KEYWORDS)
+    _FORENSIC_NOISE_KEYWORDS = frozenset([
+        'Image Verification', 'Acquisition started', 'Acquisition finished',
+        '[Device Info]', 'Source Type', 'Drive Geometry',
+        'Cylinders:', 'Tracks per Cylinder', 'Sectors per Track',
+        'Physical Evidentiary', 'MD5 checksum', 'SHA1 checksum', 'SHA256 checksum',
+        'Image Information:',
+    ])
+
+    # Well-known infrastructure IPs that should not be treated as IOCs
+    _INFRASTRUCTURE_IPS = frozenset([
+        '8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1',
+        '208.67.222.222', '208.67.220.220',  # OpenDNS
+        '9.9.9.9',  # Quad9
+        '0.0.0.0', '127.0.0.1', '255.255.255.255',
+    ])
+
+    # Noise URL domains (same as narrative_report._NOISE_URL_DOMAINS)
+    _NOISE_URL_DOMAINS = frozenset([
+        'doubleclick.net', 'atwola.com', 'googlesyndication.com',
+        'googleadservices.com', 'quantserve.com', 'scorecardresearch.com',
+        'googletagmanager.com', 'google-analytics.com', 'moatads.com',
+        'outbrain.com', 'taboola.com', 'criteo.com', 'rubiconproject.com',
+        'pubmatic.com', 'openx.net', 'casalemedia.com', 'agkn.com',
+        'adsrvr.org', 'adsymptotic.com', 'exponential.com', 'burstnet.com',
+        'contextweb.com', 'bluekai.com', 'demdex.net', 'rlcdn.com',
+        'adsafeprotected.com', '2mdn.net', 'adform.net', 'adnxs.com',
+        'adzerk.net', 'tribalfusion.com', 'turn.com', 'invitemedia.com',
+        'media6degrees.com', 'specificmedia.com', 'tidaltv.com',
+    ])
+
+    # System email local parts that should not be treated as IOCs
+    _SYSTEM_EMAIL_LOCALPARTS = frozenset({
+        'mailer-daemon', 'postmaster', 'root',
+        'administrator', 'noreply', 'no-reply',
+    })
+
     def validate_tool_output(self, tool_name: str, tool_params: Dict,
                             raw_output: str, geoff_analysis: str) -> Dict[str, Any]:
         """
@@ -312,6 +350,16 @@ class GeoffCritic:
         raw_stripped = str(raw_output).strip()
         too_short = len(raw_stripped) < 15  # less than 15 chars of output
 
+        # ---- Pre-check: forensic metadata bleed-through ----
+        # If the raw output is primarily forensic acquisition metadata,
+        # it's not meaningful forensic data
+        forensic_metadata_lines = 0
+        total_lines = raw_stripped.count('\n') + 1
+        for kw in self._FORENSIC_NOISE_KEYWORDS:
+            forensic_metadata_lines += raw_stripped.lower().count(kw.lower())
+        forensic_noise_ratio = forensic_metadata_lines / max(total_lines, 1)
+        is_forensic_metadata = forensic_noise_ratio > 0.5  # >50% metadata lines
+
         # Extract claimed IOCs from analysis for cross-check against raw output
         claimed_iocs = []
         if geoff_analysis:
@@ -325,6 +373,14 @@ class GeoffCritic:
             'localhost', 'local', 'domain', 'timeout', 'error',
             'stdout', 'stderr', 'bytes', 'sectors', 'partitions',
         )]
+        # Additional noise filtering: reject well-known infrastructure IPs
+        claimed_iocs = [i for i in claimed_iocs if i not in self._INFRASTRUCTURE_IPS]
+        # Reject noise URL domains
+        claimed_iocs = [i for i in claimed_iocs
+                       if not any(nd in i.lower() for nd in self._NOISE_URL_DOMAINS)]
+        # Reject system email local parts
+        claimed_iocs = [i for i in claimed_iocs
+                       if not (i.split('@')[0].lower() in self._SYSTEM_EMAIL_LOCALPARTS if '@' in i else False)]
 
         # Check which claimed IOCs actually appear in raw output
         missing_iocs = []
@@ -342,9 +398,16 @@ RAW OUTPUT (excerpt):
 ANALYSIS:
 {safe_analysis}
 
+IMPORTANT CONTEXT:
+- If the raw output contains E01/E02 acquisition metadata (drive geometry, checksums, image verification, sector counts, partition tables without file content), the "findings" are forensic artifacts, NOT indicators of compromise. Flag these as nonsense.
+- Private IP addresses (10.x.x.x, 172.16-31.x.x, 192.168.x.x, 127.x.x.x) are NOT actionable IOCs.
+- Well-known infrastructure IPs (8.8.8.8, 1.1.1.1, etc.) are NOT actionable IOCs.
+- Version strings like "7.0.2.7" that look like IPs are NOT IOCs.
+- Paths shorter than 15 characters or containing binary/control characters are likely noise, not real file paths.
+
 Answer these questions:
 1. Does the analysis claim something NOT present in the raw output? (hallucination)
-2. Is there any obvious nonsense? (impossible values, contradictory claims)
+2. Is there any obvious nonsense? (impossible values, contradictory claims, forensic metadata presented as IOCs)
 3. Are any claimed IOCs (IPs, hashes, timestamps, URLs) invalid format?
 4. Does the raw output contain meaningful data (non-empty, no only-error messages)?
 5. **What is your overall verdict?** Choose one:
@@ -409,6 +472,20 @@ Respond in JSON:
                 if "Empty/insufficient output" not in result.get("nonsense", []):
                     result.setdefault("nonsense", []).append("Empty/insufficient output")
 
+        # 1b. Forensic metadata bleed-through detection
+        # If the raw output is dominated by E01 acquisition metadata (drive geometry,
+        # checksums, image verification), the "findings" are forensic artifacts, not IOCs
+        if is_forensic_metadata:
+            result["forensic_metadata_bleedthrough"] = True
+            if result.get("verdict") == "APPROVED":
+                result["verdict"] = "REQUIRES_REVIEW"
+                result["verdict_reason"] = ("Raw output is dominated by forensic acquisition metadata "
+                                               "(drive geometry, checksums, image verification) — "
+                                               "findings may be forensic artifacts, not IOCs")
+                result["passes_sanity"] = False
+            if "Forensic metadata bleed-through" not in result.get("nonsense", []):
+                result.setdefault("nonsense", []).append("Forensic metadata bleed-through")
+
         # 2. IOC presence verification
         if missing_iocs:
             result["claimed_iocs_missing_from_raw"] = missing_iocs
@@ -417,6 +494,26 @@ Respond in JSON:
                 result["verdict"] = "REQUIRES_REVIEW"
                 result["verdict_reason"] = f"Analysis claims {len(missing_iocs)} IOC(s) not found in raw output"
                 result["passes_sanity"] = False
+
+        # 2b. Private IP and infrastructure IOC filtering
+        # Even if IOCs are present in raw output, private IPs and well-known
+        # infrastructure IPs are not actionable IOCs and should be flagged
+        _priv_ip_re = re.compile(
+            r'^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.|0\\.0\\.0\\.0|255\\.)')
+        infra_in_analysis = []
+        if geoff_analysis:
+            # Check for private/well-known IPs in analysis output
+            for ip_match in re.finditer(r'\b(\d{1,3}\.){3}\d{1,3}\b', geoff_analysis):
+                ip = ip_match.group(0)
+                if ip in self._INFRASTRUCTURE_IPS or _priv_ip_re.match(ip):
+                    infra_in_analysis.append(ip)
+        if infra_in_analysis:
+            result["infrastructure_ips_in_analysis"] = infra_in_analysis
+            # Don't downgrade verdict for this, but flag it for human review
+            if result.get("verdict") == "APPROVED":
+                result.setdefault("nonsense", []).append(
+                    f"Private/infrastructure IPs treated as IOCs: {', '.join(infra_in_analysis[:5])}"
+                )
 
         # 3. Derive verdict from passes_sanity if LLM didn't provide one
         if "verdict" not in result or result.get("verdict") not in ("APPROVED", "REQUIRES_REVIEW", "REJECTED"):

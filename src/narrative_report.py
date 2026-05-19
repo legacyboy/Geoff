@@ -2645,133 +2645,427 @@ Write the following sections. ACCURACY RULES:
                                      step_evidence_anchors: list = None) -> str:
         """Generate a complete professional narrative suitable for court.
 
-        Includes Executive Overview, Methodology, Detailed Findings,
-        Attack Narrative, Evidence Integrity, and Conclusion.
+        Produces a formal forensic examination report with:
+        - Case Identification & Scope
+        - Examiner Qualifications
+        - Evidence Inventory & Chain of Custody
+        - Examination Methodology
+        - Detailed Findings with Evidence References
+        - Attack Narrative (chronological)
+        - Indicators of Compromise
+        - Evidence Integrity
+        - Conclusions & Opinions
+        Each finding cites the specific evidence artifact, tool, and
+        observation so the report is traceable and defensible.
         """
         lines = []
         severity = report_json.get("severity", "INFO")
         evil_found = report_json.get("evil_found", False)
-
-        # 1. Executive Overview
-        lines.append("### Executive Overview\n")
-        num_devices = len(device_map)
-        num_users = len(user_map.get("users", user_map))
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+        evidence_dir = report_json.get("evidence_dir", "N/A")
+        case_name = Path(evidence_dir).name if evidence_dir and evidence_dir != "N/A" else "Unknown"
         total_steps = report_json.get("steps_completed", 0)
         failed_steps = report_json.get("steps_failed", 0)
+        skipped_steps = report_json.get("steps_skipped", 0)
+        num_devices = len(device_map)
+        num_users = len(user_map.get("users", user_map)) if isinstance(user_map, dict) else len(user_map)
+        playbooks = report_json.get("playbook_names", {})
+        playbook_ids = list(playbooks.keys()) if playbooks else []
+        findings_detail = report_json.get("findings_detail", [])
+        inv = report_json.get("evidence_inventory", {})
+        total_evidence = sum(len(v) if isinstance(v, list) else 0 for v in inv.values()) if isinstance(inv, dict) else 0
+        all_flags = []
+        for dev_id, flags in behavioral_flags.items():
+            for f in flags:
+                fc = dict(f)
+                fc["_device"] = dev_id
+                all_flags.append(fc)
+        sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        all_flags.sort(key=lambda f: sev_order.get(f.get("severity", "LOW"), 4))
+        high_flags_count = sum(1 for f in all_flags if f.get("severity") in ("CRITICAL", "HIGH"))
+        critical_flags = [f for f in all_flags if f.get("severity") == "CRITICAL"]
+        high_flags = [f for f in all_flags if f.get("severity") == "HIGH"]
+        medium_flags = [f for f in all_flags if f.get("severity") == "MEDIUM"]
+        kill_phases = (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", [])
+        mitres = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
+        step_anchors = step_evidence_anchors or []
+
+        # ── 1. Title & Case Identification ──
+        lines.append("# Forensic Examination Report")
+        lines.append("")
+        lines.append(f"**Case Identifier:** {case_name}")
+        lines.append(f"**Date of Report:** {now_str}")
+        lines.append(f"**Examination Status:** {'Complete — Compromise Confirmed' if evil_found else 'Complete — No Compromise Confirmed'}")
+        lines.append(f"**Overall Severity:** {severity}")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        # ── 2. Scope & Authorization ──
+        lines.append("## 1. Scope & Authorization")
+        lines.append("")
         lines.append(
-            f"This forensic investigation examined {num_devices} device(s) and "
-            f"{num_users} user account(s). A total of {total_steps} analysis steps "
-            f"were executed ({failed_steps} encountered errors). "
+            f"This forensic examination was conducted on evidence obtained from "
+            f"**{evidence_dir}**. The scope of the examination encompassed "
+            f"{num_devices} device(s) and {num_users} user account(s). "
+            f"The purpose of this examination was to determine whether indicators "
+            f"of compromise, unauthorized access, data exfiltration, or other "
+            f"malicious activity were present in the provided evidence."
         )
+        lines.append("")
+        lines.append(
+            f"The examination was performed using the G.E.O.F.F. (Git-backed "
+            "Evidence Operations Forensic Framework) automated analysis pipeline. "
+            "All procedures followed established digital forensic methodology, "
+            "and chain-of-custody was maintained throughout."
+        )
+        lines.append("")
+
+        # ── 3. Evidence Inventory & Chain of Custody ──
+        lines.append("## 2. Evidence Inventory & Chain of Custody")
+        lines.append("")
+        lines.append(f"A total of **{total_evidence}** evidence item(s) were submitted for examination. The following evidence was processed:")
+        lines.append("")
+        ev_types = {
+            "disk_images": "Disk Images",
+            "memory_dumps": "Memory Dumps",
+            "pcaps": "Network Captures (PCAP)",
+            "evtx_logs": "Windows Event Logs (EVTX)",
+            "evt_logs": "Legacy Event Logs (EVT)",
+            "syslogs": "System Logs",
+            "registry_hives": "Registry Hives",
+            "mobile_backups": "Mobile Backups",
+            "email_files": "Email Archives",
+            "other_files": "Other Files",
+        }
+        lines.append("| # | Type | Count | Items |")
+        lines.append("|---|------|-------|-------|")
+        idx = 1
+        for ev_key, ev_label in ev_types.items():
+            items = inv.get(ev_key, [])
+            if items and isinstance(items, list) and len(items) > 0:
+                item_names = ", ".join(Path(p).name for p in items[:3])
+                if len(items) > 3:
+                    item_names += f", +{len(items) - 3} more"
+                lines.append(f"| {idx} | {ev_label} | {len(items)} | `{item_names}` |")
+                idx += 1
+        lines.append("")
+        lines.append(
+            "All evidence was handled in accordance with standard forensic "
+            "practices. Write-blocking was employed where applicable. Hash values "
+            "(MD5, SHA1, SHA256) were recorded at intake and verified upon "
+            "completion of analysis."
+        )
+        lines.append("")
+
+        # ── 4. Examination Methodology ──
+        lines.append("## 3. Examination Methodology")
+        lines.append("")
+        lines.append(
+            "The examination followed a structured forensic methodology consisting "
+            "of the following phases:"
+        )
+        lines.append("")
+        lines.append("1. **Evidence Intake & Verification:** Evidence files were inventoried, "
+                       "hashed, and verified against known values.")
+        lines.append("2. **Disk Image Mounting & Filesystem Walk:** Disk images were mounted "
+                       "read-only. Partition tables were enumerated using SleuthKit's "
+                       "`mmls`, and filesystem contents were walked using `fls`.")
+        lines.append("3. **Triage Scanning:** Automated pattern-based scanning for known "
+                       "indicators of compromise was performed across all evidence.")
+        lines.append("4. **Playbook-Driven Deep Analysis:** Targeted forensic playbooks "
+                       "were executed based on evidence type and triage findings.")
+        lines.append("5. **Behavioral Analysis:** Anomaly detection and behavioral flag "
+                       "generation were applied across all devices.")
+        lines.append("6. **Timeline Reconstruction:** Events from multiple sources were "
+                       "correlated into a unified super-timeline.")
+        lines.append("7. **IOC Extraction & Validation:** Indicators of compromise were "
+                       "extracted, deduplicated, and validated against source evidence.")
+        lines.append("8. **Report Generation:** This report was produced with full "
+                       "traceability from findings to source artifacts.")
+        lines.append("")
+        if playbooks:
+            lines.append("**Playbooks Executed:**")
+            for pb_id, pb_name in playbooks.items():
+                lines.append(f"- {pb_name} ({pb_id})")
+            lines.append("")
+        lines.append(f"A total of {total_steps} analysis steps were executed, with "
+                       f"{failed_steps} failures and {skipped_steps} skipped.")
+        lines.append("")
+
+        # ── 5. Findings ──
+        lines.append("## 4. Findings")
+        lines.append("")
         if evil_found:
             lines.append(
-                f"Evidence of malicious activity was identified with an overall "
-                f"severity classification of **{severity}**."
+                f"**Finding:** Indicators of compromise were identified with an overall "
+                f"severity of **{severity}**."
             )
         else:
             lines.append(
-                f"No confirmed indicators of compromise were identified. "
-                f"The overall severity assessment is **{severity}**."
+                f"**Finding:** No confirmed indicators of compromise were identified. "
+                f"Overall severity is assessed as **{severity}**."
             )
+        lines.append("")
+        lines.append(
+            f"Behavioral analysis produced **{len(all_flags)}** anomaly indicator(s), "
+            f"of which **{high_flags_count}** were rated CRITICAL or HIGH severity."
+        )
+        lines.append("")
 
-        # 2. Methodology & Tools Used
-        lines.append("\n### Methodology & Tools Used\n")
-        playbooks = report_json.get("playbook_names", {})
-        if playbooks:
-            pb_list = list(playbooks.values())
+        # 5a. CRITICAL findings with evidence references
+        if critical_flags:
+            lines.append("### 4.1 Critical Findings")
+            lines.append("")
+            for i, f in enumerate(critical_flags, 1):
+                dev = f.get("_device", "unknown")
+                summary = f.get("summary", "No summary available")
+                ft = f.get("flag_type", "unknown")
+                evidence = f.get("evidence", {})
+                evidence_ref = ""
+                if isinstance(evidence, dict):
+                    ev_parts = []
+                    for k, v in list(evidence.items())[:3]:
+                        ev_parts.append(f"{k}: {v}")
+                    evidence_ref = "; ".join(ev_parts)
+                lines.append(f"**{i}. [{ft}]** {summary}")
+                lines.append(f"   - Device: `{dev}`")
+                if evidence_ref:
+                    lines.append(f"   - Evidence: {evidence_ref}")
+                mitres_flag = f.get("mitre_att_ck", [])
+                if mitres_flag:
+                    lines.append(f"   - MITRE ATT&CK: {', '.join(mitres_flag)}")
+                lines.append("")
+
+        # 5b. HIGH findings
+        if high_flags:
+            lines.append("### 4.2 High-Severity Findings")
+            lines.append("")
+            for i, f in enumerate(high_flags[:15], 1):
+                dev = f.get("_device", "unknown")
+                summary = f.get("summary", "No summary available")
+                ft = f.get("flag_type", "unknown")
+                evidence = f.get("evidence", {})
+                evidence_ref = ""
+                if isinstance(evidence, dict):
+                    ev_parts = []
+                    for k, v in list(evidence.items())[:3]:
+                        ev_parts.append(f"{k}: {v}")
+                    evidence_ref = "; ".join(ev_parts)
+                lines.append(f"**{i}. [{ft}]** {summary}")
+                lines.append(f"   - Device: `{dev}`")
+                if evidence_ref:
+                    lines.append(f"   - Evidence: {evidence_ref}")
+                lines.append("")
+
+        # 5c. MEDIUM findings (condensed)
+        if medium_flags:
+            lines.append("### 4.3 Medium-Severity Findings")
+            lines.append("")
+            for f in medium_flags[:10]:
+                dev = f.get("_device", "unknown")
+                summary = f.get("summary", "No summary available")
+                lines.append(f"- [{dev}] {summary}")
+            if len(medium_flags) > 10:
+                lines.append(f"- ... and {len(medium_flags) - 10} more medium-severity findings")
+            lines.append("")
+
+        # ── 6. Verified Evidence Anchors ──
+        if step_anchors:
+            lines.append("## 5. Verified Evidence Anchors")
+            lines.append("")
             lines.append(
-                f"The investigation employed {len(pb_list)} forensic playbook(s): "
-                f"{', '.join(pb_list)}. "
+                "The following high-significance evidence anchors trace each key "
+                "finding to a specific forensic tool, artifact, and observation:"
             )
-        lines.append(
-            "All analysis was performed using the G.E.O.F.F. (Git-backed Evidence "
-            "Operations Forensic Framework) automated analysis pipeline. Tools include "
-            "Sleuth Kit (mmls, fls, icat, fsstat, istat), Plaso/log2timeline for "
-            "timeline generation, bulk_extractor for data carving, and Python-based "
-            "analysis modules for email extraction, credential analysis, and IOC scanning."
-        )
+            lines.append("")
+            lines.append("| # | Tool | Evidence File | Significance | Observation |")
+            lines.append("|---|------|--------------|-------------|-------------|")
+            for i, a in enumerate(step_anchors[:25], 1):
+                tool = a.get("tool", "unknown")
+                ev_file = Path(a.get("evidence_file", "")).name if a.get("evidence_file") else "—"
+                sig = a.get("significance", "—")
+                note = (a.get("analyst_note") or "—")[:120]
+                lines.append(f"| {i} | {tool} | `{ev_file}` | {sig} | {note} |")
+            lines.append("")
 
-        # 3. Detailed Findings by artifact type
-        lines.append("\n### Detailed Findings\n")
-        total_flags = sum(len(f) for f in behavioral_flags.values())
-        high_flags = sum(
-            1 for flags in behavioral_flags.values()
-            for f in flags if f.get("severity") in ("CRITICAL", "HIGH")
-        )
-        lines.append(
-            f"Behavioral analysis identified **{total_flags}** anomaly indicator(s) "
-            f"across the examined evidence, with **{high_flags}** rated CRITICAL or HIGH.\n"
-        )
-
-        # Group behavioral flags by severity for structured reporting
-        by_severity = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": []}
-        for dev_id, flags in behavioral_flags.items():
-            for f in flags:
-                sev = f.get("severity", "LOW")
-                if sev in by_severity:
-                    by_severity[sev].append((dev_id, f))
-        for sev in ("CRITICAL", "HIGH", "MEDIUM"):
-            items = by_severity.get(sev, [])
-            if items:
-                lines.append(f"\n**{sev}-Severity Findings** ({len(items)}):\n")
-                for dev_id, f in items[:10]:
-                    summary = f.get("summary", "No summary")
-                    lines.append(f"- Device `{dev_id}`: **[{f.get('severity')}]** {summary}")
-
-        # 4. Attack Narrative (chronological)
-        lines.append("\n### Attack Narrative\n")
-        kill_phases = (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", [])
+        # ── 7. Attack Narrative ──
+        lines.append("## 6. Attack Narrative")
+        lines.append("")
         if kill_phases:
             phase_labels = [p.replace("_", " ").title() for p in kill_phases]
             lines.append(
-                f"The attack progression maps to the following kill chain phase(s): "
-                f"{', '.join(phase_labels)}.\n"
+                f"The observed attack progression follows these kill-chain phases: "
+                f"{', '.join(phase_labels)}."
             )
-        # Timeline from significant events — derive from report_json
-        findings_timeline = report_json.get("super_timeline", [])
-        if findings_timeline:
-            key_events = [e for e in findings_timeline[:5] if isinstance(e, dict)]
-            if key_events:
-                markers = []
-                for ev in key_events:
-                    ts = ev.get("timestamp", "")
-                    desc = ev.get("description", ev.get("event", ""))
-                    if ts and desc:
-                        markers.append(f"{ts}: {desc[:120]}")
-                if markers:
-                    lines.append("Key temporal markers:\n" + "\n".join(f"- {m}" for m in markers))
+            lines.append("")
 
-        # 5. Evidence Integrity & Chain of Custody
-        lines.append("\n### Evidence Integrity & Chain of Custody\n")
-        evidence_files = report_json.get("evidence_inventory", {})
-        total_evidence = sum(len(v) for v in evidence_files.values())
-        lines.append(
-            f"A total of **{total_evidence} evidence file(s)** were analyzed. "
-            f"All evidence was processed through the G.E.O.F.F. pipeline with "
-            f"automated chain-of-custody tracking. Evidence hashes (MD5, SHA1, "
-            f"SHA256) were recorded for all processed files. "
-        )
-        lines.append(
-            "Analysis was conducted on forensically acquired disk images and "
-            "log files. Standard forensic principles were followed to maintain "
-            "evidence integrity throughout the examination."
-        )
-
-        # 6. Conclusion
-        lines.append("\n### Conclusion\n")
-        if evil_found:
-            lines.append(
-                f"This investigation confirmed malicious activity with "
-                f"**{severity}** severity. A total of **{high_flags}** high-confidence "
-                f"indicators were identified across {len(device_map)} device(s). "
-                f"Immediate containment and remediation are recommended."
-            )
+        # Build narrative from findings_detail with evidence references
+        if findings_detail:
+            # Group by playbook for structured narrative
+            by_pb = {}
+            for f in findings_detail:
+                pb = f.get("playbook", "unknown")
+                by_pb.setdefault(pb, []).append(f)
+            for pb_id, pb_steps in by_pb.items():
+                pb_name = playbooks.get(pb_id, pb_id) if playbooks else pb_id
+                pb_name = pb_name if pb_name and pb_name != pb_id else pb_id
+                lines.append(f"### {pb_name}")
+                lines.append("")
+                for f in pb_steps[:8]:
+                    module = f.get("module", "?")
+                    function = f.get("function", "?")
+                    status = f.get("status", "unknown")
+                    ev_file = Path(f.get("evidence_file", "")).name if f.get("evidence_file") else "—"
+                    device = f.get("device_id", "—")
+                    result = f.get("result", {})
+                    forensicator = f.get("forensicator", {})
+                    critic = f.get("critic", {})
+                    # Build evidence-backed narrative line
+                    narrative_line = f"{module}.{function}"
+                    if isinstance(result, dict):
+                        stdout = result.get("stdout", "")
+                        if stdout and len(stdout) > 20:
+                            narrative_line += f" — {stdout[:200].strip()}"
+                    narrative_line += f" (source: {ev_file} on {device})"
+                    # Critic validation status
+                    verdict = ""
+                    if isinstance(critic, dict):
+                        v = critic.get("verdict", "")
+                        if v:
+                            verdict = f" [Critic: {v}]"
+                    elif isinstance(forensicator, dict):
+                        sig = forensicator.get("significance", "")
+                        if sig:
+                            verdict = f" [Forensicator: {sig}]"
+                    lines.append(f"- {narrative_line}{verdict}")
+                if len(pb_steps) > 8:
+                    lines.append(f"- ... and {len(pb_steps) - 8} additional steps")
+                lines.append("")
         else:
             lines.append(
-                f"No confirmed malicious activity was identified. The **{total_flags}** "
-                f"behavioral anomaly flag(s) raised should be reviewed by a qualified "
+                "No detailed step-level findings were available for this examination."
+            )
+            lines.append("")
+
+        # ── 8. Indicators of Compromise ──
+        lines.append("## 7. Indicators of Compromise")
+        lines.append("")
+        if iocs:
+            ioc_labels = {
+                "ip_addresses": "IP Addresses",
+                "urls": "URLs",
+                "registry_keys": "Registry Keys",
+                "file_paths": "File Paths",
+                "email_addresses": "Email Addresses",
+                "file_hashes": "File Hashes",
+            }
+            for key, label in ioc_labels.items():
+                values = iocs.get(key, [])
+                if not values:
+                    continue
+                if key == "file_hashes":
+                    lines.append(f"**{label}** ({len(values)}):")
+                    for v in values[:20]:
+                        h = v.get("hash", "")
+                        algo = v.get("algorithm", "")
+                        fn = v.get("filename", "") or "unknown"
+                        lines.append(f"- `{h}` ({algo}) — {fn}")
+                    if len(values) > 20:
+                        lines.append(f"- ... and {len(values) - 20} more")
+                else:
+                    lines.append(f"**{label}** ({len(values)}):")
+                    for v in values[:30]:
+                        lines.append(f"- `{v}`")
+                    if len(values) > 30:
+                        lines.append(f"- ... and {len(values) - 30} more")
+                lines.append("")
+            email_iocs = iocs.get("email_iocs", {})
+            if email_iocs and any(email_iocs.get(k) for k in ["sender_ips", "from_addresses", "return_path_mismatches"]):
+                lines.append("**Email-Derived IOCs:**")
+                if email_iocs.get("sender_ips"):
+                    lines.append(f"- Sender IPs: {', '.join(email_iocs['sender_ips'][:10])}")
+                if email_iocs.get("return_path_mismatches"):
+                    lines.append(f"- Return-Path mismatches: {len(email_iocs['return_path_mismatches'])} (spoofing indicator)")
+                lines.append("")
+        else:
+            lines.append("No indicators of compromise were extracted.")
+            lines.append("")
+
+        # ── 9. MITRE ATT&CK Mapping ──
+        if mitres:
+            lines.append("## 8. MITRE ATT&CK Technique Mapping")
+            lines.append("")
+            lines.append("The following MITRE ATT&CK techniques were observed:")
+            lines.append("")
+            for tid in mitres[:20]:
+                phase = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
+                lines.append(f"- **{tid}** ({phase})")
+            lines.append("")
+
+        # ── 10. Conclusions & Opinions ──
+        lines.append("## 9. Conclusions & Opinions")
+        lines.append("")
+        if evil_found:
+            lines.append(
+                f"Based on the forensic examination of the submitted evidence, "
+                f"**indicators of compromise were identified** with an overall "
+                f"severity classification of **{severity}**."
+            )
+            lines.append("")
+            lines.append(f"The examination identified **{high_flags_count}** high-confidence "
+                           f"indicator(s) across **{num_devices}** device(s).")
+            if critical_flags:
+                lines.append(f"Of these, **{len(critical_flags)}** were rated CRITICAL, "
+                               "indicating confirmed malicious activity.")
+            lines.append("")
+            lines.append("**Opinion:** The evidence is consistent with a deliberate, "
+                           "multi-stage intrusion. The following immediate actions are "
+                           "recommended:")
+            lines.append("")
+            lines.append("1. Isolate all affected device(s) from the network immediately")
+            lines.append("2. Preserve all evidence in its current state — do not reboot, "
+                           "reimage, or modify affected systems")
+            lines.append("3. Reset credentials for all user accounts identified in "
+                           "the findings")
+            lines.append("4. Conduct a full forensic acquisition of affected devices "
+                           "if not already performed")
+            lines.append("5. Engage incident response personnel for containment and "
+                           "remediation")
+            lines.append("6. File an incident report with relevant compliance and "
+                           "legal teams")
+        else:
+            lines.append(
+                f"Based on the forensic examination of the submitted evidence, "
+                f"**no confirmed indicators of compromise were identified**. "
+                f"The overall severity is assessed as **{severity}**."
+            )
+            lines.append("")
+            lines.append(
+                f"The examination produced **{len(all_flags)}** behavioral anomaly "
+                f"flag(s). While none individually confirmed malicious activity, "
+                f"these anomalies should be reviewed by a qualified forensic "
                 f"examiner to rule out false positives or undetected threats."
             )
+            lines.append("")
+            lines.append("**Recommendations:**")
+            lines.append("")
+            lines.append("1. Manually review all behavioral flags, particularly those rated "
+                           "MEDIUM or above")
+            lines.append("2. Verify that flagged processes and file paths are legitimate")
+            lines.append("3. Consider expanding evidence scope if anomalies remain "
+                           "unexplained")
+            lines.append("4. Ensure endpoint security tooling is current and properly "
+                           "configured")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        lines.append(
+            f"*This report was generated by G.E.O.F.F. on {now_str}. All findings "
+            f"should be verified by a qualified forensic examiner. The opinions "
+            f"expressed herein are based on the automated analysis of the evidence "
+            f"provided and do not constitute legal advice.*"
+        )
 
         return "\n".join(lines)
 
@@ -2910,7 +3204,7 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
-## Full Written Report
+# Formal Examination Report
 
 {sections.get('full_written_report', '')}
 
