@@ -948,9 +948,9 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                         entry.classList.add('active');
                         viewReport(r.dir, r.case_name);
                     });
-                    // Double-click opens the graph viewer
+                    // Double-click opens the force-directed graph viewer
                     entry.addEventListener('dblclick', () => {
-                        const viewerUrl = '/reports/viewer?case=' + encodeURIComponent(r.dir);
+                        const viewerUrl = '/reports/graph?case=' + encodeURIComponent(r.dir);
                         window.open(viewerUrl, '_blank');
                     });
                     list.appendChild(entry);
@@ -967,12 +967,11 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 const res = await authFetch('/reports/' + encodeURIComponent(caseDir) + '/json');
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const report = await res.json();
-                const graphLink = '/reports/viewer?case=' + encodeURIComponent(caseDir);
                 const histBtn = '<button class="graph-open-btn" onclick="showCommandHistory(\'' + encodeURIComponent(caseDir) + '\')" style="margin-bottom:12px;padding:6px 14px;background:rgba(16,185,129,0.15);border:1px solid #10B981;border-radius:4px;color:#10B981;cursor:pointer;font-size:12px;margin-right:8px;">🔗 Command History</button>';
-                const graphBtn = '<button class="graph-open-btn" onclick="window.open(\'' + graphLink + '\', \'' + '_blank' + '\')" style="margin-bottom:12px;padding:6px 14px;background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:4px;color:#60a5fa;cursor:pointer;font-size:12px;">🕸 View as Graph</button>';
+                const mitreBtn = '<a href="/reports/mitre-heatmap?case=' + encodeURIComponent(caseDir) + '" target="_blank" style="display:inline-block;margin-bottom:12px;padding:6px 14px;background:rgba(239,68,68,0.15);border:1px solid #ef4444;border-radius:4px;color:#F87171;cursor:pointer;font-size:12px;margin-right:8px;text-decoration:none;">🛡️ MITRE ATT&CK</a>';
                 window._reportChatCaseDir = caseDir;
                 window._reportChatData = report;
-                viewer.innerHTML = histBtn + graphBtn + _renderReportHtml(report, title || caseDir, caseDir);
+                viewer.innerHTML = histBtn + mitreBtn + _renderReportHtml(report, title || caseDir, caseDir);
             } catch(e) {
                 viewer.innerHTML = '<div class="reports-placeholder"><span style="color:#EF4444;">Error: ' + _escHtml(e.message) + '</span></div>';
             }
@@ -1117,6 +1116,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
                 h += '<a href="/reports/' + encodeURIComponent(caseDirForMitre) + '/download/markdown" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(59,130,246,0.1);border:1px solid #3b82f6;border-radius:4px;color:#60A5FA;text-decoration:none;font-size:0.8rem;transition:all 120ms;">📥 Download Markdown Report</a>';
                 h += '<a href="/reports/' + encodeURIComponent(caseDirForMitre) + '/download/json" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(245,158,11,0.1);border:1px solid #f59e0b;border-radius:4px;color:#FBBF24;text-decoration:none;font-size:0.8rem;transition:all 120ms;">📥 Download JSON Data</a>';
                 h += '<a href="/reports/' + encodeURIComponent(caseDirForMitre) + '/download/summary" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(139,92,246,0.1);border:1px solid #8b5cf6;border-radius:4px;color:#A78BFA;text-decoration:none;font-size:0.8rem;transition:all 120ms;">📥 Download Executive Summary</a>';
+                h += '<a href="/reports/mitre-heatmap?case=' + encodeURIComponent(caseDirForMitre) + '" target="_blank" class="mitre-matrix-btn" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(239,68,68,0.1);border:1px solid #ef4444;border-radius:4px;color:#F87171;text-decoration:none;font-size:0.8rem;transition:all 120ms;">🛡️ MITRE ATT&CK</a>';
                 h += '</div>';
             }
 

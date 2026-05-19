@@ -617,6 +617,16 @@ def get_case_report(case_name):
         return jsonify({'error': 'Unable to read report'}), 500
 
 
+def graph_viewer():
+    """GET /reports/graph — Serve the new force-directed D3.js graph viewer."""
+    viewer_path = Path(__file__).parent.parent / 'static' / 'graph_viewer.html'
+    html = viewer_path.read_text(encoding='utf-8')
+    if GEOFF_API_KEY:
+        key_meta = f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+        html = html.replace('<head>', '<head>\n  ' + key_meta, 1)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
 def list_reports():
     """GET /reports — List completed Find Evil cases that have a saved JSON report."""
     cases_root = Path(CASES_WORK_DIR)
@@ -793,6 +803,12 @@ def mitre_matrix():
     """GET /reports/mitre-matrix — Serve the MITRE ATT&CK matrix viewer."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
     return send_from_directory(str(viewer_dir), 'mitre-matrix.html')
+
+
+def mitre_heatmap():
+    """GET /reports/mitre-heatmap — Serve the MITRE ATT&CK interactive heatmap."""
+    viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
+    return send_from_directory(str(viewer_dir), 'mitre-heatmap.html')
 
 
 def list_tools():
@@ -1292,6 +1308,7 @@ def register_routes(app):
     app.add_url_rule('/cases', 'list_cases', _require_auth(list_cases))
     app.add_url_rule('/cases/<case_name>/report', 'get_case_report', _require_auth(get_case_report))
     app.add_url_rule('/reports', 'list_reports', _require_auth(list_reports))
+    app.add_url_rule('/reports/graph', 'graph_viewer', _require_auth(graph_viewer))
     app.add_url_rule('/reports/<case_dir>/json', 'get_report_json', _require_auth(get_report_json))
     app.add_url_rule('/reports/<case_dir>/download/markdown', 'download_markdown', _require_auth(download_markdown))
     app.add_url_rule('/reports/<case_dir>/download/json', 'download_json', _require_auth(download_json))
@@ -1299,6 +1316,7 @@ def register_routes(app):
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
+    app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
     app.add_url_rule('/tools', 'list_tools', _require_auth(list_tools))
     app.add_url_rule('/health', 'health', health)
     app.add_url_rule('/health/detailed', 'health_detailed', _require_auth(health_detailed))
