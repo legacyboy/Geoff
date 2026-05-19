@@ -961,6 +961,32 @@ function extractTechniquesFromReport(data) {
         }
     }
 
+    // Strategy 5: Check attack_chain (actual Geoff case report structure)
+    if (data.attack_chain) {
+        const ac = data.attack_chain;
+        // Direct mitre_techniques_observed array
+        if (ac.mitre_techniques_observed && Array.isArray(ac.mitre_techniques_observed)) {
+            ac.mitre_techniques_observed.forEach(tid => {
+                addFinding(tid, 'finding', 'Observed in attack chain');
+            });
+        }
+        // Walk findings_detail for evidence to link to techniques
+        if (data.findings_detail && Array.isArray(data.findings_detail)) {
+            data.findings_detail.forEach(finding => {
+                walkFindings(finding, 'findings_detail');
+            });
+        }
+        // Also walk the attack_chain object itself
+        walkFindings(ac, 'attack_chain');
+    }
+
+    // If we have mitre_techniques_observed at root or nested, ensure detection
+    if (data.mitre_techniques_observed && Array.isArray(data.mitre_techniques_observed)) {
+        data.mitre_techniques_observed.forEach(tid => {
+            addFinding(tid, 'finding', 'Observed in case');
+        });
+    }
+
     return findings;
 }
 
