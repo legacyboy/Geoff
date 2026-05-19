@@ -343,8 +343,9 @@ _EVIDENCE_TYPE_MAP = {
     ".img": "disk_image", ".vmdk": "disk_image", ".vhd": "disk_image",
     ".vhdx": "disk_image", ".qcow2": "disk_image", ".vdi": "disk_image",
     ".vmem": "memory_dump", ".mem": "memory_dump", ".dmp": "memory_dump",
-    ".lime": "memory_dump",
+    ".lime": "memory_dump", ".core": "memory_dump", ".mdmp": "memory_dump", ".hdmp": "memory_dump",
     ".pcap": "pcap", ".pcapng": "pcap", ".cap": "pcap",
+    ".pcap.gz": "pcap", ".pcapng.gz": "pcap",
     ".evtx": "evtx", ".evt": "evt",
     ".hive": "hive", ".dat": "registry",
     ".eml": "email", ".mbox": "email", ".pst": "email", ".ost": "email", ".msg": "email", ".edb": "email",
@@ -358,10 +359,29 @@ _EVIDENCE_TYPE_MAP = {
 
 
 def _infer_evidence_type(path: str) -> str:
-    """Guess evidence type from file extension."""
+    """Guess evidence type from file extension.
+
+    For .img files, uses directory-name heuristics to distinguish
+    memory dumps from disk images.
+    For .pcap.gz / .pcapng.gz, returns 'pcap'.
+    """
     if not path:
         return "unknown"
+    path_lower = path.lower()
+    # Compressed PCAPs: .pcap.gz / .pcapng.gz
+    if path_lower.endswith('.pcap.gz') or path_lower.endswith('.pcapng.gz'):
+        return "pcap"
     suffix = Path(path).suffix.lower()
+    if suffix == '.img':
+        # Disambiguate .img: could be disk_image or memory_dump
+        parent = str(Path(path).parent.name).lower()
+        if any(kw in parent for kw in ('memory', 'mem', 'ram', 'volatile')):
+            return "memory_dump"
+        name_lower = Path(path).name.lower()
+        if any(kw in name_lower for kw in ('memory', 'mem', 'ram', 'vmem', 'dmp', 'dump',
+                                            'hiberfil', 'pagefile', 'swapfile',
+                                            'boomer', 'vista-beta', 'xp-laptop')):
+            return "memory_dump"
     return _EVIDENCE_TYPE_MAP.get(suffix, "unknown")
 
 

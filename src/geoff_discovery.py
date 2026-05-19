@@ -1797,12 +1797,40 @@ def _inventory_evidence(evidence_path: Path) -> dict:
             if ext == ".evt" and "octet-stream" in mime_type and header_type != "unknown":
                 _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .evt extension but MIME is {mime_type}")
 
-        if ext in disk_ext:
+        # --- Smart classification for ambiguous extensions ---
+        # .img can be a disk image OR a memory dump — disambiguate using
+        # directory name, file header, and naming patterns.
+        if ext in disk_ext and ext == '.img':
+            # Check if this .img is actually a memory dump
+            _parent_dir = item.parent.name.lower()
+            _path_lower = str(item).lower()
+            _is_memory = False
+            # Directory-name heuristics: parent dir suggests memory
+            if any(kw in _parent_dir for kw in ('memory', 'mem', 'ram', 'volatile')):
+                _is_memory = True
+            # Header-based heuristics: magic bytes indicate memory dump
+            if not _is_memory and header_type in ('memory_dump',):
+                _is_memory = True
+            # Name-based heuristics: file name suggests memory dump
+            if not _is_memory:
+                _name_lower = item.name.lower()
+                if any(kw in _name_lower for kw in ('memory', 'mem', 'ram', 'vmem', 'dmp', 'dump', 'hiberfil', 'pagefile', 'swapfile', 'boomer', 'vista-beta', 'xp-laptop')):
+                    _is_memory = True
+            if _is_memory:
+                inventory["memory_dumps"].append(str(item))
+                _fe_log(job_id, f"  🧠 .img reclassified as memory_dump: {item.name}")
+            else:
+                inventory["disk_images"].append(str(item))
+        elif ext in disk_ext:
             inventory["disk_images"].append(str(item))
         elif ext in mem_ext:
             inventory["memory_dumps"].append(str(item))
         elif ext in pcap_ext:
             inventory["pcaps"].append(str(item))
+        # --- Compressed PCAP support ---
+        elif ext == '.pcap.gz' or ext == '.pcapng.gz' or name_lower.endswith('.pcap.gz') or name_lower.endswith('.pcapng.gz'):
+            inventory["pcaps"].append(str(item))
+            _fe_log(job_id, f"  📦 Compressed PCAP detected: {item.name}")
         elif ext == '.evtx':
             inventory.get("evtx_logs", []).append(str(item))
         elif ext == '.evt':

@@ -1894,13 +1894,41 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "files": extracted_files,
                         })
                         # Add extracted files to inventory for processing
+                        # Re-classify based on content type so playbooks trigger correctly
                         # CAP: Limit to first 1000 files to prevent runaway loops on massive extractions
                         # DeviceDiscovery will handle the directory contents directly
                         _file_cap = 1000
                         _added = 0
                         for fpath in extracted_files[:_file_cap]:
+                            fext = Path(fpath).suffix.lower()
+                            fname_lower = Path(fpath).name.lower()
                             fheader = _detect_file_type_from_header(fpath)
-                            if fheader == "sqlite_db":
+                            # Re-classify extracted files into correct inventory buckets
+                            if fheader == "ewf_disk_image" or fext in ('.e01', '.e02', '.e03', '.e04', '.dd', '.raw', '.aff'):
+                                if fpath not in inventory["disk_images"]:
+                                    inventory["disk_images"].append(fpath)
+                                    _added += 1
+                            elif fheader == "memory_dump" or (fext == '.img' and any(kw in str(Path(fpath).parent.name).lower() for kw in ('memory', 'mem', 'ram'))):
+                                if fpath not in inventory["memory_dumps"]:
+                                    inventory["memory_dumps"].append(fpath)
+                                    _added += 1
+                            elif fheader == "pcap" or fext in ('.pcap', '.pcapng', '.cap') or fname_lower.endswith('.pcap.gz') or fname_lower.endswith('.pcapng.gz'):
+                                if fpath not in inventory["pcaps"]:
+                                    inventory["pcaps"].append(fpath)
+                                    _added += 1
+                            elif fheader == "registry_hive" or fname_lower in ('ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve', 'usrclass.dat'):
+                                if fpath not in inventory["registry_hives"]:
+                                    inventory["registry_hives"].append(fpath)
+                                    _added += 1
+                            elif fext == '.evtx':
+                                if fpath not in inventory.get("evtx_logs", []):
+                                    inventory.setdefault("evtx_logs", []).append(fpath)
+                                    _added += 1
+                            elif fext == '.vmem' or fext == '.dmp' or fext == '.mem':
+                                if fpath not in inventory["memory_dumps"]:
+                                    inventory["memory_dumps"].append(fpath)
+                                    _added += 1
+                            elif fheader == "sqlite_db":
                                 if fpath not in inventory["mobile_backups"]:
                                     inventory["mobile_backups"].append(fpath)
                                     _added += 1
@@ -3672,110 +3700,82 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
 
-        # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
+        # ===== Newly Wired Playbook Triggers =====
 
-        # Memory forensics — triggered by memory dump files
-        if inventory["memory_dumps"]:
-            execution_plan.append("PB-SIFT-027")
-            _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
-
-        # Windows Modern Artifacts — triggered by Windows OS + registry hives
-        if os_type == "windows" and inventory["registry_hives"]:
-            execution_plan.append("PB-SIFT-028")
-            _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
-
-        # Encrypted Containers — detect encrypted volume indicators
-        encrypted_indicators = {
-            "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
-            "filevault": ["apfs encrypted", "filevault", "corestorage"],
-            "veracrypt": ["veracrypt", "truecrypt", r"\.tc$"],
-            "luks": ["luks", "cryptsetup", "dm-crypt"],
-        }
-        encrypted_detected = False
-        for f in inventory.get("other_files", []):
-            f_lower = str(f).lower()
-            for etype, indicators in encrypted_indicators.items():
-                if any(ind in f_lower for ind in indicators):
-                    encrypted_detected = True
-                    break
-        # Also check disk images for high-entropy (potential encrypted containers)
-        if not encrypted_detected:
-            for f in inventory.get("disk_images", []):
+        # Data Staging (PB-SIFT-015) — triggered when exfiltration playbook queued
+        # or staging-related artifacts detected in other_files
+        _staging_detected = bool(cloud_sync_detected)
+        if not _staging_detected:
+            for f in inventory.get("other_files", []):
                 f_lower = str(f).lower()
-                if any(ind in f_lower for ind in [".tc", "veracrypt", "luks", "bitlocker"]):
-                    encrypted_detected = True
+                if "staging" in f_lower or "bulk" in f_lower or "export" in f_lower:
+                    _staging_detected = True
                     break
-        if encrypted_detected:
-            execution_plan.append("PB-SIFT-029")
-            _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
+        if "PB-SIFT-007" in execution_plan or _staging_detected:
+            execution_plan.append("PB-SIFT-015")
+            _fe_log(job_id, "  PB-SIFT-015: Data Staging Analysis queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-015", "reason": "No exfiltration or staging indicators"})
 
-        # Cloud Sync Artifacts — detect cloud storage sync databases
-        cloud_sync_patterns = {
-            "onedrive": ["onedrive", "skydrive"],
-            "googledrive": ["snapshot.db", "drivefs", "google drive"],
-            "dropbox": ["filecache.db", "dropbox"],
-            "icloud": ["ubiquity", "clouddocs", "icloud"],
-            "box": ["box sync"],
+        # Network Device Forensics (PB-SIFT-034) — triggered when network device
+        # configuration exports or log files detected in other_files
+        _net_device_patterns = {
+            "cisco": ["startup-config", "running-config", "ios", "flash:", "nvram:"],
+            "juniper": ["junos", "junos.conf", "juniper.conf"],
+            "paloalto": ["pan-os", "running-config.xml", "panorama"],
+            "fortinet": ["fortigate", "fortios", "config backup", ".conf"],
+            "network_device": ["switch", "router", "firewall", "ap.config", "vlan"],
         }
-        cloud_sync_detected = False
+        _net_device_detected = False
         for f in inventory.get("other_files", []):
             f_lower = str(f).lower()
-            for service, patterns in cloud_sync_patterns.items():
+            for vendor, patterns in _net_device_patterns.items():
                 if any(p in f_lower for p in patterns):
-                    cloud_sync_detected = True
+                    _net_device_detected = True
                     break
-        if cloud_sync_detected:
-            execution_plan.append("PB-SIFT-030")
-            _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
+        if _net_device_detected:
+            execution_plan.append("PB-SIFT-034")
+            _fe_log(job_id, "  PB-SIFT-034: Network Device Forensics queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-034", "reason": "No network device artifacts detected"})
 
-        # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
-        collab_patterns = {
-            "teams": ["teams", "microsoft teams"],
-            "slack": ["slack"],
-            "discord": ["discord"],
-            "skype": ["skype", "main.db"],
-            "zoom": ["zoom", "zoom.us"],
+        # Active Directory / DC Forensics (PB-SIFT-035) — triggered when ntds.dit,
+        # SYSVOL, AD event logs, or DC indicators found in other_files or registry hives
+        _dc_patterns = {
+            "ntds": ["ntds.dit", "ntds"],
+            "sysvol": ["sysvol", "sysvol/", "scripts/gp", "policies/{"],
+            "ad_logs": ["directory service", "eid 4662", "eid 4768", "eid 4769", "eid 4776"],
+            "kerberos": ["krbtgt", "kerberos", "ticket"],
+            "domain": ["domain controller", "dc=", "%logonserver%"],
         }
-        collab_detected = False
+        _dc_detected = False
         for f in inventory.get("other_files", []):
             f_lower = str(f).lower()
-            for app, patterns in collab_patterns.items():
+            for ad_type, patterns in _dc_patterns.items():
                 if any(p in f_lower for p in patterns):
-                    collab_detected = True
+                    _dc_detected = True
                     break
-        if collab_detected:
-            execution_plan.append("PB-SIFT-031")
-            _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
-
-        # VM Snapshot Forensics — detect VM snapshot/memory files
-        vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
-        vm_detected = False
-        for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
-            if Path(f).suffix.lower() in vm_exts or Path(f).name.lower().endswith(".vmx"):
-                vm_detected = True
-                break
-        if vm_detected:
-            execution_plan.append("PB-SIFT-032")
-            _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
-
-        # Container Forensics — detect Docker/container artifacts
-        container_patterns = {
-            "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
-            "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
-            "podman": ["podman", "containers"],
-        }
-        container_detected = False
-        for f in inventory.get("other_files", []):
-            f_lower = str(f).lower()
-            for runtime, patterns in container_patterns.items():
-                if any(p in f_lower for p in patterns):
-                    container_detected = True
+        # Also check registry hives — SYSTEM hive with DC signature
+        if not _dc_detected and inventory.get("registry_hives"):
+            for h in inventory["registry_hives"]:
+                h_lower = str(h).lower()
+                if "system" in h_lower or "sam" in h_lower or "security" in h_lower:
+                    _dc_detected = True
                     break
-        if container_detected:
-            execution_plan.append("PB-SIFT-033")
-            _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
+        if _dc_detected:
+            execution_plan.append("PB-SIFT-035")
+            _fe_log(job_id, "  PB-SIFT-035: Active Directory/DC Forensics queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-035", "reason": "No AD/DC artifacts detected"})
 
-        # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
+        # PCAP & Network Forensics (PB-SIFT-036) — triggered by PCAP files in inventory
+        if inventory.get("pcaps"):
+            execution_plan.append("PB-SIFT-036")
+            _fe_log(job_id, f"  PB-SIFT-036: PCAP Network Forensics queued for {len(inventory['pcaps'])} PCAP file(s)")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-036", "reason": "No PCAP files in evidence"})
+
+        # ===== End Newly Wired Playbook Triggers =====
 
         # Add malware playbooks when:
         #   a) triage output flagged a suspicious binary keyword, OR
@@ -3815,12 +3815,99 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
 
-        # Generic File Analysis — ALWAYS run when unclassified files remain
-        if len(inventory["other_files"]) > 0:
+        # Cloud/Enterprise IR — triggered by cloud-specific artifacts
+        # NOT triggered by generic unclassified files
+        _cloud_artifact_patterns = {
+            "m365_ual": ["unified audit log", "ual", "audit log"],
+            "azure_ad": ["azure ad", "sign-in log", "azuread", "conditional access"],
+            "cloudtrail": ["cloudtrail", "aws cloudtrail", "cloud-trail"],
+            "oauth": ["oauth app", "consent grant", "app consent"],
+            "exchange_fwd": ["exchange forwarding", "transport rule", "inbox rule"],
+            "sharepoint": ["sharepoint access", "onedrive audit", "sharepoint audit"],
+            "gworkspace": ["google workspace", "gsuite audit", "admin log"],
+        }
+        _cloud_detected = False
+        for f in inventory.get("other_files", []) + inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            for _ctype, patterns in _cloud_artifact_patterns.items():
+                if any(p in f_lower for p in patterns):
+                    _cloud_detected = True
+                    break
+            if _cloud_detected:
+                break
+        if _cloud_detected:
             execution_plan.append("PB-SIFT-025")
-            _fe_log(job_id, f"  PB-SIFT-025: Generic File Analysis queued for {len(inventory['other_files'])} unclassified file(s)")
+            _fe_log(job_id, "  PB-SIFT-025: Cloud/Enterprise IR queued (cloud artifacts detected)")
         else:
-            skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
+            skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No cloud-specific artifacts detected"})
+
+        # Data Staging (PB-SIFT-015) — triggered by bulk file access or staging indicators
+        _staging_patterns = ["staging", "temp\\", "tmp\\", "dropped", "collection", "bulk"]
+        _staging_detected = False
+        for f in indicator_hits:
+            result_str = json.dumps(f.get("result", f.get("error", "")), default=str).lower()
+            if any(p in result_str for p in _staging_patterns):
+                _staging_detected = True
+                break
+        if _staging_detected or len(inventory.get("other_files", [])) > 100:
+            execution_plan.append("PB-SIFT-015")
+            _fe_log(job_id, "  PB-SIFT-015: Data Staging queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-015", "reason": "No data staging indicators"})
+
+        # Network Device Forensics (PB-SIFT-034) — triggered by network device configs
+        _net_device_patterns = {
+            "cisco": ["cisco", "ios.", "running-config", "startup-config"],
+            "junos": ["junos", "juniper", "junos-config"],
+            "paloalto": ["palo alto", "panos", "pan-config"],
+            "fortigate": ["fortigate", "fortios", "fgt"],
+            "snmp": ["snmpwalk", "snmp trap", "mib"],
+        }
+        _net_device_detected = False
+        for f in inventory.get("other_files", []):
+            f_lower = str(f).lower()
+            for _dtype, patterns in _net_device_patterns.items():
+                if any(p in f_lower for p in patterns):
+                    _net_device_detected = True
+                    break
+            if _net_device_detected:
+                break
+        if _net_device_detected:
+            execution_plan.append("PB-SIFT-034")
+            _fe_log(job_id, "  PB-SIFT-034: Network Device Forensics queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-034", "reason": "No network device evidence detected"})
+
+        # AD/DC Forensics (PB-SIFT-035) — triggered by domain controller artifacts
+        _ad_indicators = ["ntds.dit", "sysvol", "domain controller", "group policy", "gpt.ini",
+                         "ntds", "dc\\", "ad\\db" ]
+        _ad_detected = False
+        for f in inventory.get("other_files", []) + inventory.get("registry_hives", []):
+            f_lower = str(f).lower()
+            if any(ind in f_lower for ind in _ad_indicators):
+                _ad_detected = True
+                break
+        if not _ad_detected:
+            for f in inventory.get("disk_images", []):
+                f_lower = str(f).lower()
+                if any(ind in f_lower for ind in ["dc01", "dc02", "domain-controller", "ntds"]):
+                    _ad_detected = True
+                    break
+        if _ad_detected:
+            execution_plan.append("PB-SIFT-035")
+            _fe_log(job_id, "  PB-SIFT-035: AD/DC Forensics queued")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-035", "reason": "No domain controller evidence detected"})
+
+        # PCAP & Network Forensics (PB-SIFT-036) — triggered by PCAP files
+        if inventory.get("pcaps") or any(
+            str(f).lower().endswith(('.pcap', '.pcapng', '.pcap.gz', '.pcapng.gz'))
+            for f in inventory.get("other_files", [])
+        ):
+            execution_plan.append("PB-SIFT-036")
+            _fe_log(job_id, f"  PB-SIFT-036: PCAP & Network Forensics queued ({len(inventory.get('pcaps', []))} PCAP(s))")
+        else:
+            skipped_playbooks.append({"id": "PB-SIFT-036", "reason": "No PCAP files in evidence"})
 
         # --- Nuclear option: use deep classification results to intelligently
         # queue playbooks based on what was ACTUALLY found inside disk images.
