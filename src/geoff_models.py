@@ -215,13 +215,12 @@ def get_evidence_recursive(path, prefix=""):
 
 def get_all_cases():
     """Get ALL cases with ALL contents"""
-    evidence_path = "/mnt/evidence-storage/evidence"
     cases = {}
-    if not os.path.exists(evidence_path):
+    if not os.path.exists(CASES_WORK_DIR):
         return cases
     try:
-        for case_name in sorted(os.listdir(evidence_path)):
-            case_path = os.path.join(evidence_path, case_name)
+        for case_name in sorted(os.listdir(CASES_WORK_DIR)):
+            case_path = os.path.join(CASES_WORK_DIR, case_name)
             if os.path.isdir(case_path):
                 cases[case_name] = get_evidence_recursive(case_path)
     except Exception as e:
