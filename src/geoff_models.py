@@ -17,7 +17,7 @@ from typing import Optional
 # Imports from sibling modules
 # ---------------------------------------------------------------------------
 
-from geoff_config import CASES_WORK_DIR
+from geoff_config import CASES_WORK_DIR, EVIDENCE_BASE_DIR
 
 from geoff_utils import (
     _log_lock,
@@ -216,11 +216,11 @@ def get_evidence_recursive(path, prefix=""):
 def get_all_cases():
     """Get ALL cases with ALL contents"""
     cases = {}
-    if not os.path.exists(CASES_WORK_DIR):
+    if not os.path.exists(EVIDENCE_BASE_DIR):
         return cases
     try:
-        for case_name in sorted(os.listdir(CASES_WORK_DIR)):
-            case_path = os.path.join(CASES_WORK_DIR, case_name)
+        for case_name in sorted(os.listdir(EVIDENCE_BASE_DIR)):
+            case_path = os.path.join(EVIDENCE_BASE_DIR, case_name)
             if os.path.isdir(case_path):
                 cases[case_name] = get_evidence_recursive(case_path)
     except Exception as e:
