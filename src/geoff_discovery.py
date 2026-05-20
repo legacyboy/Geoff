@@ -534,6 +534,10 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
         for img in dev.get("evidence_files", []):
             if img not in disk_images:
                 continue
+                resolved = _resolve_e01_path(img)
+                if resolved != img:
+                    _fe_log(job_id, f"  SKIP Continuation segment " + Path(img).name + " - handled by " + Path(resolved).name + "")
+                    continue
             img_name = Path(img).name
             _fe_log(job_id, f"  🔍 Detecting partition offset for {img_name}")
             try:
@@ -897,6 +901,10 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
 
     for img_path in disk_images:
         offset = image_offsets.get(img_path)
+        resolved = _resolve_e01_path(img_path)
+        if resolved != img_path:
+            _fe_log(job_id, f"  SKIP Continuation segment " + Path(img_path).name + " - handled by " + Path(resolved).name + "")
+            continue
         if offset is None:
             _fe_log(job_id, f"  ⚠ No partition offset for {Path(img_path).name} — skipping")
             continue
