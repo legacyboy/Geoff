@@ -6,6 +6,7 @@ Uses LLM to generate natural language summaries, with a template-based
 fallback if the LLM is unavailable.
 """
 
+import ipaddress
 import json
 import os
 import re
@@ -246,6 +247,176 @@ class NarrativeReportGenerator:
         "Check OLLAMA_URL",
         "[ERROR] Ollama returned",
     )
+
+    # Registry keys that are never IOCs — Windows system/environment paths
+    _KNOWN_GOOD_REGISTRY_PREFIXES = frozenset({
+        'HKLM\\HARDWARE\\DESCRIPTION',
+        'HKLM\\SAM\\SAM',
+        'HKLM\\SECURITY\\Policy',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList',
+        'HKCU\\Control Panel',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Network',
+        'HKLM\\SYSTEM\\MountedDevices',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Services\\NlaSvc\\Parameters',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Enum',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Search',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+        'HKCU\\Software\\Microsoft\\Internet Explorer',
+        'HKLM\\SOFTWARE\\Microsoft\\Internet Explorer',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing',
+        'HKCU\\Software\\Microsoft\\Office',
+        'HKLM\\SOFTWARE\\Microsoft\\Office',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Dnscache',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies',
+        'HKCU\\Software\\Policies',
+        'HKLM\\SOFTWARE\\Policies',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Safety Options',
+        'HKLM\\BcdObject\\Description',
+        'HKLM\\SYSTEM\\Setup',
+        'HKLM\\COMPONENTS\\DerivedData\\VersionedIndex',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SideBySide',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ThemeManager',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Group Policy',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Group Policy',
+        'HKLM\\SYSTEM\\Select',
+        'HKLM\\SOFTWARE\\JavaSoft',
+        'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess',
+        'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager',
+    })
+
+    @staticmethod
+    def _get_registry_depth(key: str) -> int:
+        """Count depth of a registry key path (number of path components after hive)."""
+        # Normalise to backslash
+        norm = key.replace('/', '\\')
+        parts = [p for p in norm.split('\\') if p]
+        # Subtract 1 for the hive (HKLM/HKCU/HKEY_*) component
+        return max(0, len(parts) - 1)
+
+    # Known CDN / cloud-infrastructure IP ranges — never IOCs
+    _KNOWN_CDN_PREFIXES = [
+        # Microsoft Azure
+        ipaddress.IPv4Network('13.64.0.0/11'),
+        ipaddress.IPv4Network('13.96.0.0/13'),
+        ipaddress.IPv4Network('13.104.0.0/14'),
+        ipaddress.IPv4Network('40.64.0.0/10'),
+        ipaddress.IPv4Network('40.80.0.0/12'),
+        ipaddress.IPv4Network('40.112.0.0/13'),
+        ipaddress.IPv4Network('52.0.0.0/10'),
+        ipaddress.IPv4Network('104.0.0.0/10'),
+        ipaddress.IPv4Network('104.40.0.0/13'),
+        # Microsoft 365 / Office 365
+        ipaddress.IPv4Network('13.107.6.0/24'),
+        ipaddress.IPv4Network('13.107.18.0/24'),
+        ipaddress.IPv4Network('13.107.128.0/22'),
+        ipaddress.IPv4Network('52.96.0.0/14'),
+        ipaddress.IPv4Network('52.112.0.0/14'),
+        ipaddress.IPv4Network('52.120.0.0/14'),
+        # Cloudflare
+        ipaddress.IPv4Network('103.21.244.0/22'),
+        ipaddress.IPv4Network('103.22.200.0/22'),
+        ipaddress.IPv4Network('103.31.4.0/22'),
+        ipaddress.IPv4Network('104.16.0.0/13'),
+        ipaddress.IPv4Network('104.24.0.0/14'),
+        ipaddress.IPv4Network('108.162.192.0/18'),
+        ipaddress.IPv4Network('131.0.72.0/22'),
+        ipaddress.IPv4Network('141.101.64.0/18'),
+        ipaddress.IPv4Network('162.158.0.0/15'),
+        ipaddress.IPv4Network('172.64.0.0/13'),
+        ipaddress.IPv4Network('173.245.48.0/20'),
+        ipaddress.IPv4Network('188.114.96.0/20'),
+        ipaddress.IPv4Network('190.93.240.0/20'),
+        ipaddress.IPv4Network('197.234.240.0/22'),
+        ipaddress.IPv4Network('198.41.128.0/17'),
+        # Akamai
+        ipaddress.IPv4Network('2.16.0.0/13'),
+        ipaddress.IPv4Network('23.0.0.0/12'),
+        ipaddress.IPv4Network('23.32.0.0/11'),
+        ipaddress.IPv4Network('23.64.0.0/14'),
+        ipaddress.IPv4Network('23.72.0.0/13'),
+        ipaddress.IPv4Network('23.192.0.0/11'),
+        ipaddress.IPv4Network('63.241.192.0/19'),
+        ipaddress.IPv4Network('64.63.64.0/18'),
+        ipaddress.IPv4Network('69.24.0.0/15'),
+        ipaddress.IPv4Network('72.246.0.0/15'),
+        ipaddress.IPv4Network('80.67.64.0/20'),
+        ipaddress.IPv4Network('92.122.0.0/15'),
+        ipaddress.IPv4Network('95.100.0.0/15'),
+        ipaddress.IPv4Network('96.6.0.0/15'),
+        ipaddress.IPv4Network('173.222.0.0/15'),
+        ipaddress.IPv4Network('184.24.0.0/13'),
+        ipaddress.IPv4Network('184.50.0.0/15'),
+        ipaddress.IPv4Network('184.84.0.0/14'),
+        ipaddress.IPv4Network('193.108.88.0/22'),
+        ipaddress.IPv4Network('204.74.96.0/19'),
+        # Google Cloud / Google infrastructure
+        ipaddress.IPv4Network('8.8.8.0/24'),
+        ipaddress.IPv4Network('8.8.4.0/24'),
+        ipaddress.IPv4Network('34.0.0.0/15'),
+        ipaddress.IPv4Network('34.32.0.0/11'),
+        ipaddress.IPv4Network('34.64.0.0/10'),
+        ipaddress.IPv4Network('34.128.0.0/10'),
+        ipaddress.IPv4Network('35.184.0.0/13'),
+        ipaddress.IPv4Network('35.192.0.0/14'),
+        ipaddress.IPv4Network('35.196.0.0/15'),
+        ipaddress.IPv4Network('35.200.0.0/13'),
+        ipaddress.IPv4Network('35.208.0.0/12'),
+        ipaddress.IPv4Network('35.224.0.0/12'),
+        ipaddress.IPv4Network('35.240.0.0/13'),
+        # AWS (CloudFront + general)
+        ipaddress.IPv4Network('13.32.0.0/15'),
+        ipaddress.IPv4Network('13.248.0.0/14'),
+        ipaddress.IPv4Network('15.0.0.0/9'),
+        ipaddress.IPv4Network('18.0.0.0/8'),
+        ipaddress.IPv4Network('35.71.96.0/20'),
+        ipaddress.IPv4Network('52.46.0.0/18'),
+        ipaddress.IPv4Network('52.82.0.0/15'),
+        ipaddress.IPv4Network('52.84.0.0/15'),
+        ipaddress.IPv4Network('52.222.128.0/17'),
+        ipaddress.IPv4Network('54.192.0.0/10'),
+        ipaddress.IPv4Network('54.230.0.0/15'),
+        ipaddress.IPv4Network('54.239.128.0/18'),
+        ipaddress.IPv4Network('54.240.128.0/18'),
+        ipaddress.IPv4Network('99.84.0.0/16'),
+        ipaddress.IPv4Network('99.86.0.0/15'),
+        ipaddress.IPv4Network('108.156.0.0/14'),
+        ipaddress.IPv4Network('143.204.0.0/16'),
+        ipaddress.IPv4Network('144.220.0.0/16'),
+        ipaddress.IPv4Network('150.222.0.0/15'),
+        ipaddress.IPv4Network('176.32.0.0/12'),
+        ipaddress.IPv4Network('204.246.164.0/22'),
+        ipaddress.IPv4Network('205.251.192.0/19'),
+        ipaddress.IPv4Network('216.137.32.0/19'),
+    ]
+
+    @classmethod
+    def _is_in_cdn_range(cls, ip_str: str) -> bool:
+        """Check if an IP address falls within any known CDN/cloud-infrastructure range."""
+        try:
+            addr = ipaddress.IPv4Address(ip_str)
+            for net in cls._KNOWN_CDN_PREFIXES:
+                if addr in net:
+                    return True
+        except ipaddress.AddressValueError:
+            pass
+        return False
 
     def _call_llm_with_retry(self, prompt: str, context: str = "", agent_type: str = "manager",
                               max_retries: int = 3, backoff: list = None) -> Optional[str]:
@@ -1722,8 +1893,11 @@ class NarrativeReportGenerator:
     _PRIV_IP = re.compile(
         r'^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|0\.0\.0\.0|255\.)')
 
-    # URL noise filter — known ad/tracking, SSL infra, and CDN patterns
+    # URL noise filter — known ad/tracking, SSL infra, CDN patterns, and
+    # Microsoft/cloud telemetry/infrastructure domains that are never IOCs.
+    # Matched via domain suffix (subdomain matching): sub.example.com matches .example.com
     _NOISE_URL_DOMAINS = (
+        # Ads / tracking
         'doubleclick.net', 'atwola.com', 'cdn.channel.aol.com', 'ads.cnn.com',
         'googlesyndication.com', 'googleadservices.com', 'quantserve.com',
         'scorecardresearch.com', 'googletagmanager.com', 'google-analytics.com',
@@ -1735,8 +1909,79 @@ class NarrativeReportGenerator:
         'adsafeprotected.com', '2mdn.net', 'adform.net', 'adnxs.com',
         'adzerk.net', 'tribalfusion.com', 'turn.com', 'invitemedia.com',
         'media6degrees.com', 'specificmedia.com', 'tidaltv.com',
+        # Mozilla telemetry
         'telemetry.mozilla.org', 'incoming.telemetry.mozilla.org',
+        # Crash/error reporting
         'sessions.bugsnag.com', 'notify.bugsnag.com',
+        # Microsoft telemetry / update / infrastructure
+        'microsoft.com',
+        'live.com',
+        'bing.com',
+        'msn.com',
+        'windows.com',
+        'azure.com',
+        'office.com',
+        'office365.com',
+        'microsoftonline.com',
+        'windowsupdate.com',
+        'windowsupdate.microsoft.com',
+        'update.microsoft.com',
+        'delivery.mp.microsoft.com',
+        'ctldl.windowsupdate.com',
+        'download.windowsupdate.com',
+        'settings-win.data.microsoft.com',
+        'watson.telemetry.microsoft.com',
+        'vortex.data.microsoft.com',
+        'vortex-win.data.microsoft.com',
+        'telecommand.telemetry.microsoft.com',
+        'oca.telemetry.microsoft.com',
+        'sqm.telemetry.microsoft.com',
+        'telemetry.microsoft.com',
+        'stats.microsoft.com',
+        'login.live.com',
+        'account.live.com',
+        'outlook.office.com',
+        'outlook.office365.com',
+        'outlook.live.com',
+        'skype.com',           # legitimate Microsoft service
+        'xboxlive.com',
+        'xbox.com',
+        'microsoftstore.com',
+        'visualstudio.com',
+        'github.com',          # legitimate dev platform
+        'githubusercontent.com',
+        'nuget.org',           # package feed
+        # CDN / CDN-like
+        'akamaized.net',
+        'cloudfront.net',
+        'cloudflare.com',
+        'edgekey.net',
+        'edgesuite.net',
+        'akadns.net',
+        'akamai.net',
+        'akamaihd.net',
+        'akamaitechnologies.com',
+        'llnwd.net',           # Limelight CDN
+        'fastly.net',
+        'fastly.com',
+        'stackpathcdn.com',
+        'cdninstagram.com',
+        # Known safe / forensic reference
+        'google.com',          # search, not IOC
+        'nist.gov',            # forensics reference
+        'nvd.nist.gov',
+        'virustotal.com',      # analysis reference
+        'reddit.com',
+        'youtube.com',
+        'twitter.com',
+        'x.com',
+        'facebook.com',
+        'linkedin.com',
+        'wikipedia.org',
+        'stackoverflow.com',
+        'stackexchange.com',
+        'docker.com',          # container registry
+        'hub.docker.com',
     )
     _NOISE_URL_KEYWORDS = (
         'crl.', 'ocsp.', 'verisign', 'thawte', 'globalsign',
@@ -1776,8 +2021,7 @@ class NarrativeReportGenerator:
             between = url_lower[first_end:http_positions[1]]
             if '&' not in between and '?' not in between and ' ' not in between:
                 return True
-        # Reject URLs without a proper dot in the domain (single-segment pseudo-TLDs aren't real)
-        # Extract domain between :// and next /
+        # Extract domain between :// and next / for suffix checks
         proto_end = url_lower.find('://')
         if proto_end >= 0:
             domain_start = proto_end + 3
@@ -1786,18 +2030,29 @@ class NarrativeReportGenerator:
                 domain_end = url_lower.find('?', domain_start)
             if domain_end == -1:
                 domain_end = len(url_lower)
-            domain = url_lower[domain_start:domain_end]
+            url_domain = url_lower[domain_start:domain_end]
+            # Strip port number if present
+            port_idx = url_domain.find(':')
+            if port_idx >= 0:
+                url_domain = url_domain[:port_idx]
             # No dot in domain means it's not a real URL (e.g. http://abcdefg)
-            if '.' not in domain:
+            if '.' not in url_domain:
                 return True
+        else:
+            url_domain = ''  # not a proper URL; downstream checks will handle
         # Reject URLs containing binary/hex-like noise patterns (long hex strings without proper structure)
         # Random hex segments appearing as path components suggest binary data artifact
         hex_segments = __import__('re').findall(r'[0-9a-f]{16,}', url_lower)
         if hex_segments and len(hex_segments) >= 2:
             return True
-        for domain in self._NOISE_URL_DOMAINS:
-            if domain in url_lower:
+        # Domain suffix matching: check if url_domain matches a blocklist suffix
+        # e.g. sub.telemetry.microsoft.com matches .microsoft.com (ends with)
+        for domain_suffix in self._NOISE_URL_DOMAINS:
+            ds = domain_suffix.lower()
+            if url_domain == ds or url_domain.endswith('.' + ds):
                 return True
+
+        # Keyword substring matching (for patterns like crl., ocsp.)
         for kw in self._NOISE_URL_KEYWORDS:
             if kw in url_lower:
                 return True
@@ -1833,7 +2088,7 @@ class NarrativeReportGenerator:
                     all_single = all(len(o) == 1 for o in octets)
                     if all_single and ip not in {'8.8.8.8', '1.1.1.1', '8.8.4.4', '1.0.0.1'}:
                         continue
-                    if not self._PRIV_IP.match(ip):
+                    if not self._PRIV_IP.match(ip) and not NarrativeReportGenerator._is_in_cdn_range(ip):
                         buckets["ip_addresses"].add(ip)
             # MD5 / SHA1 / SHA256 hashes (store with context placeholders)
             for m in re.finditer(r'\b[0-9a-fA-F]{32,64}\b', text):
@@ -1858,12 +2113,30 @@ class NarrativeReportGenerator:
                 # Apply noise filter
                 if not self._is_noise_url(cleaned):
                     buckets["urls"].add(cleaned)
-            # Windows registry keys
+            # Windows registry keys — filter known-good and shallow keys
+            _registry_filtered = 0
             for m in re.finditer(
                     r'(?:HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)'
                     r'[\\\/][^\s"\'<>\r\n]+',
                     text, re.IGNORECASE):
-                buckets["registry_keys"].add(m.group(0))
+                rk = m.group(0)
+                # Normalise to backslash for consistent comparison
+                rk_norm = rk.replace('/', '\\')
+                # Skip keys with depth < 3 (too generic to be IOCs)
+                if NarrativeReportGenerator._get_registry_depth(rk_norm) < 3:
+                    _registry_filtered += 1
+                    continue
+                # Skip keys matching known-good prefixes
+                skip = False
+                for good_prefix in NarrativeReportGenerator._KNOWN_GOOD_REGISTRY_PREFIXES:
+                    if rk_norm.upper().startswith(good_prefix.upper()):
+                        _registry_filtered += 1
+                        skip = True
+                        break
+                if not skip:
+                    buckets["registry_keys"].add(rk)
+            if _registry_filtered > 0:
+                print(f"[REPORT] Filtered {_registry_filtered} noise registry key(s) from IOC extraction")
             # Windows file paths (min 10 chars to reduce noise)
             # Require at least 2-char directory names to avoid matching
             # single-char garbage from forensic metadata (e.g. \r\n parsed as r\, n\)
