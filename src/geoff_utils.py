@@ -51,6 +51,8 @@ __all__ = [
   "_hash_file",
   "_is_rfc1918",
   "_log_error",
+  "_active_mounts",
+  "_find_evil_jobs",
   "_log_info",
   "_make_exec_key",
   "_resolve_params",
