@@ -533,11 +533,11 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
     for dev_id, dev in device_map.items():
         for img in dev.get("evidence_files", []):
             if img not in disk_images:
-                continue
                 resolved = _resolve_e01_path(img)
                 if resolved != img:
-                    _fe_log(job_id, f"  SKIP Continuation segment " + Path(img).name + " - handled by " + Path(resolved).name + "")
+                    _fe_log(job_id, f"  SKIP Continuation segment - handled by parent")
                     continue
+                continue
             img_name = Path(img).name
             _fe_log(job_id, f"  🔍 Detecting partition offset for {img_name}")
             try:
