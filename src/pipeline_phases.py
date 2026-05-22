@@ -2036,7 +2036,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     continue
                 # Determine which disk image this browser artifact came from:
                 # browser artifacts from mount points have full_paths like
-                #   /home/sansforensics/cases/mounts/<case>/<img>_p<offset>/...
+                #   /mnt/cases/mounts/<case>/<img>_p<offset>/...
                 # Match by checking which disk image's stem appears in the path.
                 for _dev_id, _dev in device_map.items():
                     for _img in _dev.get("evidence_files", []):
@@ -2305,7 +2305,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             if vss_snapshots > 0 and _vss_findings:
                                 _vss_item = str(item)
                                 # VSS mount points follow the pattern: .../mounts/<case>/<img>_vss<N>/...
-                                if "_vss" in _vss_item and _vss_item.startswith("/home/sansforensics/cases/mounts/"):
+                                if "_vss" in _vss_item and _vss_item.startswith(os.path.join(CASES_WORK_DIR, "mounts")):
                                     step_record["_source_vss"] = True
                                     # Extract VSS number from path: ..._vss<N>/
                                     _vss_num_match = re.search(r'_vss(\d+)', _vss_item)

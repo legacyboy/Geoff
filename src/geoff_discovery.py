@@ -2913,7 +2913,7 @@ def _mount_vss_snapshots(inventory: dict, image_offsets: dict,
         'memory.dmp', 'kernel.dmp',
     })
 
-    mount_base = f"/home/sansforensics/cases/mounts/{case_name}"
+    mount_base = os.path.join(CASES_WORK_DIR, "mounts", case_name)
     os.makedirs(mount_base, exist_ok=True)
 
     vss_spec = VSS_Specialist()

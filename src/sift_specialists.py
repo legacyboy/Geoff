@@ -1524,7 +1524,7 @@ class SpecialistOrchestrator:
 
 
 if __name__ == '__main__':
-    orch = SpecialistOrchestrator('/home/sansforensics/evidence-storage')
+    orch = SpecialistOrchestrator('/mnt/evidence')
     tools = orch.get_available_tools()
     for tool, info in tools.items():
         print(f"\n{tool.upper()}:")
