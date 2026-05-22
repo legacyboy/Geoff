@@ -4531,635 +4531,635 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _fe_log(job_id, f"{'='*60}")
 
             completed_pb_dev = _scan_completed_playbooks(str(case_work_dir / "audit_trail.jsonl"))
-        for pb_idx, playbook_id in enumerate(execution_plan):
-                pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
-                pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
-                _update_job(pb_progress_base, playbook_id, f"{dev_id}: Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name} [{dev_id}]")
-
-                pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
-                pb_findings = []
-                any_step_ran = False
-
-                for ev_type, step_templates in pb_steps_def.items():
-                    if _abort:
-                        break
-                    evidence_items = dev_ev.get(ev_type, [])
-                    # If no evidence of this type, skip the steps for this evidence type
-                    # (but the playbook still "runs" — it just has no applicable evidence)
-                    if not evidence_items:
-                        continue
-
-                    # For some evidence types we iterate over each item; for others we
-                    # just use the first one (to keep runtime manageable).
-                    # Disk images and memory dumps: iterate all; others: first 3.
-                    if ev_type in ("disk_images", "memory_dumps"):
-                        items = evidence_items
-                    else:
-                        items = evidence_items[:3]
-
-                    for item in items:
+            for pb_idx, playbook_id in enumerate(execution_plan):
+                    pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
+                    pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
+                    _update_job(pb_progress_base, playbook_id, f"{dev_id}: Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name} [{dev_id}]")
+    
+                    pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
+                    pb_findings = []
+                    any_step_ran = False
+    
+                    for ev_type, step_templates in pb_steps_def.items():
                         if _abort:
                             break
-                        # Validate evidence path before substitution to prevent command injection
-                        try:
-                            _validate_evidence_path(item)
-                        except ValueError as path_err:
-                            _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
+                        evidence_items = dev_ev.get(ev_type, [])
+                        # If no evidence of this type, skip the steps for this evidence type
+                        # (but the playbook still "runs" — it just has no applicable evidence)
+                        if not evidence_items:
                             continue
-
-                        # For other_files, only invoke email analysis on actual email files.
-                        if ev_type == "other_files":
-                            if Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
-                                continue
-
-                        item_stem = Path(item).stem
-                        for module, function, raw_params in step_templates:
-                            # A009 — Anti-forensics steps handled by dedicated checkpoint phase; skip here
-                            if module == "anti_forensics":
-                                continue
-                            # Filter mobile steps by device type
-                            if playbook_id == "PB-SIFT-021":
-                                device_type = (dev.get("device_type") or "").lower()
-                                is_ios = device_type in ("ios_mobile", "ios")
-                                is_android = device_type in ("android_mobile", "android")
-                            
-                                # iOS-only steps
-                                if function.startswith("extract_ios_") or function in ("analyze_ios_backup", "run_ileapp"):
-                                    if not is_ios:
-                                        continue
-                                # Android-only steps
-                                elif function.startswith("extract_android_") or function in ("analyze_android", "run_aleapp"):
-                                    if not is_android:
-                                        continue
-                                # Platform-agnostic steps (whatsapp, telegram, photo_exif) — skip if neither
-                                elif function in ("extract_whatsapp", "extract_telegram", "extract_mobile_photo_exif"):
-                                    if not (is_ios or is_android):
-                                        continue
-
-                            _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
-
-                            # Build actual params by substituting placeholders
-                            params = {}
-                            for k, v in raw_params.items():
-                                if isinstance(v, str):
-                                    v = v.replace("{image}", item)
-                                    v = v.replace("{mem}", item)
-                                    v = v.replace("{pcap}", item)
-                                    v = v.replace("{evtx}", item)
-                                    v = v.replace("{evt}", item)
-                                    v = v.replace("{syslog}", item)
-                                    v = v.replace("{hive}", item)
-                                    v = v.replace("{mobile}", str(Path(item).parent))
-                                    v = v.replace("{file}", item)
-                                    v = v.replace("{output_dir}", output_dir)
-                                    v = v.replace("{image_stem}", item_stem)
-                                    v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
-                                params[k] = v
-                            # Convert numeric string params to int
-                            for k, v in list(params.items()):
-                                if isinstance(v, str) and v.isdigit():
-                                    params[k] = int(v)
-                                elif isinstance(v, str) and v.lower() in ('true', 'false'):
-                                    params[k] = v.lower() == 'true'
-
-                            # Idempotent step key — derive from findings (single source of truth)
-                            step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
-                            execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
-
-                            step_record = {
-                                "playbook": playbook_id,
-                                "step_key": step_key,
-                                "execution_hash": execution_hash,
-                                "module": module,
-                                "function": function,
-                                "params": params,
-                                "raw_command": _reconstruct_raw_command(module, function, params),
-                                "evidence_file": item,
-                                "device_id": dev_id,
-                                "owner": dev.get("owner"),
-                                "status": "running",
-                                "started_at": datetime.now().isoformat(),
-                            }
-
-                            # Idempotency: skip if already completed with same inputs
-                            if findings_writer.is_completed(step_key):
-                                _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
-                                continue
-
-                            # Dependency enforcement: check playbook step requirements
-                            # PLAYBOOK_STEPS entries are tuples: (module, function, params)
-                            pb_steps_list = []
-                            for category, steps in PLAYBOOK_STEPS.get(playbook_id, {}).items():
-                                if isinstance(steps, list):
-                                    pb_steps_list.extend(steps)
-                            step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
-                            # Tuples don't have 'requires' — dependency checking is for future dict-based steps
-                            if isinstance(step_def, dict) and step_def.get("requires"):
-                                for dep in step_def["requires"]:
-                                    dep_completed = any(
-                                        s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
-                                        for s in findings_writer.all_records()
-                                    )
-                                    if not dep_completed:
-                                        _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
-                                        step_record = {
-                                            "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
-                                            "module": module, "function": function, "params": params,
-                                            "raw_command": _reconstruct_raw_command(module, function, params),
-                                            "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
-                                            "status": "skipped", "error": f"dependency {dep} not met",
-                                            "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
-                                        }
-                                        findings_writer.append(step_record)
-                                        pb_findings.append(step_record)
-                                        continue
-
-                            step_record = {
-                                "playbook": playbook_id,
-                                "step_key": step_key,
-                                "execution_hash": execution_hash,
-                                "module": module,
-                                "function": function,
-                                "params": params,
-                                "raw_command": _reconstruct_raw_command(module, function, params),
-                                "evidence_file": item,
-                                "device_id": dev_id,
-                                "owner": dev.get("owner"),
-                                "status": "running",
-                                "retries": 0,
-                                "max_retries": 2,
-                                "started_at": datetime.now().isoformat(),
-                            }
-
-                            # Persist running state before execution (crash recovery)
+    
+                        # For some evidence types we iterate over each item; for others we
+                        # just use the first one (to keep runtime manageable).
+                        # Disk images and memory dumps: iterate all; others: first 3.
+                        if ev_type in ("disk_images", "memory_dumps"):
+                            items = evidence_items
+                        else:
+                            items = evidence_items[:3]
+    
+                        for item in items:
+                            if _abort:
+                                break
+                            # Validate evidence path before substitution to prevent command injection
                             try:
-                                pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-                                pb_output.parent.mkdir(parents=True, exist_ok=True)
-                                pb_findings_running = pb_findings + [step_record]
-                                _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
-                            except Exception as persist_exc:
-                                _log_info(f"playbook state persistence skipped for {playbook_id}: {persist_exc}")
-
-                            # Dedup: skip if this exact tool+file+params already ran
-                            exec_key = _make_exec_key(module, function, item, params)
-                            cached = exec_cache.get(exec_key)
-                            if cached is not None:
-                                step_record = {"playbook": playbook_id, "module": module, "function": function, "device": dev_id, "evidence": Path(item).name, "status": "completed", "result": cached, "_deduped": True}
-                                findings_writer.append(step_record)
-                                pb_findings.append(step_record)
-                                steps_completed += 1
-                                _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
+                                _validate_evidence_path(item)
+                            except ValueError as path_err:
+                                _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
                                 continue
-                            # Retry logic for transient failures
-                            # Catches BOTH exceptions AND error-status results
-                            # (orchestrator returns {"status": "error"} dicts, not exceptions)
-                            MAX_RETRIES = 3
-                            for attempt in range(MAX_RETRIES + 1):
+    
+                            # For other_files, only invoke email analysis on actual email files.
+                            if ev_type == "other_files":
+                                if Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
+                                    continue
+    
+                            item_stem = Path(item).stem
+                            for module, function, raw_params in step_templates:
+                                # A009 — Anti-forensics steps handled by dedicated checkpoint phase; skip here
+                                if module == "anti_forensics":
+                                    continue
+                                # Filter mobile steps by device type
+                                if playbook_id == "PB-SIFT-021":
+                                    device_type = (dev.get("device_type") or "").lower()
+                                    is_ios = device_type in ("ios_mobile", "ios")
+                                    is_android = device_type in ("android_mobile", "android")
+                                
+                                    # iOS-only steps
+                                    if function.startswith("extract_ios_") or function in ("analyze_ios_backup", "run_ileapp"):
+                                        if not is_ios:
+                                            continue
+                                    # Android-only steps
+                                    elif function.startswith("extract_android_") or function in ("analyze_android", "run_aleapp"):
+                                        if not is_android:
+                                            continue
+                                    # Platform-agnostic steps (whatsapp, telegram, photo_exif) — skip if neither
+                                    elif function in ("extract_whatsapp", "extract_telegram", "extract_mobile_photo_exif"):
+                                        if not (is_ios or is_android):
+                                            continue
+    
+                                _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
+    
+                                # Build actual params by substituting placeholders
+                                params = {}
+                                for k, v in raw_params.items():
+                                    if isinstance(v, str):
+                                        v = v.replace("{image}", item)
+                                        v = v.replace("{mem}", item)
+                                        v = v.replace("{pcap}", item)
+                                        v = v.replace("{evtx}", item)
+                                        v = v.replace("{evt}", item)
+                                        v = v.replace("{syslog}", item)
+                                        v = v.replace("{hive}", item)
+                                        v = v.replace("{mobile}", str(Path(item).parent))
+                                        v = v.replace("{file}", item)
+                                        v = v.replace("{output_dir}", output_dir)
+                                        v = v.replace("{image_stem}", item_stem)
+                                        v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                    params[k] = v
+                                # Convert numeric string params to int
+                                for k, v in list(params.items()):
+                                    if isinstance(v, str) and v.isdigit():
+                                        params[k] = int(v)
+                                    elif isinstance(v, str) and v.lower() in ('true', 'false'):
+                                        params[k] = v.lower() == 'true'
+    
+                                # Idempotent step key — derive from findings (single source of truth)
+                                step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+                                execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
+    
+                                step_record = {
+                                    "playbook": playbook_id,
+                                    "step_key": step_key,
+                                    "execution_hash": execution_hash,
+                                    "module": module,
+                                    "function": function,
+                                    "params": params,
+                                    "raw_command": _reconstruct_raw_command(module, function, params),
+                                    "evidence_file": item,
+                                    "device_id": dev_id,
+                                    "owner": dev.get("owner"),
+                                    "status": "running",
+                                    "started_at": datetime.now().isoformat(),
+                                }
+    
+                                # Idempotency: skip if already completed with same inputs
+                                if findings_writer.is_completed(step_key):
+                                    _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
+                                    continue
+    
+                                # Dependency enforcement: check playbook step requirements
+                                # PLAYBOOK_STEPS entries are tuples: (module, function, params)
+                                pb_steps_list = []
+                                for category, steps in PLAYBOOK_STEPS.get(playbook_id, {}).items():
+                                    if isinstance(steps, list):
+                                        pb_steps_list.extend(steps)
+                                step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
+                                # Tuples don't have 'requires' — dependency checking is for future dict-based steps
+                                if isinstance(step_def, dict) and step_def.get("requires"):
+                                    for dep in step_def["requires"]:
+                                        dep_completed = any(
+                                            s.get("step_key", "").startswith(f"{playbook_id}:{dep}") and s.get("status") == "completed"
+                                            for s in findings_writer.all_records()
+                                        )
+                                        if not dep_completed:
+                                            _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
+                                            step_record = {
+                                                "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
+                                                "module": module, "function": function, "params": params,
+                                                "raw_command": _reconstruct_raw_command(module, function, params),
+                                                "evidence_file": item, "device_id": dev_id, "owner": dev.get("owner"),
+                                                "status": "skipped", "error": f"dependency {dep} not met",
+                                                "started_at": datetime.now().isoformat(), "completed_at": datetime.now().isoformat(),
+                                            }
+                                            findings_writer.append(step_record)
+                                            pb_findings.append(step_record)
+                                            continue
+    
+                                step_record = {
+                                    "playbook": playbook_id,
+                                    "step_key": step_key,
+                                    "execution_hash": execution_hash,
+                                    "module": module,
+                                    "function": function,
+                                    "params": params,
+                                    "raw_command": _reconstruct_raw_command(module, function, params),
+                                    "evidence_file": item,
+                                    "device_id": dev_id,
+                                    "owner": dev.get("owner"),
+                                    "status": "running",
+                                    "retries": 0,
+                                    "max_retries": 2,
+                                    "started_at": datetime.now().isoformat(),
+                                }
+    
+                                # Persist running state before execution (crash recovery)
                                 try:
-                                    result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
-                                except Exception as retry_exc:
-                                    if attempt < MAX_RETRIES:
-                                        _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
-                                        time.sleep(1 * (attempt + 1))
-                                        continue
-                                    result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
-                                    break
-                                # Check for error-status results (not exceptions) — retry these too
-                                if isinstance(result, dict) and result.get("status") == "error":
-                                    if attempt < MAX_RETRIES:
-                                        err_detail = result.get("error", result.get("stderr", "unknown"))
-                                        _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES} (error: {str(err_detail)[:120]})")
-                                        time.sleep(2 * (attempt + 1))
-                                        continue
-                                    # Last attempt gave error — keep it but mark exhausted
-                                    result["_retries_exhausted"] = True
-                                # Success or final failure — cache and proceed
-                                if result.get("status") != "error" or attempt == MAX_RETRIES:
-                                    exec_cache.set(exec_key, result)
-                                    break
-
-                            try:
-                                # Check for safe_run timeout indicators in result
-                                if isinstance(result, dict) and result.get("code") is not None:
-                                    if result["code"] == -1:
-                                        step_record["status"] = "failed"
-                                        step_record["error"] = f"Timeout: {result.get('stderr', '')}"
-                                        step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
-                                        steps_failed += 1
-                                        _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
-                                        findings_writer.append(step_record)
-                                        pb_findings.append(step_record)
-                                        continue
-                                    elif result["code"] < 0:
-                                        step_record["status"] = "failed"
-                                        step_record["error"] = f"Execution error: {result.get('stderr', '')}"
-                                        step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
-                                        steps_failed += 1
-                                        _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
-                                        findings_writer.append(step_record)
-                                        pb_findings.append(step_record)
-                                        continue
-                        
-                                step_status = result.get("status", "error")
-                                # If the tool was missing, skip (not a failure)
-                                if step_status == "error" and "not found" in str(result.get("error", "")).lower():
-                                    step_record["status"] = "skipped"
-                                    step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
-                                    steps_skipped += 1
-                                    _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
-                                elif step_status == "success":
-                                    # Specialist tools return structured dicts without 'stdout'
-                                    # Only validate stdout for safe_run results (have 'code' key)
-                                    if isinstance(result, dict) and "code" in result:
-                                        # safe_run result -- validate stdout
-                                        stdout = result.get("stdout", "")
-                                        if not stdout or len(stdout.strip()) < 10:
+                                    pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                                    pb_output.parent.mkdir(parents=True, exist_ok=True)
+                                    pb_findings_running = pb_findings + [step_record]
+                                    _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
+                                except Exception as persist_exc:
+                                    _log_info(f"playbook state persistence skipped for {playbook_id}: {persist_exc}")
+    
+                                # Dedup: skip if this exact tool+file+params already ran
+                                exec_key = _make_exec_key(module, function, item, params)
+                                cached = exec_cache.get(exec_key)
+                                if cached is not None:
+                                    step_record = {"playbook": playbook_id, "module": module, "function": function, "device": dev_id, "evidence": Path(item).name, "status": "completed", "result": cached, "_deduped": True}
+                                    findings_writer.append(step_record)
+                                    pb_findings.append(step_record)
+                                    steps_completed += 1
+                                    _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
+                                    continue
+                                # Retry logic for transient failures
+                                # Catches BOTH exceptions AND error-status results
+                                # (orchestrator returns {"status": "error"} dicts, not exceptions)
+                                MAX_RETRIES = 3
+                                for attempt in range(MAX_RETRIES + 1):
+                                    try:
+                                        result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
+                                    except Exception as retry_exc:
+                                        if attempt < MAX_RETRIES:
+                                            _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
+                                            time.sleep(1 * (attempt + 1))
+                                            continue
+                                        result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
+                                        break
+                                    # Check for error-status results (not exceptions) — retry these too
+                                    if isinstance(result, dict) and result.get("status") == "error":
+                                        if attempt < MAX_RETRIES:
+                                            err_detail = result.get("error", result.get("stderr", "unknown"))
+                                            _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES} (error: {str(err_detail)[:120]})")
+                                            time.sleep(2 * (attempt + 1))
+                                            continue
+                                        # Last attempt gave error — keep it but mark exhausted
+                                        result["_retries_exhausted"] = True
+                                    # Success or final failure — cache and proceed
+                                    if result.get("status") != "error" or attempt == MAX_RETRIES:
+                                        exec_cache.set(exec_key, result)
+                                        break
+    
+                                try:
+                                    # Check for safe_run timeout indicators in result
+                                    if isinstance(result, dict) and result.get("code") is not None:
+                                        if result["code"] == -1:
                                             step_record["status"] = "failed"
-                                            step_record["error"] = f"Empty or invalid output from {module}.{function}"
-                                            step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                            step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                                            step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                             steps_failed += 1
+                                            _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
+                                            findings_writer.append(step_record)
+                                            pb_findings.append(step_record)
+                                            continue
+                                        elif result["code"] < 0:
+                                            step_record["status"] = "failed"
+                                            step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                                            step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
+                                            steps_failed += 1
+                                            _fe_log(job_id, f"  ✗ {module}.{function} → execution error")
+                                            findings_writer.append(step_record)
+                                            pb_findings.append(step_record)
+                                            continue
+                            
+                                    step_status = result.get("status", "error")
+                                    # If the tool was missing, skip (not a failure)
+                                    if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                                        step_record["status"] = "skipped"
+                                        step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
+                                        steps_skipped += 1
+                                        _fe_log(job_id, f"  ⎘ {module}.{function} skipped (tool not found)")
+                                    elif step_status == "success":
+                                        # Specialist tools return structured dicts without 'stdout'
+                                        # Only validate stdout for safe_run results (have 'code' key)
+                                        if isinstance(result, dict) and "code" in result:
+                                            # safe_run result -- validate stdout
+                                            stdout = result.get("stdout", "")
+                                            if not stdout or len(stdout.strip()) < 10:
+                                                step_record["status"] = "failed"
+                                                step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                                                step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                                                steps_failed += 1
+                                            else:
+                                                step_record["status"] = "completed"
+                                                step_record["result"] = result
+                                                steps_completed += 1
                                         else:
+                                            # Specialist result -- trust status=success
                                             step_record["status"] = "completed"
                                             step_record["result"] = result
                                             steps_completed += 1
                                     else:
-                                        # Specialist result -- trust status=success
-                                        step_record["status"] = "completed"
-                                        step_record["result"] = result
-                                        steps_completed += 1
-                                else:
-                                    step_record["status"] = "failed"
-                                    step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
-                                    steps_failed += 1
-                                    any_step_ran = True
-                                    _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
-
-                                    # LLM-POWERED SELF-HEALING: Delegate to _attempt_heal
-                                    try:
-                                        _fe_log(job_id, f"  🔄 Self-heal analyzing failure for {module}.{function}...")
-                                        healed = _attempt_heal(
-                                            module, function, params, result, job_id,
-                                            evidence_file=item,
-                                            evidence_type=_infer_evidence_type(item),
-                                            os_type=os_type,
-                                        )
-                                        if healed is not None:
-                                            if healed.get("status") == "success":
-                                                step_record["status"] = "completed"
-                                                step_record["result"] = healed
-                                                step_record["_self_healed"] = True
-                                                step_record["_heal_fix_type"] = healed.get("_heal_fix_type")
-                                                step_record["_heal_confidence"] = healed.get("_heal_confidence")
-                                                steps_failed -= 1
-                                                steps_completed += 1
-                                                _fe_log(job_id, f"  ✓ Self-healed {module}.{function}: {healed.get('_heal_fix_type')}")
-                                                result = healed
-                                            elif healed.get("status") == "skipped":
-                                                step_record["status"] = "skipped"
-                                                step_record["_self_healed"] = True
-                                                step_record["_healing_strategy"] = "skip_on_critic_advice"
-                                                steps_failed -= 1
-                                                steps_skipped += 1
-                                    except Exception as heal_err:
-                                        _fe_log(job_id, f"  ⚠ Self-heal error: {heal_err}")
-
-                                # Forensicator interprets each completed step so the Critic
-                                # has a real analysis to validate rather than a placeholder.
-                                forensicator_notes = {}
-                                if step_record.get("status") == "completed":
-                                    try:
-                                        forensicator_notes = geoff_forensicator.interpret_step_result(
-                                            playbook_id=playbook_id,
-                                            module=module,
-                                            function=function,
-                                            params=params,
-                                            result=result,
-                                            device_context={"device_id": dev_id, "os_type": os_type},
-                                        )
-                                        step_record["forensicator"] = forensicator_notes
-                                        # Handle Ollama timeout — forensicator marks needs_review
-                                        if forensicator_notes.get("needs_review") and forensicator_notes.get("error") == "ollama_timeout":
-                                            step_record["needs_review"] = True
-                                            step_record["unverified_reason"] = forensicator_notes.get("unverified_reason", "Ollama timeout")
-                                            _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} — marked needs_review")
-                                        sig = forensicator_notes.get("significance", "UNKNOWN")
-                                        note = forensicator_notes.get("analyst_note") or ""
-                                        if sig in ("CRITICAL", "HIGH"):
-                                            _fe_log(job_id, f"  🔍 Forensicator [{sig}]: {note}")
-                                        if forensicator_notes.get("follow_up_needed"):
-                                            _fe_log(job_id, f"  ↳ Follow-up: {forensicator_notes.get('follow_up_reason', '')}")
-                                        # Accuracy validation: evidence chain anchors each finding
-                                        # to a specific artifact, tool, and observation.
-                                        step_record["evidence_chain"] = {
-                                            "artifact": function,
-                                            "evidence_file": item,
-                                            "tool": f"{module}.{function}",
-                                            "playbook": playbook_id,
-                                            "significance": sig,
-                                            "analyst_note": forensicator_notes.get("analyst_note"),
-                                            "threat_indicators": forensicator_notes.get("threat_indicators", []),
-                                            "follow_up_needed": forensicator_notes.get("follow_up_needed", False),
-                                            "follow_up_reason": forensicator_notes.get("follow_up_reason"),
-                                        }
-                                    except Exception as fe:
-                                        _fe_log(job_id, f"  ⚠ Forensicator unavailable for {module}.{function}: {fe}")
-                                        step_record["evidence_chain"] = {
-                                            "artifact": function,
-                                            "evidence_file": item,
-                                            "tool": f"{module}.{function}",
-                                            "playbook": playbook_id,
-                                            "significance": "UNKNOWN",
-                                            "analyst_note": None,
-                                            "threat_indicators": [],
-                                            "follow_up_needed": False,
-                                            "follow_up_reason": None,
-                                        }
-
-                                # Build Critic analysis string from Forensicator output so the
-                                # Critic is checking a real interpretation, not a placeholder.
-                                _critic_analysis = f"Find Evil auto-run: {playbook_id} → {module}.{function}"
-                                if forensicator_notes.get("analyst_note"):
-                                    _critic_analysis += f"\nForensicator: {forensicator_notes['analyst_note']}"
-                                if forensicator_notes.get("threat_indicators"):
-                                    _critic_analysis += f"\nThreat indicators: {', '.join(forensicator_notes['threat_indicators'])}"
-
-                                # Critic validation — mandatory: failures are surfaced as
-                                # needs_review flags rather than silently ignored.
-                                try:
-                                    critic_val = geoff_critic.validate_tool_output(
-                                        tool_name=f"{module}.{function}",
-                                        tool_params=params,
-                                        raw_output=json.dumps(result, default=str)[:8000],
-                                        geoff_analysis=_critic_analysis,
-                                    )
-                                    step_record["critic"] = critic_val
-                                    critic_results.append(critic_val)
-                                    # Check for invalid IOCs flagged by critic
-                                    if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
-                                        step_record["invalid_iocs"] = critic_val["invalid_iocs"]
-
-                                    # Handle Ollama timeout — critic marks needs_review
-                                    if isinstance(critic_val, dict) and critic_val.get("needs_review") and critic_val.get("unverified_reason"):
-                                        step_record["needs_review"] = True
-                                        step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
-                                        _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
-                                        # Demote to unverified
-                                        if step_record.get("status") == "completed":
-                                            step_record["status"] = "completed_unverified"
-                                            steps_unverified += 1
-                                        # Skip further critic processing for this step
-
-                                    # Verdict-based: REJECTED → unverified immediately
-                                    elif isinstance(critic_val, dict) and critic_val.get("verdict") == "REJECTED":
-                                        issue_str = critic_val.get("verdict_reason", "Critic rejected this step")
-                                        issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
-                                        _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} — {issue_str}")
-                                        if step_record.get("status") == "completed":
-                                            step_record["status"] = "completed_unverified"
-                                            step_record["needs_review"] = True
-                                            step_record["unverified_reason"] = issue_str
-                                            steps_unverified += 1
-
-                                    # Verdict-based: REQUIRES_REVIEW or passes_sanity=False → attempt self-correction
-                                    elif (isinstance(critic_val, dict) and
-                                          (critic_val.get("verdict") == "REQUIRES_REVIEW" or
-                                           critic_val.get("passes_sanity") is False)):
-                                        issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
-                                        short = "; ".join(str(i) for i in issues[:2]) if issues else (critic_val.get("verdict", "sanity check failed"))
-                                        _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
-
-                                        # Self-correction: Manager generates revised analysis → re-validate with Critic
-                                        correction = _manager_generate_correction(
-                                            module=module, function=function,
-                                            result=result,
-                                            forensicator_notes=forensicator_notes,
-                                            critic_issues=issues,
-                                        )
-                                        corrected = False
-                                        if correction:
-                                            # Re-call forensicator with critic feedback
-                                            critic_feedback_summary = "; ".join(str(i) for i in issues[:3]) if issues else issue_str
-                                            forensicator_retry = None
-                                            try:
-                                                forensicator_retry = geoff_forensicator.interpret_step_result(
-                                                    playbook_id=playbook_id,
-                                                    module=module,
-                                                    function=function,
-                                                    params=params,
-                                                    result=result,
-                                                    device_context={"device_id": dev_id, "os_type": os_type},
-                                                    critic_feedback=critic_feedback_summary,
-                                                )
-                                                if forensicator_retry and forensicator_retry.get("analyst_note"):
-                                                    _fe_log(job_id, f"  ↑ Forensicator re-analysis complete")
-                                                    step_record["forensicator"] = forensicator_retry
-                                            except Exception as fre:
-                                                _fe_log(job_id, f"  ⚠ Forensicator re-analysis failed: {fre}")
-                                            forensicator_note = (forensicator_retry.get("analyst_note", "") if forensicator_retry else correction.get("analyst_note", ""))
-                                            forensicator_indicators = (forensicator_retry.get("threat_indicators", []) if forensicator_retry else correction.get("threat_indicators", []))
-                                            corrected_analysis = (
-                                                f"Find Evil auto-run (corrected): {playbook_id} → {module}.{function}\n"
-                                                f"Corrected analysis: {forensicator_note}\n"
-                                                f"Corrected indicators: {', '.join(forensicator_indicators)}"
+                                        step_record["status"] = "failed"
+                                        step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
+                                        steps_failed += 1
+                                        any_step_ran = True
+                                        _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
+    
+                                        # LLM-POWERED SELF-HEALING: Delegate to _attempt_heal
+                                        try:
+                                            _fe_log(job_id, f"  🔄 Self-heal analyzing failure for {module}.{function}...")
+                                            healed = _attempt_heal(
+                                                module, function, params, result, job_id,
+                                                evidence_file=item,
+                                                evidence_type=_infer_evidence_type(item),
+                                                os_type=os_type,
                                             )
-                                            try:
-                                                critic_retry = geoff_critic.validate_tool_output(
-                                                    tool_name=f"{module}.{function}",
-                                                    tool_params=params,
-                                                    raw_output=json.dumps(result, default=str)[:8000],
-                                                    geoff_analysis=corrected_analysis,
-                                                )
-                                                if isinstance(critic_retry, dict) and (critic_retry.get("passes_sanity") is True or critic_retry.get("verdict") == "APPROVED"):
-                                                    # Correction accepted — update step with corrected interpretation
-                                                    step_record["forensicator"]["analyst_note"] = correction.get("analyst_note", forensicator_notes.get("analyst_note"))
-                                                    step_record["forensicator"]["threat_indicators"] = correction.get("threat_indicators", forensicator_notes.get("threat_indicators", []))
-                                                    step_record["self_corrected"] = True
-                                                    step_record["correction_reasoning"] = correction.get("correction_reasoning", "")
-                                                    step_record["critic"] = critic_retry
-                                                    critic_results.append(critic_retry)
-                                                    _fe_log(job_id, f"  ✓ Self-correction accepted by Critic for {module}.{function}")
-                                                    corrected = True
-                                                    _audit_append(
-                                                        case_work_dir, "self_correction",
-                                                        playbook_id=playbook_id, module=module, function=function,
-                                                        device_id=dev_id,
-                                                    )
-                                            except Exception as retry_ce:
-                                                _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
-
-                                        if not corrected:
-                                            # Correction failed or unavailable — demote to unverified
+                                            if healed is not None:
+                                                if healed.get("status") == "success":
+                                                    step_record["status"] = "completed"
+                                                    step_record["result"] = healed
+                                                    step_record["_self_healed"] = True
+                                                    step_record["_heal_fix_type"] = healed.get("_heal_fix_type")
+                                                    step_record["_heal_confidence"] = healed.get("_heal_confidence")
+                                                    steps_failed -= 1
+                                                    steps_completed += 1
+                                                    _fe_log(job_id, f"  ✓ Self-healed {module}.{function}: {healed.get('_heal_fix_type')}")
+                                                    result = healed
+                                                elif healed.get("status") == "skipped":
+                                                    step_record["status"] = "skipped"
+                                                    step_record["_self_healed"] = True
+                                                    step_record["_healing_strategy"] = "skip_on_critic_advice"
+                                                    steps_failed -= 1
+                                                    steps_skipped += 1
+                                        except Exception as heal_err:
+                                            _fe_log(job_id, f"  ⚠ Self-heal error: {heal_err}")
+    
+                                    # Forensicator interprets each completed step so the Critic
+                                    # has a real analysis to validate rather than a placeholder.
+                                    forensicator_notes = {}
+                                    if step_record.get("status") == "completed":
+                                        try:
+                                            forensicator_notes = geoff_forensicator.interpret_step_result(
+                                                playbook_id=playbook_id,
+                                                module=module,
+                                                function=function,
+                                                params=params,
+                                                result=result,
+                                                device_context={"device_id": dev_id, "os_type": os_type},
+                                            )
+                                            step_record["forensicator"] = forensicator_notes
+                                            # Handle Ollama timeout — forensicator marks needs_review
+                                            if forensicator_notes.get("needs_review") and forensicator_notes.get("error") == "ollama_timeout":
+                                                step_record["needs_review"] = True
+                                                step_record["unverified_reason"] = forensicator_notes.get("unverified_reason", "Ollama timeout")
+                                                _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} — marked needs_review")
+                                            sig = forensicator_notes.get("significance", "UNKNOWN")
+                                            note = forensicator_notes.get("analyst_note") or ""
+                                            if sig in ("CRITICAL", "HIGH"):
+                                                _fe_log(job_id, f"  🔍 Forensicator [{sig}]: {note}")
+                                            if forensicator_notes.get("follow_up_needed"):
+                                                _fe_log(job_id, f"  ↳ Follow-up: {forensicator_notes.get('follow_up_reason', '')}")
+                                            # Accuracy validation: evidence chain anchors each finding
+                                            # to a specific artifact, tool, and observation.
+                                            step_record["evidence_chain"] = {
+                                                "artifact": function,
+                                                "evidence_file": item,
+                                                "tool": f"{module}.{function}",
+                                                "playbook": playbook_id,
+                                                "significance": sig,
+                                                "analyst_note": forensicator_notes.get("analyst_note"),
+                                                "threat_indicators": forensicator_notes.get("threat_indicators", []),
+                                                "follow_up_needed": forensicator_notes.get("follow_up_needed", False),
+                                                "follow_up_reason": forensicator_notes.get("follow_up_reason"),
+                                            }
+                                        except Exception as fe:
+                                            _fe_log(job_id, f"  ⚠ Forensicator unavailable for {module}.{function}: {fe}")
+                                            step_record["evidence_chain"] = {
+                                                "artifact": function,
+                                                "evidence_file": item,
+                                                "tool": f"{module}.{function}",
+                                                "playbook": playbook_id,
+                                                "significance": "UNKNOWN",
+                                                "analyst_note": None,
+                                                "threat_indicators": [],
+                                                "follow_up_needed": False,
+                                                "follow_up_reason": None,
+                                            }
+    
+                                    # Build Critic analysis string from Forensicator output so the
+                                    # Critic is checking a real interpretation, not a placeholder.
+                                    _critic_analysis = f"Find Evil auto-run: {playbook_id} → {module}.{function}"
+                                    if forensicator_notes.get("analyst_note"):
+                                        _critic_analysis += f"\nForensicator: {forensicator_notes['analyst_note']}"
+                                    if forensicator_notes.get("threat_indicators"):
+                                        _critic_analysis += f"\nThreat indicators: {', '.join(forensicator_notes['threat_indicators'])}"
+    
+                                    # Critic validation — mandatory: failures are surfaced as
+                                    # needs_review flags rather than silently ignored.
+                                    try:
+                                        critic_val = geoff_critic.validate_tool_output(
+                                            tool_name=f"{module}.{function}",
+                                            tool_params=params,
+                                            raw_output=json.dumps(result, default=str)[:8000],
+                                            geoff_analysis=_critic_analysis,
+                                        )
+                                        step_record["critic"] = critic_val
+                                        critic_results.append(critic_val)
+                                        # Check for invalid IOCs flagged by critic
+                                        if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
+                                            step_record["invalid_iocs"] = critic_val["invalid_iocs"]
+    
+                                        # Handle Ollama timeout — critic marks needs_review
+                                        if isinstance(critic_val, dict) and critic_val.get("needs_review") and critic_val.get("unverified_reason"):
+                                            step_record["needs_review"] = True
+                                            step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
+                                            _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
+                                            # Demote to unverified
+                                            if step_record.get("status") == "completed":
+                                                step_record["status"] = "completed_unverified"
+                                                steps_unverified += 1
+                                            # Skip further critic processing for this step
+    
+                                        # Verdict-based: REJECTED → unverified immediately
+                                        elif isinstance(critic_val, dict) and critic_val.get("verdict") == "REJECTED":
+                                            issue_str = critic_val.get("verdict_reason", "Critic rejected this step")
+                                            issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
+                                            _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} — {issue_str}")
                                             if step_record.get("status") == "completed":
                                                 step_record["status"] = "completed_unverified"
                                                 step_record["needs_review"] = True
+                                                step_record["unverified_reason"] = issue_str
                                                 steps_unverified += 1
-                                            step_record["unverified_reason"] = issues[:5]
-                                            _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
-                                            _audit_append(
-                                                case_work_dir, "unverified",
-                                                playbook_id=playbook_id, module=module, function=function,
-                                                device_id=dev_id, reason=issues[:5],
+    
+                                        # Verdict-based: REQUIRES_REVIEW or passes_sanity=False → attempt self-correction
+                                        elif (isinstance(critic_val, dict) and
+                                              (critic_val.get("verdict") == "REQUIRES_REVIEW" or
+                                               critic_val.get("passes_sanity") is False)):
+                                            issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
+                                            short = "; ".join(str(i) for i in issues[:2]) if issues else (critic_val.get("verdict", "sanity check failed"))
+                                            _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
+    
+                                            # Self-correction: Manager generates revised analysis → re-validate with Critic
+                                            correction = _manager_generate_correction(
+                                                module=module, function=function,
+                                                result=result,
+                                                forensicator_notes=forensicator_notes,
+                                                critic_issues=issues,
                                             )
-                                    elif isinstance(critic_val, dict) and (critic_val.get("passes_sanity") is True or critic_val.get("verdict") == "APPROVED"):
-                                        _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
-                                    # Validate IOC formats from step result
-                                    try:
-                                        result_iocs = {}
-                                        if isinstance(result, dict):
-                                            for ioc_key in ["iocs", "ips", "domains", "hashes", "urls", "emails"]:
-                                                if ioc_key in result and isinstance(result[ioc_key], (dict, list)):
-                                                    result_iocs[ioc_key] = result[ioc_key] if isinstance(result[ioc_key], list) else list(result[ioc_key].values())
-                                        if result_iocs:
-                                            format_val = geoff_critic.validate_ioc_formats(result_iocs)
-                                            if format_val.get("format_issue_count", 0) > 0:
-                                                step_record["ioc_format_issues"] = format_val["format_issues"]
-                                    except Exception as ioc_exc:
-                                        _fe_log(job_id, f"  ⚠ IOC format validation error for {module}.{function}: {ioc_exc}")
-                                        step_record["ioc_format_validation_error"] = str(ioc_exc)
-                                    # Write validation to case validations/ directory
-                                    try:
-                                        val_dir = case_work_dir / "validations"
-                                        val_dir.mkdir(exist_ok=True)
-                                        val_file = val_dir / f"{step_key.replace(':', '_')}.json"
-                                        _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
-                                    except OSError as write_exc:
-                                        _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
-                                except Exception as ce:
-                                    # Critic unavailable or errored — demote to unverified so
-                                    # unvalidated findings are never silently accepted.
-                                    _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
-                                    step_record["critic_error"] = str(ce)
-                                    step_record["needs_review"] = True
-                                    if step_record.get("status") == "completed":
-                                        step_record["status"] = "completed_unverified"
-                                        steps_unverified += 1
-                                    _fe_log(job_id, f"  ⚠ {module}.{function} marked completed_unverified (critic unavailable)")
-                            except Exception as e:
-                                _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
-                                step_record["status"] = "failed"
-                                step_record["error"] = str(e)
-                                steps_failed += 1
-
-                            step_record["completed_at"] = datetime.now().isoformat()
-                            findings_writer.append(step_record)
-                            pb_findings.append(step_record)
-
-                            # Per-step git commit with chain-of-custody metadata
-                            if step_record.get("status") in (
-                                "completed", "completed_unverified"
-                            ):
-                                _cust = _commit_step_with_custody(
-                                    step_record, item, case_work_dir, job_id
-                                )
-                                if _cust.get("status") == "failed":
-                                    _fe_log(job_id, (
-                                        f"  ⚠ Custody commit failed for {step_key}: "
-                                        f"{_cust.get('error', 'unknown')}"
-                                    ))
-
-                            # CONTINUE_ON_FAILURE enforcement
-                            if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
-                                _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
-                                # Break out of all loops
+                                            corrected = False
+                                            if correction:
+                                                # Re-call forensicator with critic feedback
+                                                critic_feedback_summary = "; ".join(str(i) for i in issues[:3]) if issues else issue_str
+                                                forensicator_retry = None
+                                                try:
+                                                    forensicator_retry = geoff_forensicator.interpret_step_result(
+                                                        playbook_id=playbook_id,
+                                                        module=module,
+                                                        function=function,
+                                                        params=params,
+                                                        result=result,
+                                                        device_context={"device_id": dev_id, "os_type": os_type},
+                                                        critic_feedback=critic_feedback_summary,
+                                                    )
+                                                    if forensicator_retry and forensicator_retry.get("analyst_note"):
+                                                        _fe_log(job_id, f"  ↑ Forensicator re-analysis complete")
+                                                        step_record["forensicator"] = forensicator_retry
+                                                except Exception as fre:
+                                                    _fe_log(job_id, f"  ⚠ Forensicator re-analysis failed: {fre}")
+                                                forensicator_note = (forensicator_retry.get("analyst_note", "") if forensicator_retry else correction.get("analyst_note", ""))
+                                                forensicator_indicators = (forensicator_retry.get("threat_indicators", []) if forensicator_retry else correction.get("threat_indicators", []))
+                                                corrected_analysis = (
+                                                    f"Find Evil auto-run (corrected): {playbook_id} → {module}.{function}\n"
+                                                    f"Corrected analysis: {forensicator_note}\n"
+                                                    f"Corrected indicators: {', '.join(forensicator_indicators)}"
+                                                )
+                                                try:
+                                                    critic_retry = geoff_critic.validate_tool_output(
+                                                        tool_name=f"{module}.{function}",
+                                                        tool_params=params,
+                                                        raw_output=json.dumps(result, default=str)[:8000],
+                                                        geoff_analysis=corrected_analysis,
+                                                    )
+                                                    if isinstance(critic_retry, dict) and (critic_retry.get("passes_sanity") is True or critic_retry.get("verdict") == "APPROVED"):
+                                                        # Correction accepted — update step with corrected interpretation
+                                                        step_record["forensicator"]["analyst_note"] = correction.get("analyst_note", forensicator_notes.get("analyst_note"))
+                                                        step_record["forensicator"]["threat_indicators"] = correction.get("threat_indicators", forensicator_notes.get("threat_indicators", []))
+                                                        step_record["self_corrected"] = True
+                                                        step_record["correction_reasoning"] = correction.get("correction_reasoning", "")
+                                                        step_record["critic"] = critic_retry
+                                                        critic_results.append(critic_retry)
+                                                        _fe_log(job_id, f"  ✓ Self-correction accepted by Critic for {module}.{function}")
+                                                        corrected = True
+                                                        _audit_append(
+                                                            case_work_dir, "self_correction",
+                                                            playbook_id=playbook_id, module=module, function=function,
+                                                            device_id=dev_id,
+                                                        )
+                                                except Exception as retry_ce:
+                                                    _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
+    
+                                            if not corrected:
+                                                # Correction failed or unavailable — demote to unverified
+                                                if step_record.get("status") == "completed":
+                                                    step_record["status"] = "completed_unverified"
+                                                    step_record["needs_review"] = True
+                                                    steps_unverified += 1
+                                                step_record["unverified_reason"] = issues[:5]
+                                                _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
+                                                _audit_append(
+                                                    case_work_dir, "unverified",
+                                                    playbook_id=playbook_id, module=module, function=function,
+                                                    device_id=dev_id, reason=issues[:5],
+                                                )
+                                        elif isinstance(critic_val, dict) and (critic_val.get("passes_sanity") is True or critic_val.get("verdict") == "APPROVED"):
+                                            _fe_log(job_id, f"  ✓ Critic: {module}.{function} verified")
+                                        # Validate IOC formats from step result
+                                        try:
+                                            result_iocs = {}
+                                            if isinstance(result, dict):
+                                                for ioc_key in ["iocs", "ips", "domains", "hashes", "urls", "emails"]:
+                                                    if ioc_key in result and isinstance(result[ioc_key], (dict, list)):
+                                                        result_iocs[ioc_key] = result[ioc_key] if isinstance(result[ioc_key], list) else list(result[ioc_key].values())
+                                            if result_iocs:
+                                                format_val = geoff_critic.validate_ioc_formats(result_iocs)
+                                                if format_val.get("format_issue_count", 0) > 0:
+                                                    step_record["ioc_format_issues"] = format_val["format_issues"]
+                                        except Exception as ioc_exc:
+                                            _fe_log(job_id, f"  ⚠ IOC format validation error for {module}.{function}: {ioc_exc}")
+                                            step_record["ioc_format_validation_error"] = str(ioc_exc)
+                                        # Write validation to case validations/ directory
+                                        try:
+                                            val_dir = case_work_dir / "validations"
+                                            val_dir.mkdir(exist_ok=True)
+                                            val_file = val_dir / f"{step_key.replace(':', '_')}.json"
+                                            _atomic_write(val_file, json.dumps(critic_val, default=str, indent=2))
+                                        except OSError as write_exc:
+                                            _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
+                                    except Exception as ce:
+                                        # Critic unavailable or errored — demote to unverified so
+                                        # unvalidated findings are never silently accepted.
+                                        _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
+                                        step_record["critic_error"] = str(ce)
+                                        step_record["needs_review"] = True
+                                        if step_record.get("status") == "completed":
+                                            step_record["status"] = "completed_unverified"
+                                            steps_unverified += 1
+                                        _fe_log(job_id, f"  ⚠ {module}.{function} marked completed_unverified (critic unavailable)")
+                                except Exception as e:
+                                    _fe_log_with_exception(job_id, f"  ✗ {module}.{function} step error", e)
+                                    step_record["status"] = "failed"
+                                    step_record["error"] = str(e)
+                                    steps_failed += 1
+    
+                                step_record["completed_at"] = datetime.now().isoformat()
+                                findings_writer.append(step_record)
+                                pb_findings.append(step_record)
+    
+                                # Per-step git commit with chain-of-custody metadata
+                                if step_record.get("status") in (
+                                    "completed", "completed_unverified"
+                                ):
+                                    _cust = _commit_step_with_custody(
+                                        step_record, item, case_work_dir, job_id
+                                    )
+                                    if _cust.get("status") == "failed":
+                                        _fe_log(job_id, (
+                                            f"  ⚠ Custody commit failed for {step_key}: "
+                                            f"{_cust.get('error', 'unknown')}"
+                                        ))
+    
+                                # CONTINUE_ON_FAILURE enforcement
+                                if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
+                                    _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
+                                    # Break out of all loops
+                                    break
+    
+                    # Check if we broke out due to failure
+                    if not CONTINUE_ON_FAILURE:
+                        failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
+                        if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings_writer.all_records()[-3:]):
+                            break
+    
+                    # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
+                    # retroactively downgrade ALL findings and mark them compromised.
+                    # Uses word-boundary matching for single-word keywords to avoid false
+                    # positives (e.g. "del" matching "model", "delete", "delivered").
+                    if playbook_id == "PB-SIFT-012":
+                        anti_forensics_keywords = [
+                            "log clear", "event log clear", "timestomp",
+                            "anti-forensic", "wevtutil", "sdelete",
+                            "eraser", "bleachbit", "cipher /w", "fsutil",
+                            "ccleaner", "secure delete",
+                        ]
+                        anti_forensics_hit = False
+                        for step in pb_findings:
+                            result = step.get("result", {})
+                            if not isinstance(result, dict):
+                                continue
+                            # Check structured anti_forensics_detected field first
+                            if result.get("anti_forensics_detected"):
+                                anti_forensics_hit = True
                                 break
-
-                # Check if we broke out due to failure
-                if not CONTINUE_ON_FAILURE:
-                    failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
-                    if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings_writer.all_records()[-3:]):
-                        break
-
-                # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
-                # retroactively downgrade ALL findings and mark them compromised.
-                # Uses word-boundary matching for single-word keywords to avoid false
-                # positives (e.g. "del" matching "model", "delete", "delivered").
-                if playbook_id == "PB-SIFT-012":
-                    anti_forensics_keywords = [
-                        "log clear", "event log clear", "timestomp",
-                        "anti-forensic", "wevtutil", "sdelete",
-                        "eraser", "bleachbit", "cipher /w", "fsutil",
-                        "ccleaner", "secure delete",
-                    ]
-                    anti_forensics_hit = False
-                    for step in pb_findings:
-                        result = step.get("result", {})
-                        if not isinstance(result, dict):
-                            continue
-                        # Check structured anti_forensics_detected field first
-                        if result.get("anti_forensics_detected"):
-                            anti_forensics_hit = True
-                            break
-                        # String match with word boundaries for single words
-                        result_str = json.dumps(result, default=str).lower()
-                        for kw in anti_forensics_keywords:
-                            if " " in kw:
-                                # Multi-word: substring match is safe
-                                if kw in result_str:
-                                    anti_forensics_hit = True
-                                    break
-                            else:
-                                # Single-word: word boundary match to avoid false positives
-                                if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
-                                    anti_forensics_hit = True
-                                    break
+                            # String match with word boundaries for single words
+                            result_str = json.dumps(result, default=str).lower()
+                            for kw in anti_forensics_keywords:
+                                if " " in kw:
+                                    # Multi-word: substring match is safe
+                                    if kw in result_str:
+                                        anti_forensics_hit = True
+                                        break
+                                else:
+                                    # Single-word: word boundary match to avoid false positives
+                                    if re.search(r'\b' + re.escape(kw) + r'\b', result_str):
+                                        anti_forensics_hit = True
+                                        break
+                            if anti_forensics_hit:
+                                break
                         if anti_forensics_hit:
-                            break
-                    if anti_forensics_hit:
-                        anti_forensics_detected = True
-                        if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
-                            confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
-                        _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
-                        _audit_append(case_work_dir, "anti_forensics_cascade", device_id=dev_id)
-                        cascaded_now = _apply_anti_forensics_cascade(findings_writer)
-                        _fe_log(job_id, f"  Cascade tagged {cascaded_now} existing findings (later findings will be tagged at job end)")
-
-                playbooks_run.append({
-                    "playbook_id": playbook_id,
-                    "steps_attempted": len(pb_findings),
-                    "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
-                    "steps_unverified": sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
-                    "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
-                    "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
-                })
-                _audit_append(
-                    case_work_dir, "playbook_complete",
-                    playbook_id=playbook_id, device_id=dev_id,
-                    steps_attempted=len(pb_findings),
-                    steps_completed=sum(1 for s in pb_findings if s.get("status") == "completed"),
-                    steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
-                    steps_failed=sum(1 for s in pb_findings if s.get("status") == "failed"),
-                )
-
-                # Git commit after each playbook — part of transaction, not optional
-                try:
-                    # Write playbook findings to output dir
-                    pb_output = case_work_dir / "output" / f"{playbook_id}.json"
-                    # Compact large step results before writing
-                    for step in pb_findings:
-                        if isinstance(step.get("result"), dict):
-                            step["result"] = _compact_step_result(step["result"], case_work_dir)
-                    _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
-                    git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
-                    if git_result["status"] == "failed":
-                        _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
-                        # In STRICT_MODE, treat git commit failure as step failure
+                            anti_forensics_detected = True
+                            if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
+                                confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
+                            _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                            _audit_append(case_work_dir, "anti_forensics_cascade", device_id=dev_id)
+                            cascaded_now = _apply_anti_forensics_cascade(findings_writer)
+                            _fe_log(job_id, f"  Cascade tagged {cascaded_now} existing findings (later findings will be tagged at job end)")
+    
+                    playbooks_run.append({
+                        "playbook_id": playbook_id,
+                        "steps_attempted": len(pb_findings),
+                        "steps_completed": sum(1 for s in pb_findings if s.get("status") == "completed"),
+                        "steps_unverified": sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
+                        "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
+                        "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+                    })
+                    _audit_append(
+                        case_work_dir, "playbook_complete",
+                        playbook_id=playbook_id, device_id=dev_id,
+                        steps_attempted=len(pb_findings),
+                        steps_completed=sum(1 for s in pb_findings if s.get("status") == "completed"),
+                        steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
+                        steps_failed=sum(1 for s in pb_findings if s.get("status") == "failed"),
+                    )
+    
+                    # Git commit after each playbook — part of transaction, not optional
+                    try:
+                        # Write playbook findings to output dir
+                        pb_output = case_work_dir / "output" / f"{playbook_id}.json"
+                        # Compact large step results before writing
+                        for step in pb_findings:
+                            if isinstance(step.get("result"), dict):
+                                step["result"] = _compact_step_result(step["result"], case_work_dir)
+                        _atomic_write(pb_output, json.dumps(pb_findings, default=str, indent=2))
+                        git_result = safe_git_commit(f"{playbook_id}: {len(pb_findings)} steps ({steps_completed} ok, {steps_failed} fail, {steps_skipped} skip)", base_path=str(case_work_dir))
+                        if git_result["status"] == "failed":
+                            _fe_log(job_id, f"  \u26a0 git commit failed for {playbook_id}: {git_result.get('error', 'unknown')}")
+                            # In STRICT_MODE, treat git commit failure as step failure
+                            if STRICT_MODE:
+                                raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
+                    except Exception as gce:
+                        _fe_log(job_id, f"  git commit failed: {gce}")
                         if STRICT_MODE:
-                            raise RuntimeError(f"Git commit failed: {git_result.get('error', 'unknown')}")
-                except Exception as gce:
-                    _fe_log(job_id, f"  git commit failed: {gce}")
-                    if STRICT_MODE:
-                        raise
-
-                # --- Adaptive re-evaluation after each playbook ---
-                # Check what new artifacts were discovered and add playbooks
-                # that are now applicable. Pull every thread.
-                _newly_queued = _re_evaluate_playbooks(
-                    playbook_id, pb_findings, execution_plan, skipped_playbooks,
-                    inventory, os_type, has_disk_images, _disk_artifacts,
-                    indicator_hits, job_id)
-                if _newly_queued:
-                    _fe_log(job_id, f"  \u27f3 Re-evaluation queued: {', '.join(_newly_queued)}")
-
+                            raise
+    
+                    # --- Adaptive re-evaluation after each playbook ---
+                    # Check what new artifacts were discovered and add playbooks
+                    # that are now applicable. Pull every thread.
+                    _newly_queued = _re_evaluate_playbooks(
+                        playbook_id, pb_findings, execution_plan, skipped_playbooks,
+                        inventory, os_type, has_disk_images, _disk_artifacts,
+                        indicator_hits, job_id)
+                    if _newly_queued:
+                        _fe_log(job_id, f"  \u27f3 Re-evaluation queued: {', '.join(_newly_queued)}")
+    
         # End of per-device playbook loop
         # Process unattributed evidence (PCAPs, logs not tied to a device)
         if any(unattributed_ev.values()):

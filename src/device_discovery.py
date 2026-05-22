@@ -169,6 +169,25 @@ class DeviceDiscovery:
                 mob_path = Path(mob)
                 # If mob is a directory (extracted archive), use it directly
                 if mob_path.is_dir():
+                    # Peek inside: if the directory contains disk images or memory
+                    # dumps, it is NOT a mobile backup — skip mobile classification.
+                    _is_mobile = True
+                    try:
+                        _children = list(mob_path.iterdir())
+                        _child_names_lower = {c.name.lower() for c in _children}
+                        _child_exts = {c.suffix.lower() for c in _children if c.is_file()}
+                        # Disk image indicators: E01, dd, raw, img, aff files
+                        _disk_exts = {'.e01', '.e02', '.e03', '.dd', '.raw', '.img', '.aff', '.vhd', '.vmdk', '.vdi'}
+                        if _disk_exts & _child_exts:
+                            _is_mobile = False
+                        # Memory dump indicators: vmem, mem, dmp, core files
+                        _mem_exts = {'.vmem', '.mem', '.dmp', '.core'}
+                        if _mem_exts & _child_exts:
+                            _is_mobile = False
+                    except (OSError, PermissionError):
+                        pass  # Can't read directory — assume it might be mobile
+                    if not _is_mobile:
+                        continue
                     mob_dir = str(mob_path)
                     dev_id = f"mobile_{mob_path.name}"
                 else:
