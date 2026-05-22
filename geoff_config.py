@@ -113,7 +113,7 @@ def _validate_evidence_path(path: str) -> str:
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
     # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
     real_path = Path(os.path.realpath(path))
-    allowed_bases = [Path(os.path.realpath(b)) for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR, "/mnt/nas"] if b]
+    allowed_bases = [Path(os.path.realpath(b)) for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR, "/mnt"] if b]
     # Only enforce the base-dir check when at least one allowed base is configured.
     # Using relative_to() avoids the startswith() prefix-collision bug where
     # /mnt/evidence_real would slip past a base of /mnt/evidence.
@@ -246,11 +246,11 @@ def _resolve_dir(env_var, default_path, fallback_subdir):
 
 
 EVIDENCE_BASE_DIR = _resolve_dir('GEOFF_EVIDENCE_PATH',
-                               "/home/sansforensics/evidence-storage/evidence",
+                               "/mnt/evidence",
                                "geoff-evidence")
 
 CASES_WORK_DIR = _resolve_dir('GEOFF_CASES_PATH',
-                             "/home/sansforensics/evidence-storage/cases",
+                             "/mnt/cases",
                              "geoff-cases")
 
 _active_evidence_dir: str = EVIDENCE_BASE_DIR

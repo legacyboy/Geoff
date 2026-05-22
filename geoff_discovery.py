@@ -408,7 +408,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
     })
 
     # --- Build mount base directory ---
-    mount_base = f"/home/sansforensics/cases/mounts/{case_name}"
+    mount_base = os.path.join(CASES_WORK_DIR, "mounts", case_name)
     os.makedirs(mount_base, exist_ok=True)
 
     images_processed = 0
