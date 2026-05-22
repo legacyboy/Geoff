@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from xml.etree import ElementTree as ET
 import sys
+import inspect
+import time
 
 
 # ---------------------------------------------------------------------------
@@ -7489,6 +7491,34 @@ class MACOS_Specialist:
 # PHOTORec Specialist
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# FAT Recovery Specialist
+# ---------------------------------------------------------------------------
+class FAT_RECOVERY_Specialist:
+    """Thin wrapper for FAT/exFAT formatted media recovery.
+    Delegates to the standalone recover_formatted_fat() function.
+    """
+    def __init__(self, evidence_base: str):
+        self.evidence_base = evidence_base
+        self.tools_available = True
+
+    def recover_formatted_fat(self, disk_image: str = None, offset: str = None,
+                              disk_images: list = None, device_map: dict = None,
+                              image_offsets: dict = None, output_dir: str = None,
+                              job_id: str = None, **kwargs) -> dict:
+        """Recover files from formatted FAT/exFAT partitions."""
+        try:
+            from geoff_discovery import recover_formatted_fat as _recover
+            return _recover(
+                disk_images=disk_images or ([disk_image] if disk_image else []),
+                device_map=device_map or {},
+                image_offsets=image_offsets or {},
+                output_dir=output_dir,
+                job_id=job_id,
+            )
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
 class PHOTOREC_Specialist:
     """Specialist for file carving with PhotoRec — batch mode support."""
 
@@ -7881,7 +7911,8 @@ class VSS_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = tempfile.mkdtemp()
+        try:
             cmd = ['vshadowmount', image, tmpdir]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
@@ -7889,7 +7920,7 @@ class VSS_Specialist:
                 return {
                     'tool': 'vshadowmount',
                     'status': 'error',
-                    'error': 'Failed to mount image for VSS enumeration',
+                    'error': f'vshadowmount failed: {result.stderr}',
                     'timestamp': datetime.now().isoformat(),
                 }
 
@@ -7904,6 +7935,10 @@ class VSS_Specialist:
                 'vss_numbers': vss_nums,
                 'timestamp': datetime.now().isoformat(),
             }
+        finally:
+            subprocess.run(['fusermount', '-u', tmpdir], capture_output=True, timeout=15)
+            time.sleep(0.5)
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def mount_vss(self, image: str, vss_num: int, mount_point: str) -> Dict[str, Any]:
         """Mount a specific Volume Shadow Copy."""
@@ -7961,23 +7996,24 @@ class VSS_Specialist:
         extracted = []
         for vss_num in vss_nums:
             mount_point = tempfile.mkdtemp()
-            mount_result = self.mount_vss(image, vss_num, mount_point)
+            try:
+                mount_result = self.mount_vss(image, vss_num, mount_point)
 
-            if mount_result['status'] != 'success':
-                subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
-                continue
+                if mount_result['status'] != 'success':
+                    continue
 
-            for ext in interesting_extensions:
-                for matched in Path(mount_point).rglob(f'*{ext}'):
-                    if matched.is_file():
-                        extracted.append({
-                            'vss_number': vss_num,
-                            'source_path': str(matched),
-                            'size': matched.stat().st_size,
-                        })
-
-            subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
-            shutil.rmtree(mount_point, ignore_errors=True)
+                for ext in interesting_extensions:
+                    for matched in Path(mount_point).rglob(f'*{ext}'):
+                        if matched.is_file():
+                            extracted.append({
+                                'vss_number': vss_num,
+                                'source_path': str(matched),
+                                'size': matched.stat().st_size,
+                            })
+            finally:
+                subprocess.run(['fusermount', '-u', mount_point], capture_output=True, timeout=15)
+                time.sleep(0.5)
+                shutil.rmtree(mount_point, ignore_errors=True)
 
         return {
             'tool': 'vss_extract',
@@ -8006,30 +8042,31 @@ class VSS_Specialist:
         events = []
         for vss_num in vss_nums:
             mount_point = tempfile.mkdtemp()
-            mount_result = self.mount_vss(image, vss_num, mount_point)
+            try:
+                mount_result = self.mount_vss(image, vss_num, mount_point)
 
-            if mount_result['status'] != 'success':
-                subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
-                continue
+                if mount_result['status'] != 'success':
+                    continue
 
-            cmd = ['find', mount_point, '-type', 'f', '-printf', '%T@ %p\n']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                cmd = ['find', mount_point, '-type', 'f', '-printf', '%T@ %p\n']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    parts = line.strip().split(' ', 1)
-                    if len(parts) == 2:
-                        try:
-                            events.append({
-                                'path': parts[1],
-                                'timestamp': int(float(parts[0])),
-                                'source': f'VSS{vss_num}',
-                            })
-                        except ValueError:
-                            pass
-
-            subprocess.run(['fusermount', '-u', mount_point], capture_output=True)
-            shutil.rmtree(mount_point, ignore_errors=True)
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        parts = line.strip().split(' ', 1)
+                        if len(parts) == 2:
+                            try:
+                                events.append({
+                                    'path': parts[1],
+                                    'timestamp': int(float(parts[0])),
+                                    'source': f'VSS{vss_num}',
+                                })
+                            except ValueError:
+                                pass
+            finally:
+                subprocess.run(['fusermount', '-u', mount_point], capture_output=True, timeout=15)
+                time.sleep(0.5)
+                shutil.rmtree(mount_point, ignore_errors=True)
 
         events.sort(key=lambda x: x.get('timestamp', 0) or 0)
         return {
@@ -8048,17 +8085,48 @@ class VSS_Specialist:
 # ---------------------------------------------------------------------------
 
 class ZIMMERMAN_Specialist:
-    """Specialist for Eric Zimmerman's forensic tools (.NET DLLs)."""
+    """Specialist for Eric Zimmerman's forensic tools (.NET exe via mono)."""
 
     def __init__(self, tools_dir: str = '/opt/geoff/zimmerman_tools'):
         self.tools_dir = Path(tools_dir)
+        self.mono_available = self._check_mono()
         self.dotnet_available = self._check_dotnet()
+
+    def _check_mono(self) -> bool:
+        result = subprocess.run(['which', 'mono'], capture_output=True)
+        return result.returncode == 0
 
     def _check_dotnet(self) -> bool:
         result = subprocess.run(['which', 'dotnet'], capture_output=True)
         return result.returncode == 0
 
+    def _find_tool_exe(self, tool_name: str) -> Optional[Path]:
+        """Find a Zimmerman .exe tool by searching the tools directory tree."""
+        exe_map = {
+            'evtx': 'EvtxECmd.exe',
+            'mft': 'MFTECmd.exe',
+            'strings': 'bstrings.exe',
+            'shellbags': 'SBECmd.exe',
+            'amcache': 'AmcacheParser.exe',
+            'srum': 'SrumECmd.exe',
+            'prefetch': 'PECmd.exe',
+            'jumplist': 'JLECmd.exe',
+            'lnk': 'LECmd.exe',
+            'appcompat': 'AppCompatCacheParser.exe',
+        }
+        exe_name = exe_map.get(tool_name, f'{tool_name}.exe')
+        # Search recursively under tools_dir for the exe
+        matches = list(self.tools_dir.rglob(exe_name))
+        if matches:
+            return matches[0]
+        # Try case-insensitive fallback
+        for p in self.tools_dir.rglob('*.exe'):
+            if p.name.lower() == exe_name.lower():
+                return p
+        return None
+
     def _find_tool_dll(self, tool_name: str) -> Optional[Path]:
+        """Legacy: find a Zimmerman .dll tool (for dotnet-based execution)."""
         dll_map = {
             'evtx': 'EvtxECmd.dll',
             'mft': 'MFTECmd.dll',
@@ -8068,46 +8136,57 @@ class ZIMMERMAN_Specialist:
             'srum': 'SrumECmd.dll',
         }
         dll_name = dll_map.get(tool_name, f'{tool_name.capitalize()}.dll')
+        for p in self.tools_dir.rglob(dll_name):
+            return p
         dll_path = self.tools_dir / dll_name
         return dll_path if dll_path.exists() else None
 
     # -- public API ----------------------------------------------------------
 
     def parse_evtx_zimmerman(self, evtx_file: str, output_csv: str) -> Dict[str, Any]:
-        """Parse EVTX using EvtxECmd.dll."""
-        return self._run_dotnet_tool('evtx', evtx_file, output_csv, '-of csv')
+        """Parse EVTX using EvtxECmd."""
+        return self._run_tool('evtx', evtx_file, output_csv, '--csv', Path(output_csv).parent)
 
     def parse_mft(self, mft_file: str, output_csv: str) -> Dict[str, Any]:
-        """Parse MFT using MFTECmd.dll."""
-        return self._run_dotnet_tool('mft', mft_file, output_csv, '-of csv')
+        """Parse MFT using MFTECmd."""
+        return self._run_tool('mft', mft_file, output_csv, '--csv', Path(output_csv).parent)
 
     def extract_strings_zimmerman(self, file: str, output: str, min_length: int = 4) -> Dict[str, Any]:
-        """Extract strings using bstrings.dll."""
-        return self._run_dotnet_tool('strings', file, output, f'-min {min_length}')
+        """Extract strings using bstrings."""
+        return self._run_tool('strings', file, output, '-min', str(min_length))
 
     def shellbags_parse(self, hive: str, output_csv: str) -> Dict[str, Any]:
-        """Parse ShellBags using ShellBagsExplorer.dll."""
-        return self._run_dotnet_tool('shellbags', hive, output_csv, '-of csv')
+        """Parse ShellBags using SBECmd."""
+        return self._run_tool('shellbags', hive, output_csv, '--csv', Path(output_csv).parent)
 
     def amcache_parse(self, hive: str, output_csv: str) -> Dict[str, Any]:
-        """Parse AmCache using AmcacheParser.dll."""
-        return self._run_dotnet_tool('amcache', hive, output_csv, '-of csv')
+        """Parse AmCache using AmcacheParser."""
+        return self._run_tool('amcache', hive, output_csv, '--csv', Path(output_csv).parent)
 
     def srum_parse(self, srum_db: str, output_csv: str) -> Dict[str, Any]:
-        """Parse SRUM using SrumECmd.dll."""
-        return self._run_dotnet_tool('srum', srum_db, output_csv, '-of csv')
+        """Parse SRUM using SrumECmd."""
+        return self._run_tool('srum', srum_db, output_csv, '--csv', Path(output_csv).parent)
 
-    def _run_dotnet_tool(self, tool_name: str, input_path: str, output: str, extra_args: str) -> Dict[str, Any]:
-        """Run Zimmerman tool DLL."""
-        if not self.dotnet_available:
-            return {'tool': tool_name, 'status': 'error', 'error': 'dotnet not found', 'timestamp': datetime.now().isoformat()}
-
-        dll_path = self._find_tool_dll(tool_name)
-        if not dll_path:
-            return {'tool': tool_name, 'status': 'error', 'error': f'{tool_name}.dll not found', 'timestamp': datetime.now().isoformat()}
-
-        cmd = ['dotnet', str(dll_path), '-f', input_path, '-o', output] + shlex.split(extra_args)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    def _run_tool(self, tool_name: str, input_path: str, output: str, *extra_args: str) -> Dict[str, Any]:
+        """Run Zimmerman tool — prefers mono + exe, falls back to dotnet + dll."""
+        exe_path = self._find_tool_exe(tool_name)
+        if exe_path and self.mono_available:
+            cmd = ['mono', str(exe_path)] + list(extra_args) + ['-f', input_path]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            except Exception as e:
+                return {'tool': tool_name, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+        elif exe_path and self.dotnet_available:
+            cmd = ['dotnet', str(exe_path)] + list(extra_args) + ['-f', input_path]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            except Exception as e:
+                return {'tool': tool_name, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+        else:
+            runtime = 'mono' if not self.mono_available else 'dotnet'
+            return {'tool': tool_name, 'status': 'error',
+                    'error': f'{tool_name} not found or {runtime} not available — install Eric Zimmerman tools',
+                    'timestamp': datetime.now().isoformat()}
 
         event_count = 0
         if Path(output).exists():
@@ -8123,6 +8202,10 @@ class ZIMMERMAN_Specialist:
             'event_count': event_count,
             'timestamp': datetime.now().isoformat(),
         }
+
+    def _run_dotnet_tool(self, tool_name: str, input_path: str, output: str, extra_args: str) -> Dict[str, Any]:
+        """Legacy dotnet DLL runner — now delegates to _run_tool."""
+        return self._run_tool(tool_name, input_path, output, *shlex.split(extra_args))
 
 
     def extract_macos_users(self, dscl_path: str = '/var/db/dslocal/nodes/Default/users') -> Dict[str, Any]:
@@ -8586,23 +8669,76 @@ class WINDOWS_Specialist:
             return {}
 
     def analyze_prefetch(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
-        try:
-            import subprocess
-            result = subprocess.run(
-                ['pecmd', '-d', image, '--csv', output_dir or '/tmp'],
-                capture_output=True, text=True, timeout=120
-            )
+        import platform
+        out_dir = output_dir or '/tmp'
+        
+        # Try PECmd first (Eric Zimmerman tool)
+        if shutil.which('pecmd') or shutil.which('PECmd'):
+            try:
+                import subprocess
+                cmd_name = shutil.which('pecmd') or shutil.which('PECmd')
+                result = subprocess.run(
+                    [cmd_name, '-d', image, '--csv', out_dir],
+                    capture_output=True, text=True, timeout=120
+                )
+                # Check for Linux/mono "Non-Windows platforms" error
+                if 'Non-Windows platforms not supported' in result.stderr or 'Non-Windows platforms not supported' in result.stdout:
+                    # Fall through to Python-based parsing
+                    pass
+                else:
+                    return {
+                        'tool': 'PECmd',
+                        'status': 'success' if result.returncode == 0 else 'error',
+                        'stdout': result.stdout[:3000],
+                        'stderr': result.stderr[:1000],
+                        'timestamp': datetime.now().isoformat(),
+                    }
+            except FileNotFoundError:
+                pass  # Fall through to Python parsing
+            except Exception as e:
+                if 'FileNotFoundError' in type(e).__name__:
+                    pass  # Fall through
+                else:
+                    return {'tool': 'PECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+        # Python fallback: parse prefetch files structurally
+        pf_dir = Path(image) / 'Windows' / 'Prefetch' if not Path(image).is_file() else Path(image)
+        if not pf_dir.exists():
+            # Try as direct path
+            pf_dir = Path(image)
+        
+        results = []
+        for pf_path in sorted(pf_dir.rglob('*.pf')):
+            parsed = self._parse_prefetch(str(pf_path))
+            if parsed:
+                parsed['filename'] = pf_path.name
+                results.append(parsed)
+        
+        if results:
+            # Write CSV output
+            import csv
+            csv_path = Path(out_dir) / 'prefetch_analysis.csv'
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=['filename', 'version', 'run_count', 'last_run_timestamp'])
+                writer.writeheader()
+                for r in results:
+                    writer.writerow(r)
             return {
-                'tool': 'PECmd',
-                'status': 'success' if result.returncode == 0 else 'error',
-                'stdout': result.stdout[:3000],
-                'stderr': result.stderr[:1000],
+                'tool': 'PECmd (Python fallback)',
+                'status': 'success',
+                'prefetch_count': len(results),
+                'output_csv': str(csv_path),
+                'results': results[:50],  # First 50 entries
+                'note': 'PECmd unavailable on Linux (decompression libs) — using structural parser. Run PECmd on Windows for full decompression.',
                 'timestamp': datetime.now().isoformat(),
             }
-        except FileNotFoundError:
-            return {'tool': 'PECmd', 'status': 'error', 'error': 'PECmd not found — install Eric Zimmerman tools', 'timestamp': datetime.now().isoformat()}
-        except Exception as e:
-            return {'tool': 'PECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+        else:
+            return {
+                'tool': 'PECmd',
+                'status': 'error',
+                'error': 'No prefetch files found in ' + str(image),
+                'timestamp': datetime.now().isoformat(),
+            }
 
     def analyze_jumplists(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
         try:
@@ -10903,6 +11039,9 @@ class ExtendedOrchestrator:
         self.dc3dd = DC3DD_Specialist()
         self.zeek = ZEEK_Specialist()
 
+        # FAT recovery specialist (delegates to geoff_discovery.recover_formatted_fat)
+        self.fat_recovery = FAT_RECOVERY_Specialist(evidence_base)
+
         try:
             from sift_specialists_remnux import REMNUX_Orchestrator
             self.remnux = REMNUX_Orchestrator()
@@ -10946,17 +11085,31 @@ class ExtendedOrchestrator:
             'bulk_extractor': self.bulk_extractor,
             'dc3dd': self.dc3dd,
             'zeek': self.zeek,
+            'fat_recovery': self.fat_recovery,
         }
 
         specialist = specialist_map.get(module)
         if specialist and hasattr(specialist, function):
             func = getattr(specialist, function)
-            return func(**params)
+            sig = inspect.signature(func)
+            accepted = set(sig.parameters.keys())
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                filtered_params = params
+            else:
+                filtered_params = {k: v for k, v in params.items() if k in accepted}
+            return func(**filtered_params)
 
         if module == 'remnux' and self.remnux is not None:
             return self.remnux.run_playbook_step(investigation_id, step)
 
-        return {'status': 'error', 'error': f'Unknown module {module}', 'timestamp': datetime.now().isoformat()}
+        # Distinguish unknown module from unknown function for clearer diagnostics
+        specialist = specialist_map.get(module)
+        if specialist is None:
+            return {'status': 'error', 'error': f'Unknown module: {module}', 'timestamp': datetime.now().isoformat()}
+        elif not hasattr(specialist, function):
+            return {'status': 'error', 'error': f'Unknown function "{function}" on module "{module}"', 'timestamp': datetime.now().isoformat()}
+        else:
+            return {'status': 'error', 'error': f'Cannot invoke {module}.{function}', 'timestamp': datetime.now().isoformat()}
 
     def _init_host_correlator(self):
         """Initialize HostCorrelator for cross-image correlation."""

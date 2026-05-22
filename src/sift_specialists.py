@@ -1502,7 +1502,14 @@ class SpecialistOrchestrator:
             func = getattr(specialist, function)
             return func(**params)
 
-        return {'status': 'error', 'error': f'Unknown module {module} or function {function}', 'timestamp': datetime.now().isoformat()}
+        # Distinguish unknown module from unknown function for clearer diagnostics
+        specialist = specialist_map.get(module)
+        if specialist is None:
+            return {'status': 'error', 'error': f'Unknown module: {module}', 'timestamp': datetime.now().isoformat()}
+        elif not hasattr(specialist, function):
+            return {'status': 'error', 'error': f'Unknown function "{function}" on module "{module}"', 'timestamp': datetime.now().isoformat()}
+        else:
+            return {'status': 'error', 'error': f'Cannot invoke {module}.{function}', 'timestamp': datetime.now().isoformat()}
 
     def get_available_tools(self) -> Dict[str, List[str]]:
         return {

@@ -9,6 +9,7 @@ to produce per-user activity narratives and detect lateral movement.
 import json
 from datetime import datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 

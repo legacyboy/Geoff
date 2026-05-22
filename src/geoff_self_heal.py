@@ -95,6 +95,17 @@ _heal_cache = HealCache(
 # ---------------------------------------------------------------------------
 
 
+MODULE_ALIASES = {
+    'tsk': 'sleuthkit',
+    'file_system_forensics': 'sleuthkit',
+    'file_system': 'sleuthkit',
+    'file_analysis': 'sleuthkit',
+    'files': 'sleuthkit',
+    'ewf_tools': 'sleuthkit',
+    'registry_forensics': 'registry',
+    'windows_registry': 'registry',
+}
+
 __all__ = ["GEOFF_PROMPT", "_attempt_heal", "_audit_heal", "_call_manager_llm", "_execute_heal", "_manager_generate_correction", "_manager_review_execution_plan", "_self_check_chat_response", "_wire_attempt_heal", "call_llm", "classify_error_fast"]
 def classify_error_fast(ctx: ErrorContext) -> Optional[str]:
     """Pre-classify errors for deterministic cases, avoiding LLM calls.
@@ -180,12 +191,21 @@ def _execute_heal(module: str, function: str, params: dict,
     elif fix_type == "fallback_tool":
         if not decision.fallback_module or not decision.fallback_function:
             return None
+        # Resolve LLM-invented module names via aliases
+        fallback_mod = decision.fallback_module.lower().replace(' ', '_')
+        fallback_mod = MODULE_ALIASES.get(fallback_mod, fallback_mod)
+        decision.fallback_module = fallback_mod
+        # Validate fallback module exists in the orchestrator's specialist_map
+        from geoff_utils import orchestrator as _orch
+        if _orch is not None and hasattr(_orch, 'specialist_map') and fallback_mod not in _orch.specialist_map:
+            _fe_log(job_id, f"  [HEAL] Fallback module '{fallback_mod}' not in specialist_map — aborting")
+            return None
         new_params = dict(params)
         new_params.update(decision.new_params)
         new_params["_heal_attempt"] = True
-        _fe_log(job_id, f"  [HEAL] Fallback: {decision.fallback_module}.{decision.fallback_function}")
+        _fe_log(job_id, f"  [HEAL] Fallback: {fallback_mod}.{decision.fallback_function}")
         return _run_step_via_orchestrator(
-            decision.fallback_module, decision.fallback_function,
+            fallback_mod, decision.fallback_function,
             new_params, job_id=job_id,
         )
 
