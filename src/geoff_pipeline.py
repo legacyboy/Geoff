@@ -1855,8 +1855,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             for archive_path in inventory.get("mobile_backups", []) + inventory.get("other_files", []):
                 header_type = _detect_file_type_from_header(archive_path)
                 if header_type in ("zip_archive", "gzip_archive", "tar_archive", "7zip_archive"):
-                    # Checkpoint dedup: compute sha256, skip if already extracted
-                    _ahash = _hash_file(archive_path)
+                    # Checkpoint dedup: use fast stat-based identity (path+size+mtime)
+                    # Skipping SHA256 of multi-GB archives over NFS — redundant:
+                    # extracted E01 images already embed their own integrity hashes
+                    _st = os.stat(archive_path)
+                    _ahash = f"{archive_path}:{_st.st_size}:{_st.st_mtime}"
                     if _ckpt_archive_registered(ckpt, _ahash):
                         _cached = ckpt["extracted_archives"][_ahash]
                         _cached_dir = Path(_cached["extracted_dir"])
