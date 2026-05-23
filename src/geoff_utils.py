@@ -687,11 +687,9 @@ def _run_step_via_orchestrator(module: str, function: str, params: dict, *,
                                 job_id: str = "") -> dict:
     """Route a step to the correct orchestrator based on module prefix.
 
-    Steps whose module is 'remnux' (or starts with 'remnux_') go to the
-    REMnux orchestrator; everything else goes to the extended SIFT orchestrator.
-
-    On error, delegates to _attempt_heal() for LLM-powered self-healing.
-    The _heal_attempt flag in params prevents infinite recursion.
+    Routes steps to the appropriate orchestrator and returns results directly.
+    Self-healing is handled exclusively at the pipeline level (geoff_pipeline.py),
+    which has access to evidence type, OS type, and device context.
     """
     # Strip internal healing params before passing to specialist methods,
     # which don't accept unexpected keyword arguments
@@ -705,13 +703,6 @@ def _run_step_via_orchestrator(module: str, function: str, params: dict, *,
     else:
         step = {"module": module, "function": function, "params": clean_params}
         result = orchestrator.run_playbook_step("find-evil", step)
-
-    # LLM-powered self-healing on error (guarded against recursion)
-    if result.get("status") == "error" and not params.get("_heal_attempt"):
-        if _attempt_heal is not None:
-            healed = _attempt_heal(module, function, params, result, job_id)
-            if healed is not None:
-                return healed
 
     return result
 

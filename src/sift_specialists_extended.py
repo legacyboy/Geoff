@@ -27,6 +27,7 @@ from typing import Dict, List, Any, Optional
 from xml.etree import ElementTree as ET
 import sys
 import inspect
+from file_scanner import FileScanner
 import time
 
 
@@ -11042,53 +11043,57 @@ class ExtendedOrchestrator:
         # FAT recovery specialist (delegates to geoff_discovery.recover_formatted_fat)
         self.fat_recovery = FAT_RECOVERY_Specialist(evidence_base)
 
+        # File scanner specialist (file identification / signature mismatch)
+        self.file_scanner = FileScanner(evidence_base)
+
         try:
             from sift_specialists_remnux import REMNUX_Orchestrator
             self.remnux = REMNUX_Orchestrator()
         except ImportError:
             self.remnux = None
 
+        self.specialist_map = {
+            'sleuthkit':      self.sleuthkit,
+            'volatility':     self.volatility,
+            'strings':        self.strings,
+            'registry':       self.registry,
+            'plaso':          self.plaso,
+            'network':        self.network,
+            'logs':           self.logs,
+            'mobile':         self.mobile,
+            'mobile_malware': self.mobile_malware,
+            'photorec':       self.photorec,
+            'vss':            self.vss,
+            'zimmerman':      self.zimmerman,
+            'remnux':         self.remnux,
+            'browser':        self.browser,
+            'sqlite':         self.sqlite,
+            'email':          self.email,
+            'jumplist':       self.jumplist,
+            'macos':          self.macos,
+            'data_staging':   self.data_staging,
+            'memory':         self.memory,
+            'windows':        self.windows,
+            'crypto':         self.crypto,
+            'cloud':          self.cloud,
+            'collaboration':  self.collaboration,
+            'vm':             self.vm,
+            'container':      self.container,
+            'scheduled':      self.scheduled,
+            'host_correlator':self.host_correlator,
+            'bulk_extractor': self.bulk_extractor,
+            'dc3dd':          self.dc3dd,
+            'zeek':           self.zeek,
+            'file_scanner':   self.file_scanner,
+            'fat_recovery':   self.fat_recovery,
+        }
+
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
         module = step.get('module')
         function = step.get('function')
         params = step.get('params', {})
 
-        specialist_map = {
-            'sleuthkit': self.sleuthkit,
-            'volatility': self.volatility,
-            'strings': self.strings,
-            'registry': self.registry,
-            'plaso': self.plaso,
-            'network': self.network,
-            'logs': self.logs,
-            'mobile': self.mobile,
-            'mobile_malware': self.mobile_malware,
-            'photorec': self.photorec,
-            'vss': self.vss,
-            'zimmerman': self.zimmerman,
-            'remnux': self.remnux,
-            'browser': self.browser,
-            'sqlite': self.sqlite,
-            'email': self.email,
-            'jumplist': self.jumplist,
-            'macos': self.macos,
-            'data_staging': self.data_staging,
-            'memory': self.memory,
-            'windows': self.windows,
-            'crypto': self.crypto,
-            'cloud': self.cloud,
-            'collaboration': self.collaboration,
-            'vm': self.vm,
-            'container': self.container,
-            'scheduled': self.scheduled,
-            'host_correlator': self.host_correlator,
-            'bulk_extractor': self.bulk_extractor,
-            'dc3dd': self.dc3dd,
-            'zeek': self.zeek,
-            'fat_recovery': self.fat_recovery,
-        }
-
-        specialist = specialist_map.get(module)
+        specialist = self.specialist_map.get(module)
         if specialist and hasattr(specialist, function):
             func = getattr(specialist, function)
             sig = inspect.signature(func)
@@ -11103,7 +11108,7 @@ class ExtendedOrchestrator:
             return self.remnux.run_playbook_step(investigation_id, step)
 
         # Distinguish unknown module from unknown function for clearer diagnostics
-        specialist = specialist_map.get(module)
+        specialist = self.specialist_map.get(module)
         if specialist is None:
             return {'status': 'error', 'error': f'Unknown module: {module}', 'timestamp': datetime.now().isoformat()}
         elif not hasattr(specialist, function):

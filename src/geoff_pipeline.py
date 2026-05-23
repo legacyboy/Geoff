@@ -12,7 +12,7 @@ This module contains:
 
 External singleton references (orchestrator, remnux_orchestrator,
 geoff_critic, geoff_forensicator) are wired by geoff_integrated.py after
-initialisation — same pattern as geoff_utils.py.
+initialisation - same pattern as geoff_utils.py.
 """
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,7 @@ from geoff_phase34 import (
 from geoff_classifier import classify_case, summarize_classification
 from geoff_critic import GeoffCritic
 from geoff_mitre import map_findings_to_mitre
+from geoff_fallback_chains import _execute_fallback_chain
 
 # Wire module-level references for orchestrator routing
 import geoff_utils as _gu
@@ -252,12 +253,12 @@ def _preflight_validation(evidence_path: Path, case_work_dir: Path, job_id: str)
     # Evidence directory must contain at least one file
     evidence_files = [f for f in evidence_path.rglob("*") if f.is_file()]
     if not evidence_files:
-        warnings.append(f"Evidence directory {evidence_path} contains no files — inventory will be empty")
+        warnings.append(f"Evidence directory {evidence_path} contains no files - inventory will be empty")
 
     # Verify git is available (needed for custody commits)
     git_check = safe_run(['git', '--version'], timeout=5)
     if git_check["code"] != 0:
-        warnings.append("git not found in PATH — per-step custody commits will be skipped")
+        warnings.append("git not found in PATH - per-step custody commits will be skipped")
 
     # Verify case_work_dir parent is writable
     try:
@@ -528,7 +529,7 @@ def _run_forensicator_batch(
     metadata used by _manager_post_critic_decision.
 
     Actual step execution runs inside find_evil's existing per-device/playbook
-    loop — per-step custody commits happen inside that loop.
+    loop - per-step custody commits happen inside that loop.
     """
     total_templates = sum(
         sum(len(steps) for steps in PLAYBOOK_STEPS.get(pb, {}).values())
@@ -688,7 +689,7 @@ def _timeline_intelligence_analysis(
                     f"What artifacts link {proc_name} across devices?",
                 ],
             }
-            # Deduplicate — one trigger per matched process keyword
+            # Deduplicate - one trigger per matched process keyword
             if not any(t["trigger_type"] == trigger["trigger_type"] and
                        all(d in t["devices_involved"] for d in devices_involved)
                        for t in intelligence["pass2_playbook_triggers"]):
@@ -1098,7 +1099,7 @@ Respond ONLY in valid JSON:
                     _log(f"  ✓ Manager approved {len(approved)}/{len(triggers)} triggers: {parsed.get('reasoning', '')}")
                     return approved[:3]  # Cap at 3
     except Exception as e:
-        _log(f"  ⚠ Manager review LLM error: {e} — using template fallback")
+        _log(f"  ⚠ Manager review LLM error: {e} - using template fallback")
 
     # Template fallback: approve highest-priority up to 3
     _log("  ↳ Falling back to template: approve up to 3 highest-priority triggers")
@@ -1146,7 +1147,7 @@ def _execute_pass2(
             fe_log_func(job_id, msg)
 
     if not triggers:
-        _log("  Pass 2: no approved triggers — skipping")
+        _log("  Pass 2: no approved triggers - skipping")
         return {"triggers_processed": 0, "playbooks_run": [], "findings_count": 0}
 
     _log(f"\n{'='*60}")
@@ -1182,7 +1183,7 @@ def _execute_pass2(
         pb_name = PLAYBOOK_NAMES_PASS2.get(playbook_id, playbook_id)
 
         if playbook_id not in PLAYBOOK_STEPS_PASS2:
-            _log(f"  ✗ Pass 2: playbook {playbook_id} not defined — skipping")
+            _log(f"  ✗ Pass 2: playbook {playbook_id} not defined - skipping")
             continue
 
         _log(f"\n  ▶ Pass 2 [{trigger_idx+1}/{len(triggers)}]: {playbook_id} ({pb_name})")
@@ -1255,7 +1256,7 @@ def _execute_pass2(
                                 v = v.replace("{target_hosts}", ",".join(trigger.get("devices_involved", [])))
                                 v = v.replace("{target_paths}", str(trigger_context.get("target_paths", "")))
                                 # Registry hive params are handled via {hive} substitution above
-                                # (autoruns_hive / services_hive removed — use {hive} in playbook defs)
+                                # (autoruns_hive / services_hive removed - use {hive} in playbook defs)
                             elif isinstance(v, dict):
                                 v = {sk: str(sv).replace("{dwell_start}", str(time_window.get("start", "")))
                                      .replace("{dwell_end}", str(time_window.get("end", "")))
@@ -1451,7 +1452,7 @@ Respond ONLY in valid JSON (no extra text):
         if m:
             batch_assessment = json.loads(m.group())
     except Exception as e:
-        _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} — using defaults")
+        _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} - using defaults")
 
     # Write batch assessment to disk
     _atomic_write(
@@ -1477,7 +1478,7 @@ def _manager_post_critic_decision(
     Returns a decision dict with keys:
     - action:             "approve" | "flag" | "replay"
     - replay_adjustments: {step_key: {param_key: new_value}}  (populated on "replay")
-    - generate_report:    bool — whether to generate the narrative report
+    - generate_report:    bool - whether to generate the narrative report
     - reasoning:          str
     """
     llm_assessment    = batch_assessment.get("llm_assessment", {})
@@ -1538,7 +1539,7 @@ Respond ONLY in valid JSON (no extra text):
         "action": "approve",
         "replay_adjustments": {},
         "generate_report": sufficient,
-        "reasoning": "Manager LLM unavailable — defaulting to approve",
+        "reasoning": "Manager LLM unavailable - defaulting to approve",
     }
     try:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -1549,7 +1550,7 @@ Respond ONLY in valid JSON (no extra text):
             decision["generate_report"]    = parsed.get("generate_report", sufficient)
             decision["reasoning"]          = parsed.get("reasoning", "")
     except Exception as e:
-        _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} — defaulting to approve")
+        _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve")
 
     _fe_log(job_id, (
         f"  [MANAGER] Decision: {decision['action'].upper()} | "
@@ -1668,10 +1669,13 @@ def _retry_unprocessed(
                 step_key = f"retry:{pb_id}:{module}:{function}:{Path(path).name}"
 
                 try:
-                    result = _run_step_via_orchestrator(module, function, params)
+                    result = _execute_fallback_chain(module, function, params,
+                                                     evidence_path=path, job_id=job_id)
                     step_status = (
-                        "completed" if result.get("status") == "success" else "failed"
+                        "completed" if result.get("status") in ("success", "success_partial") else "failed"
                     )
+                    if result.get("status") == "unprocessable":
+                        step_status = "unprocessable"
 
                     record = {
                         "playbook": pb_id,
@@ -1749,7 +1753,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
     confidence_modifiers = None
     super_timeline_path = None
 
-    # Pending findings buffers — initialized unconditionally to prevent
+    # Pending findings buffers - initialized unconditionally to prevent
     # NameError on checkpoint resume (phases that completed in a prior
     # run skip their buffer-initialization code, but the flush loop after
     # findings_writer init references these variables unconditionally).
@@ -1793,7 +1797,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 "evidence_dir": evidence_dir,
             }
 
-        # Preflight validation (non-fatal — warnings logged but execution continues)
+        # Preflight validation (non-fatal - warnings logged but execution continues)
         _case_work_dir_preview = Path(CASES_WORK_DIR) / f"{evidence_path.name}_findevil_preflight"
         try:
             _preflight_validation(evidence_path, _case_work_dir_preview, job_id)
@@ -1812,7 +1816,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         ckpt_inventory_file = case_work_dir / "checkpoint_inventory.json"
         if _ckpt_phase_done(ckpt, "inventory"):
             inventory = json.loads(ckpt_inventory_file.read_text())
-            _fe_log(job_id, "  [CKPT] Skipping inventory — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping inventory - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "inventory", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -1833,7 +1837,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             else:
                 inventory = _inventory_evidence(evidence_path)
 
-            # Phase 0b: Validate classification — NEVER leave files unprocessed
+            # Phase 0b: Validate classification - NEVER leave files unprocessed
             _update_job(2, "validation", "Re-checking file classifications")
             inventory = _validate_inventory_classification(inventory, job_id)
             _fe_log(job_id, f"  Validation: {len(inventory.get('other_files', []))} files remain in other_files for generic analysis")
@@ -1843,10 +1847,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # Phase 1c: Extract compressed archives
-        # DFIR requires full extraction — disk space usage is expected
+        # DFIR requires full extraction - disk space usage is expected
         if _ckpt_phase_done(ckpt, "extraction"):
             extracted_archives = inventory.get("extracted_archives", [])
-            _fe_log(job_id, "  [CKPT] Skipping extraction — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping extraction - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "extraction", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -1856,7 +1860,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 header_type = _detect_file_type_from_header(archive_path)
                 if header_type in ("zip_archive", "gzip_archive", "tar_archive", "7zip_archive"):
                     # Checkpoint dedup: use fast stat-based identity (path+size+mtime)
-                    # Skipping SHA256 of multi-GB archives over NFS — redundant:
+                    # Skipping SHA256 of multi-GB archives over NFS - redundant:
                     # extracted E01 images already embed their own integrity hashes
                     _st = os.stat(archive_path)
                     _ahash = f"{archive_path}:{_st.st_size}:{_st.st_mtime}"
@@ -1907,11 +1911,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             fname_lower = Path(fpath).name.lower()
                             fheader = _detect_file_type_from_header(fpath)
                             # Re-classify extracted files into correct inventory buckets
-                            if fheader == "ewf_disk_image" or fext in ('.e01', '.e02', '.e03', '.e04', '.dd', '.raw', '.aff'):
+                            if fheader == "ewf_disk_image" or fext in ('.e01', '.e02', '.e03', '.e04', '.dd', '.aff'):
                                 if fpath not in inventory["disk_images"]:
                                     inventory["disk_images"].append(fpath)
                                     _added += 1
-                            elif fheader == "memory_dump" or (fext == '.img' and any(kw in str(Path(fpath).parent.name).lower() for kw in ('memory', 'mem', 'ram'))):
+                            elif fheader == "memory_dump" or (fext in ('.img', '.raw', '.001', '.002') and any(kw in str(Path(fpath).parent.name).lower() for kw in ('memory', 'mem', 'ram'))):
                                 if fpath not in inventory["memory_dumps"]:
                                     inventory["memory_dumps"].append(fpath)
                                     _added += 1
@@ -1927,7 +1931,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 if fpath not in inventory.get("evtx_logs", []):
                                     inventory.setdefault("evtx_logs", []).append(fpath)
                                     _added += 1
-                            elif fext == '.vmem' or fext == '.dmp' or fext == '.mem':
+                            elif fext in ('.vmem', '.mem', '.dmp', '.raw', '.001'):
                                 if fpath not in inventory["memory_dumps"]:
                                     inventory["memory_dumps"].append(fpath)
                                     _added += 1
@@ -1978,7 +1982,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             saved = json.loads(ckpt_devices_file.read_text())
             device_map = saved.get("device_map", {})
             user_map = saved.get("user_map", {})
-            _fe_log(job_id, "  [CKPT] Skipping device discovery — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping device discovery - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "device_discovery", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -2007,7 +2011,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     "evidence_files": all_evidence,
                 }
             }
-            _fe_log(job_id, "  No devices resolved — created synthetic host-unknown device")
+            _fe_log(job_id, "  No devices resolved - created synthetic host-unknown device")
 
         for dev_id, dev in device_map.items():
             _fe_log(job_id, f"  Device: {dev_id} ({dev.get('device_type', 'unknown')}) "
@@ -2066,7 +2070,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         ckpt_offsets_file = case_work_dir / "checkpoint_offsets.json"
         if _ckpt_phase_done(ckpt, "partition_offsets"):
             image_offsets = json.loads(ckpt_offsets_file.read_text())
-            _fe_log(job_id, "  [CKPT] Skipping partition scan — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping partition scan - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "partition_offsets", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -2074,7 +2078,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # Phase 1b (revised): Detect partition offsets per device
         # Uses a multi-strategy approach:
-        #   1. ewfmount + mmls on ewf1 (for E01/E02 images — most reliable)
+        #   1. ewfmount + mmls on ewf1 (for E01/E02 images - most reliable)
         #   2. SLEUTHKIT_Specialist (handles E01 natively but may fail on multi-segment)
         #   3. Direct mmls with -t type fallbacks (GPT, DOS, Mac, BSD)
         #   4. LLM self-healing
@@ -2404,11 +2408,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             except Exception as _p1_ce:
                 _fe_log_with_exception(job_id, "  ⚠ Phase 1 Critic validation failed", _p1_ce)
 
-        # Mount & Discover — checkpoint for disk walk dedup
+        # Mount & Discover - checkpoint for disk walk dedup
         ckpt_mounts_file = case_work_dir / "checkpoint_mounts.json"
         if _ckpt_phase_done(ckpt, "mount_discover"):
             nuclear_result = json.loads(ckpt_mounts_file.read_text())
-            _fe_log(job_id, "  [CKPT] Skipping mount/discover — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping mount/discover - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "mount_discover", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -2420,17 +2424,17 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             # If zero images were actually walked but disk images exist, mark as failed
             nuc_processed = nuclear_result.get("nuclear_images_processed", 0) if nuclear_result else 0
             if nuc_processed == 0 and inventory.get("disk_images", []):
-                _fe_log(job_id, f"  ⚠ Mount phase found 0 items but {len(inventory.get('disk_images',[]))} disk images exist — marking as failed for retry")
+                _fe_log(job_id, f"  ⚠ Mount phase found 0 items but {len(inventory.get('disk_images',[]))} disk images exist - marking as failed for retry")
                 _ckpt_mark_phase(ckpt, "mount_discover", "failed", "checkpoint_mounts.json")
             else:
                 _ckpt_mark_phase(ckpt, "mount_discover", "complete", "checkpoint_mounts.json")
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A002 — Post-Mount Second-Pass Inventory Sweep
+        # A002 - Post-Mount Second-Pass Inventory Sweep
         # ------------------------------------------------------------------
         # Walks every active mount point searching for artifact paths that
-        # the initial extension-based inventory cannot discover — email
+        # the initial extension-based inventory cannot discover - email
         # databases (OST, PST, Windows.edb), browser history DBs (Chrome,
         # Firefox), cloud sync artifacts (Google Drive), Recycle Bin
         # metadata ($Recycle.Bin $I*), Prefetch files, and anti-forensics
@@ -2440,7 +2444,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # PB-SIFT-030 Cloud Sync Artifacts, etc.) can act on them.
         # Checkpoint-aware and non-fatal on failure.
         if not _ckpt_phase_done(ckpt, "post_mount_sweep"):
-            _fe_log(job_id, "  [POST-MOUNT-SWEEP] Starting second-pass inventory sweep …")
+            _fe_log(job_id, "  [POST-MOUNT-SWEEP] Starting second-pass inventory sweep ...")
             _ckpt_mark_phase(ckpt, "post_mount_sweep", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -2450,7 +2454,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     job_id=job_id,
                 )
                 # Merge discovered artifacts into inventory (already done
-                # inside the function — this is just audit logging).
+                # inside the function - this is just audit logging).
                 total_discovered = sum(len(v) for v in sweep_result.values())
                 categories_found = [cat for cat, paths in sweep_result.items() if paths]
                 if categories_found:
@@ -2465,7 +2469,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A011 — Network Share Forensics
+        # A011 - Network Share Forensics
         # ------------------------------------------------------------------
         # Analyzes network share/mapped drive artifacts from registry (NTUSER.DAT
         # HKCU\\Network and MountPoints2), Prefetch (NET.EXE-*.pf), and PowerShell
@@ -2474,7 +2478,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Checkpoint-aware, non-fatal on failure.
         # Findings are buffered and flushed after findings_writer initialization.
         if not _ckpt_phase_done(ckpt, "network_shares"):
-            _fe_log(job_id, "  [NET-SHARE] Beginning network share forensics …")
+            _fe_log(job_id, "  [NET-SHARE] Beginning network share forensics ...")
             _ckpt_mark_phase(ckpt, "network_shares", "running")
             _ckpt_save(case_work_dir, ckpt)
             _pending_net_share_findings = []
@@ -2529,7 +2533,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 ],
                                 "follow_up_needed": bool(drive.get("persistent")),
                                 "follow_up_reason": (
-                                    "Persistent mapped network drive — potential data exfiltration vector"
+                                    "Persistent mapped network drive - potential data exfiltration vector"
                                     if drive.get("persistent") else ""
                                 ),
                             },
@@ -2694,7 +2698,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A012 — FAT/exFAT Formatted Media Recovery
+        # A012 - FAT/exFAT Formatted Media Recovery
         # ------------------------------------------------------------------
         # Recovers deleted files from quick-formatted FAT12/16/32 and exFAT
         # partitions using Sleuth Kit (fls -rd, icat) and photorec carving.
@@ -2702,11 +2706,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Runs after mount so that disk images and offsets are available.
         # Checkpoint-aware, non-fatal on failure.
         if not _ckpt_phase_done(ckpt, "formatted_media_recovery"):
-            _fe_log(job_id, "  [FAT-RECOV] Beginning FAT/exFAT formatted media recovery …")
+            _fe_log(job_id, "  [FAT-RECOV] Beginning FAT/exFAT formatted media recovery ...")
             _ckpt_mark_phase(ckpt, "formatted_media_recovery", "running")
             _ckpt_save(case_work_dir, ckpt)
 
-            # Buffer findings — findings_writer not yet initialized
+            # Buffer findings - findings_writer not yet initialized
             _pending_fat_recovery_findings = []
 
             try:
@@ -2769,7 +2773,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 ],
                                 "follow_up_needed": True,
                                 "follow_up_reason": (
-                                    "File recovered from formatted partition — "
+                                    "File recovered from formatted partition - "
                                     "potential anti-forensics / evidence destruction"
                                 ),
                             },
@@ -2825,7 +2829,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             ],
                             "follow_up_needed": True,
                             "follow_up_reason": (
-                                "USB device was formatted — possible anti-forensics "
+                                "USB device was formatted - possible anti-forensics "
                                 "to destroy evidence of data exfiltration"
                             ),
                         },
@@ -2834,12 +2838,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     })
 
                 if fat_result.get("formatted") or usb_result.get("format_detected"):
-                    # Add ANTI-FORENSICS confidence modifier — will be applied
+                    # Add ANTI-FORENSICS confidence modifier - will be applied
                     # when confidence_modifiers list is initialized later in phase 3.
                     # Store in inventory for the phase-3 logic to pick up.
                     inventory["_format_anti_forensics"] = True
 
-                _fe_log(job_id, f"  [FAT-RECOV] Completed — formatted={fat_result.get('formatted', False)}, "
+                _fe_log(job_id, f"  [FAT-RECOV] Completed - formatted={fat_result.get('formatted', False)}, "
                                 f"entries={len(fat_result.get('recovered_entries', []))}, "
                                 f"usb_format={usb_result.get('format_detected', False)}")
                 _ckpt_mark_phase(ckpt, "formatted_media_recovery", "complete")
@@ -2850,7 +2854,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A003 — Email Artifact Discovery on Mounted Partitions
+        # A003 - Email Artifact Discovery on Mounted Partitions
         # ------------------------------------------------------------------
         # Searches inside every active mount point for email-related files
         # (.pst, .ost, .eml, .msg, .edb, etc.).  Found artifacts are added
@@ -2858,7 +2862,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Forensics playbook (PB-SIFT-023) is triggered later during the
         # playbook planning phase.
         if not _ckpt_phase_done(ckpt, "email_artifact_search"):
-            _fe_log(job_id, "  [EMAIL] Searching mounted partitions for email artifacts …")
+            _fe_log(job_id, "  [EMAIL] Searching mounted partitions for email artifacts ...")
             _ckpt_mark_phase(ckpt, "email_artifact_search", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -2873,7 +2877,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A008 — Browser History Enhancement (IE/Edge) on Mounted Partitions
+        # A008 - Browser History Enhancement (IE/Edge) on Mounted Partitions
         # ------------------------------------------------------------------
         # Searches every active mount point for IE/Edge WebCacheV01.dat (ESE DB)
         # and legacy index.dat history files.  Extracts URLs, timestamps,
@@ -2882,7 +2886,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # list, flagging matches with HIGH confidence.
         # Checkpoint-aware, non-fatal on failure.
         if not _ckpt_phase_done(ckpt, "browser_history"):
-            _fe_log(job_id, "  [BROWSER] Beginning IE/Edge browser history extraction …")
+            _fe_log(job_id, "  [BROWSER] Beginning IE/Edge browser history extraction ...")
             _ckpt_mark_phase(ckpt, "browser_history", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -2914,7 +2918,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A010 — Google Drive Cloud Sync Forensics
+        # A010 - Google Drive Cloud Sync Forensics
         # ------------------------------------------------------------------
         # Walks mounted partitions looking for Google Drive sync artifacts
         # (snapshot.db, sync_config.db, sync_log.log, Google Drive folder).
@@ -2922,7 +2926,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # files, account emails, and upload/download events.
         # Checkpoint-aware, non-fatal on failure.
         if not _ckpt_phase_done(ckpt, "google_drive"):
-            _fe_log(job_id, "  [GDRIVE] Beginning Google Drive cloud sync forensics …")
+            _fe_log(job_id, "  [GDRIVE] Beginning Google Drive cloud sync forensics ...")
             _ckpt_mark_phase(ckpt, "google_drive", "running")
             _ckpt_save(case_work_dir, ckpt)
             # Buffer for flush after findings_writer init
@@ -2994,7 +2998,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     ],
                                     "follow_up_needed": bool(gf.get("shared")),
                                     "follow_up_reason": (
-                                        "Shared cloud file — potential data leakage indicator"
+                                        "Shared cloud file - potential data leakage indicator"
                                         if gf.get("shared") else ""
                                     ),
                                 },
@@ -3036,7 +3040,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     "analyst_note": f"Google Drive {sle['event']} event at {sle.get('timestamp', 'unknown')}: {sle.get('details', '')[:150]}",
                                     "threat_indicators": [f"google_drive:{sle['event']}"],
                                     "follow_up_needed": sle["event"] == "upload",
-                                    "follow_up_reason": "Cloud upload event — potential exfiltration indicator" if sle["event"] == "upload" else "",
+                                    "follow_up_reason": "Cloud upload event - potential exfiltration indicator" if sle["event"] == "upload" else "",
                                 },
                                 "started_at": datetime.now().isoformat(),
                                 "completed_at": datetime.now().isoformat(),
@@ -3053,13 +3057,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A001 — User Identification from SAM + NTUSER.DAT
+        # A001 - User Identification from SAM + NTUSER.DAT
         # ------------------------------------------------------------------
         # Run after mount/discover (images are mounted) to extract local user
         # accounts from SAM hives and enumerate profile directories.
         # Merges results with the existing user_map from device discovery.
         if not _ckpt_phase_done(ckpt, "user_extraction"):
-            _fe_log(job_id, "  [USERS] Beginning local user extraction from mounted images …")
+            _fe_log(job_id, "  [USERS] Beginning local user extraction from mounted images ...")
             _ckpt_mark_phase(ckpt, "user_extraction", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -3092,7 +3096,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A006 — File Signature vs Extension Mismatch Detection
+        # A006 - File Signature vs Extension Mismatch Detection
         # ------------------------------------------------------------------
         # Walks user profile directories and scans documents with `file -b`,
         # cross-referencing magic header type against file extension.  Flags
@@ -3101,7 +3105,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Runs after mount/discover + user extraction so that profile paths
         # inside mounted disk images are available for scanning.
         if not _ckpt_phase_done(ckpt, "signature_mismatch_scan"):
-            _fe_log(job_id, "  [SIG-SCAN] Beginning file signature vs extension scan …")
+            _fe_log(job_id, "  [SIG-SCAN] Beginning file signature vs extension scan ...")
             _ckpt_mark_phase(ckpt, "signature_mismatch_scan", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -3117,7 +3121,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     # Write full results to case work dir
                     sig_path = case_work_dir / "signature_mismatches.json"
                     _atomic_write(sig_path, json.dumps(sig_mismatches, indent=2, default=str))
-                    # Buffer findings locally — findings_writer not yet initialized
+                    # Buffer findings locally - findings_writer not yet initialized
                     _pending_sig_findings = []
                     for sm in sig_mismatches:
                         step_key = f"A006:signature_mismatch:{Path(sm['path']).name}"
@@ -3162,7 +3166,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 ],
                                 "follow_up_needed": sev in ("CRITICAL", "HIGH"),
                                 "follow_up_reason": (
-                                    "Possible malware delivery via disguised file — "
+                                    "Possible malware delivery via disguised file - "
                                     "manual review recommended"
                                     if sev in ("CRITICAL", "HIGH") else ""
                                 ),
@@ -3179,15 +3183,15 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_save(case_work_dir, ckpt)
 
         # ------------------------------------------------------------------
-        # A007 — $UsnJrnl Change Journal Forensics
+        # A007 - $UsnJrnl Change Journal Forensics
         # ------------------------------------------------------------------
         # Parses the NTFS change journal on mounted disk images to detect
-        # file renames, deletions, and data overwrites — key indicators of
+        # file renames, deletions, and data overwrites - key indicators of
         # anti-forensics activity (timestomping, evidence deletion, malware
         # self-deletion).  Runs after mount/discover so that the volume
         # is accessible at its mount point.
         if not _ckpt_phase_done(ckpt, "usnjrnl_parse"):
-            _fe_log(job_id, "  [USNJRNL] Beginning $UsnJrnl change journal analysis …")
+            _fe_log(job_id, "  [USNJRNL] Beginning $UsnJrnl change journal analysis ...")
             _ckpt_mark_phase(ckpt, "usnjrnl_parse", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -3196,7 +3200,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 with _state_lock:
                     mount_points = list(_active_mounts) if _active_mounts else []
                 if not mount_points:
-                    _fe_log(job_id, "  [USNJRNL] No active mounts — skipping")
+                    _fe_log(job_id, "  [USNJRNL] No active mounts - skipping")
                 else:
                     for mp in mount_points:
                         journal_candidates = [
@@ -3219,7 +3223,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         )
                         if batch:
                             usn_records.extend(batch)
-                            # Buffer findings — flush after findings_writer init
+                            # Buffer findings - flush after findings_writer init
                             for rec in batch:
                                 fname = rec.get("filename", "")
                                 if not fname:
@@ -3282,7 +3286,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         ),
                                         "follow_up_reason": (
                                             f"$UsnJrnl {rlabel} event on "
-                                            f"{fname} — may indicate "
+                                            f"{fname} - may indicate "
                                             f"anti-forensics or malware "
                                             f"activity"
                                         ),
@@ -3305,9 +3309,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Create evidence separation directories
         (case_work_dir / "evidence" / "derived").mkdir(parents=True, exist_ok=True)
         (case_work_dir / "evidence" / "raw").mkdir(parents=True, exist_ok=True)
-    
+
         # Write evidence manifest to evidence/raw/ (references, not copies/links)
-        # Raw evidence stays in its original location — only derived artifacts go here
+        # Raw evidence stays in its original location - only derived artifacts go here
         manifest = {
             "evidence_dir": str(evidence_dir),
             "disk_images": inventory.get("disk_images", []),
@@ -3360,7 +3364,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
         _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir))
 
-        # Crash Recovery — reset any 'running' steps from previous runs
+        # Crash Recovery - reset any 'running' steps from previous runs
         for pb_file in case_work_dir.glob("output/*.json"):
             try:
                 with open(pb_file) as f:
@@ -3369,7 +3373,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 for step in pb_steps:
                     if step.get("status") == "running":
                         step["status"] = "failed"
-                        step["error"] = "Interrupted by crash — status was 'running' on restart"
+                        step["error"] = "Interrupted by crash - status was 'running' on restart"
                         changed = True
                 if changed:
                     _atomic_write(pb_file, json.dumps(pb_steps, default=str, indent=2))
@@ -3377,7 +3381,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             except Exception as crash_exc:
                 _log_info(f"crash recovery skipped for {pb_file.name}: {crash_exc}")
 
-        # Disk State Reconciliation — find orphaned artifacts not tracked in state
+        # Disk State Reconciliation - find orphaned artifacts not tracked in state
         try:
             tracked_files = set()
             for pb_file in case_work_dir.glob("output/*.json"):
@@ -3400,7 +3404,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     rel = f.relative_to(case_work_dir)
                     if str(rel).startswith(("output/", "timeline/", "reports/")):
                         fhash = _hash_file(str(f))
-                        untracked.append({"file": str(f), "hash": fhash, "note": "orphaned — not in state"})
+                        untracked.append({"file": str(f), "hash": fhash, "note": "orphaned - not in state"})
             if untracked:
                 orphan_log = case_work_dir / "untracked_artifacts.json"
                 _atomic_write(orphan_log, json.dumps(untracked, indent=2, default=str))
@@ -3450,6 +3454,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         steps_completed = 0
         steps_failed = 0
         steps_skipped = 0
+        steps_unprocessable = 0
         steps_unverified = 0
         CONTINUE_ON_FAILURE = os.environ.get("GEOFF_CONTINUE_ON_FAILURE", "true").lower() == "true"
         _abort = False  # Set to True on failure when CONTINUE_ON_FAILURE=False
@@ -3516,10 +3521,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         anti_forensics_detected = False
 
         # ------------------------------------------------------------------
-        # A009 — Anti-Forensics Tool Signature Detection (checkpoint-aware phase)
+        # A009 - Anti-Forensics Tool Signature Detection (checkpoint-aware phase)
         # ------------------------------------------------------------------
         if not _ckpt_phase_done(ckpt, "anti_forensics_detection"):
-            _fe_log(job_id, "  [AF-DETECT] Beginning anti-forensics tool signature detection …")
+            _fe_log(job_id, "  [AF-DETECT] Beginning anti-forensics tool signature detection ...")
             _ckpt_mark_phase(ckpt, "anti_forensics_detection", "running")
             _ckpt_save(case_work_dir, ckpt)
             try:
@@ -3569,7 +3574,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     "analyst_note": f"Anti-forensics tool '{tool_name}' detected: {len(tool_result.get('evidence', []))} artifact(s) found, confidence={tool_result.get('confidence', 'LOW')}",
                                     "threat_indicators": [f"anti-forensics:{tool_name}"],
                                     "follow_up_needed": True,
-                                    "follow_up_reason": f"Anti-forensics tool {tool_name} execution artifacts found — evidence may be compromised",
+                                    "follow_up_reason": f"Anti-forensics tool {tool_name} execution artifacts found - evidence may be compromised",
                                 },
                             })
                             _fe_log(job_id, f"  [AF-DETECT] ⚠ {tool_name}: DETECTED ({tool_result.get('confidence', 'LOW')} confidence, {tool_result.get('execution_count', 0)} executions)")
@@ -3582,7 +3587,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
                             confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
                         cascaded_now = _apply_anti_forensics_cascade(findings_writer)
-                        _fe_log(job_id, f"  [AF-DETECT] ⚠ Anti-forensics tools detected — cascade tagged {cascaded_now} findings")
+                        _fe_log(job_id, f"  [AF-DETECT] ⚠ Anti-forensics tools detected - cascade tagged {cascaded_now} findings")
                     else:
                         _fe_log(job_id, "  [AF-DETECT] No anti-forensics tools detected")
                 else:
@@ -3603,7 +3608,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # --- Scan triage_findings for artifacts INSIDE disk images ---
         # The fls/list_files results from PB-SIFT-001 are in triage_findings.
         # When we have disk images, key artifacts (email, browser, registry, etc.)
-        # are INSIDE the image — they won't appear in inventory's top-level files.
+        # are INSIDE the image - they won't appear in inventory's top-level files.
         # We must detect them from the fls file listing.
         _disk_artifacts = {
             "email": False,       # PST/OST/DBX/EML inside image
@@ -3676,7 +3681,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     # Could be {"files": [...]} or {"output": "..."} or {"file_list": [...]}
                     file_list = result.get("files") or result.get("file_list")
                     if file_list is None and isinstance(result.get("output"), str):
-                        # fls output is a text blob — scan it directly
+                        # fls output is a text blob - scan it directly
                         file_list = None  # will scan output string below
                         output_str = result["output"].lower()
                         for pat in _email_patterns:
@@ -3741,7 +3746,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _disk_artifacts["registry"] = True
             _disk_artifacts["evtx"] = True
             _disk_artifacts["evt"] = True
-            # Don't assume email unless detected — but enable browser (common)
+            # Don't assume email unless detected - but enable browser (common)
             _disk_artifacts["browser"] = True
 
         _fe_log(job_id, f"  Disk artifact detection: {_disk_artifacts}")
@@ -3761,14 +3766,14 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         if os_type == "macos":
             execution_plan.append("PB-SIFT-024")
 
-        # Mobile analysis — auto-trigger when mobile backups are present
+        # Mobile analysis - auto-trigger when mobile backups are present
         if inventory["mobile_backups"]:
             execution_plan.append("PB-SIFT-021")
 
         # OS-agnostic playbooks
         execution_plan.extend(["PB-SIFT-009", "PB-SIFT-013"])
 
-        # Browser forensics — run when browser artifacts detected
+        # Browser forensics - run when browser artifacts detected
         # (Inside disk images OR as standalone files, plus always relevant)
         if _disk_artifacts.get("browser") or inventory["disk_images"]:
             execution_plan.append("PB-SIFT-022")
@@ -3776,7 +3781,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             # Still add browser forensics for non-disk-image cases with browser files
             execution_plan.append("PB-SIFT-022")
 
-        # Email forensics — run when email-like files are present as standalone
+        # Email forensics - run when email-like files are present as standalone
         # OR when email artifacts are detected inside disk images
         email_exts = {".pst", ".ost", ".mbox", ".eml", ".msg"}
         _standalone_email = any(Path(f).suffix.lower() in email_exts for f in inventory["other_files"])
@@ -3786,31 +3791,31 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             if _image_email:
                 _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (email artifacts detected inside disk image)")
         elif has_disk_images and os_type == "windows":
-            # Windows disk images: schedule email forensics proactively —
+            # Windows disk images: schedule email forensics proactively -
             # Outlook/Outlook Express data is common and critical for phishing cases
             execution_plan.append("PB-SIFT-023")
-            _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (Windows disk image — email likely present)")
+            _fe_log(job_id, "  PB-SIFT-023: Email Forensics queued (Windows disk image - email likely present)")
         else:
             skipped_playbooks.append({"id": "PB-SIFT-023", "reason": "No email files or email artifacts inside images"})
 
         # --- NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-027 through PB-SIFT-033) ---
 
-        # Memory forensics — triggered by memory dump files
+        # Memory forensics - triggered by memory dump files
         if inventory["memory_dumps"]:
             execution_plan.append("PB-SIFT-027")
             _fe_log(job_id, f"  PB-SIFT-027: Memory Forensics queued for {len(inventory['memory_dumps'])} memory dump(s)")
 
-        # Windows Modern Artifacts — triggered by Windows OS + registry hives
+        # Windows Modern Artifacts - triggered by Windows OS + registry hives
         # (standalone OR detected inside disk images)
         if os_type == "windows" and (inventory["registry_hives"] or _disk_artifacts.get("registry")):
             execution_plan.append("PB-SIFT-028")
             _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued")
         elif has_disk_images and os_type == "windows":
-            # Windows image without explicit registry detection — still queue it
+            # Windows image without explicit registry detection - still queue it
             execution_plan.append("PB-SIFT-028")
             _fe_log(job_id, "  PB-SIFT-028: Windows Modern Artifacts queued (Windows disk image)")
 
-        # Encrypted Containers — detect encrypted volume indicators
+        # Encrypted Containers - detect encrypted volume indicators
         encrypted_indicators = {
             "bitlocker": ["fvevol.sys", "bitlocker", "fvek"],
             "filevault": ["apfs encrypted", "filevault", "corestorage"],
@@ -3835,7 +3840,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-029")
             _fe_log(job_id, "  PB-SIFT-029: Encrypted Container analysis queued")
 
-        # Cloud Sync Artifacts — detect cloud storage sync databases
+        # Cloud Sync Artifacts - detect cloud storage sync databases
         cloud_sync_patterns = {
             "onedrive": ["onedrive", "skydrive"],
             "googledrive": ["snapshot.db", "drivefs", "google drive"],
@@ -3854,7 +3859,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-030")
             _fe_log(job_id, "  PB-SIFT-030: Cloud Sync Artifact analysis queued")
 
-        # Enterprise Collaboration — detect Teams/Slack/Discord/Skype/Zoom artifacts
+        # Enterprise Collaboration - detect Teams/Slack/Discord/Skype/Zoom artifacts
         collab_patterns = {
             "teams": ["teams", "microsoft teams"],
             "slack": ["slack"],
@@ -3873,7 +3878,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-031")
             _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
 
-        # VM Snapshot Forensics — detect VM snapshot/memory files
+        # VM Snapshot Forensics - detect VM snapshot/memory files
         vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
         vm_detected = False
         for f in inventory.get("memory_dumps", []) + inventory.get("other_files", []):
@@ -3884,7 +3889,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-032")
             _fe_log(job_id, "  PB-SIFT-032: VM Snapshot Forensics queued")
 
-        # Container Forensics — detect Docker/container artifacts
+        # Container Forensics - detect Docker/container artifacts
         container_patterns = {
             "docker": ["docker", "containerd", "overlay2", "config.v2.json"],
             "kubernetes": ["kubernetes", "kubectl", "kubelet", "etcd"],
@@ -3905,7 +3910,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # ===== Newly Wired Playbook Triggers =====
 
-        # Data Staging (PB-SIFT-015) — triggered when exfiltration playbook queued
+        # Data Staging (PB-SIFT-015) - triggered when exfiltration playbook queued
         # or staging-related artifacts detected in other_files
         _staging_detected = bool(cloud_sync_detected)
         if not _staging_detected:
@@ -3920,7 +3925,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-015", "reason": "No exfiltration or staging indicators"})
 
-        # Network Device Forensics (PB-SIFT-034) — triggered when network device
+        # Network Device Forensics (PB-SIFT-034) - triggered when network device
         # configuration exports or log files detected in other_files
         _net_device_patterns = {
             "cisco": ["startup-config", "running-config", "ios", "flash:", "nvram:"],
@@ -3942,7 +3947,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-034", "reason": "No network device artifacts detected"})
 
-        # Active Directory / DC Forensics (PB-SIFT-035) — triggered when ntds.dit,
+        # Active Directory / DC Forensics (PB-SIFT-035) - triggered when ntds.dit,
         # SYSVOL, AD event logs, or DC indicators found in other_files or registry hives
         _dc_patterns = {
             "ntds": ["ntds.dit", "ntds"],
@@ -3958,7 +3963,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 if any(p in f_lower for p in patterns):
                     _dc_detected = True
                     break
-        # Also check registry hives — SYSTEM hive with DC signature
+        # Also check registry hives - SYSTEM hive with DC signature
         if not _dc_detected and inventory.get("registry_hives"):
             for h in inventory["registry_hives"]:
                 h_lower = str(h).lower()
@@ -3971,14 +3976,14 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-035", "reason": "No AD/DC artifacts detected"})
 
-        # PCAP & Network Forensics (PB-SIFT-036) — triggered by PCAP files in inventory
+        # PCAP & Network Forensics (PB-SIFT-036) - triggered by PCAP files in inventory
         if inventory.get("pcaps"):
             execution_plan.append("PB-SIFT-036")
             _fe_log(job_id, f"  PB-SIFT-036: PCAP Network Forensics queued for {len(inventory['pcaps'])} PCAP file(s)")
         else:
             skipped_playbooks.append({"id": "PB-SIFT-036", "reason": "No PCAP files in evidence"})
 
-        # IoT Device Forensics (PB-SIFT-037) — triggered by IoT device images,
+        # IoT Device Forensics (PB-SIFT-037) - triggered by IoT device images,
         # config dumps, or directory naming patterns indicating IoT devices
         _iot_detected = False
         _iot_keywords = ["arlo", "echo", "alexa", "smartthings", "wink", "ismartalarm", "ismart",
@@ -4028,11 +4033,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             skipped_playbooks.append({"id": "PB-SIFT-017", "reason": reason})
             skipped_playbooks.append({"id": "PB-SIFT-018", "reason": reason})
 
-        # Timeline analysis — always run if disk images present (psort after log2timeline)
+        # Timeline analysis - always run if disk images present (psort after log2timeline)
         if len(inventory["disk_images"]) > 0:
             execution_plan.append("PB-SIFT-020")
 
-        # Mobile forensics — run if mobile backup artifacts detected
+        # Mobile forensics - run if mobile backup artifacts detected
         if len(inventory["mobile_backups"]) > 0:
             execution_plan.append("PB-SIFT-021")
         else:
@@ -4044,7 +4049,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
 
-        # Cloud/Enterprise IR — triggered by cloud-specific artifacts
+        # Cloud/Enterprise IR - triggered by cloud-specific artifacts
         # NOT triggered by generic unclassified files
         _cloud_artifact_patterns = {
             "m365_ual": ["unified audit log", "ual", "audit log"],
@@ -4070,7 +4075,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No cloud-specific artifacts detected"})
 
-        # Data Staging (PB-SIFT-015) — triggered by bulk file access or staging indicators
+        # Data Staging (PB-SIFT-015) - triggered by bulk file access or staging indicators
         _staging_patterns = ["staging", "temp\\", "tmp\\", "dropped", "collection", "bulk"]
         _staging_detected = False
         for f in indicator_hits:
@@ -4084,7 +4089,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-015", "reason": "No data staging indicators"})
 
-        # Network Device Forensics (PB-SIFT-034) — triggered by network device configs
+        # Network Device Forensics (PB-SIFT-034) - triggered by network device configs
         _net_device_patterns = {
             "cisco": ["cisco", "ios.", "running-config", "startup-config"],
             "junos": ["junos", "juniper", "junos-config"],
@@ -4107,7 +4112,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-034", "reason": "No network device evidence detected"})
 
-        # AD/DC Forensics (PB-SIFT-035) — triggered by domain controller artifacts
+        # AD/DC Forensics (PB-SIFT-035) - triggered by domain controller artifacts
         _ad_indicators = ["ntds.dit", "sysvol", "domain controller", "group policy", "gpt.ini",
                          "ntds", "dc\\", "ad\\db" ]
         _ad_detected = False
@@ -4128,7 +4133,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-035", "reason": "No domain controller evidence detected"})
 
-        # PCAP & Network Forensics (PB-SIFT-036) — triggered by PCAP files
+        # PCAP & Network Forensics (PB-SIFT-036) - triggered by PCAP files
         if inventory.get("pcaps") or any(
             str(f).lower().endswith(('.pcap', '.pcapng', '.pcap.gz', '.pcapng.gz'))
             for f in inventory.get("other_files", [])
@@ -4148,78 +4153,78 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _nuclear_found = nuclear_result.get("nuclear_findings", [])
             _fe_log(job_id, f"  Nuclear: {len(_nuclear_found)} classified items inside disk images")
 
-            # Super Timeline (Plaso) — always run for disk images
+            # Super Timeline (Plaso) - always run for disk images
             if "PB-SIFT-020" not in execution_plan:
                 execution_plan.append("PB-SIFT-020")
                 _fe_log(job_id, "  PB-SIFT-020: Force-queued (disk image present)")
 
-            # Registry Forensics — queue if registry hives found inside
+            # Registry Forensics - queue if registry hives found inside
             if _nuclear_ev.get("registry_hives") or inventory["registry_hives"]:
                 if "PB-SIFT-009" not in execution_plan:
                     execution_plan.append("PB-SIFT-009")
-                    _fe_log(job_id, f"  PB-SIFT-009: nuclear — {len(_nuclear_ev.get('registry_hives', []))} registry hive(s) inside image")
+                    _fe_log(job_id, f"  PB-SIFT-009: nuclear - {len(_nuclear_ev.get('registry_hives', []))} registry hive(s) inside image")
             elif os_type == "windows":
                 if "PB-SIFT-009" not in execution_plan:
                     execution_plan.append("PB-SIFT-009")
-                    _fe_log(job_id, "  PB-SIFT-009: nuclear — Windows image, registry likely")
+                    _fe_log(job_id, "  PB-SIFT-009: nuclear - Windows image, registry likely")
 
-            # Browser Forensics — queue if browser artifacts found inside
+            # Browser Forensics - queue if browser artifacts found inside
             if _nuclear_ev.get("browser_artifacts") or _disk_artifacts.get("browser"):
                 if "PB-SIFT-022" not in execution_plan:
                     execution_plan.append("PB-SIFT-022")
-                    _fe_log(job_id, f"  PB-SIFT-022: nuclear — {len(_nuclear_ev.get('browser_artifacts', []))} browser artifact(s) inside image")
+                    _fe_log(job_id, f"  PB-SIFT-022: nuclear - {len(_nuclear_ev.get('browser_artifacts', []))} browser artifact(s) inside image")
             elif os_type == "windows":
                 if "PB-SIFT-022" not in execution_plan:
                     execution_plan.append("PB-SIFT-022")
-                    _fe_log(job_id, "  PB-SIFT-022: nuclear — Windows image, browser likely")
+                    _fe_log(job_id, "  PB-SIFT-022: nuclear - Windows image, browser likely")
 
-            # Email Forensics — queue if email files found inside
+            # Email Forensics - queue if email files found inside
             _mounted_email = inventory.get("_email_artifacts_found", [])
             if _nuclear_ev.get("email_files") or _disk_artifacts.get("email") or _mounted_email:
                 if "PB-SIFT-023" not in execution_plan:
                     execution_plan.append("PB-SIFT-023")
-                    _fe_log(job_id, f"  PB-SIFT-023: nuclear — {len(_nuclear_ev.get('email_files', []))} email file(s) inside image"
+                    _fe_log(job_id, f"  PB-SIFT-023: nuclear - {len(_nuclear_ev.get('email_files', []))} email file(s) inside image"
                             f"{' + ' + str(len(_mounted_email)) + ' mounted' if _mounted_email else ''}")
             elif os_type == "windows":
                 if "PB-SIFT-023" not in execution_plan:
                     execution_plan.append("PB-SIFT-023")
-                    _fe_log(job_id, "  PB-SIFT-023: nuclear — Windows image, email likely")
+                    _fe_log(job_id, "  PB-SIFT-023: nuclear - Windows image, email likely")
 
-            # Malware Analysis — queue if suspicious binaries/documents found
+            # Malware Analysis - queue if suspicious binaries/documents found
             if _nuclear_ev.get("documents") or _nuclear_ev.get("archives_inside") or malware_analysis_warranted:
                 for malware_pb in ["PB-SIFT-017", "PB-SIFT-018"]:
                     if malware_pb not in execution_plan:
                         execution_plan.append(malware_pb)
-                        _fe_log(job_id, f"  {malware_pb}: nuclear — {len(_nuclear_ev.get('documents', []))} doc(s), {len(_nuclear_ev.get('archives_inside', []))} archive(s) inside image")
+                        _fe_log(job_id, f"  {malware_pb}: nuclear - {len(_nuclear_ev.get('documents', []))} doc(s), {len(_nuclear_ev.get('archives_inside', []))} archive(s) inside image")
 
-            # Memory Forensics — queue if memory dumps found inside image
+            # Memory Forensics - queue if memory dumps found inside image
             if _nuclear_ev.get("memory_dumps_inside") or _disk_artifacts.get("memory_dumps_in_image"):
                 if "PB-SIFT-027" not in execution_plan:
                     execution_plan.append("PB-SIFT-027")
-                    _fe_log(job_id, f"  PB-SIFT-027: nuclear — {len(_nuclear_ev.get('memory_dumps_inside', []))} memory dump(s) inside image")
+                    _fe_log(job_id, f"  PB-SIFT-027: nuclear - {len(_nuclear_ev.get('memory_dumps_inside', []))} memory dump(s) inside image")
 
-            # Nested disk images discovered — queue for analysis
+            # Nested disk images discovered - queue for analysis
             if _nuclear_ev.get("nested_disk_images"):
                 _nested_count = len(_nuclear_ev["nested_disk_images"])
-                _fe_log(job_id, f"  🪆 Nested images: {_nested_count} disk image(s) found INSIDE image — these need extraction")
+                _fe_log(job_id, f"  🪆 Nested images: {_nested_count} disk image(s) found INSIDE image - these need extraction")
                 # Add core playbooks if not already queued (for nested image processing)
                 for core_pb in ["PB-SIFT-006", "PB-SIFT-007", "PB-SIFT-008"]:
                     if core_pb not in execution_plan:
                         execution_plan.append(core_pb)
-                        _fe_log(job_id, f"  {core_pb}: nuclear — nested disk image processing")
+                        _fe_log(job_id, f"  {core_pb}: nuclear - nested disk image processing")
 
             # OS-specific playbooks based on nuclear findings
             if os_type == "windows" and "PB-SIFT-028" not in execution_plan:
                 execution_plan.append("PB-SIFT-028")
-                _fe_log(job_id, "  PB-SIFT-028: nuclear — Windows Modern Artifacts")
+                _fe_log(job_id, "  PB-SIFT-028: nuclear - Windows Modern Artifacts")
             elif os_type == "linux" and "PB-SIFT-014" not in execution_plan:
                 execution_plan.append("PB-SIFT-014")
-                _fe_log(job_id, "  PB-SIFT-014: nuclear — Linux Forensics")
+                _fe_log(job_id, "  PB-SIFT-014: nuclear - Linux Forensics")
             elif os_type == "macos" and "PB-SIFT-024" not in execution_plan:
                 execution_plan.append("PB-SIFT-024")
-                _fe_log(job_id, "  PB-SIFT-024: nuclear — macOS Forensics")
+                _fe_log(job_id, "  PB-SIFT-024: nuclear - macOS Forensics")
 
-        # Classification based on indicator hits — must be computed before manager review
+        # Classification based on indicator hits - must be computed before manager review
         hit_categories = set(h.get("category", "").lower() for h in indicator_hits if isinstance(h, dict))
         classification = "Unknown"
         severity = "MEDIUM"
@@ -4322,7 +4327,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Geoff decides when to carve data from images based on evidence state
         carving_needed = False
         carving_reasons = []
-    
+
         # 1. Disk images present but filesystem appears empty/unusual
         for img in inventory.get("disk_images", []):
             img_path = Path(str(img))
@@ -4341,26 +4346,26 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     if not has_meaningful_data:
                         carving_needed = True
                         carving_reasons.append(f"Large disk image {img_path.name} ({size_mb:.0f}MB) with minimal filesystem recovery")
-    
+
         # 2. Raw binary dumps (NAND, mobile chip-off) that need carving
         raw_extensions = {".bin", ".img", ".raw", ".dd", ".nand"}
         for f in inventory.get("other_files", []) + inventory.get("disk_images", []):
             if Path(str(f)).suffix.lower() in raw_extensions:
                 carving_needed = True
                 carving_reasons.append(f"Raw binary dump detected: {Path(str(f)).name}")
-    
+
         # 3. Anti-forensics detected → carve for deleted files
         if "ANTI-FORENSICS-CONFIRMED" in confidence_modifiers:
             carving_needed = True
-            carving_reasons.append("Anti-forensics detected — carving for deleted/wiped files")
-    
+            carving_reasons.append("Anti-forensics detected - carving for deleted/wiped files")
+
         # 4. Mobile backups that are raw dumps (not structured backups)
         for mb in inventory.get("mobile_backups", []):
             mb_path = Path(str(mb))
             if mb_path.is_file() and mb_path.suffix.lower() in {".bin", ".img", ".raw"}:
                 carving_needed = True
                 carving_reasons.append(f"Raw mobile dump: {mb_path.name}")
-    
+
         if carving_needed:
             _fe_log(job_id, f"🔪 Carving triggered: {len(carving_reasons)} reason(s)")
             for reason in carving_reasons[:3]:
@@ -4393,7 +4398,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _fe_log(job_id, f"Skipped: {json.dumps([s['id'] for s in skipped_playbooks])}")
         _fe_log(job_id, f"Classification: {classification} | Severity: {severity} | Evidence: {evidence_quality}")
         if "ANTI-FORENSICS-CONFIRMED" in confidence_modifiers:
-            _fe_log(job_id, "\u26a0 Anti-forensics detected — all findings will be downgraded")
+            _fe_log(job_id, "\u26a0 Anti-forensics detected - all findings will be downgraded")
 
         # Write execution plan to case directory
         try:
@@ -4471,11 +4476,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 # Skip internal-ref paths (:: notation) that can't be used by tools
                 if "::" in str(_em_path):
                     _email_skipped_bad_path += 1
-                    _fe_log(job_id, f"  ⚠ Email file {Path(str(_em_path)).name} has internal-ref path — needs icat re-extraction")
+                    _fe_log(job_id, f"  ⚠ Email file {Path(str(_em_path)).name} has internal-ref path - needs icat re-extraction")
                     continue
                 # Verify the file actually exists on disk
                 if not Path(_em_path).exists():
-                    _fe_log(job_id, f"  ⚠ Email file {_em_path} not found on disk — skipping")
+                    _fe_log(job_id, f"  ⚠ Email file {_em_path} not found on disk - skipping")
                     continue
                 for _dev_id, _dev in device_map.items():
                     for _img in _dev.get("evidence_files", []):
@@ -4487,7 +4492,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             if _email_attributed:
                 _fe_log(job_id, f"  📧 Email file attribution: {_email_attributed} email file(s) assigned to devices")
             if _email_skipped_bad_path:
-                _fe_log(job_id, f"  ⚠ {_email_skipped_bad_path} email file(s) have :: internal-ref paths — PST extraction may have failed")
+                _fe_log(job_id, f"  ⚠ {_email_skipped_bad_path} email file(s) have :: internal-ref paths - PST extraction may have failed")
 
         # Build per-device evidence lookup
         device_evidence = {}  # device_id -> {ev_type: [paths]}
@@ -4532,23 +4537,23 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
             completed_pb_dev = _scan_completed_playbooks(str(case_work_dir / "audit_trail.jsonl"))
             for pb_idx, playbook_id in enumerate(execution_plan):
-                    pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10–90% range for playbooks
+                    pb_progress_base = 10 + (80 * pb_idx / total_pb)  # 10-90% range for playbooks
                     pb_name = PLAYBOOK_NAMES.get(playbook_id, playbook_id)
                     _update_job(pb_progress_base, playbook_id, f"{dev_id}: Starting", log_msg=f"\u25b6 {playbook_id}: {pb_name} [{dev_id}]")
-    
+
                     pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
                     pb_findings = []
                     any_step_ran = False
-    
+
                     for ev_type, step_templates in pb_steps_def.items():
                         if _abort:
                             break
                         evidence_items = dev_ev.get(ev_type, [])
                         # If no evidence of this type, skip the steps for this evidence type
-                        # (but the playbook still "runs" — it just has no applicable evidence)
+                        # (but the playbook still "runs" - it just has no applicable evidence)
                         if not evidence_items:
                             continue
-    
+
                         # For some evidence types we iterate over each item; for others we
                         # just use the first one (to keep runtime manageable).
                         # Disk images and memory dumps: iterate all; others: first 3.
@@ -4556,7 +4561,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             items = evidence_items
                         else:
                             items = evidence_items[:3]
-    
+
                         for item in items:
                             if _abort:
                                 break
@@ -4566,15 +4571,15 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             except ValueError as path_err:
                                 _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
                                 continue
-    
+
                             # For other_files, only invoke email analysis on actual email files.
                             if ev_type == "other_files":
                                 if Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
                                     continue
-    
+
                             item_stem = Path(item).stem
                             for module, function, raw_params in step_templates:
-                                # A009 — Anti-forensics steps handled by dedicated checkpoint phase; skip here
+                                # A009 - Anti-forensics steps handled by dedicated checkpoint phase; skip here
                                 if module == "anti_forensics":
                                     continue
                                 # Filter mobile steps by device type
@@ -4582,7 +4587,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     device_type = (dev.get("device_type") or "").lower()
                                     is_ios = device_type in ("ios_mobile", "ios")
                                     is_android = device_type in ("android_mobile", "android")
-                                
+
                                     # iOS-only steps
                                     if function.startswith("extract_ios_") or function in ("analyze_ios_backup", "run_ileapp"):
                                         if not is_ios:
@@ -4591,13 +4596,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     elif function.startswith("extract_android_") or function in ("analyze_android", "run_aleapp"):
                                         if not is_android:
                                             continue
-                                    # Platform-agnostic steps (whatsapp, telegram, photo_exif) — skip if neither
+                                    # Platform-agnostic steps (whatsapp, telegram, photo_exif) - skip if neither
                                     elif function in ("extract_whatsapp", "extract_telegram", "extract_mobile_photo_exif"):
                                         if not (is_ios or is_android):
                                             continue
-    
+
                                 _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
-    
+
                                 # Build actual params by substituting placeholders
                                 params = {}
                                 for k, v in raw_params.items():
@@ -4621,11 +4626,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         params[k] = int(v)
                                     elif isinstance(v, str) and v.lower() in ('true', 'false'):
                                         params[k] = v.lower() == 'true'
-    
-                                # Idempotent step key — derive from findings (single source of truth)
+
+                                # Idempotent step key - derive from findings (single source of truth)
                                 step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
                                 execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
-    
+
                                 step_record = {
                                     "playbook": playbook_id,
                                     "step_key": step_key,
@@ -4640,12 +4645,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     "status": "running",
                                     "started_at": datetime.now().isoformat(),
                                 }
-    
+
                                 # Idempotency: skip if already completed with same inputs
                                 if findings_writer.is_completed(step_key):
                                     _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
                                     continue
-    
+
                                 # Dependency enforcement: check playbook step requirements
                                 # PLAYBOOK_STEPS entries are tuples: (module, function, params)
                                 pb_steps_list = []
@@ -4653,7 +4658,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     if isinstance(steps, list):
                                         pb_steps_list.extend(steps)
                                 step_def = next((s for s in pb_steps_list if isinstance(s, tuple) and len(s) >= 3 and s[0] == module and s[1] == function), None)
-                                # Tuples don't have 'requires' — dependency checking is for future dict-based steps
+                                # Tuples don't have 'requires' - dependency checking is for future dict-based steps
                                 if isinstance(step_def, dict) and step_def.get("requires"):
                                     for dep in step_def["requires"]:
                                         dep_completed = any(
@@ -4661,7 +4666,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             for s in findings_writer.all_records()
                                         )
                                         if not dep_completed:
-                                            _fe_log(job_id, f"  ⚠ {module}.{function} skipped — dependency {dep} not complete")
+                                            _fe_log(job_id, f"  ⚠ {module}.{function} skipped - dependency {dep} not complete")
                                             step_record = {
                                                 "playbook": playbook_id, "step_key": step_key, "execution_hash": execution_hash,
                                                 "module": module, "function": function, "params": params,
@@ -4673,7 +4678,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             findings_writer.append(step_record)
                                             pb_findings.append(step_record)
                                             continue
-    
+
                                 step_record = {
                                     "playbook": playbook_id,
                                     "step_key": step_key,
@@ -4690,7 +4695,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     "max_retries": 2,
                                     "started_at": datetime.now().isoformat(),
                                 }
-    
+
                                 # Persist running state before execution (crash recovery)
                                 try:
                                     pb_output = case_work_dir / "output" / f"{playbook_id}.json"
@@ -4699,7 +4704,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
                                 except Exception as persist_exc:
                                     _log_info(f"playbook state persistence skipped for {playbook_id}: {persist_exc}")
-    
+
                                 # Dedup: skip if this exact tool+file+params already ran
                                 exec_key = _make_exec_key(module, function, item, params)
                                 cached = exec_cache.get(exec_key)
@@ -4710,34 +4715,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     steps_completed += 1
                                     _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
                                     continue
-                                # Retry logic for transient failures
-                                # Catches BOTH exceptions AND error-status results
-                                # (orchestrator returns {"status": "error"} dicts, not exceptions)
-                                MAX_RETRIES = 3
-                                for attempt in range(MAX_RETRIES + 1):
-                                    try:
-                                        result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
-                                    except Exception as retry_exc:
-                                        if attempt < MAX_RETRIES:
-                                            _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES}: {retry_exc}")
-                                            time.sleep(1 * (attempt + 1))
-                                            continue
-                                        result = {"status": "error", "error": f"Failed after {MAX_RETRIES} retries: {retry_exc}"}
-                                        break
-                                    # Check for error-status results (not exceptions) — retry these too
-                                    if isinstance(result, dict) and result.get("status") == "error":
-                                        if attempt < MAX_RETRIES:
-                                            err_detail = result.get("error", result.get("stderr", "unknown"))
-                                            _fe_log(job_id, f"  ↻ {module}.{function} retry {attempt+1}/{MAX_RETRIES} (error: {str(err_detail)[:120]})")
-                                            time.sleep(2 * (attempt + 1))
-                                            continue
-                                        # Last attempt gave error — keep it but mark exhausted
-                                        result["_retries_exhausted"] = True
-                                    # Success or final failure — cache and proceed
-                                    if result.get("status") != "error" or attempt == MAX_RETRIES:
-                                        exec_cache.set(exec_key, result)
-                                        break
-    
+                                # Fail-forward: try fallback chain instead of
+                                # dumb retries on the same tool
+                                result = _execute_fallback_chain(module, function, params,
+                                                                  evidence_path=item, job_id=job_id)
+                                exec_cache.set(exec_key, result)
+
                                 try:
                                     # Check for safe_run timeout indicators in result
                                     if isinstance(result, dict) and result.get("code") is not None:
@@ -4759,7 +4742,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             findings_writer.append(step_record)
                                             pb_findings.append(step_record)
                                             continue
-                            
+
                                     step_status = result.get("status", "error")
                                     # If the tool was missing, skip (not a failure)
                                     if step_status == "error" and "not found" in str(result.get("error", "")).lower():
@@ -4787,13 +4770,64 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             step_record["status"] = "completed"
                                             step_record["result"] = result
                                             steps_completed += 1
+                                    elif step_status == "success_partial":
+                                        # Fallback chain succeeded but with reduced fidelity
+                                        step_record["status"] = "completed"
+                                        step_record["result"] = result
+                                        step_record["_fallback_primary_failed"] = result.get("_fallback_primary_failed", True)
+                                        step_record["_fallback_final_method"]   = result.get("_fallback_final_method", "")
+                                        steps_completed += 1
+                                        any_step_ran = True
+                                        _fe_log(job_id, f"  ◐ {module}.{function} → partial via {result.get('_fallback_final_method', 'fallback')}")
+
+                                    elif step_status == "unprocessable":
+                                        # Fallback chain exhausted — try the LLM healer as absolute last resort
+                                        step_record["status"] = "failed"
+                                        step_record["result"] = result
+                                        step_record["_fallback_exhausted"] = True
+                                        step_record["_attempted_methods"]  = result.get("attempted_methods", [])
+                                        steps_unprocessable += 1
+                                        steps_failed += 1
+                                        any_step_ran = True
+                                        _fe_log(job_id, f"  ✗ {module}.{function} → unprocessable after {len(result.get('attempted_methods', []))} methods")
+
+                                        # LLM heal as last resort (one call, full context)
+                                        try:
+                                            _fe_log(job_id, f"  🔄 Self-heal last-resort for unprocessable {module}.{function}…")
+                                            healed = _attempt_heal(
+                                                module, function, params, result, job_id,
+                                                evidence_file=item,
+                                                evidence_type=_infer_evidence_type(item),
+                                                os_type=os_type,
+                                            )
+                                            if healed is not None and healed.get("status") == "success":
+                                                step_record["status"] = "completed"
+                                                step_record["result"] = healed
+                                                step_record["_self_healed"] = True
+                                                step_record["_heal_fix_type"] = healed.get("_heal_fix_type")
+                                                steps_failed -= 1
+                                                steps_unprocessable -= 1
+                                                steps_completed += 1
+                                                _fe_log(job_id, f"  ✓ Self-healed after chain exhaustion: {healed.get('_heal_fix_type')}")
+                                                result = healed
+                                            elif healed is not None and healed.get("status") == "skipped":
+                                                step_record["status"] = "skipped"
+                                                step_record["_self_healed"] = True
+                                                step_record["_healing_strategy"] = "skip_on_critic_advice"
+                                                steps_failed -= 1
+                                                steps_unprocessable -= 1
+                                                steps_skipped += 1
+                                        except Exception as heal_err:
+                                            _fe_log(job_id, f"  ⚠ Last-resort heal error: {heal_err}")
+
                                     else:
+                                        # Generic error (fallback chain not defined for this module.function)
                                         step_record["status"] = "failed"
                                         step_record["result"] = {"status": "failed", "stdout": result.get('stdout', ''), "stderr": result.get('stderr', ''), "artifacts": [], "error": result.get('error', step_status)}
                                         steps_failed += 1
                                         any_step_ran = True
                                         _fe_log(job_id, f"  ✗ {module}.{function} → {step_status}")
-    
+
                                         # LLM-POWERED SELF-HEALING: Delegate to _attempt_heal
                                         try:
                                             _fe_log(job_id, f"  🔄 Self-heal analyzing failure for {module}.{function}...")
@@ -4822,7 +4856,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                     steps_skipped += 1
                                         except Exception as heal_err:
                                             _fe_log(job_id, f"  ⚠ Self-heal error: {heal_err}")
-    
+
                                     # Forensicator interprets each completed step so the Critic
                                     # has a real analysis to validate rather than a placeholder.
                                     forensicator_notes = {}
@@ -4837,11 +4871,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 device_context={"device_id": dev_id, "os_type": os_type},
                                             )
                                             step_record["forensicator"] = forensicator_notes
-                                            # Handle Ollama timeout — forensicator marks needs_review
+                                            # Handle Ollama timeout - forensicator marks needs_review
                                             if forensicator_notes.get("needs_review") and forensicator_notes.get("error") == "ollama_timeout":
                                                 step_record["needs_review"] = True
                                                 step_record["unverified_reason"] = forensicator_notes.get("unverified_reason", "Ollama timeout")
-                                                _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} — marked needs_review")
+                                                _fe_log(job_id, f"  ⚠ Forensicator Ollama timeout for {module}.{function} - marked needs_review")
                                             sig = forensicator_notes.get("significance", "UNKNOWN")
                                             note = forensicator_notes.get("analyst_note") or ""
                                             if sig in ("CRITICAL", "HIGH"):
@@ -4874,7 +4908,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 "follow_up_needed": False,
                                                 "follow_up_reason": None,
                                             }
-    
+
                                     # Build Critic analysis string from Forensicator output so the
                                     # Critic is checking a real interpretation, not a placeholder.
                                     _critic_analysis = f"Find Evil auto-run: {playbook_id} → {module}.{function}"
@@ -4882,8 +4916,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         _critic_analysis += f"\nForensicator: {forensicator_notes['analyst_note']}"
                                     if forensicator_notes.get("threat_indicators"):
                                         _critic_analysis += f"\nThreat indicators: {', '.join(forensicator_notes['threat_indicators'])}"
-    
-                                    # Critic validation — mandatory: failures are surfaced as
+
+                                    # Critic validation - mandatory: failures are surfaced as
                                     # needs_review flags rather than silently ignored.
                                     try:
                                         critic_val = geoff_critic.validate_tool_output(
@@ -4897,37 +4931,37 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         # Check for invalid IOCs flagged by critic
                                         if isinstance(critic_val, dict) and critic_val.get("invalid_iocs"):
                                             step_record["invalid_iocs"] = critic_val["invalid_iocs"]
-    
-                                        # Handle Ollama timeout — critic marks needs_review
+
+                                        # Handle Ollama timeout - critic marks needs_review
                                         if isinstance(critic_val, dict) and critic_val.get("needs_review") and critic_val.get("unverified_reason"):
                                             step_record["needs_review"] = True
                                             step_record["unverified_reason"] = critic_val.get("unverified_reason", "Ollama timeout")
-                                            _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} — marked needs_review")
+                                            _fe_log(job_id, f"  ⚠ Critic Ollama timeout for {module}.{function} - marked needs_review")
                                             # Demote to unverified
                                             if step_record.get("status") == "completed":
                                                 step_record["status"] = "completed_unverified"
                                                 steps_unverified += 1
                                             # Skip further critic processing for this step
-    
+
                                         # Verdict-based: REJECTED → unverified immediately
                                         elif isinstance(critic_val, dict) and critic_val.get("verdict") == "REJECTED":
                                             issue_str = critic_val.get("verdict_reason", "Critic rejected this step")
                                             issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
-                                            _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} — {issue_str}")
+                                            _fe_log(job_id, f"  ✗ Critic REJECTED: {module}.{function} - {issue_str}")
                                             if step_record.get("status") == "completed":
                                                 step_record["status"] = "completed_unverified"
                                                 step_record["needs_review"] = True
                                                 step_record["unverified_reason"] = issue_str
                                                 steps_unverified += 1
-    
+
                                         # Verdict-based: REQUIRES_REVIEW or passes_sanity=False → attempt self-correction
                                         elif (isinstance(critic_val, dict) and
                                               (critic_val.get("verdict") == "REQUIRES_REVIEW" or
                                                critic_val.get("passes_sanity") is False)):
                                             issues = (critic_val.get("hallucinations") or []) + (critic_val.get("nonsense") or [])
                                             short = "; ".join(str(i) for i in issues[:2]) if issues else (critic_val.get("verdict", "sanity check failed"))
-                                            _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed — {short}. Attempting self-correction...")
-    
+                                            _fe_log(job_id, f"  ✗ Critic: {module}.{function} failed - {short}. Attempting self-correction...")
+
                                             # Self-correction: Manager generates revised analysis → re-validate with Critic
                                             correction = _manager_generate_correction(
                                                 module=module, function=function,
@@ -4970,7 +5004,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                         geoff_analysis=corrected_analysis,
                                                     )
                                                     if isinstance(critic_retry, dict) and (critic_retry.get("passes_sanity") is True or critic_retry.get("verdict") == "APPROVED"):
-                                                        # Correction accepted — update step with corrected interpretation
+                                                        # Correction accepted - update step with corrected interpretation
                                                         step_record["forensicator"]["analyst_note"] = correction.get("analyst_note", forensicator_notes.get("analyst_note"))
                                                         step_record["forensicator"]["threat_indicators"] = correction.get("threat_indicators", forensicator_notes.get("threat_indicators", []))
                                                         step_record["self_corrected"] = True
@@ -4986,15 +5020,15 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                         )
                                                 except Exception as retry_ce:
                                                     _fe_log(job_id, f"  ⚠ Critic re-validation failed: {retry_ce}")
-    
+
                                             if not corrected:
-                                                # Correction failed or unavailable — demote to unverified
+                                                # Correction failed or unavailable - demote to unverified
                                                 if step_record.get("status") == "completed":
                                                     step_record["status"] = "completed_unverified"
                                                     step_record["needs_review"] = True
                                                     steps_unverified += 1
                                                 step_record["unverified_reason"] = issues[:5]
-                                                _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED — {short}")
+                                                _fe_log(job_id, f"  ✗ Critic: {module}.{function} UNVERIFIED - {short}")
                                                 _audit_append(
                                                     case_work_dir, "unverified",
                                                     playbook_id=playbook_id, module=module, function=function,
@@ -5025,7 +5059,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         except OSError as write_exc:
                                             _fe_log(job_id, f"  ⚠ Could not write critic validation for {step_key}: {write_exc}")
                                     except Exception as ce:
-                                        # Critic unavailable or errored — demote to unverified so
+                                        # Critic unavailable or errored - demote to unverified so
                                         # unvalidated findings are never silently accepted.
                                         _fe_log_with_exception(job_id, f"  ✗ Critic validation failed for {module}.{function}", ce)
                                         step_record["critic_error"] = str(ce)
@@ -5039,11 +5073,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     step_record["status"] = "failed"
                                     step_record["error"] = str(e)
                                     steps_failed += 1
-    
+
                                 step_record["completed_at"] = datetime.now().isoformat()
                                 findings_writer.append(step_record)
                                 pb_findings.append(step_record)
-    
+
                                 # Per-step git commit with chain-of-custody metadata
                                 if step_record.get("status") in (
                                     "completed", "completed_unverified"
@@ -5056,19 +5090,19 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             f"  ⚠ Custody commit failed for {step_key}: "
                                             f"{_cust.get('error', 'unknown')}"
                                         ))
-    
+
                                 # CONTINUE_ON_FAILURE enforcement
                                 if step_record["status"] == "failed" and not CONTINUE_ON_FAILURE:
-                                    _fe_log(job_id, f"\u26a0 Step failed — stopping execution (CONTINUE_ON_FAILURE=false)")
+                                    _fe_log(job_id, f"\u26a0 Step failed - stopping execution (CONTINUE_ON_FAILURE=false)")
                                     # Break out of all loops
                                     break
-    
+
                     # Check if we broke out due to failure
                     if not CONTINUE_ON_FAILURE:
                         failed_steps = [s for s in pb_findings if s.get("status") == "failed"]
                         if failed_steps and any(s.get("step_key", "").startswith(playbook_id) for s in findings_writer.all_records()[-3:]):
                             break
-    
+
                     # Anti-forensics confidence cascade: if PB-SIFT-012 found indicators,
                     # retroactively downgrade ALL findings and mark them compromised.
                     # Uses word-boundary matching for single-word keywords to avoid false
@@ -5108,11 +5142,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             anti_forensics_detected = True
                             if "ANTI-FORENSICS-CONFIRMED" not in confidence_modifiers:
                                 confidence_modifiers.append("ANTI-FORENSICS-CONFIRMED")
-                            _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed — retroactively downgrading all findings")
+                            _fe_log(job_id, "\u26a0 PB-SIFT-012: Anti-forensics confirmed - retroactively downgrading all findings")
                             _audit_append(case_work_dir, "anti_forensics_cascade", device_id=dev_id)
                             cascaded_now = _apply_anti_forensics_cascade(findings_writer)
                             _fe_log(job_id, f"  Cascade tagged {cascaded_now} existing findings (later findings will be tagged at job end)")
-    
+
                     playbooks_run.append({
                         "playbook_id": playbook_id,
                         "steps_attempted": len(pb_findings),
@@ -5120,6 +5154,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         "steps_unverified": sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
                         "steps_skipped": sum(1 for s in pb_findings if s.get("status") == "skipped"),
                         "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
+                        "steps_unprocessable": sum(1 for s in pb_findings if s.get("_fallback_exhausted")),
                     })
                     _audit_append(
                         case_work_dir, "playbook_complete",
@@ -5129,8 +5164,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
                         steps_failed=sum(1 for s in pb_findings if s.get("status") == "failed"),
                     )
-    
-                    # Git commit after each playbook — part of transaction, not optional
+
+                    # Git commit after each playbook - part of transaction, not optional
                     try:
                         # Write playbook findings to output dir
                         pb_output = case_work_dir / "output" / f"{playbook_id}.json"
@@ -5149,7 +5184,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         _fe_log(job_id, f"  git commit failed: {gce}")
                         if STRICT_MODE:
                             raise
-    
+
                     # --- Adaptive re-evaluation after each playbook ---
                     # Check what new artifacts were discovered and add playbooks
                     # that are now applicable. Pull every thread.
@@ -5159,7 +5194,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         indicator_hits, job_id)
                     if _newly_queued:
                         _fe_log(job_id, f"  \u27f3 Re-evaluation queued: {', '.join(_newly_queued)}")
-    
+
         # End of per-device playbook loop
         # Process unattributed evidence (PCAPs, logs not tied to a device)
         if any(unattributed_ev.values()):
@@ -5221,13 +5256,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 processed_paths.add(str(ef))
 
         # ------------------------------------------------------------------
-        # Phase 68%: Transition — prepare for timeline analysis
+        # Phase 68%: Transition - prepare for timeline analysis
         # ------------------------------------------------------------------
         _update_job(68, "super-timeline", "Building unified timeline from Pass 1 findings")
 
         # ------------------------------------------------------------------
         # Phase 70%: Super Timeline Build (moved from 90%)
-        # This is now the PASS BOUNDARY — timeline intelligence drives Pass 2
+        # This is now the PASS BOUNDARY - timeline intelligence drives Pass 2
         # ------------------------------------------------------------------
         _update_job(70, "super-timeline", "Building unified timeline")
         try:
@@ -5338,7 +5373,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 job_id=job_id,
             )
         except Exception as _batch_err:
-            _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} — defaulting to approve")
+            _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} - defaulting to approve")
 
         # --- Incremental Replay: re-run steps with Manager-patched params ---
         replay_adjustments = manager_decision.get("replay_adjustments", {})
@@ -5349,7 +5384,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 # Find the original step record
                 _orig = next((f for f in findings_writer.all_records() if f.get("step_key") == _rk), None)
                 if _orig is None:
-                    _fe_log(job_id, f"  ⚠ Replay: step_key {_rk!r} not found in findings — skipping")
+                    _fe_log(job_id, f"  ⚠ Replay: step_key {_rk!r} not found in findings - skipping")
                     continue
                 _module   = _orig.get("module", "")
                 _function = _orig.get("function", "")
@@ -5414,13 +5449,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # Flag if no behavioral data recovered from any device
         if not all_behavioral_flags or all(len(flags) == 0 for flags in all_behavioral_flags.values()):
-            _fe_log(job_id, "⚠️  No behavioral data recovered from any device — potential anti-forensics")
+            _fe_log(job_id, "⚠️  No behavioral data recovered from any device - potential anti-forensics")
             if not all_behavioral_flags:
                 all_behavioral_flags = {}
             all_behavioral_flags["_no_recovery"] = [{
                 "flag_type": "no_recovery",
                 "severity": "MEDIUM",
-                "description": "No behavioral data recovered from evidence — potential anti-forensics (wiped, encrypted, or corrupted)",
+                "description": "No behavioral data recovered from evidence - potential anti-forensics (wiped, encrypted, or corrupted)",
                 "device_id": "all"
             }]
 
@@ -5459,7 +5494,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
         evil_found = False
 
-        # From triage indicators — only POSSIBLE confidence from string/filename hits
+        # From triage indicators - only POSSIBLE confidence from string/filename hits
         # evil_found requires CONFIRMED, or single CRITICAL/HIGH hit, or 2+ distinct POSSIBLE categories
         possible_categories = set()
         for hit in indicator_hits:
@@ -5500,7 +5535,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 if stdout and "No malware" not in stdout and len(stdout.strip()) > 20:
                     severity_counts["HIGH"] += 1
                     evil_found = True
-            # Critic flagged hallucinations — reduce confidence
+            # Critic flagged hallucinations - reduce confidence
             critic = f.get("critic", {})
             if isinstance(critic, dict) and not critic.get("valid", True):
                 severity_counts["LOW"] += 1
@@ -5534,7 +5569,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         _classification_detail = {}
         if _ckpt_phase_done(ckpt, "multi_label_classify"):
-            _fe_log(job_id, "  [CKPT] Skipping multi-label classification — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping multi-label classification - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "multi_label_classify", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -5569,7 +5604,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         campaign_results = {}
         if _ckpt_phase_done(ckpt, "campaign_patterns"):
-            _fe_log(job_id, "  [CKPT] Skipping campaign pattern detection — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping campaign pattern detection - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "campaign_patterns", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -5595,7 +5630,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         negative_space_results = {}
         if _ckpt_phase_done(ckpt, "negative_space"):
-            _fe_log(job_id, "  [CKPT] Skipping negative space analysis — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping negative space analysis - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "negative_space", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -5619,7 +5654,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         recycle_bin_results = {}
         if _ckpt_phase_done(ckpt, "recycle_bin"):
-            _fe_log(job_id, "  [CKPT] Skipping recycle bin parsing — loaded from checkpoint")
+            _fe_log(job_id, "  [CKPT] Skipping recycle bin parsing - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "recycle_bin", "running")
             _ckpt_save(case_work_dir, ckpt)
@@ -5827,7 +5862,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         report = {
             "case_id": case_name,
-            "title": f"Find Evil Report — {case_name}",
+            "title": f"Find Evil Report - {case_name}",
             "generated_at": datetime.now().isoformat(),
             "evidence_dir": str(evidence_dir),
             "os_type": os_type,
@@ -5847,6 +5882,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "steps_unverified": steps_unverified,
             "steps_failed": steps_failed,
             "steps_skipped": steps_skipped,
+            "steps_unprocessable": steps_unprocessable,
             "critic_approval_pct": round(critic_pct, 1),
             "critic_approved": critic_approved,
             "critic_rejected": critic_rejected,
@@ -6131,7 +6167,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _fe_log(job_id, f"[MITRE] Mapped {len(mitre_results)} techniques from {len(all_findings)} findings")
             if mitre_results:
                 for mt in mitre_results:
-                    _fe_log(job_id, f"  ├ {mt['technique_id']} — {mt['technique_name']} (confidence: {mt['confidence']})")
+                    _fe_log(job_id, f"  ├ {mt['technique_id']} - {mt['technique_name']} (confidence: {mt['confidence']})")
             else:
                 _fe_log(job_id, "  No MITRE ATT&CK techniques identified from findings")
         except Exception as e:
@@ -6212,7 +6248,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
     """
     disk_images = inventory.get("disk_images", [])
     if not disk_images:
-        _fe_log(job_id, "  [EMAIL_DIRECT] No disk images in inventory — skipping")
+        _fe_log(job_id, "  [EMAIL_DIRECT] No disk images in inventory - skipping")
         return
 
     _fe_log(job_id, f"  [EMAIL_DIRECT] Direct PST scan on {len(disk_images)} disk image(s)")

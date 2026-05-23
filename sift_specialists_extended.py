@@ -9266,41 +9266,42 @@ class ExtendedOrchestrator:
         except ImportError:
             self.remnux = None
 
+        # Specialist map as instance attribute for external access
+        self.specialist_map = {
+            'sleuthkit':      self.sleuthkit,
+            'volatility':     self.volatility,
+            'strings':        self.strings,
+            'registry':       self.registry,
+            'plaso':          self.plaso,
+            'network':        self.network,
+            'logs':           self.logs,
+            'mobile':         self.mobile,
+            'mobile_malware': self.mobile_malware,
+            'photorec':       self.photorec,
+            'vss':            self.vss,
+            'zimmerman':      self.zimmerman,
+            'remnux':         self.remnux,
+            'browser':        self.browser,
+            'sqlite':         self.sqlite,
+            'email':          self.email,
+            'jumplist':       self.jumplist,
+            'macos':          self.macos,
+            'data_staging':   self.data_staging,
+            'memory':         self.memory,
+            'windows':        self.windows,
+            'crypto':         self.crypto,
+            'cloud':          self.cloud,
+            'collaboration':  self.collaboration,
+            'vm':             self.vm,
+            'container':      self.container,
+        }
+
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
         module = step.get('module')
         function = step.get('function')
         params = step.get('params', {})
 
-        specialist_map = {
-            'sleuthkit': self.sleuthkit,
-            'volatility': self.volatility,
-            'strings': self.strings,
-            'registry': self.registry,
-            'plaso': self.plaso,
-            'network': self.network,
-            'logs': self.logs,
-            'mobile': self.mobile,
-            'mobile_malware': self.mobile_malware,
-            'photorec': self.photorec,
-            'vss': self.vss,
-            'zimmerman': self.zimmerman,
-            'remnux': self.remnux,
-            'browser': self.browser,
-            'sqlite': self.sqlite,
-            'email': self.email,
-            'jumplist': self.jumplist,
-            'macos': self.macos,
-            'data_staging': self.data_staging,
-            'memory': self.memory,
-            'windows': self.windows,
-            'crypto': self.crypto,
-            'cloud': self.cloud,
-            'collaboration': self.collaboration,
-            'vm': self.vm,
-            'container': self.container,
-        }
-
-        specialist = specialist_map.get(module)
+        specialist = self.specialist_map.get(module)
         if specialist and hasattr(specialist, function):
             func = getattr(specialist, function)
             return func(**params)

@@ -638,6 +638,18 @@ class NarrativeReportGenerator:
             "elapsed_minutes": round(elapsed / 60, 1),
             "steps_completed": report_json.get("steps_completed", 0),
             "steps_failed": report_json.get("steps_failed", 0),
+            "steps_unprocessable": report_json.get("steps_unprocessable", 0),
+            "unprocessable_details": [
+                {
+                    "evidence": r.get("evidence", r.get("evidence_file", "")),
+                    "module": r.get("original_module", r.get("module", "")),
+                    "function": r.get("original_function", r.get("function", "")),
+                    "attempted_methods": r.get("result", {}).get("attempted_methods", []),
+                    "reason": r.get("result", {}).get("reason", ""),
+                }
+                for r in report_json.get("findings_detail", [])
+                if r.get("_fallback_exhausted") or (isinstance(r.get("result"), dict) and r.get("result").get("_fallback_exhausted"))
+            ],
             "classification": report_json.get("classification", ""),
             "kill_chain_phases": (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []),
             "mitre_techniques_observed": (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", []),
@@ -703,8 +715,14 @@ class NarrativeReportGenerator:
             f"user account(s). The investigation spanned "
             f"{context['elapsed_minutes']} minutes, executing "
             f"{context['steps_completed']} analysis steps with "
-            f"{context['steps_failed']} steps encountering errors."
+            f"{context['steps_failed']} steps encountering errors"
         )
+        unprocessable = context.get('steps_unprocessable', 0)
+        if unprocessable:
+            lines.append(
+                f"Of those, {unprocessable} evidence items could not be processed "
+                f"after exhausting all available analysis methods."
+            )
 
         if evil:
             lines.append("")
@@ -1055,10 +1073,11 @@ class NarrativeReportGenerator:
             pid = pr.get("playbook_id", "Unknown")
             name = pr.get("name", pid)
             if pid not in condensed:
-                condensed[pid] = {"name": name, "runs": 0, "completed": 0, "failed": 0, "skipped": 0}
+                condensed[pid] = {"name": name, "runs": 0, "completed": 0, "failed": 0, "skipped": 0, "unprocessable": 0}
             condensed[pid]["runs"] += 1
             condensed[pid]["completed"] += pr.get("steps_completed", 0)
             condensed[pid]["failed"] += pr.get("steps_failed", 0)
+            condensed[pid]["unprocessable"] += pr.get("steps_unprocessable", 0)
             condensed[pid]["skipped"] += pr.get("steps_skipped", 0)
 
         lines = []
@@ -1661,7 +1680,8 @@ class NarrativeReportGenerator:
         failures = report_json.get("failures", [])
         total_steps = (report_json.get("steps_completed", 0)
                        + report_json.get("steps_failed", 0)
-                       + report_json.get("steps_skipped", 0))
+                       + report_json.get("steps_skipped", 0)
+                       + report_json.get("steps_unprocessable", 0))
         failed_count = len(failures)
 
         if total_steps > 0 and failed_count > 0:
@@ -2997,6 +3017,7 @@ Write the following sections. ACCURACY RULES:
         total_steps = report_json.get("steps_completed", 0)
         failed_steps = report_json.get("steps_failed", 0)
         skipped_steps = report_json.get("steps_skipped", 0)
+        unprocessable_steps = report_json.get("steps_unprocessable", 0)
         num_devices = len(device_map)
         num_users = len(user_map.get("users", user_map)) if isinstance(user_map, dict) else len(user_map)
         playbooks = report_json.get("playbook_names", {})
@@ -3121,7 +3142,40 @@ Write the following sections. ACCURACY RULES:
             lines.append("")
         lines.append(f"A total of {total_steps} analysis steps were executed, with "
                        f"{failed_steps} failures and {skipped_steps} skipped.")
+        if unprocessable_steps:
+            lines.append(f"{unprocessable_steps} evidence items could not be processed after all methods were exhausted.")
         lines.append("")
+
+        # ── 4.5 Could Not Process ──
+        unprocessable_findings = [
+            r for r in report_json.get("findings_detail", [])
+            if r.get("_fallback_exhausted") or (isinstance(r.get("result"), dict) and r.get("result").get("_fallback_exhausted"))
+        ]
+        if unprocessable_findings:
+            lines.append("### 3.1 Evidence That Could Not Be Processed")
+            lines.append("")
+            lines.append(
+                "The following evidence items could not be analyzed after "
+                "exhausting all available forensic methods. These items are "
+                "flagged for manual review."
+            )
+            lines.append("")
+            lines.append("| Evidence | Tool | Methods Attempted | Reason ")
+            lines.append("|----------|------|------------------|--------")
+            for r in unprocessable_findings[:20]:
+                ev_name = r.get("evidence", r.get("evidence_file", "Unknown"))
+                if isinstance(ev_name, str) and "/" in ev_name:
+                    ev_name = Path(ev_name).name
+                tool = f"{r.get('original_module', r.get('module', ''))}.{r.get('original_function', r.get('function', ''))}"
+                result_dict = r.get("result", {})
+                if not isinstance(result_dict, dict):
+                    result_dict = {}
+                methods = ", ".join(result_dict.get("attempted_methods", [])[:4])
+                reason = result_dict.get("reason", "All methods failed")[:80]
+                lines.append(f"| {ev_name} | {tool} | {methods} | {reason} ")
+            if len(unprocessable_findings) > 20:
+                lines.append(f"| ... | ... | ... | *{len(unprocessable_findings) - 20} more* ")
+            lines.append("")
 
         # ── 5. Findings ──
         lines.append("## 4. Findings")
@@ -3430,7 +3484,7 @@ Write the following sections. ACCURACY RULES:
 
 **Generated:** {generated}
 **Evidence Directory:** {report_json.get("evidence_dir", "N/A")}
-**Analysis:** {report_json.get("steps_completed", 0)} steps completed, {report_json.get("steps_failed", 0)} failed, {report_json.get("steps_skipped", 0)} skipped
+**Analysis:** {report_json.get("steps_completed", 0)} steps completed, {report_json.get("steps_failed", 0)} failed, {report_json.get("steps_skipped", 0)} skipped, {report_json.get("steps_unprocessable", 0)} unprocessable
 **Playbooks:** {report_json.get("playbooks_total", 0)} unique, {report_json.get("specialist_steps_executed", 0)} specialist steps
 
 ---

@@ -1043,6 +1043,9 @@ class VOLATILITY_Specialist:
                 fallback_result = self._fallback_analysis(memory_dump, plugin)
                 fallback_result['volatility_error'] = stderr[:500] if stderr else 'No output from volatility'
                 fallback_result['volatility_returncode'] = result.returncode
+                fallback_result['_fallback_method'] = 'strings_and_bulk_extractor'
+                fallback_result['_primary_failed'] = True
+                fallback_result['_primary_tool'] = f'volatility.{plugin}'
                 return fallback_result
 
             return {
