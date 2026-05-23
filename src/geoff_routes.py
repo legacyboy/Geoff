@@ -679,11 +679,19 @@ def get_report_json(case_dir):
             if not candidate.is_dir():
                 continue
             cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            # Split at _findevil_ and compare normalized prefix
-            cand_prefix = cand_norm.split('_findevil_')[0]
-            if cand_prefix == safe_norm:
+            if cand_norm == safe_norm:
                 case_path = candidate
                 break
+        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
+        if case_path is None:
+            for candidate in sorted(cases_root.iterdir(), reverse=True):
+                if not candidate.is_dir():
+                    continue
+                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+                cand_prefix = cand_norm.split('_findevil_')[0]
+                if cand_prefix == safe_norm:
+                    case_path = candidate
+                    break
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
@@ -739,10 +747,19 @@ def download_markdown(case_dir):
             if not candidate.is_dir():
                 continue
             cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            cand_prefix = cand_norm.split('_findevil_')[0]
-            if cand_prefix == safe_norm:
+            if cand_norm == safe_norm:
                 case_path = candidate
                 break
+        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
+        if case_path is None:
+            for candidate in sorted(cases_root.iterdir(), reverse=True):
+                if not candidate.is_dir():
+                    continue
+                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+                cand_prefix = cand_norm.split('_findevil_')[0]
+                if cand_prefix == safe_norm:
+                    case_path = candidate
+                    break
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
@@ -776,10 +793,19 @@ def download_json(case_dir):
             if not candidate.is_dir():
                 continue
             cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            cand_prefix = cand_norm.split('_findevil_')[0]
-            if cand_prefix == safe_norm:
+            if cand_norm == safe_norm:
                 case_path = candidate
                 break
+        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
+        if case_path is None:
+            for candidate in sorted(cases_root.iterdir(), reverse=True):
+                if not candidate.is_dir():
+                    continue
+                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+                cand_prefix = cand_norm.split('_findevil_')[0]
+                if cand_prefix == safe_norm:
+                    case_path = candidate
+                    break
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
@@ -813,10 +839,19 @@ def download_summary(case_dir):
             if not candidate.is_dir():
                 continue
             cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            cand_prefix = cand_norm.split('_findevil_')[0]
-            if cand_prefix == safe_norm:
+            if cand_norm == safe_norm:
                 case_path = candidate
                 break
+        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
+        if case_path is None:
+            for candidate in sorted(cases_root.iterdir(), reverse=True):
+                if not candidate.is_dir():
+                    continue
+                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+                cand_prefix = cand_norm.split('_findevil_')[0]
+                if cand_prefix == safe_norm:
+                    case_path = candidate
+                    break
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
@@ -1000,12 +1035,23 @@ def get_investigation_status(case_name):
                 if not d.is_dir():
                     continue
                 cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', d.name)
-                cand_prefix = cand_norm.split('_findevil_')[0]
-                if cand_prefix == safe_norm:
+                if cand_norm == safe_norm:
                     candidate = d / "reports" / "find_evil_report.json"
                     if candidate.exists():
                         report_file = candidate
                         break
+            # Fallback: prefix-only match
+            if report_file is None:
+                for d in sorted(cases_root.iterdir(), reverse=True):
+                    if not d.is_dir():
+                        continue
+                    cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', d.name)
+                    cand_prefix = cand_norm.split('_findevil_')[0]
+                    if cand_prefix == safe_norm:
+                        candidate = d / "reports" / "find_evil_report.json"
+                        if candidate.exists():
+                            report_file = candidate
+                            break
         if report_file:
             return jsonify({'status': 'completed', 'case': safe_name, 'report': str(report_file)})
         return jsonify({'status': 'not_found', 'case': safe_name}), 404
