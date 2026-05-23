@@ -2329,7 +2329,7 @@ Awaiting investigation directive. Provide an evidence path above or ask me anyth
             // Full narrative report section (fetched separately)
             html += '<div id="fe-report-section" style="margin-top:16px;">';
             if (report.narrative_report_path) {
-                const caseName = (report.title || '').replace('Find Evil Report \u2014 ', '');
+                const caseName = report.case_work_dir || report.case_id || (report.title || '').replace('Find Evil Report - ', '');
                 html += '<button id="fe-report-btn" onclick="loadNarrativeReport(\'' + _escAttr(caseName) + '\')" '
                       + 'style="background:#3B82F6;color:#fff;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:0.9rem;">'
                       + '\u2139\ufe0f View Full Investigation Report</button>';

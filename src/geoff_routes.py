@@ -590,7 +590,7 @@ def get_case_report(case_name):
     The case_name must consist only of alphanumeric characters, hyphens, and
     underscores to prevent path traversal.
     """
-    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', case_name)
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_name)
     if not safe_name:
         return jsonify({'error': 'Invalid case name'}), 400
 
@@ -600,7 +600,7 @@ def get_case_report(case_name):
     if cases_root.exists():
         pattern = re.compile(r'^' + re.escape(safe_name) + r'(_findevil_|$)')
         for candidate in sorted(cases_root.iterdir(), reverse=True):
-            if candidate.is_dir() and pattern.match(candidate.name):
+            if candidate.is_dir() and pattern.match(re.sub(r"[^a-zA-Z0-9_\-]", "", candidate.name)):
                 candidate_report = candidate / "reports" / "narrative_report.md"
                 if candidate_report.exists():
                     report_path = candidate_report
@@ -666,11 +666,26 @@ def list_reports():
 def get_report_json(case_dir):
     """GET /reports/<case_dir>/json — Serve the find_evil_report.json for a specific case directory,
     enriched with narrative report content if available."""
-    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
-    case_path = Path(CASES_WORK_DIR) / safe_dir
-    if not case_path.is_dir():
+
+    # Search CASES_WORK_DIR for a matching directory (normalized match)
+    cases_root = Path(CASES_WORK_DIR)
+    case_path = None
+    if cases_root.exists():
+        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            # Split at _findevil_ and compare normalized prefix
+            cand_prefix = cand_norm.split('_findevil_')[0]
+            if cand_prefix == safe_norm:
+                case_path = candidate
+                break
+
+    if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
     # Verify resolved path stays within CASES_WORK_DIR (no traversal)
     try:
@@ -711,11 +726,25 @@ def get_report_json(case_dir):
 
 def download_markdown(case_dir):
     """GET /reports/<case_dir>/download/markdown — Serve narrative_report.md as a downloadable file."""
-    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
-    case_path = Path(CASES_WORK_DIR) / safe_dir
-    if not case_path.is_dir():
+
+    # Search CASES_WORK_DIR for a matching directory (normalized match)
+    cases_root = Path(CASES_WORK_DIR)
+    case_path = None
+    if cases_root.exists():
+        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            cand_prefix = cand_norm.split('_findevil_')[0]
+            if cand_prefix == safe_norm:
+                case_path = candidate
+                break
+
+    if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
     try:
         case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
@@ -734,11 +763,25 @@ def download_markdown(case_dir):
 
 def download_json(case_dir):
     """GET /reports/<case_dir>/download/json — Serve find_evil_report.json as a downloadable file."""
-    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
-    case_path = Path(CASES_WORK_DIR) / safe_dir
-    if not case_path.is_dir():
+
+    # Search CASES_WORK_DIR for a matching directory (normalized match)
+    cases_root = Path(CASES_WORK_DIR)
+    case_path = None
+    if cases_root.exists():
+        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            cand_prefix = cand_norm.split('_findevil_')[0]
+            if cand_prefix == safe_norm:
+                case_path = candidate
+                break
+
+    if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
     try:
         case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
@@ -757,11 +800,25 @@ def download_json(case_dir):
 
 def download_summary(case_dir):
     """GET /reports/<case_dir>/download/summary — Extract executive summary from narrative_report.json and serve as .md download."""
-    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
-    case_path = Path(CASES_WORK_DIR) / safe_dir
-    if not case_path.is_dir():
+
+    # Search CASES_WORK_DIR for a matching directory (normalized match)
+    cases_root = Path(CASES_WORK_DIR)
+    case_path = None
+    if cases_root.exists():
+        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
+        for candidate in sorted(cases_root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            cand_prefix = cand_norm.split('_findevil_')[0]
+            if cand_prefix == safe_norm:
+                case_path = candidate
+                break
+
+    if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
     try:
         case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
@@ -917,7 +974,7 @@ def critic_summary(investigation_id):
 def get_investigation_status(case_name):
     """GET /investigation/status/<case_name> — Get status of background investigation via find_evil pipeline."""
     try:
-        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '', case_name)
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_name)
         if not safe_name:
             return jsonify({'status': 'error', 'error': 'Invalid case name'}), 400
 
@@ -925,7 +982,7 @@ def get_investigation_status(case_name):
         with _state_lock:
             jobs_snapshot = list(_find_evil_jobs.items())
         for job_id, job in jobs_snapshot:
-            if safe_name in job_id or job.get('case_name') == safe_name:
+            if safe_name in job_id or job.get('case_name') == safe_name or job.get('case_name', '').replace(' ', '_') == safe_name:
                 return jsonify({
                     'status': job.get('status', 'pending'),
                     'case': safe_name,
@@ -937,10 +994,14 @@ def get_investigation_status(case_name):
         # Check for completed investigation in case directory using anchored pattern
         cases_root = Path(CASES_WORK_DIR)
         report_file = None
-        case_pattern = re.compile(r'^' + re.escape(safe_name) + r'(_findevil_|$)')
+        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_name)
         if cases_root.exists():
             for d in sorted(cases_root.iterdir(), reverse=True):
-                if d.is_dir() and case_pattern.match(d.name):
+                if not d.is_dir():
+                    continue
+                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', d.name)
+                cand_prefix = cand_norm.split('_findevil_')[0]
+                if cand_prefix == safe_norm:
                     candidate = d / "reports" / "find_evil_report.json"
                     if candidate.exists():
                         report_file = candidate

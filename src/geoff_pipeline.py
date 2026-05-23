@@ -1767,6 +1767,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
     if case_work_dir is None:
         _ev_key = hashlib.sha256(str(evidence_path.resolve()).encode()).hexdigest()[:12]
         _case_name = evidence_path.name
+        _case_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", _case_name)
         case_work_dir = Path(CASES_WORK_DIR) / f"{_case_name}_findevil_{_ev_key}"
     else:
         case_work_dir = Path(case_work_dir)
