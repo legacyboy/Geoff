@@ -67,6 +67,7 @@ from geoff_classifier import classify_case, summarize_classification
 from geoff_critic import GeoffCritic
 from geoff_mitre import map_findings_to_mitre
 from geoff_fallback_chains import _execute_fallback_chain
+from offset_cache import OffsetCache
 
 # Wire module-level references for orchestrator routing
 import geoff_utils as _gu
@@ -2068,312 +2069,60 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         # Phase 1b: Detect partition offsets for each disk image
         # ------------------------------------------------------------------
+        # Uses OffsetCache for validated, persistent offset detection.
+        # Falls back to legacy checkpoint_offsets.json for backward compat.
+        _offset_cache_path = case_work_dir / "offset_cache.json"
         ckpt_offsets_file = case_work_dir / "checkpoint_offsets.json"
+
         if _ckpt_phase_done(ckpt, "partition_offsets"):
-            image_offsets = json.loads(ckpt_offsets_file.read_text())
+            # Try OffsetCache first (new format), fall back to legacy dict
+            if _offset_cache_path.exists():
+                offset_cache = OffsetCache(_offset_cache_path, fe_log_func=_fe_log)
+            elif ckpt_offsets_file.exists():
+                offset_cache = OffsetCache(_offset_cache_path, fe_log_func=_fe_log)
+                # Migrate legacy dict into cache
+                legacy = json.loads(ckpt_offsets_file.read_text())
+                for img, off in legacy.items():
+                    if img == "_candidates" or not isinstance(off, int):
+                        continue
+                    offset_cache.detect_and_cache(img, job_id=job_id)
+                _fe_log(job_id, "  [CKPT] Migrated legacy offsets to OffsetCache")
+            else:
+                offset_cache = OffsetCache(_offset_cache_path, fe_log_func=_fe_log)
             _fe_log(job_id, "  [CKPT] Skipping partition scan - loaded from checkpoint")
         else:
+            offset_cache = OffsetCache(_offset_cache_path, fe_log_func=_fe_log)
             _ckpt_mark_phase(ckpt, "partition_offsets", "running")
             _ckpt_save(case_work_dir, ckpt)
-        image_offsets = image_offsets if _ckpt_phase_done(ckpt, "partition_offsets") else {}  # image_path -> first filesystem partition offset
 
-        # Phase 1b (revised): Detect partition offsets per device
-        # Uses a multi-strategy approach:
-        #   1. ewfmount + mmls on ewf1 (for E01/E02 images - most reliable)
-        #   2. SLEUTHKIT_Specialist (handles E01 natively but may fail on multi-segment)
-        #   3. Direct mmls with -t type fallbacks (GPT, DOS, Mac, BSD)
-        #   4. LLM self-healing
-        #   5. Smart fallback: 2048 (GPT/4K) → 63 (legacy DOS) → 0 (whole-disk)
         _ran_partition_scan = _ckpt_phase_done(ckpt, "partition_offsets")
-        _ewf_mount_dirs_p1b = []  # track ewfmount dirs for cleanup
 
-        def _resolve_e01_local(img_path: str) -> str:
-            for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
-                if img_path.endswith(seg):
-                    base = img_path[:-4]
-                    e01 = base + ".E01"
-                    if os.path.isfile(e01):
-                        return e01
-                    e01_lower = base + ".e01"
-                    if os.path.isfile(e01_lower):
-                        return e01_lower
-            return img_path
-
-        def _is_ewf_image_local(img_path: str) -> bool:
-            ext = Path(img_path).suffix.lower()
-            return ext in ('.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01')
-
+        # Use OffsetCache for per-image offset detection and validation
         for dev_id, dev in device_map.items():
             if _ran_partition_scan:
                 break
             for img in dev.get("evidence_files", []):
                 if img in inventory.get("disk_images", []):
-                    img_name = Path(img).name
+                    if img in offset_cache and offset_cache.get_validated_offset(img) is not None:
+                        continue  # Already cached and validated
                     try:
-                        # ────────────────────────────────────────────────────────
-                        # Strategy 1: ewfmount + mmls on ewf1 (EWF images only)
-                        # ────────────────────────────────────────────────────────
-                        if _is_ewf_image_local(img) and img not in image_offsets:
-                            ewf_raw_dir = f"/tmp/geoff_ewf_p1b_{os.getpid()}_{hash(img) % 100000}"
-                            try:
-                                os.makedirs(ewf_raw_dir, exist_ok=True)
-                                e01_path = _resolve_e01_local(img)
-                                _fe_log(job_id, f"  📦 ewfmount: {Path(e01_path).name} → {ewf_raw_dir}")
-                                ewf_result = subprocess.run(
-                                    ["ewfmount", e01_path, ewf_raw_dir],
-                                    capture_output=True, text=True, timeout=60,
-                                )
-                                if ewf_result.returncode == 0:
-                                    ewf1_path = f"{ewf_raw_dir}/ewf1"
-                                    if os.path.exists(ewf1_path):
-                                        _fe_log(job_id, f"  📦 ewfmount OK, running mmls on ewf1")
-                                        try:
-                                            mmls_r = subprocess.run(
-                                                ["mmls", ewf1_path],
-                                                capture_output=True, text=True, timeout=60,
-                                            )
-                                            if mmls_r.returncode == 0:
-                                                for line in mmls_r.stdout.splitlines():
-                                                    line = line.strip()
-                                                    # Parse slot-prefixed and DOS/MBR formats
-                                                    m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                    if m:
-                                                        start = int(m.group(1))
-                                                        desc = m.group(4).lower()
-                                                        if start > 0:
-                                                            if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                image_offsets[img] = start
-                                                                _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls)")
-                                                                break
-                                                    if not m:
-                                                        m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                        if m:
-                                                            start = int(m.group(1))
-                                                            desc = m.group(4).lower()
-                                                            if start > 0:
-                                                                if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                    image_offsets[img] = start
-                                                                    _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls)")
-                                                                    break
-                                                # If no FS partition found, try first non-zero
-                                                if img not in image_offsets:
-                                                    for line in mmls_r.stdout.splitlines():
-                                                        line = line.strip()
-                                                        m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+', line)
-                                                        if not m:
-                                                            m = re.match(r'^\d+:\s+(\d+)\s+', line)
-                                                        if m:
-                                                            start = int(m.group(1))
-                                                            if start > 0:
-                                                                image_offsets[img] = start
-                                                                _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls, first partition)")
-                                                                break
-                                            else:
-                                                _fe_log(job_id, f"  ⚠ mmls on ewf1 failed for {img_name}: {mmls_r.stderr.strip()[:200]}")
-                                                # Try mmls with explicit partition table types
-                                                for pt_type in ["gpt", "dos", "mac", "bsd"]:
-                                                    try:
-                                                        mmls_t = subprocess.run(
-                                                            ["mmls", "-t", pt_type, ewf1_path],
-                                                            capture_output=True, text=True, timeout=30,
-                                                        )
-                                                        if mmls_t.returncode == 0:
-                                                            for line in mmls_t.stdout.splitlines():
-                                                                line = line.strip()
-                                                                m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                                if not m:
-                                                                    m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                                if m:
-                                                                    start = int(m.group(1))
-                                                                    desc = m.group(4).lower() if m.lastindex >= 4 else ""
-                                                                    if start > 0 and any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                        image_offsets[img] = start
-                                                                        _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls -t {pt_type})")
-                                                                        break
-                                                            if img in image_offsets:
-                                                                break
-                                                    except Exception:
-                                                        pass
-                                        except subprocess.TimeoutExpired:
-                                            _fe_log(job_id, f"  ⚠ mmls on ewf1 timed out for {img_name}")
-                                        except Exception as e:
-                                            _fe_log(job_id, f"  ⚠ mmls on ewf1 crashed for {img_name}: {e}")
-                                        _ewf_mount_dirs_p1b.append(ewf_raw_dir)
-                                    else:
-                                        _fe_log(job_id, f"  ⚠ ewfmount succeeded but ewf1 device not found at {ewf1_path}")
-                                        _ewf_mount_dirs_p1b.append(ewf_raw_dir)
-                                else:
-                                    _fe_log(job_id, f"  ⚠ ewfmount failed for {img_name}: {ewf_result.stderr.strip()[:200]}")
-                                    try:
-                                        os.rmdir(ewf_raw_dir)
-                                    except OSError:
-                                        pass
-                            except subprocess.TimeoutExpired:
-                                _fe_log(job_id, f"  ⚠ ewfmount timed out for {img_name}")
-                                _ewf_mount_dirs_p1b.append(ewf_raw_dir)
-                            except Exception as e:
-                                _fe_log(job_id, f"  ⚠ ewfmount crashed for {img_name}: {e}")
-                                try:
-                                    os.rmdir(ewf_raw_dir)
-                                except OSError:
-                                    pass
-
-                        # ────────────────────────────────────────────────────────
-                        # Strategy 2: SLEUTHKIT_Specialist (handles E01 natively)
-                        # ────────────────────────────────────────────────────────
-                        if img not in image_offsets:
-                            try:
-                                specialist = SLEUTHKIT_Specialist(evidence_path=img)
-                                mmls_result = specialist.analyze_partition_table(img)
-                            except Exception as e:
-                                _fe_log(job_id, f"  ⚠ SLEUTHKIT_Specialist unavailable for {img_name}: {e}")
-                                mmls_result = {"status": "error", "stderr": str(e)[:200]}
-
-                            if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
-                                # Find first NTFS/ext4/HFS+ partition
-                                for part in mmls_result["partitions"]:
-                                    desc = part.get("description", "").lower()
-                                    start = part.get("start_sector", 0)
-                                    if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                        image_offsets[img] = start
-                                        _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (SLEUTHKIT_Specialist)")
-                                        break
-                                if img not in image_offsets and mmls_result["partitions"]:
-                                    # Use first non-meta partition
-                                    for part in mmls_result["partitions"]:
-                                        start = part.get("start_sector", 0)
-                                        if start > 0:
-                                            image_offsets[img] = start
-                                            _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (SLEUTHKIT_Specialist, first partition)")
-                                            break
-
-                        # ────────────────────────────────────────────────────────
-                        # Strategy 3: Direct mmls with -t type fallbacks
-                        # ────────────────────────────────────────────────────────
-                        if img not in image_offsets:
-                            # Try default mmls first
-                            try:
-                                raw_mmls = subprocess.run(
-                                    ['mmls', img], capture_output=True, text=True, timeout=30
-                                )
-                                if raw_mmls.returncode == 0:
-                                    for line in raw_mmls.stdout.splitlines():
-                                        line = line.strip()
-                                        m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                        if m:
-                                            desc = m.group(4).lower()
-                                            start = int(m.group(1))
-                                            if any(fs in desc for fs in ['ntfs', 'ext', 'fat', 'hfs']) and start > 0:
-                                                image_offsets[img] = start
-                                                _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (direct mmls)")
-                                                break
-                            except subprocess.TimeoutExpired:
-                                _fe_log(job_id, f"  ⚠ mmls timed out on raw image for {img_name}")
-                            except Exception:
-                                pass
-
-                            # If default mmls failed, try with explicit partition table types
-                            if img not in image_offsets:
-                                for pt_type in ["gpt", "dos", "mac", "bsd"]:
-                                    try:
-                                        mmls_t = subprocess.run(
-                                            ["mmls", "-t", pt_type, img],
-                                            capture_output=True, text=True, timeout=30,
-                                        )
-                                        if mmls_t.returncode == 0:
-                                            for line in mmls_t.stdout.splitlines():
-                                                line = line.strip()
-                                                m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                if m:
-                                                    start = int(m.group(1))
-                                                    desc = m.group(4).lower()
-                                                    if start > 0:
-                                                        image_offsets[img] = start
-                                                        _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (mmls -t {pt_type})")
-                                                        break
-                                            if img in image_offsets:
-                                                break
-                                    except Exception:
-                                        pass
-
-                        # ────────────────────────────────────────────────────────
-                        # Strategy 4: LLM self-healing
-                        # ────────────────────────────────────────────────────────
-                        if img not in image_offsets:
-                            _pd_err = f"mmls failed to identify partitions for {img_name}"
-                            if 'mmls_result' in dir() and mmls_result and mmls_result.get("stderr"):
-                                _pd_err += f": {str(mmls_result['stderr'])[:200]}"
-                            _fe_log(job_id, f"  ⚠ All partition detection strategies failed for {img_name}")
-                            healed = _attempt_heal(
-                                module="system",
-                                function="detect_partitions",
-                                params={"evidence_path": img},
-                                error_result={"status": "error", "stderr": _pd_err},
-                                job_id=job_id,
-                                evidence_file=img,
-                                evidence_type="disk_image",
-                            )
-                            if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
-                                _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped for {img_name}: {healed.get('_skip_reason', 'LLM skip')}")
-                                continue
-
-                            # ────────────────────────────────────────────────────
-                            # Strategy 5: Smart fallback offsets
-                            # Priority: 2048 (GPT/4K) → 63 (legacy DOS) → 0 (whole-disk)
-                            # ────────────────────────────────────────────────────
-                            for fallback_offset in COMMON_LEGACY_OFFSETS:
-                                image_offsets[img] = fallback_offset
-                                _fe_log(job_id, f"Partition detection failed for {img_name}, "
-                                         f"using fallback offset {fallback_offset} "
-                                         f"({'GPT/4K-aligned' if fallback_offset == 2048 else 'legacy DOS/MBR' if fallback_offset == 63 else 'whole-disk'})")
-                                break
-                            # Store all candidates in metadata for possible auto-heal retry
-                            auto_heal_candidates = image_offsets.get('_candidates', {})
-                            auto_heal_candidates[img] = [
-                                off for off in COMMON_LEGACY_OFFSETS
-                                if off != image_offsets.get(img)
-                            ]
-                            if auto_heal_candidates:
-                                image_offsets['_candidates'] = auto_heal_candidates
-
+                        offset = offset_cache.detect_and_cache(img, job_id=job_id)
+                        if offset is not None:
+                            _fe_log(job_id, f"Partition offset for {Path(img).name}: sector {offset} (validated)")
+                        else:
+                            _fe_log(job_id, f"⚠ Could not validate any partition offset for {Path(img).name}")
                     except Exception as e:
-                        _fe_log(job_id, f"Partition detection crashed for {img_name}: {e}")
-                        # LLM-powered self-healing for partition detection crashes
-                        healed = _attempt_heal(
-                            module="system",
-                            function="detect_partitions",
-                            params={"evidence_path": img},
-                            error_result={"status": "error", "stderr": str(e)[:300]},
-                            job_id=job_id,
-                            evidence_file=img,
-                            evidence_type="disk_image",
-                        )
-                        if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
-                            _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped after crash for {img_name}")
-                            continue
-                        # Smart fallback on crash too
-                        for fallback_offset in COMMON_LEGACY_OFFSETS:
-                            image_offsets[img] = fallback_offset
-                            _fe_log(job_id, f"  ⚠ Using fallback offset {fallback_offset} for {img_name} after crash")
-                            break
+                        _fe_log(job_id, f"Partition detection crashed for {Path(img).name}: {e}")
 
-        # Cleanup ewfmount dirs from Phase 1b
-        for ewf_dir in _ewf_mount_dirs_p1b:
-            try:
-                subprocess.run(["fusermount", "-u", ewf_dir], capture_output=True, text=True, timeout=15)
-                subprocess.run(["umount", ewf_dir], capture_output=True, text=True, timeout=15)
-            except Exception:
-                pass
-            try:
-                os.rmdir(ewf_dir)
-            except OSError:
-                pass
+        # Derive backward-compat image_offsets dict from OffsetCache
+        image_offsets = offset_cache.to_dict()
 
         # ------------------------------------------------------------------
         # Phase 1c: Nuclear Deep Classification (filesystem walk inside disk images)
         # ------------------------------------------------------------------
-        # Save partition offsets checkpoint if we just scanned
+        # Save partition offsets checkpoint (legacy format + new cache)
         if not _ran_partition_scan and image_offsets:
+            # Save legacy checkpoint_offsets.json for backward compat
             _atomic_write(ckpt_offsets_file, json.dumps(image_offsets, default=str))
             _ckpt_mark_phase(ckpt, "partition_offsets", "complete", "checkpoint_offsets.json")
             _ckpt_save(case_work_dir, ckpt)
@@ -4745,6 +4494,36 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             continue
 
                                     step_status = result.get("status", "error")
+
+                                    # ── Offset-retry: if step failed with offset-related error ──
+                                    if step_status == "error" and "offset" in params and offset_cache is not None:
+                                        stderr_lower = (result.get("stderr", "") or result.get("error", "") or "").lower()
+                                        if any(kw in stderr_lower for kw in [
+                                            "cannot determine", "invalid offset", "cannot find",
+                                            "bad superblock", "invalid superblock", "mft entry",
+                                            "dinode_lookup", "update sequence", "metadata structure",
+                                            "mft size", "not a filesystem",
+                                        ]):
+                                            current_offset = params.get("offset")
+                                            next_offset = offset_cache.mark_offset_failed(item, current_offset, job_id=job_id)
+                                            if next_offset is not None:
+                                                _fe_log(job_id, f"  ↻ [OFFSET] Offset {current_offset} failed for {Path(item).name}, retrying with {next_offset}")
+                                                params["offset"] = next_offset
+                                                # Retry the same step with new offset
+                                                try:
+                                                    result = _run_step_via_orchestrator(module, function, params)
+                                                except Exception as retry_exc:
+                                                    result = {"status": "error", "error": str(retry_exc)}
+                                                step_status = result.get("status", "error")
+                                                if step_status == "success":
+                                                    # Update image_offsets for backward compat
+                                                    image_offsets[item] = next_offset
+                                                    _fe_log(job_id, f"  ✓ [OFFSET] Retry with offset {next_offset} succeeded for {module}.{function}")
+                                                else:
+                                                    _fe_log(job_id, f"  ✗ [OFFSET] Retry with offset {next_offset} also failed for {module}.{function}")
+                                            else:
+                                                _fe_log(job_id, f"  ✗ [OFFSET] All offsets exhausted for {Path(item).name}")
+
                                     # If the tool was missing, skip (not a failure)
                                     if step_status == "error" and "not found" in str(result.get("error", "")).lower():
                                         step_record["status"] = "skipped"

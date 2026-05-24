@@ -305,8 +305,15 @@ class SLEUTHKIT_Specialist:
                 'error': f'{tool} not found in PATH',
                 'timestamp': datetime.now().isoformat()
             }
+        # Scale timeout based on tool — mmls/fls/fsstat on large images needs more time
+        # than icat or istat.  Use a generous default of 900s (15min) for listing tools.
+        listing_tools = {'mmls', 'fls', 'fsstat', 'ils'}
+        if tool in listing_tools:
+            t = 900
+        else:
+            t = 600
         try:
-            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=600)
+            result = subprocess.run([tool] + args, capture_output=True, text=True, timeout=t)
             return {
                 'tool': tool,
                 'status': 'success' if result.returncode == 0 else 'error',
@@ -316,7 +323,7 @@ class SLEUTHKIT_Specialist:
                 'timestamp': datetime.now().isoformat()
             }
         except subprocess.TimeoutExpired:
-            return {'tool': tool, 'status': 'timeout', 'error': 'Command timed out after 5 minutes', 'timestamp': datetime.now().isoformat()}
+            return {'tool': tool, 'status': 'timeout', 'error': f'Command timed out after {t}s', 'timestamp': datetime.now().isoformat()}
         except Exception as e:
             return {'tool': tool, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
@@ -1351,8 +1358,28 @@ class STRINGS_Specialist:
         result = subprocess.run(['which', 'strings'], capture_output=True)
         self.strings_available = result.returncode == 0
 
-    def extract_strings(self, file_path: str, min_length: int = 4, encoding: str = 'ascii') -> Dict[str, Any]:
-        """Extract strings from binary with IOC categorization"""
+    def _calculate_strings_timeout(self, file_path: str, base_timeout: int = 600) -> int:
+        """Scale strings timeout based on file size.
+
+        Base is *base_timeout* seconds (default 600). For each GB over 1,
+        add 30 seconds.  Cap at 3600 seconds (1 hour).
+        """
+        try:
+            size_gb = os.path.getsize(file_path) / (1024 ** 3)
+        except (OSError, FileNotFoundError):
+            return base_timeout
+        timeout = int(base_timeout + (size_gb - 1) * 30) if size_gb > 1 else base_timeout
+        return min(timeout, 3600)
+
+    def extract_strings(self, file_path: str, min_length: int = 4, encoding: str = 'ascii',
+                         max_timeout: int = 600) -> Dict[str, Any]:
+        """Extract strings from binary with IOC categorization.
+
+        Uses adaptive timeout based on file size:
+          - <1GB: 60s (default)
+          - 1-10GB: 300s
+          - >10GB: 600s (max)
+        """
         if not self.strings_available:
             return {
                 'tool': 'strings',
@@ -1368,8 +1395,10 @@ class STRINGS_Specialist:
             cmd.extend(['-e', 'b'])
         cmd.append(file_path)
 
+        timeout = self._calculate_strings_timeout(file_path)
+
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             all_strings = result.stdout.strip().splitlines() if result.stdout else []
 
             # Categorized IOCs
@@ -1476,8 +1505,104 @@ class STRINGS_Specialist:
                 'ioc_counts': {k: len(v) for k, v in iocs.items()},
                 'timestamp': datetime.now().isoformat()
             }
+        except subprocess.TimeoutExpired:
+            return {'tool': 'strings', 'file': file_path, 'status': 'timeout', 'error': f'Strings extraction timed out after {timeout}s (file size: {size_gb:.1f}GB)', 'timestamp': datetime.now().isoformat()}
         except Exception as e:
             return {'tool': 'strings', 'file': file_path, 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def extract_targeted_strings(self, file_path: str) -> Dict[str, Any]:
+        """Fast targeted string search using grep -aP for specific patterns.
+
+        Instead of dumping all strings (which is slow on large images),
+        this searches for patterns that matter for forensics:
+          - URLs (https?://)
+          - Email addresses
+          - IP addresses (both dot-decimal and colon-hex)
+          - Base64 chunks (40+ chars, typical for encoded payloads)
+          - Registry paths (double backslash paths)
+          - Known malware strings
+
+        Uses grep -aP (binary-safe, Perl-compatible regex) which is
+        dramatically faster than full strings + post-processing on large
+        disk images.
+        """
+        import pathlib
+
+        p = pathlib.Path(file_path)
+        if not p.exists():
+            return {
+                'tool': 'targeted_strings',
+                'file': file_path,
+                'status': 'error',
+                'error': 'File not found',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+        timeout = self._calculate_strings_timeout(file_path, base_timeout=300)
+
+        # Build grep patterns — one combined PCRE pattern per category
+        patterns = {
+            'urls': r'https?://[^\s<>"\'\)\]]{3,2048}',
+            'emails': r'[a-zA-Z0-9][a-zA-Z0-9._%+-]{2,63}@[a-zA-Z0-9][a-zA-Z0-9-]{0,61}(?:\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61})*\.[a-zA-Z]{2,24}',
+            'ips': r'\b(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\b',
+            'base64': r'[A-Za-z0-9+/]{40,}(?:=|==)?',
+            'registry_paths': r'\\\\[A-Za-z0-9_\\]+',
+            'suspicious': r'(?i)\b(cmd\.exe|powershell|mimikatz|lsass|ntds\.dit|shellcode|backdoor|beacon|ransom|exploit|payload|trojan|keylog)\b',
+        }
+
+        results = {}
+        total_hits = 0
+
+        # Check if grep supports -P (PCRE). Some systems (macOS) don't.
+        grep_pcre = True
+        try:
+            check = subprocess.run(
+                ['grep', '-P', '', '/dev/null'],
+                capture_output=True, timeout=5
+            )
+            if check.returncode != 0 and 'illegal option' in check.stderr.decode():
+                grep_pcre = False
+        except Exception:
+            grep_pcre = False
+
+        grep_flag = '-P' if grep_pcre else '-E'
+
+        for category, pattern in patterns.items():
+            try:
+                cmd = ['grep', '-a', grep_flag, '-o', pattern, file_path]
+                result = subprocess.run(
+                    cmd, capture_output=True, timeout=timeout
+                )
+                if result.returncode == 0:
+                    hits = result.stdout.decode('utf-8', errors='replace').strip().splitlines()
+                    # Deduplicate while preserving order
+                    seen = set()
+                    unique_hits = []
+                    for h in hits:
+                        h_stripped = h.strip()
+                        if h_stripped and h_stripped not in seen:
+                            seen.add(h_stripped)
+                            unique_hits.append(h_stripped)
+                    results[category] = unique_hits
+                    total_hits += len(unique_hits)
+                else:
+                    results[category] = []
+            except subprocess.TimeoutExpired:
+                results[category] = []
+                results[f'{category}_error'] = 'timeout'
+            except Exception as e:
+                results[category] = []
+                results[f'{category}_error'] = str(e)
+
+        return {
+            'tool': 'targeted_strings',
+            'file': file_path,
+            'status': 'success',
+            'total_hits': total_hits,
+            'patterns_searched': list(patterns.keys()),
+            'iocs': results,
+            'timestamp': datetime.now().isoformat(),
+        }
 
 
 class SpecialistOrchestrator:
@@ -1528,7 +1653,7 @@ class SpecialistOrchestrator:
             },
             'strings': {
                 'available': True,
-                'functions': ['extract_strings']
+                'functions': ['extract_strings', 'extract_targeted_strings']
             }
         }
 

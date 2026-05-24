@@ -78,9 +78,12 @@ def _remap_evidence_params(module: str, function: str,
 FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
 
     # ── Disk Image Analysis ──────────────────────────────────────────────────
+    # NOTE: Blind offset guesses (0, 2048, 63, 32256) removed.  Offset retry
+    # is handled by the pipeline via OffsetCache, which tries ALL mmls
+    # partitions validated with fsstat.  Fallback chains only fire after
+    # ALL offsets from mmls have been exhausted.
     "sleuthkit.list_files": [
         {"module": "sleuthkit",      "function": "list_files",             "params_mod": None,                               "label": "fls_auto"},
-        {"module": "sleuthkit",      "function": "list_files",             "params_mod": {"offset": 0},                      "label": "fls_offset0"},
         {"module": "sleuthkit",      "function": "analyze_partition_table", "params_mod": None,                              "label": "mmls_probe"},
         {"module": "photorec",       "function": "recover_files",         "params_mod": None,                               "label": "photorec_carve"},
         {"module": "bulk_extractor", "function": "scan_image",            "params_mod": None,                               "label": "bulk_extractor"},
@@ -88,7 +91,6 @@ FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     ],
     "sleuthkit.analyze_partition_table": [
         {"module": "sleuthkit",      "function": "analyze_partition_table", "params_mod": None,                              "label": "mmls_standard"},
-        {"module": "sleuthkit",      "function": "analyze_partition_table", "params_mod": {"offset": 0},                    "label": "mmls_offset0"},
         {"module": "sleuthkit",      "function": "analyze_filesystem",     "params_mod": None,                               "label": "fsstat_fallback"},
         {"module": "photorec",       "function": "recover_files",         "params_mod": None,                               "label": "photorec_carve"},
         {"module": "bulk_extractor", "function": "scan_image",            "params_mod": None,                               "label": "bulk_extractor"},
@@ -96,7 +98,6 @@ FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
     ],
     "sleuthkit.analyze_filesystem": [
         {"module": "sleuthkit",      "function": "analyze_filesystem",     "params_mod": None,                               "label": "fsstat_auto"},
-        {"module": "sleuthkit",      "function": "analyze_filesystem",     "params_mod": {"offset": 0},                      "label": "fsstat_offset0"},
         {"module": "sleuthkit",      "function": "list_files",            "params_mod": None,                               "label": "fls_fallback"},
         {"module": "photorec",       "function": "recover_files",         "params_mod": None,                               "label": "photorec_carve"},
         {"module": "strings",        "function": "extract_strings",       "params_mod": None,                               "label": "strings_terminal"},
