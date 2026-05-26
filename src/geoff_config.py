@@ -594,10 +594,9 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 4, "encoding": "ascii"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
-            ("strings", "extract_targeted_strings", {"file_path": "{image}"}),
             ("bulk_extractor", "scan_image", {"image": "{image}", "output_dir": "{output_dir}/bulk_extractor"}),
             # A006 — File Signature vs Extension Mismatch Detection
-            ("file_scanner", "signature_mismatch_scan", {"input_dir": "{output_dir}"}),
+            ("files", "signature_mismatch_scan", {"output_dir": "{output_dir}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
@@ -665,7 +664,7 @@ PLAYBOOK_STEPS = {
             # General: $UsnJrnl large-scale deletion, VSS deletion artifacts
             ("anti_forensics", "detect_general_anti_forensics", {"image": "{image}"}),
             # A007 — $UsnJrnl Change Journal Forensics (parsed inline in pipeline)
-            ("usnjrnl", "parse_usnjrnl", {"image": "{image}", "partition_offset": "{offset}"}),
+            ("usnjrnl", "parse_usnjrnl", {"image": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),

@@ -409,7 +409,7 @@ class DeviceDiscovery:
         # Also search ALL zip files in inventory (they may be assigned to other devices)
         all_zips = inventory.get("mobile_backups", []) + inventory.get("disk_images", [])
         for fpath in all_zips:
-            if not fpath.endswith(".zip"):
+            if not fpath or not fpath.endswith(".zip"):
                 continue
             if "ios" in fpath.lower() or "backup" in fpath.lower() or "iphone" in fpath.lower():
                 self._extract_ios_keychain(dev, fpath)

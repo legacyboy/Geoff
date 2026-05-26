@@ -28,12 +28,6 @@ from xml.etree import ElementTree as ET
 import sys
 import inspect
 from file_scanner import FileScanner
-# Lazy _fe_log import for specialists that log progress
-try:
-    from geoff_utils import _fe_log as __fe_log
-    _fe_log = lambda jid, msg: __fe_log(jid, msg) if jid else None
-except ImportError:
-    _fe_log = lambda *a, **kw: None
 import time
 
 
@@ -879,15 +873,8 @@ class PLASO_Specialist:
     # -- public API ----------------------------------------------------------
 
     def create_timeline(self, evidence_path: str, output_file: str,
-                        parsers: Optional[List[str]] = None,
-                        partition_offset: Optional[int] = None) -> Dict[str, Any]:
-        """Create timeline with log2timeline – parsed event counts and parser info.
-
-        partition_offset: if provided, mount the image at this offset before
-        creating the timeline.  For raw images, log2timeline handles offsets
-        internally via the VFS parser; for E01 images, the image should already
-        be mounted or converted.
-        """
+                        parsers: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Create timeline with log2timeline – parsed event counts and parser info."""
         if not self.log2timeline_path:
             return {
                 'tool': 'log2timeline',
@@ -970,21 +957,7 @@ class PLASO_Specialist:
 
     def sort_timeline(self, storage_file: str, output_format: str = 'l2tcsv',
                       filter_str: Optional[str] = None) -> Dict[str, Any]:
-        """Sort and filter timeline with psort – parsed event count.
-
-        Guards against missing .plaso storage files — returns a "skipped"
-        status if the input doesn't exist (e.g., create_timeline never ran).
-        """
-        # Guard: storage file must exist (create_timeline must have completed)
-        if not os.path.isfile(storage_file):
-            return {
-                'tool': 'psort',
-                'status': 'skipped',
-                'reason': f'Storage file not found: {storage_file} — run create_timeline first',
-                'input': storage_file,
-                'timestamp': datetime.now().isoformat(),
-            }
-
+        """Sort and filter timeline with psort – parsed event count."""
         if not self.psort_path:
             return {
                 'tool': 'psort',
@@ -1023,61 +996,6 @@ class PLASO_Specialist:
                 'error': str(e),
                 'timestamp': datetime.now().isoformat(),
             }
-
-    def create_and_sort_timeline(self, evidence_path: str, output_dir: str,
-                                   parsers: Optional[List[str]] = None,
-                                   partition_offset: Optional[int] = None,
-                                   output_format: str = 'l2tcsv') -> Dict[str, Any]:
-        """Create and sort a timeline in one call.
-
-        Runs log2timeline.py then psort, returning combined results.
-        Validates that the .plaso file has events before running psort.
-        """
-        # Determine output file paths
-        stem = Path(evidence_path).stem
-        storage_file = str(Path(output_dir) / f"{stem}.plaso")
-
-        # Step 1: Create timeline
-        create_result = self.create_timeline(
-            evidence_path, storage_file, parsers=parsers,
-            partition_offset=partition_offset,
-        )
-
-        if create_result.get('status') not in ('success',):
-            return {
-                **create_result,
-                'sort_status': 'skipped',
-                'note': 'Timeline creation failed, skipping sort',
-            }
-
-        # Step 2: Validate timeline has events (via pinfo)
-        if self.pinfo_path:
-            try:
-                info_result = self.analyze_storage(storage_file)
-                event_count = info_result.get('event_count', 0)
-                if not event_count or event_count == 0:
-                    return {
-                        'tool': 'log2timeline+psort',
-                        'status': 'error',
-                        'error': f'Timeline created with 0 events (offset may be wrong)',
-                        'create_result': create_result,
-                        'storage_file': storage_file,
-                        'timestamp': datetime.now().isoformat(),
-                    }
-            except Exception:
-                pass
-
-        # Step 3: Sort timeline
-        sort_result = self.sort_timeline(storage_file, output_format=output_format)
-
-        return {
-            'tool': 'log2timeline+psort',
-            'status': 'success' if sort_result.get('status') == 'success' else 'partial',
-            'create_result': create_result,
-            'sort_result': sort_result,
-            'storage_file': storage_file,
-            'timestamp': datetime.now().isoformat(),
-        }
 
     def analyze_storage(self, storage_file: str) -> Dict[str, Any]:
         """Get storage file info with pinfo – fully parsed stats."""
@@ -3515,14 +3433,6 @@ class MOBILE_Specialist:
         # Prefer exiftool for comprehensive metadata
         exiftool_bin = shutil.which('exiftool')
         if exiftool_bin:
-            # Size guard: skip if source_path is a single file >500MB
-            if os.path.isfile(str(source_path)):
-                try:
-                    fsize = os.path.getsize(str(source_path))
-                    if fsize > 500 * 1024 * 1024:
-                        exiftool_bin = None  # Skip exiftool for huge files
-                except OSError:
-                    pass
             try:
                 r = subprocess.run(
                     [exiftool_bin, '-json', '-GPS*', '-DateTimeOriginal',
@@ -7588,71 +7498,20 @@ class MACOS_Specialist:
 class FAT_RECOVERY_Specialist:
     """Thin wrapper for FAT/exFAT formatted media recovery.
     Delegates to the standalone recover_formatted_fat() function.
-    Skips NTFS images to avoid unnecessary processing.
     """
     def __init__(self, evidence_base: str):
         self.evidence_base = evidence_base
         self.tools_available = True
 
-    def _is_ntfs(self, disk_image: str) -> bool:
-        """Quick check if image is NTFS (use mmls output)."""
-        try:
-            mmls_proc = subprocess.run(
-                ['mmls', disk_image],
-                capture_output=True, text=True, timeout=30,
-            )
-            if mmls_proc.returncode == 0:
-                for line in mmls_proc.stdout.splitlines():
-                    if 'NTFS' in line.upper():
-                        return True
-        except Exception:
-            pass
-        # Also check first few bytes of the partition for 'NTFS'
-        try:
-            with open(disk_image, 'rb') as f:
-                header = f.read(512)
-            if b'NTFS' in header or b'ntfs' in header:
-                return True
-        except Exception:
-            pass
-        return False
-
     def recover_formatted_fat(self, disk_image: str = None, offset: str = None,
                               disk_images: list = None, device_map: dict = None,
                               image_offsets: dict = None, output_dir: str = None,
                               job_id: str = None, **kwargs) -> dict:
-        """Recover files from formatted FAT/exFAT partitions.
-
-        Skips NTFS images quickly to avoid unnecessary processing.
-        """
-        # Determine the image(s) to check
-        images = disk_images or ([disk_image] if disk_image else [])
-
-        if not images:
-            return {"status": "error", "error": "No disk images provided"}
-
-        # Skip if all images are NTFS
-        all_ntfs = True
-        for img in images:
-            if not self._is_ntfs(img):
-                all_ntfs = False
-                break
-
-        if all_ntfs:
-            return {
-                "status": "skipped",
-                "reason": "All disk images are NTFS — FAT recovery not applicable",
-                "formatted": False,
-                "fs_type": "NTFS",
-                "recovered_entries": [],
-                "carving_results": {"total_carved": 0, "file_types": {}},
-                "timestamp": datetime.now().isoformat(),
-            }
-
+        """Recover files from formatted FAT/exFAT partitions."""
         try:
             from geoff_discovery import recover_formatted_fat as _recover
             return _recover(
-                disk_images=images,
+                disk_images=disk_images or ([disk_image] if disk_image else []),
                 device_map=device_map or {},
                 image_offsets=image_offsets or {},
                 output_dir=output_dir,
@@ -7867,139 +7726,39 @@ class PHOTOREC_Specialist:
 # ---------------------------------------------------------------------------
 
 class BULK_EXTRACTOR_Specialist:
-    """Specialist for bulk_extractor — scans raw images for emails, URLs, credit cards, etc.
-
-    Handles E01/EWF images by auto-converting to raw via ewfexport (part of
-    libewf/ewf-tools).  The raw conversion is cached alongside the source image
-    and cleaned up after processing.
-    """
+    """Specialist for bulk_extractor — scans raw images for emails, URLs, credit cards, etc."""
 
     def __init__(self):
         self.bulk_path = shutil.which('bulk_extractor')
-        self.ewfexport_path = shutil.which('ewfexport')
-
-    def _is_ewf_image(self, image: str) -> bool:
-        """Check if image is an EnCase/EWF format."""
-        ext = Path(image).suffix.lower()
-        return ext in ('.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01')
-
-    def _convert_ewf_to_raw(self, image: str) -> str:
-        """Convert EWF (E01) image to raw format for bulk_extractor.
-
-        Returns path to raw image.  The caller is responsible for cleanup.
-        """
-        if not self.ewfexport_path:
-            raise RuntimeError("ewfexport not found — cannot convert E01 to raw")
-
-        # Resolve E02+ segments to base E01
-        p = Path(image)
-        base_stem = p.stem  # e.g. "rocba-cdrive" from "rocba-cdrive.E01"
-        raw_path = str(p.parent / f"{base_stem}_bulkextract.raw")
-
-        if Path(raw_path).exists():
-            # Already converted (cached from a previous run)
-            return raw_path
-
-        # Resolve to E01 if we got an E02 segment
-        e01_path = image
-        for seg_suffix in ('.E02', '.E03', '.E04', '.E05', '.e02', '.e03', '.e04', '.e05'):
-            if image.endswith(seg_suffix):
-                candidate = image[:-4] + '.E01'
-                if Path(candidate).exists():
-                    e01_path = candidate
-                    break
-                candidate = image[:-4] + '.e01'
-                if Path(candidate).exists():
-                    e01_path = candidate
-                    break
-
-        cmd = [self.ewfexport_path, '-t', raw_path, '-f', 'raw', '-S', '0', e01_path]
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3600
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"ewfexport failed: {proc.stderr[:500]}")
-
-        # ewfexport writes to raw_path.raw (appends .raw)
-        actual_raw = raw_path + '.raw'
-        if Path(actual_raw).exists():
-            return actual_raw
-        # Also try without appended .raw
-        if Path(raw_path).exists():
-            return raw_path
-
-        # Some ewfexport versions use a different naming convention; scan for output
-        out_dir = Path(image).parent
-        for f in out_dir.iterdir():
-            if f.stem == base_stem and f.suffix in ('.raw', '.dd', '.img'):
-                return str(f)
-
-        raise RuntimeError(f"ewfexport completed but output not found (looked for {raw_path}.raw)")
 
     def scan_image(self, image: str, output_dir: str) -> Dict[str, Any]:
-        """Run bulk_extractor on a disk image.
-
-        For E01/EWF images, auto-converts to raw format first.
-        """
+        """Run bulk_extractor on a disk image."""
         if not self.bulk_path:
             return {'tool': 'bulk_extractor', 'status': 'error', 'error': 'bulk_extractor not found',
                     'timestamp': datetime.now().isoformat()}
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        # E01/EWF handling: convert to raw before running bulk_extractor
-        is_ewf = self._is_ewf_image(image)
-        raw_image = None
-        if is_ewf:
-            try:
-                raw_image = self._convert_ewf_to_raw(image)
-            except (RuntimeError, subprocess.TimeoutExpired) as e:
-                return {
-                    'tool': 'bulk_extractor',
-                    'status': 'error',
-                    'error': f'E01→raw conversion failed: {e}',
-                    'timestamp': datetime.now().isoformat(),
-                }
-            if not raw_image or not Path(raw_image).exists():
-                return {
-                    'tool': 'bulk_extractor',
-                    'status': 'error',
-                    'error': 'E01→raw conversion produced no output file',
-                    'timestamp': datetime.now().isoformat(),
-                }
-
-        target = raw_image if raw_image else image
-
         try:
-            cmd = [self.bulk_path, '-o', output_dir, target]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            cmd = [self.bulk_path, '-o', output_dir, image]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
             report_files = list(Path(output_dir).glob('*'))
-            return_val = {
+            return {
                 'tool': 'bulk_extractor',
                 'status': 'success' if result.returncode == 0 else 'error',
                 'returncode': result.returncode,
                 'output_dir': output_dir,
                 'report_count': len(report_files),
                 'reports': [str(f.name) for f in report_files[:50]],
-                'ewf_converted': is_ewf,
-                'raw_image': raw_image if is_ewf else None,
                 'timestamp': datetime.now().isoformat(),
                 'stderr': result.stderr[:2000] if result.stderr else '',
             }
-            return return_val
         except subprocess.TimeoutExpired:
-            return {'tool': 'bulk_extractor', 'status': 'timeout', 'error': 'bulk_extractor timed out after 30 minutes'}
+            return {'tool': 'bulk_extractor', 'status': 'timeout', 'error': 'bulk_extractor timed out after 10 minutes'}
         except Exception as e:
             return {'tool': 'bulk_extractor', 'status': 'error', 'error': str(e),
                     'timestamp': datetime.now().isoformat()}
-        finally:
-            # Clean up raw conversion if we created one
-            if raw_image and Path(raw_image).exists():
-                try:
-                    Path(raw_image).unlink()
-                except OSError:
-                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -9953,379 +9712,6 @@ class CONTAINER_Specialist:
 
 
 # ---------------------------------------------------------------------------
-# USNJRNL_Specialist — NTFS USN Journal parser
-# ---------------------------------------------------------------------------
-
-class USNJRNL_Specialist:
-    """Specialist for NTFS USN Journal ($UsnJrnl:$J) parsing.
-
-    The USN Journal records all file system changes on NTFS volumes.
-    Each USN_RECORD_V2/V3 entry contains:
-      - USN (update sequence number)
-      - Timestamp
-      - Reason (file create/modify/delete/rename, etc.)
-      - Source info (what triggered the change)
-      - Security descriptor ID
-      - File attributes
-      - Filename
-
-    This parser extracts $UsnJrnl:$J from a disk image using icat (SleuthKit)
-    and parses the raw binary records.
-    """
-
-    def __init__(self):
-        self.icat_available = shutil.which('icat') is not None
-        self.mmls_available = shutil.which('mmls') is not None
-
-    def parse_usnjrnl(self, image: str, offset: int = None,
-                      partition_offset: int = None,
-                      output_dir: str = None, job_id: str = None) -> Dict[str, Any]:
-        """Extract and parse $UsnJrnl:$J from an NTFS disk image.
-
-        partition_offset is an alias for offset (for playbook compat).
-
-        Tries multiple methods to locate the journal:
-        1. icat by well-known MFT entry ($UsnJrnl is typically MFT entry 10, $J data stream)
-        2. Scan for USN journal MFT attributes
-        3. Binary string search for "$UsnJrnl"
-        """
-        # Accept partition_offset as alias for offset
-        if offset is None and partition_offset is not None:
-            offset = partition_offset
-        from datetime import datetime
-
-        if not self.icat_available:
-            return {
-                'tool': 'usnjrnl',
-                'status': 'error',
-                'error': 'icat not found — cannot extract $UsnJrnl:$J',
-                'timestamp': datetime.now().isoformat(),
-            }
-
-        tmpdir = Path(tempfile.mkdtemp(prefix='geoff_usnjrnl_'))
-        journal_data = None
-
-        try:
-            # Method 1: Try known MFT entry numbers for $UsnJrnl
-            # $UsnJrnl is typically MFT entry 10 (0x0A)
-            # The $J ADS is attribute type 0x80 (data) with name "$J"
-            mft_entries_to_try = [10, 11, 12]  # Common MFT entries for $UsnJrnl
-
-            if offset is not None:
-                offset_args = ['-o', str(offset)]
-            else:
-                offset_args = []
-
-            for mft_entry in mft_entries_to_try:
-                try:
-                    # Try to extract via icat with ADS syntax
-                    cmd = ['icat'] + offset_args + [image, str(mft_entry)]
-                    result = subprocess.run(cmd, capture_output=True, timeout=60)
-                    if result.returncode == 0 and len(result.stdout) > 0:
-                        # Check for USN journal signature
-                        if self._is_usn_journal(result.stdout):
-                            journal_data = result.stdout
-                            _fe_log(job_id, f"Found $UsnJrnl:$J via icat MFT entry {mft_entry} ({len(journal_data)} bytes)")
-                            break
-                except Exception:
-                    continue
-
-            if journal_data is None:
-                # Method 2: Search for $UsnJrnl in MFT entries using icat
-                # Scan MFT entries 0-40 looking for $UsnJrnl reference
-                _fe_log(job_id, "Method 1 failed, scanning MFT entries for $UsnJrnl...")
-                try:
-                    # Try extracting via MFT entry with ADS name indicator
-                    # SleuthKit syntax for ADS: icat image inode-ads_num
-                    for mft_entry in range(0, 48):
-                        try:
-                            cmd = ['icat'] + offset_args + [image, f'{mft_entry}-128-1']
-                            result = subprocess.run(cmd, capture_output=True, timeout=30)
-                            if result.returncode == 0 and len(result.stdout) > 64:
-                                if b'$UsnJrnl' in result.stdout[:4096]:
-                                    journal_data = self._extract_usn_journal(image, offset, mft_entry, tmpdir, job_id)
-                                    if journal_data:
-                                        break
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-
-            if journal_data is None:
-                # Method 3: Try extracting using specific ADS name lookup
-                # $UsnJrnl:$J can be at different MFT locations
-                # Try using fls -d to find it first
-                try:
-                    cmd = ['fls'] + offset_args + ['-d', image, '10']
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                    if result.returncode == 0 and '$UsnJrnl' in result.stdout:
-                        _fe_log(job_id, "Found $UsnJrnl in MFT listing, trying direct extraction...")
-                        # Direct icat with ADS syntax
-                        ads_entries = ['10-128-1', '11-128-1', '12-128-1', '10-0', '11-0']
-                        for ads in ads_entries:
-                            try:
-                                cmd = ['icat'] + offset_args + [image, ads]
-                                result = subprocess.run(cmd, capture_output=True, timeout=120)
-                                if result.returncode == 0 and len(result.stdout) > 64:
-                                    if self._is_usn_journal(result.stdout):
-                                        journal_data = result.stdout
-                                        _fe_log(job_id, f"Found $UsnJrnl:$J via ADS {ads} ({len(journal_data)} bytes)")
-                                        break
-                            except Exception:
-                                continue
-                except Exception:
-                    pass
-
-            if journal_data is None:
-                return {
-                    'tool': 'usnjrnl',
-                    'status': 'error',
-                    'error': 'Could not locate $UsnJrnl:$J — image may not be NTFS, or journal not present',
-                    'timestamp': datetime.now().isoformat(),
-                }
-
-            # Parse the raw USN journal records
-            records = self._parse_usn_records(journal_data)
-
-            # Save parsed results and raw data
-            if output_dir:
-                parsed_dir = Path(output_dir)
-                parsed_dir.mkdir(parents=True, exist_ok=True)
-                raw_out = parsed_dir / 'usnjrnl_raw.bin'
-                raw_out.write_bytes(journal_data)
-                json_out = parsed_dir / 'usnjrnl_parsed.json'
-                json_out.write_text(json.dumps(records, indent=2, default=str))
-
-            return {
-                'tool': 'usnjrnl',
-                'status': 'success',
-                'journal_size_bytes': len(journal_data),
-                'record_count': len(records),
-                'records': records[:5000],  # Cap at 5000 to avoid oversized results
-                'summary': self._summarize_records(records),
-                'output_dir': str(parsed_dir / 'usnjrnl_parsed.json') if output_dir else None,
-                'timestamp': datetime.now().isoformat(),
-            }
-
-        except Exception as e:
-            return {
-                'tool': 'usnjrnl',
-                'status': 'error',
-                'error': str(e),
-                'timestamp': datetime.now().isoformat(),
-            }
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-
-    def _extract_usn_journal(self, image: str, offset: int,
-                              mft_entry: int, tmpdir: Path,
-                              job_id: str = None) -> Optional[bytes]:
-        """Try to extract USN journal data from a given MFT entry."""
-        try:
-            offset_args = ['-o', str(offset)] if offset is not None else []
-            cmd = ['icat'] + offset_args + [image, str(mft_entry)]
-            result = subprocess.run(cmd, capture_output=True, timeout=120)
-            if result.returncode != 0 or len(result.stdout) < 64:
-                return None
-            if self._is_usn_journal(result.stdout):
-                _fe_log(job_id, f"Found $UsnJrnl via MFT entry {mft_entry} ({len(result.stdout)} bytes)")
-                return result.stdout
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _is_usn_journal(data: bytes) -> bool:
-        """Check if data starts with a valid USN_RECORD header.
-
-        USN_RECORD_V2: 4 bytes major version (2), 4 bytes minor version
-        USN_RECORD_V3: 4 bytes major version (3), 4 bytes minor version
-        Record length follows at offset 8.
-        """
-        if len(data) < 16:
-            return False
-        usn_magic = (data[0:4] == b'\x02\x00\x00\x00' or
-                     data[0:4] == b'\x03\x00\x00\x00')
-        if not usn_magic:
-            return False
-        # Check record length is reasonable (60-65535 bytes)
-        record_length = int.from_bytes(data[8:12], 'little')
-        return 40 < record_length < 65536
-
-    @staticmethod
-    def _parse_usn_records(data: bytes) -> List[Dict[str, Any]]:
-        """Parse raw USN journal data into structured records.
-
-        USN_RECORD_V2/V3 structure (each field is little-endian):
-          Offset  Size  Field
-          0       4     Record length
-          4       2     Major version
-          6       2     Minor version
-          8       8     File reference number (MFT entry)
-          16      8     Parent file reference number
-          24      8     USN (update sequence number)
-          32      8     Timestamp (Windows FILETIME 100 ns since 1601-01-01)
-          40      4     Reason (bitmask of USN_REASON_* flags)
-          44      4     Source info
-          48      4     Security descriptor ID
-          52      4     File attributes
-          56      2     File name length (in bytes)
-          58      2     File name offset (from start of record)
-          60      N     File name (UTF-16LE, up to 255*2 bytes)
-        """
-        records = []
-        offset = 0
-        data_len = len(data)
-        MIN_RECORD_LEN = 60
-
-        usn_reason_flags = {
-            0x00000001: 'USN_REASON_DATA_OVERWRITE',
-            0x00000002: 'USN_REASON_DATA_EXTEND',
-            0x00000004: 'USN_REASON_DATA_TRUNCATION',
-            0x00000010: 'USN_REASON_NAMED_DATA_OVERWRITE',
-            0x00000020: 'USN_REASON_NAMED_DATA_EXTEND',
-            0x00000040: 'USN_REASON_NAMED_DATA_TRUNCATION',
-            0x00000100: 'USN_REASON_FILE_CREATE',
-            0x00000200: 'USN_REASON_FILE_DELETE',
-            0x00000400: 'USN_REASON_EXTENDED_ATTRIBUTE_CHANGE',
-            0x00000800: 'USN_REASON_SECURITY_CHANGE',
-            0x00001000: 'USN_REASON_RENAME_OLD_NAME',
-            0x00002000: 'USN_REASON_RENAME_NEW_NAME',
-            0x00004000: 'USN_REASON_INDEXABLE_CHANGE',
-            0x00008000: 'USN_REASON_BASIC_INFO_CHANGE',
-            0x00010000: 'USN_REASON_HARD_LINK_CHANGE',
-            0x00020000: 'USN_REASON_COMPRESSION_CHANGE',
-            0x00040000: 'USN_REASON_ENCRYPTION_CHANGE',
-            0x00080000: 'USN_REASON_OBJECT_ID_CHANGE',
-            0x00100000: 'USN_REASON_REPARSE_POINT_CHANGE',
-            0x00200000: 'USN_REASON_STREAM_CHANGE',
-            0x00400000: 'USN_REASON_TRANSACTED_CHANGE',
-            0x80000000: 'USN_REASON_CLOSE',
-        }
-
-        while offset + MIN_RECORD_LEN <= data_len:
-            try:
-                record_length = int.from_bytes(data[offset:offset+4], 'little')
-                if record_length < MIN_RECORD_LEN or record_length > 65536:
-                    # Invalid length — skip to next aligned position
-                    offset += 4
-                    continue
-                if offset + record_length > data_len:
-                    break
-
-                major_version = int.from_bytes(data[offset+4:offset+6], 'little')
-                # minor_version omitted from parsing
-
-                file_ref = int.from_bytes(data[offset+8:offset+16], 'little')
-                parent_ref = int.from_bytes(data[offset+16:offset+24], 'little')
-                usn = int.from_bytes(data[offset+24:offset+32], 'little')
-
-                # FILETIME → Unix timestamp
-                filetime_raw = int.from_bytes(data[offset+32:offset+40], 'little')
-                if filetime_raw > 0:
-                    # Windows FILETIME: 100-ns intervals since 1601-01-01
-                    unix_ts = filetime_raw / 10000000.0 - 11644473600
-                    timestamp = datetime.fromtimestamp(unix_ts).isoformat() if unix_ts > 0 else None
-                else:
-                    timestamp = None
-
-                reason_flags = int.from_bytes(data[offset+40:offset+44], 'little')
-                # source_info omitted
-                # sec_desc_id omitted
-                file_attrs = int.from_bytes(data[offset+52:offset+56], 'little')
-
-                name_len = int.from_bytes(data[offset+56:offset+58], 'little')
-                name_offset = int.from_bytes(data[offset+58:offset+60], 'little')
-
-                if name_len > 0 and name_offset >= MIN_RECORD_LEN and name_offset + name_len <= record_length:
-                    name_bytes = data[offset+name_offset:offset+name_offset+name_len]
-                    try:
-                        filename = name_bytes.decode('utf-16-le', errors='replace')
-                    except Exception:
-                        filename = name_bytes.decode('utf-8', errors='replace')
-                else:
-                    filename = ''
-
-                # Decode reason flags
-                reasons = [desc for flag, desc in usn_reason_flags.items()
-                          if reason_flags & flag]
-
-                records.append({
-                    'usn': usn,
-                    'file_reference': file_ref,
-                    'parent_reference': parent_ref,
-                    'timestamp': timestamp,
-                    'filename': filename,
-                    'file_attributes': file_attrs,
-                    'version': major_version,
-                    'reason_flags_raw': reason_flags,
-                    'reason_descriptions': reasons,
-                })
-
-                offset += record_length
-
-            except (IndexError, ValueError):
-                offset += 4
-                continue
-
-        return records
-
-    @staticmethod
-    def _summarize_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Summarize USN journal records by operation type."""
-        summary = {
-            'total_records': len(records),
-            'creates': 0,
-            'deletes': 0,
-            'renames': 0,
-            'data_modifications': 0,
-            'security_changes': 0,
-            'closes': 0,
-            'timeline_start': None,
-            'timeline_end': None,
-            'unique_files': set(),
-        }
-
-        for rec in records:
-            reasons = rec.get('reason_descriptions', [])
-            if 'USN_REASON_FILE_CREATE' in reasons:
-                summary['creates'] += 1
-            if 'USN_REASON_FILE_DELETE' in reasons:
-                summary['deletes'] += 1
-                if rec.get('filename'):
-                    summary.setdefault('deleted_files', []).append({
-                        'filename': rec['filename'],
-                        'timestamp': rec.get('timestamp'),
-                    })
-            if 'USN_REASON_RENAME_OLD_NAME' in reasons or 'USN_REASON_RENAME_NEW_NAME' in reasons:
-                summary['renames'] += 1
-            if any(r in reasons for r in ['USN_REASON_DATA_OVERWRITE',
-                                           'USN_REASON_DATA_EXTEND',
-                                           'USN_REASON_DATA_TRUNCATION',
-                                           'USN_REASON_BASIC_INFO_CHANGE',
-                                           'USN_REASON_CLOSE']):
-                summary['data_modifications'] += 1
-            if 'USN_REASON_SECURITY_CHANGE' in reasons:
-                summary['security_changes'] += 1
-            if 'USN_REASON_CLOSE' in reasons:
-                summary['closes'] += 1
-
-            if rec.get('filename'):
-                summary['unique_files'].add(rec['filename'])
-            ts = rec.get('timestamp')
-            if ts:
-                if summary['timeline_start'] is None or ts < summary['timeline_start']:
-                    summary['timeline_start'] = ts
-                if summary['timeline_end'] is None or ts > summary['timeline_end']:
-                    summary['timeline_end'] = ts
-
-        summary['unique_file_count'] = len(summary['unique_files'])
-        summary['unique_files'] = sorted(summary['unique_files'])[:500]
-
-        return summary
-
-
-# ---------------------------------------------------------------------------
 # DATA_STAGING_Specialist
 # ---------------------------------------------------------------------------
 class DATA_STAGING_Specialist:
@@ -11657,9 +11043,6 @@ class ExtendedOrchestrator:
         # FAT recovery specialist (delegates to geoff_discovery.recover_formatted_fat)
         self.fat_recovery = FAT_RECOVERY_Specialist(evidence_base)
 
-        # USN Journal specialist
-        self.usnjrnl = USNJRNL_Specialist()
-
         # File scanner specialist (file identification / signature mismatch)
         self.file_scanner = FileScanner(evidence_base)
 
@@ -11702,9 +11085,7 @@ class ExtendedOrchestrator:
             'dc3dd':          self.dc3dd,
             'zeek':           self.zeek,
             'file_scanner':   self.file_scanner,
-            'files':          self.file_scanner,   # alias for playbook compat
             'fat_recovery':   self.fat_recovery,
-            'usnjrnl':        self.usnjrnl,
         }
 
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:
