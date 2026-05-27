@@ -1456,23 +1456,48 @@ Respond ONLY in valid JSON (no extra text):
     geoff_critic_instance = GeoffCritic()
     raw = geoff_critic_instance._call_critic_llm(prompt)
     batch_assessment = {}
-    try:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            batch_assessment = json.loads(m.group())
-    except Exception as e:
-        _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} - using defaults")
+    parse_error = None
+    if raw and raw.strip():
+        try:
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                batch_assessment = json.loads(m.group())
+        except Exception as e:
+            parse_error = str(e)
+            _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} - using defaults")
 
+    # Fail-open transparency: record whether the Critic gate actually ran. An
+    # empty assessment means the LLM was unavailable or unparseable, so the
+    # downstream defaults are NOT a real Critic judgement and the audit trail
+    # must say so explicitly.
+    critic_executed = bool(batch_assessment)
+    critic_unavailable_reason = None
+    if not critic_executed:
+        if not (raw and raw.strip()):
+            critic_unavailable_reason = "critic_llm_no_response"
+        elif parse_error:
+            critic_unavailable_reason = f"critic_response_unparseable: {parse_error}"
+        else:
+            critic_unavailable_reason = "critic_response_no_json"
+        _fe_log(job_id, f"  ⚠ [BATCH-CRITIC] gate did NOT run ({critic_unavailable_reason}) — proceeding fail-open")
+
+    result = {
+        **summary,
+        "llm_assessment": batch_assessment,
+        "critic_executed": critic_executed,
+        "critic_unavailable_reason": critic_unavailable_reason,
+    }
     # Write batch assessment to disk
     _atomic_write(
         case_work_dir / "batch_critic_assessment.json",
-        json.dumps({**summary, "llm_assessment": batch_assessment}, indent=2, default=str),
+        json.dumps(result, indent=2, default=str),
     )
     _fe_log(job_id, (
         f"  [BATCH-CRITIC] Quality: {batch_assessment.get('overall_quality', 'N/A')} | "
-        f"Report: {batch_assessment.get('sufficient_for_report', True)}"
+        f"Report: {batch_assessment.get('sufficient_for_report', True)} | "
+        f"CriticRan: {critic_executed}"
     ))
-    return {**summary, "llm_assessment": batch_assessment}
+    return result
 
 
 def _manager_post_critic_decision(
@@ -1494,14 +1519,22 @@ def _manager_post_critic_decision(
     overall_quality   = llm_assessment.get("overall_quality", "ACCEPTABLE")
     replay_candidates = llm_assessment.get("replay_candidates", [])
     sufficient        = llm_assessment.get("sufficient_for_report", True)
+    critic_executed   = batch_assessment.get("critic_executed", True)
+    critic_reason     = batch_assessment.get("critic_unavailable_reason")
 
-    # Fast-path: quality GOOD and nothing to replay → approve immediately
-    if overall_quality == "GOOD" and not replay_candidates:
+    # Fast-path: quality GOOD and nothing to replay → approve immediately.
+    # Only trustworthy when the Critic actually ran — GOOD is never a default,
+    # so a non-executed Critic can't reach this branch.
+    if critic_executed and overall_quality == "GOOD" and not replay_candidates:
         decision = {
             "action": "approve",
             "replay_adjustments": {},
             "generate_report": sufficient,
             "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
+            "critic_executed": True,
+            "manager_executed": True,
+            "auto_approved": False,
+            "auto_approve_reason": None,
         }
         _fe_log(job_id, f"  [MANAGER] Decision: APPROVE | Report: {decision['generate_report']}")
         _atomic_write(case_work_dir / "manager_decision.json", json.dumps(decision, indent=2))
@@ -1544,22 +1577,44 @@ Respond ONLY in valid JSON (no extra text):
         f"(quality={overall_quality}, {len(replay_candidates)} replay candidates)..."
     ))
     raw = _call_manager_llm(prompt, timeout=180)
+    manager_executed = False
     decision = {
         "action": "approve",
         "replay_adjustments": {},
         "generate_report": sufficient,
         "reasoning": "Manager LLM unavailable - defaulting to approve",
     }
-    try:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            parsed = json.loads(m.group())
-            decision["action"]             = parsed.get("action", "approve")
-            decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-            decision["generate_report"]    = parsed.get("generate_report", sufficient)
-            decision["reasoning"]          = parsed.get("reasoning", "")
-    except Exception as e:
-        _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve")
+    if raw and raw.strip():
+        try:
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group())
+                decision["action"]             = parsed.get("action", "approve")
+                decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
+                decision["generate_report"]    = parsed.get("generate_report", sufficient)
+                decision["reasoning"]          = parsed.get("reasoning", "")
+                manager_executed = True
+        except Exception as e:
+            _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve")
+
+    # Fail-open transparency: flag when the approval only happened because a
+    # checker was unavailable (Critic didn't run, or Manager LLM didn't respond).
+    decision["critic_executed"]  = critic_executed
+    decision["manager_executed"] = manager_executed
+    gate_down = (not critic_executed) or (not manager_executed)
+    decision["auto_approved"] = bool(decision["action"] == "approve" and gate_down)
+    if decision["auto_approved"]:
+        reasons = []
+        if not critic_executed:
+            reasons.append(critic_reason or "critic_unavailable")
+        if not manager_executed:
+            reasons.append("manager_llm_unavailable")
+        decision["auto_approve_reason"] = "; ".join(reasons)
+        if not manager_executed:
+            decision["reasoning"] = "Manager LLM unavailable - defaulting to approve"
+        _fe_log(job_id, f"  ⚠ [MANAGER] auto-approved fail-open: {decision['auto_approve_reason']}")
+    else:
+        decision["auto_approve_reason"] = None
 
     _fe_log(job_id, (
         f"  [MANAGER] Decision: {decision['action'].upper()} | "
@@ -5374,7 +5429,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         # Phase 80%: Batch Critic Review (now includes Pass 2 findings)
         # ------------------------------------------------------------------
-        manager_decision = {"action": "approve", "replay_adjustments": {}, "generate_report": True}
+        manager_decision = {
+            "action": "approve", "replay_adjustments": {}, "generate_report": True,
+            "critic_executed": False, "manager_executed": False,
+            "auto_approved": True, "auto_approve_reason": "batch_critic_manager_not_run",
+        }
         _update_job(80, "batch-critic", "Batch Critic reviewing all findings (Pass 1 + Pass 2)")
         # Pass 2 findings have already been merged into findings_writer above
         all_findings = findings_writer.all_records()
@@ -5393,6 +5452,18 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             )
         except Exception as _batch_err:
             _fe_log(job_id, f"  ⚠ Batch Critic/Manager failed: {_batch_err} - defaulting to approve")
+            manager_decision = {
+                "action": "approve", "replay_adjustments": {}, "generate_report": True,
+                "critic_executed": False, "manager_executed": False,
+                "auto_approved": True,
+                "auto_approve_reason": f"batch_critic_manager_exception: {type(_batch_err).__name__}: {_batch_err}",
+                "reasoning": "Batch Critic/Manager raised an exception - defaulting to approve",
+            }
+            try:
+                _atomic_write(case_work_dir / "manager_decision.json",
+                              json.dumps(manager_decision, indent=2, default=str))
+            except Exception:
+                pass
 
         # --- Incremental Replay: re-run steps with Manager-patched params ---
         replay_adjustments = manager_decision.get("replay_adjustments", {})
@@ -5908,6 +5979,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "critic_rejected": critic_rejected,
             "critic_review": critic_review,
             "steps_needs_review": needs_review_count,
+            "quality_gate": {
+                "critic_executed": manager_decision.get("critic_executed", True),
+                "manager_executed": manager_decision.get("manager_executed", True),
+                "auto_approved": manager_decision.get("auto_approved", False),
+                "auto_approve_reason": manager_decision.get("auto_approve_reason"),
+            },
             "findings_detail": findings_writer.all_records(),
             "findings_jsonl": str(findings_writer._path),
             "user_activity_summary": correlated_users if correlated_users is not None else {},
