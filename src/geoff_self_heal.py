@@ -131,6 +131,126 @@ def classify_error_fast(ctx: ErrorContext) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# _fast_heal — deterministic remedies for environmental errors (no LLM)
+# ---------------------------------------------------------------------------
+
+# We cannot reliably auto-install tools mid-run (no guaranteed sudo, and the
+# network policy may block package fetches). Instead we emit the exact install
+# command so the investigator — or a future re-run on a provisioned box — has a
+# concrete fix, and skip the step cleanly rather than failing opaquely.
+_TOOL_INSTALL_HINTS = {
+    "vol": "pip install volatility3",
+    "vol.py": "pip install volatility3",
+    "volatility3": "pip install volatility3",
+    "fls": "apt-get install -y sleuthkit",
+    "mmls": "apt-get install -y sleuthkit",
+    "icat": "apt-get install -y sleuthkit",
+    "fsstat": "apt-get install -y sleuthkit",
+    "istat": "apt-get install -y sleuthkit",
+    "tsk_recover": "apt-get install -y sleuthkit",
+    "log2timeline.py": "pip install plaso",
+    "psort.py": "pip install plaso",
+    "pinfo.py": "pip install plaso",
+    "tshark": "apt-get install -y tshark",
+    "tcpflow": "apt-get install -y tcpflow",
+    "bulk_extractor": "apt-get install -y bulk-extractor",
+    "photorec": "apt-get install -y testdisk",
+    "foremost": "apt-get install -y foremost",
+    "scalpel": "apt-get install -y scalpel",
+    "readpst": "apt-get install -y pst-utils",
+    "rip.pl": "clone RegRipper: https://github.com/keydet89/RegRipper3.0",
+    "regripper": "clone RegRipper: https://github.com/keydet89/RegRipper3.0",
+    "vshadowmount": "apt-get install -y libvshadow-utils",
+    "ewfmount": "apt-get install -y ewf-tools",
+    "exiftool": "apt-get install -y libimage-exiftool-perl",
+    "clamscan": "apt-get install -y clamav",
+    "ssdeep": "apt-get install -y ssdeep",
+    "hashdeep": "apt-get install -y hashdeep",
+    "oledump.py": "pip install oletools",
+    "upx": "apt-get install -y upx-ucl",
+    "r2": "apt-get install -y radare2",
+}
+
+
+def _extract_missing_binary(ctx: ErrorContext) -> str:
+    """Best-effort: pull the missing binary name from stderr / tool_command."""
+    stderr = ctx.stderr or ""
+    m = re.search(r"([\w./\-]+):\s*(?:command\s+)?not found", stderr, re.IGNORECASE)
+    if m:
+        return os.path.basename(m.group(1).strip())
+    m = re.search(r"command not found:\s*([\w./\-]+)", stderr, re.IGNORECASE)
+    if m:
+        return os.path.basename(m.group(1).strip())
+    m = re.search(r"No such file or directory:\s*'?([\w./\-]+)'?", stderr)
+    if m:
+        return os.path.basename(m.group(1).strip())
+    cmd = (ctx.tool_command or "").strip()
+    if cmd:
+        return os.path.basename(cmd.split()[0])
+    return ""
+
+
+def _fast_heal(fast_class: str, module: str, function: str, params: dict,
+                ctx: ErrorContext, job_id: str) -> Optional[dict]:
+    """Deterministic remedy for environmental errors classify_error_fast knows
+    about but the LLM healer was never given. Returns a result dict (success or
+    skipped-with-remediation), or None to defer to the LLM.
+    """
+    # --- Missing tool: emit a precise install remediation, skip cleanly ---
+    if fast_class == "tool_missing":
+        binary = _extract_missing_binary(ctx)
+        hint = _TOOL_INSTALL_HINTS.get(binary) or _TOOL_INSTALL_HINTS.get(binary.lower(), "")
+        remediation = (
+            f"Install '{binary}' and re-run this step ({hint})" if hint
+            else f"Install the missing tool '{binary or function}' and re-run this step"
+        )
+        _fe_log(job_id, f"  ⎘ [HEAL] tool_missing: {binary or function} — {remediation}")
+        return {
+            "status": "skipped",
+            "_heal_skipped": True,
+            "_heal_fix_type": "tool_missing_remediation",
+            "_skip_reason": "tool_missing",
+            "_missing_tool": binary,
+            "_remediation": remediation,
+            "error": f"tool not installed: {binary or function}",
+        }
+
+    # --- Mount errors: bounded retry (often transient), else skip with hint ---
+    if fast_class.startswith("mount_error"):
+        new_params = dict(params)
+        new_params["_heal_attempt"] = True
+        for delay in (0.5, 1.0, 2.0):
+            time.sleep(delay)
+            try:
+                r = _run_step_via_orchestrator(module, function, new_params, job_id=job_id)
+            except Exception:
+                r = None
+            if isinstance(r, dict) and r.get("status") == "success":
+                _fe_log(job_id, f"  ✓ [HEAL] mount retry succeeded for {module}.{function}")
+                r["_self_healed"] = True
+                r["_heal_fix_type"] = "mount_retry"
+                return r
+        sub = fast_class.split(".", 1)[1] if "." in fast_class else "mount_failed"
+        hints = {
+            "wrong_fs_type": "verify filesystem type / partition offset (mmls) before mounting",
+            "no_such_device": "check the partition offset and that the image path is correct",
+            "loop_device": "free loop devices (losetup -D) or ensure the image is not already mounted",
+        }
+        remediation = hints.get(sub, "inspect the partition table and mount parameters")
+        _fe_log(job_id, f"  ⎘ [HEAL] {fast_class}: bounded retry exhausted — {remediation}")
+        return {
+            "status": "skipped",
+            "_heal_skipped": True,
+            "_heal_fix_type": "mount_error_remediation",
+            "_skip_reason": fast_class,
+            "_remediation": remediation,
+            "error": f"mount failed ({sub}) after bounded retry",
+        }
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # _execute_heal
 # ---------------------------------------------------------------------------
 
@@ -253,6 +373,25 @@ def _attempt_heal(module: str, function: str, params: dict,
     fast_class = classify_error_fast(ctx)
     if fast_class == "permission_error":
         return None
+
+    # Deterministic remedies for environmental errors (missing tool, mount
+    # failure) — act on them instead of deferring to an LLM that is told to
+    # give up on these classes.
+    if fast_class and (fast_class == "tool_missing" or fast_class.startswith("mount_error")):
+        fast_result = _fast_heal(fast_class, module, function, params, ctx, job_id)
+        if fast_result is not None:
+            outcome = "healed" if fast_result.get("status") == "success" else "skipped"
+            _fast_decision = HealDecision(
+                fixable=True,
+                fix_type=fast_result.get("_heal_fix_type", fast_class),
+                fix_detail=fast_result.get("_remediation", ""),
+                root_cause=fast_class,
+                confidence=10,
+                llm_model="deterministic",
+            )
+            _audit_heal(job_id, module, function, ctx, _fast_decision, outcome)
+            return fast_result
+        # else fall through to LLM diagnosis
 
     # Check local cache first
     cache_key = ctx.cache_key()
