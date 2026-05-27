@@ -48,6 +48,7 @@ from super_timeline import SuperTimeline
 from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
 from evidence_classifier import AIEvidenceClassifier, classify_with_ai
+import command_logger
 
 # ---------------------------------------------------------------------------
 # Geoff internal modules
@@ -483,6 +484,13 @@ def _commit_step_with_custody(
 
     raw_command = step_record.get("raw_command", "")
 
+    # Real versions of the tool binaries that actually executed during this
+    # step, captured by the command logger (empty if logging was unavailable).
+    try:
+        tool_versions = command_logger.get_step_tool_versions()
+    except Exception:
+        tool_versions = {}
+
     custody = {
         "step_key": step_key,
         "playbook": playbook_id,
@@ -492,6 +500,7 @@ def _commit_step_with_custody(
         "evidence_sha256": evidence_sha256,
         "params_hash": params_hash,
         "raw_command": raw_command,
+        "tool_versions": tool_versions,
         "status": step_record.get("status", "unknown"),
         "committed_at": datetime.now().isoformat(),
         "execution_hash": step_record.get("execution_hash", ""),
@@ -1788,6 +1797,14 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         ckpt["started_at"] = datetime.now().isoformat()
         _ckpt_save(case_work_dir, ckpt)
         _fe_log(job_id, f"  [CKPT] New investigation: {case_work_dir}")
+
+    # Chain-of-custody: faithfully log every executed command to commands/ so
+    # the investigation can be audited or replayed by another investigator.
+    try:
+        command_logger.install()
+        command_logger.begin_case(case_work_dir / "commands", job_id=job_id or "")
+    except Exception as _cl_err:
+        _fe_log(job_id, f"  ⚠ Command logging unavailable: {_cl_err}")
 
     try:
 
@@ -4631,6 +4648,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 # Idempotent step key - derive from findings (single source of truth)
                                 step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
                                 execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
+                                command_logger.set_step(step_key, playbook_id)
 
                                 step_record = {
                                     "playbook": playbook_id,
@@ -5393,6 +5411,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 # Merge original params with Manager adjustments
                 _merged_params = {**_orig.get("params", {}), **_rparams}
                 _fe_log(job_id, f"  [REPLAY] {_module}.{_function} | adjusted params: {list(_rparams.keys())}")
+                command_logger.set_step(_rk, _orig.get("playbook", ""))
                 try:
                     _replay_result = _run_step_via_orchestrator(_module, _function, _merged_params)
                     _replay_status = "completed" if _replay_result.get("status") == "success" else "failed"
@@ -6232,6 +6251,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "evidence_dir": evidence_dir,
             "elapsed_seconds": round(time.time() - start_time, 1),
         }
+    finally:
+        try:
+            command_logger.end_case()
+        except Exception:
+            pass
     _cleanup_mounts()
     return report
 
