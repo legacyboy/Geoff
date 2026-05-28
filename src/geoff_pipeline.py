@@ -548,7 +548,7 @@ def _run_forensicator_batch(
     _fe_log(job_id, (
         f"  [BATCH] Autonomous execution: {len(execution_plan)} playbooks, "
         f"~{total_templates} step templates, {len(device_map)} device(s)"
-    ))
+    ), agent="Forensicator")
     return {
         "mode": "batch",
         "playbooks_queued": len(execution_plan),
@@ -1416,7 +1416,7 @@ def _batch_critic_review_all_playbooks(
         f"{summary['unverified']} unverified | "
         f"{summary['failed']} failed | "
         f"{summary['high_critical_findings']} HIGH/CRITICAL"
-    ))
+    ), agent="Critic")
 
     # Build concise finding snippets for the LLM (cap at 50)
     finding_snippets = []
@@ -1464,7 +1464,7 @@ Respond ONLY in valid JSON (no extra text):
                 batch_assessment = json.loads(m.group())
         except Exception as e:
             parse_error = str(e)
-            _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} - using defaults")
+            _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} - using defaults", agent="Critic")
 
     # Fail-open transparency: record whether the Critic gate actually ran. An
     # empty assessment means the LLM was unavailable or unparseable, so the
@@ -1479,7 +1479,7 @@ Respond ONLY in valid JSON (no extra text):
             critic_unavailable_reason = f"critic_response_unparseable: {parse_error}"
         else:
             critic_unavailable_reason = "critic_response_no_json"
-        _fe_log(job_id, f"  ⚠ [BATCH-CRITIC] gate did NOT run ({critic_unavailable_reason}) — proceeding fail-open")
+        _fe_log(job_id, f"  ⚠ [BATCH-CRITIC] gate did NOT run ({critic_unavailable_reason}) — proceeding fail-open", agent="Critic")
 
     result = {
         **summary,
@@ -1496,7 +1496,7 @@ Respond ONLY in valid JSON (no extra text):
         f"  [BATCH-CRITIC] Quality: {batch_assessment.get('overall_quality', 'N/A')} | "
         f"Report: {batch_assessment.get('sufficient_for_report', True)} | "
         f"CriticRan: {critic_executed}"
-    ))
+    ), agent="Critic")
     return result
 
 
@@ -1536,7 +1536,7 @@ def _manager_post_critic_decision(
             "auto_approved": False,
             "auto_approve_reason": None,
         }
-        _fe_log(job_id, f"  [MANAGER] Decision: APPROVE | Report: {decision['generate_report']}")
+        _fe_log(job_id, f"  [MANAGER] Decision: APPROVE | Report: {decision['generate_report']}", agent="Manager")
         _atomic_write(case_work_dir / "manager_decision.json", json.dumps(decision, indent=2))
         return decision
 
@@ -1575,7 +1575,7 @@ Respond ONLY in valid JSON (no extra text):
     _fe_log(job_id, (
         f"  [MANAGER] Reviewing batch assessment "
         f"(quality={overall_quality}, {len(replay_candidates)} replay candidates)..."
-    ))
+    ), agent="Manager")
     raw = _call_manager_llm(prompt, timeout=180)
     manager_executed = False
     decision = {
@@ -1595,7 +1595,7 @@ Respond ONLY in valid JSON (no extra text):
                 decision["reasoning"]          = parsed.get("reasoning", "")
                 manager_executed = True
         except Exception as e:
-            _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve")
+            _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve", agent="Manager")
 
     # Fail-open transparency: flag when the approval only happened because a
     # checker was unavailable (Critic didn't run, or Manager LLM didn't respond).
@@ -1612,14 +1612,14 @@ Respond ONLY in valid JSON (no extra text):
         decision["auto_approve_reason"] = "; ".join(reasons)
         if not manager_executed:
             decision["reasoning"] = "Manager LLM unavailable - defaulting to approve"
-        _fe_log(job_id, f"  ⚠ [MANAGER] auto-approved fail-open: {decision['auto_approve_reason']}")
+        _fe_log(job_id, f"  ⚠ [MANAGER] auto-approved fail-open: {decision['auto_approve_reason']}", agent="Manager")
     else:
         decision["auto_approve_reason"] = None
 
     _fe_log(job_id, (
         f"  [MANAGER] Decision: {decision['action'].upper()} | "
         f"Report: {decision['generate_report']} | {decision['reasoning']}"
-    ))
+    ), agent="Manager")
     _atomic_write(case_work_dir / "manager_decision.json", json.dumps(decision, indent=2))
     return decision
 
