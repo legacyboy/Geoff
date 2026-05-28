@@ -16,6 +16,8 @@
 
 **Your digital forensics colleague with multi-agent analysis, device-centric investigation, and narrative reporting.**
 
+**License:** Apache 2.0 — see [LICENSE](LICENSE).
+
 ---
 
 ## What is GEOFF?
