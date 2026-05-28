@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+_evidence_hash_memo: dict = {}
+
 __all__ = [
   "FindingsWriter",
   "_ExecResultCache",
@@ -176,17 +178,21 @@ def _global_exception_handler(exc_type, exc_value, exc_traceback):
 # Atomic I/O and hashing (mirrored from geoff_config to keep this module a leaf)
 # ---------------------------------------------------------------------------
 
-def _hash_file(path):
-    """Compute SHA-256 hash of a file for chain of custody."""
+def _hash_file(path: str) -> str:
+    """SHA-256 of file. Memoized: evidence files don't change during analysis."""
+    if path in _evidence_hash_memo:
+        return _evidence_hash_memo[path]
     h = hashlib.sha256()
     try:
         with open(path, "rb") as f:
-            while chunk := f.read(8192):
+            while chunk := f.read(1 << 20):  # 1MB chunks
                 h.update(chunk)
-        return h.hexdigest()
+        result = h.hexdigest()
     except Exception as e:
         _log_error(f"hash_file failed for {path}", e)
-        return "hash_failed"
+        result = "hash_failed"
+    _evidence_hash_memo[path] = result
+    return result
 
 
 def _atomic_write(path, data, mode='w'):
