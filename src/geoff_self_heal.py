@@ -398,15 +398,15 @@ def _attempt_heal(module: str, function: str, params: dict,
     decision = _heal_cache.get(cache_key)
     if decision:
         decision.from_cache = True
-        _fe_log(job_id, f"  [HEAL] Cache hit for {cache_key[:8]} → {decision.fix_type}")
+        _fe_log(job_id, f"  [HEAL] Cache hit for {cache_key[:8]} → {decision.fix_type}", agent="Healer")
     else:
         decision = geoff_critic.analyze_execution_error_v2(ctx)
         if decision.fixable and decision.confidence >= 5:
             _heal_cache.store(cache_key, decision)
-            _fe_log(job_id, f"  [HEAL] LLM diagnosed → {decision.fix_type} (confidence: {decision.confidence})")
+            _fe_log(job_id, f"  [HEAL] LLM diagnosed → {decision.fix_type} (confidence: {decision.confidence})", agent="Healer")
 
     if not decision.fixable or decision.fix_type == "fail":
-        _fe_log(job_id, f"  [HEAL] Not fixable: {decision.root_cause or decision.fix_detail}")
+        _fe_log(job_id, f"  [HEAL] Not fixable: {decision.root_cause or decision.fix_detail}", agent="Healer")
         return None
 
     healed_result = _execute_heal(module, function, params, decision, job_id)
@@ -421,12 +421,12 @@ def _attempt_heal(module: str, function: str, params: dict,
         healed_result["_heal_confidence"] = decision.confidence
         healed_result["_heal_from_cache"] = decision.from_cache
         _heal_cache.record_outcome(cache_key, success=True)
-        _fe_log(job_id, f"  ✓ [HEAL] {module}.{function} healed: {decision.fix_type}")
+        _fe_log(job_id, f"  ✓ [HEAL] {module}.{function} healed: {decision.fix_type}", agent="Healer")
     elif healed_result and healed_result.get("status") == "skipped":
-        _fe_log(job_id, f"  ⎘ [HEAL] {module}.{function} skipped: {decision.skip_reason}")
+        _fe_log(job_id, f"  ⎘ [HEAL] {module}.{function} skipped: {decision.skip_reason}", agent="Healer")
     else:
         _heal_cache.record_outcome(cache_key, success=False)
-        _fe_log(job_id, f"  ✗ [HEAL] {module}.{function} healing failed")
+        _fe_log(job_id, f"  ✗ [HEAL] {module}.{function} healing failed", agent="Healer")
 
     return healed_result
 
@@ -799,7 +799,7 @@ Respond ONLY in valid JSON (no extra text):
     "reasoning": "one sentence explaining the key prioritisation decision"
 }}"""
 
-    _fe_log(job_id, "▶ Manager: reviewing execution plan…")
+    _fe_log(job_id, "▶ Manager: reviewing execution plan…", agent="Manager")
     raw = _call_manager_llm(prompt)
     try:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -813,12 +813,12 @@ Respond ONLY in valid JSON (no extra text):
                 if pb in valid_ids and pb not in validated:
                     validated.insert(mandatory.index(pb), pb)
             if validated:
-                _fe_log(job_id, f"  ✓ Manager approved {len(validated)}-playbook plan: {reasoning}")
+                _fe_log(job_id, f"  ✓ Manager approved {len(validated)}-playbook plan: {reasoning}", agent="Manager")
                 return validated
     except Exception as e:
-        _fe_log(job_id, f"  ⚠ Manager plan parse error ({e}) — using proposed plan")
+        _fe_log(job_id, f"  ⚠ Manager plan parse error ({e}) — using proposed plan", agent="Manager")
 
-    _fe_log(job_id, f"  ⚠ Manager LLM unavailable — using proposed plan ({len(proposed_plan)} playbooks)")
+    _fe_log(job_id, f"  ⚠ Manager LLM unavailable — using proposed plan ({len(proposed_plan)} playbooks)", agent="Manager")
     return proposed_plan
 
 

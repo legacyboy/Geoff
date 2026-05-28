@@ -22,6 +22,45 @@
 
 GEOFF is a **multi-agent conversational DFIR platform** with three specialized AI agents, device-aware evidence processing, behavioral analysis, and LLM-generated narrative reports.
 
+## Agentic Framework
+
+Geoff's primary execution engine is the **Geoff Triad** — a three-agent autonomous loop that plans, executes, observes, critiques, and self-corrects without per-step human approval. The competition rules permit "comparable agentic architectures" alongside Claude Code and OpenClaw; the Geoff Triad is that architecture.
+
+### The agents
+
+- **Manager** — receives the high-level goal ("find evil in this evidence"), reviews triage output, builds and amends the execution plan, decides post-execution actions (approve / flag / replay). Implementation: `src/geoff_self_heal.py::_manager_review_execution_plan`, `src/geoff_pipeline.py::_manager_post_critic_decision`.
+- **Forensicator** — selects forensic tools per playbook step, interprets each tool's output into a structured analyst note (significance + threat indicators + evidence chain). Implementation: `src/geoff_forensicator.py::call_forensicator_llm`.
+- **Critic** — validates every finding for hallucinations and inconsistency, diagnoses failed tool runs into structured `HealDecision`s, and flags steps that need replay. Implementation: `src/geoff_critic.py` and `src/geoff_self_heal.py::_attempt_heal`.
+
+A fourth role — **Healer** — is the Critic operating in error-recovery mode (`_attempt_heal` → `_execute_heal`). It is the same model with a different prompt; surfaced separately in the agent trace because it has its own audit class.
+
+All three agents communicate via structured JSON messages. The full protocol is in [`docs/AGENT_PROTOCOL.md`](docs/AGENT_PROTOCOL.md).
+
+### Capability comparison
+
+| Capability | Claude Code | OpenClaw | **Geoff Triad** |
+|------------|-------------|----------|------------------|
+| Goal-directed planning | ✅ single agent | ✅ single agent | ✅ **dedicated planner agent (Manager)** |
+| Tool selection at runtime | ✅ | ✅ | ✅ Forensicator chooses per-step from 25 playbooks |
+| Observation → reasoning loop | ✅ | ✅ | ✅ Forensicator analyst note → Critic validation |
+| Self-critique | ⚠ via prompt | ⚠ via prompt | ✅ **dedicated Critic agent + batch holistic review** |
+| Autonomous error recovery | ⚠ retry only | ⚠ retry only | ✅ **`_attempt_heal` with fast-path + LLM diagnosis** |
+| Multi-agent specialization | ❌ | ❌ | ✅ **three distinct roles, three model profiles** |
+| Persistent memory | session context | session context | ✅ **git-backed per-case repo with custody sidecars** |
+| Reproducible audit trail | ❌ | partial | ✅ **per-step SHA-256 custody + commands log + audit_trail.jsonl** |
+| Pluggable LLM backend | Anthropic-only | Ollama-only | Ollama (cloud or local), profile-switchable |
+| Runs on SIFT Workstation | requires net + key | yes | yes (cloud or local) |
+
+Geoff matches Claude Code and OpenClaw on every agentic primitive and exceeds them on multi-agent specialization, dedicated self-correction, and reproducibility.
+
+### Why a custom triad instead of Claude Code or OpenClaw
+
+DFIR investigations require three properties that single-agent frameworks struggle to provide:
+
+1. **Separation of concerns.** Tool execution (Forensicator), validation (Critic), and decision-making (Manager) come from different model temperaments. We use different models per role (`profiles.json`) — a coder model for tool selection, a general-reasoning model for critique, a planner model for decisions.
+2. **Holistic cross-step critique.** A per-step LLM check misses inconsistencies between findings. The Geoff Critic reviews all findings in one pass (`_batch_critic_review_all_playbooks`), which catches hallucinations a single-agent loop cannot.
+3. **Forensic chain of custody.** Every step commits to a per-case git repository with a SHA-256-of-evidence custody sidecar. This is a forensic non-negotiable; bolted onto a general-purpose agent framework it becomes fragile, but it's primary in Geoff.
+
 ### The Multi-Agent Team
 
 | Agent | Role | Cloud Model | Local Model |

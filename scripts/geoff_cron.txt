@@ -1,8 +1,8 @@
 # G.E.O.F.F. Investigation Cron Configuration
-# Place in OpenClaw crontab for status updates
+# Add to the system crontab (e.g. crontab -e) for periodic status monitoring
 
 # Check investigation status every 3 minutes
-*/3 * * * * cd /home/claw/.openclaw/workspace && /usr/bin/python3 -c "
+*/3 * * * * /usr/bin/python3 -c "
 import os
 import json
 from pathlib import Path
@@ -33,7 +33,7 @@ for case_dir in Path(CASES_DIR).iterdir():
 "
 
 # Check for completed investigations every 5 minutes
-*/5 * * * * cd /home/claw/.openclaw/workspace && /usr/bin/python3 -c "
+*/5 * * * * /usr/bin/python3 -c "
 import os
 import json
 from pathlib import Path

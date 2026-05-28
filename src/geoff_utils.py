@@ -26,6 +26,8 @@ _evidence_hash_memo: dict = {}
 
 __all__ = [
   "FindingsWriter",
+  "_configure_agent_vis",
+  "_emit_agent_trace",
   "_ExecResultCache",
   "_apply_anti_forensics_cascade",
   "_atomic_append",
@@ -94,6 +96,41 @@ _find_evil_jobs: dict = {}  # job_id -> {status, progress, result, ...}
 _active_mounts: list = []
 
 # ---------------------------------------------------------------------------
+# Agent-visibility state (set by bin/geoff-find-evil via _configure_agent_vis)
+# ---------------------------------------------------------------------------
+
+_SHOW_AGENTS: bool = os.environ.get("GEOFF_SHOW_AGENTS", "").strip() == "1"
+_AGENT_TRACE: bool = os.environ.get("GEOFF_AGENT_TRACE", "").strip() == "1"
+_agent_trace_path: Optional[Path] = None   # set when a case dir is known
+
+_AGENT_COLORS = {
+    "Manager":     "\033[36m",   # cyan
+    "Forensicator": "\033[32m",  # green
+    "Critic":      "\033[33m",   # yellow
+    "Healer":      "\033[35m",   # magenta
+}
+_RESET = "\033[0m"
+
+
+def _configure_agent_vis(show_agents: bool, agent_trace: bool, trace_path: Optional[Path] = None):
+    """Called by the CLI to configure agent-visibility features at startup."""
+    global _SHOW_AGENTS, _AGENT_TRACE, _agent_trace_path
+    _SHOW_AGENTS = show_agents
+    _AGENT_TRACE = agent_trace
+    _agent_trace_path = trace_path
+
+
+def _emit_agent_trace(event: dict):
+    """Append one JSON event to the agent trace file, if tracing is enabled."""
+    if not _AGENT_TRACE or _agent_trace_path is None:
+        return
+    try:
+        line = json.dumps(event, default=str) + "\n"
+        _atomic_append(_agent_trace_path, line)
+    except Exception:
+        pass  # trace write failures are non-fatal
+
+# ---------------------------------------------------------------------------
 # Function references set by importing module (orchestrator singletons)
 # ---------------------------------------------------------------------------
 
@@ -113,14 +150,31 @@ def _log_info(msg: str):
         pass
 
 
-def _fe_log(job_id: str, msg: str):
-    """Append a timestamped log entry to a Find Evil job."""
+def _fe_log(job_id: str, msg: str, agent: Optional[str] = None):
+    """Append a timestamped log entry to a Find Evil job.
+
+    When agent= is provided and --show-agents is active, the stored message
+    is prefixed with a color-tagged role label so the CLI tailer displays it.
+    """
     if job_id is None:
         return
     with _state_lock:
         if job_id in _find_evil_jobs:
             ts = datetime.now().strftime("%H:%M:%S")
-            _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": msg})
+            display_msg = msg
+            if agent and _SHOW_AGENTS:
+                color = _AGENT_COLORS.get(agent, "")
+                reset = _RESET if color else ""
+                display_msg = f"{color}[{agent}]{reset} {msg}"
+            _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": display_msg})
+    if agent and _AGENT_TRACE:
+        _emit_agent_trace({
+            "ts": datetime.now().isoformat(),
+            "agent": agent,
+            "event": "log",
+            "job_id": job_id,
+            "msg": msg[:500],
+        })
 
 
 def _fe_log_with_exception(job_id: str, msg: str, e: Exception = None):

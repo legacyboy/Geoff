@@ -10,6 +10,11 @@ Options:
     -o, --output FILE   Write full JSON report to FILE as well as showing progress
     --no-color          Disable ANSI colour output
     --strict            Exit 2 on any step failure (default: continue on failure)
+    --show-agents       Prefix every log line with its agent role ([Manager], [Forensicator],
+                        [Critic], [Healer]) using ANSI colour tags. Env: GEOFF_SHOW_AGENTS=1
+    --agent-trace       Write case_work_dir/agent_trace.jsonl with per-event prompt/response
+                        excerpts, outcomes, and refs to full artifacts on disk.
+                        Env: GEOFF_AGENT_TRACE=1
     -h, --help          Show this help and exit
 
 Exit codes:
@@ -180,6 +185,10 @@ def main():
                         help="Disable ANSI colour")
     parser.add_argument("--strict", action="store_true",
                         help="Treat any step failure as fatal (exit 2)")
+    parser.add_argument("--show-agents", action="store_true",
+                        help="Prefix log lines with agent role tags ([Manager], [Critic], …)")
+    parser.add_argument("--agent-trace", action="store_true",
+                        help="Write case_work_dir/agent_trace.jsonl with per-event excerpts")
     parser.add_argument("-h", "--help", action="store_true",
                         help="Show help and exit")
     args = parser.parse_args()
@@ -194,6 +203,9 @@ def main():
 
     if args.strict:
         os.environ["GEOFF_CONTINUE_ON_FAILURE"] = "false"
+
+    show_agents = getattr(args, "show_agents", False) or os.environ.get("GEOFF_SHOW_AGENTS", "") == "1"
+    agent_trace = getattr(args, "agent_trace", False) or os.environ.get("GEOFF_AGENT_TRACE", "") == "1"
 
     evidence_dir = str(Path(args.evidence_dir).resolve())
     if not Path(evidence_dir).exists():
@@ -216,6 +228,17 @@ def main():
     except Exception as e:
         _print_err(f"Failed to import geoff_integrated: {e}")
         sys.exit(2)
+
+    # Configure agent visibility before any log lines are emitted.
+    # The trace path is unknown until find_evil runs and creates a case dir;
+    # we pass None here and let the pipeline set it via _configure_agent_vis
+    # once the case dir is known (or it picks it up from _agent_trace_path
+    # after we set it on the report's case_work_dir below).
+    try:
+        from geoff_utils import _configure_agent_vis
+        _configure_agent_vis(show_agents=show_agents, agent_trace=agent_trace)
+    except Exception:
+        pass  # non-fatal; visibility features degrade gracefully
 
     # Register a job so _fe_log writes to the store we can tail
     job_id = str(uuid.uuid4())
@@ -272,6 +295,20 @@ def main():
     if report.get("status") == "error":
         _print_err(report.get("error", "unknown error"))
         sys.exit(2)
+
+    # If agent-trace was requested, update the trace path now that we know
+    # the case directory, and print its location for the user.
+    if agent_trace:
+        case_dir = report.get("case_work_dir", "")
+        if case_dir:
+            trace_path = Path(case_dir) / "agent_trace.jsonl"
+            try:
+                from geoff_utils import _configure_agent_vis
+                _configure_agent_vis(show_agents=show_agents, agent_trace=True, trace_path=trace_path)
+            except Exception:
+                pass
+            if not quiet:
+                _print_progress(f"  Agent trace: {trace_path}")
 
     # Write JSON report if requested
     if args.output:
