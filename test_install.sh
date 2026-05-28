@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # GEOFF install loop test — runs continuously, restoring snapshots between tests
-# Designed to be run by OpenClaw cron every 30 min
+# Designed to be run periodically (e.g. via cron) to verify install.sh on a clean SIFT base image
 set -euo pipefail
 
 VM_NAME="SIFT-DFIR"
 SNAPSHOT="fresh-install"
 SSH_CMD="sshpass -p forensics ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 2222 sansforensics@localhost"
-LOG="/home/claw/.openclaw/workspace/projects/Geoff/install_test.log"
-COMMIT=$(cd /home/claw/.openclaw/workspace/projects/Geoff && git rev-parse --short HEAD)
+INSTALL_TEST_ROOT="${INSTALL_TEST_ROOT:-/home/sansforensics/geoff-install-test}"
+LOG="${INSTALL_TEST_ROOT}/install_test.log"
+COMMIT=$(cd "$(dirname "$0")" && git rev-parse --short HEAD)
 
 echo "=== GEOFF Install Test $(date) | commit ${COMMIT} ===" | tee "$LOG"
 
