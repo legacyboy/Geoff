@@ -47,6 +47,9 @@ from geoff_self_heal import call_llm, _self_check_chat_response
 from geoff_pipeline import find_evil, run_full_investigation
 from geoff_templates import HTML_TEMPLATE
 
+# Wire geoff_utils module reference for _save_jobs
+import geoff_utils as _gu
+
 # ---------------------------------------------------------------------------
 # Module-level singleton references (set by geoff_integrated.py after init)
 # ---------------------------------------------------------------------------
