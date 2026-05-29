@@ -1,0 +1,199 @@
+/* ============================================================
+   GEOFF DFIR — shared design tokens & base
+   Evolution of the repo theme (installer/geoff-theme.ts).
+   Same DNA: dark navy, IBM Plex, severity + entity color system.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Surfaces — deepened & layered for the bolder evolution */
+  --g-bg:        #080D18;
+  --g-bg-2:      #0C1322;
+  --g-surface:   #131C2E;
+  --g-surface-2: #0F1828;
+  --g-surface-3: #1A2740;
+  --g-border:    #2A3957;
+  --g-border-soft: #1B2740;
+  --g-line:      #16213A;
+
+  /* Text */
+  --g-text:      #EEF3FB;
+  --g-text-dim:  #9DB0CC;
+  --g-text-mute: #5E708F;
+  --g-text-faint:#3C4D6B;
+
+  /* Accents */
+  --g-blue:      #4C8DFF;
+  --g-blue-soft: #79A9FF;
+  --g-cyan:      #1FC8DB;
+  --g-green:     #25D396;
+  --g-amber:     #FBB534;
+  --g-red:       #FF5765;
+  --g-violet:    #A78BFA;
+  --g-pink:      #F472B6;
+
+  /* Severity */
+  --sev-crit:    #FF4D5E;
+  --sev-high:    #FBB534;
+  --sev-med:     #4C8DFF;
+  --sev-low:     #7C90AE;
+  --sev-info:    #5E708F;
+
+  /* Entity types */
+  --ent-user:    #25D396;
+  --ent-pc:      #4C8DFF;
+  --ent-server:  #A78BFA;
+  --ent-mobile:  #FBB534;
+  --ent-network: #7C90AE;
+  --ent-service: #F472B6;
+  --ent-evidence:#1FC8DB;
+  --ent-threat:  #FF4D5E;
+
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  --radius:    10px;
+  --radius-sm: 6px;
+  --radius-lg: 16px;
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-2: 0 8px 30px rgba(0,0,0,.45);
+  --glow-blue: 0 0 0 1px rgba(76,141,255,.35), 0 0 24px rgba(76,141,255,.18);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background:
+    radial-gradient(1100px 600px at 78% -8%, rgba(76,141,255,.07), transparent 60%),
+    radial-gradient(900px 600px at -5% 100%, rgba(167,139,250,.06), transparent 55%),
+    var(--g-bg);
+  background-attachment: fixed;
+  color: var(--g-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; padding: 0; }
+button:focus-visible, a:focus-visible { outline: 1.5px solid var(--g-blue); outline-offset: 2px; }
+input, textarea { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+/* ---- Faint engineering grid overlay (instrument-panel feel) ---- */
+.grid-tex {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(120,160,230,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,160,230,.035) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 92%);
+}
+
+/* ===================== Shared chrome ===================== */
+.brandbar {
+  position: relative; z-index: 5;
+  height: 58px;
+  display: flex; align-items: center; gap: 22px;
+  padding: 0 22px;
+  background: linear-gradient(180deg, rgba(18,28,48,.92), rgba(12,19,34,.92));
+  border-bottom: 1px solid var(--g-border-soft);
+  backdrop-filter: blur(8px);
+}
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand .mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: grid; place-items: center;
+  background: linear-gradient(150deg, var(--g-blue), #2D5FCC);
+  box-shadow: var(--glow-blue);
+  font-family: var(--font-mono); font-weight: 700; font-size: 15px; color: #fff;
+}
+.brand .wordmark { display: flex; flex-direction: column; line-height: 1.05; }
+.brand .wordmark b {
+  font-family: var(--font-mono); font-weight: 700; font-size: 16px;
+  letter-spacing: 2px; color: var(--g-text);
+}
+.brand .wordmark span {
+  font-size: 9px; letter-spacing: 2.4px; text-transform: uppercase; color: var(--g-text-mute);
+}
+
+.navlink {
+  font-size: 13px; color: var(--g-text-dim); padding: 7px 13px; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; gap: 7px; transition: all .14s; font-weight: 500;
+}
+.navlink:hover { color: var(--g-text); background: var(--g-surface); }
+.navlink.active { color: var(--g-blue-soft); background: rgba(76,141,255,.12); box-shadow: inset 0 0 0 1px rgba(76,141,255,.25); }
+
+.spacer { flex: 1; }
+
+.online {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--g-text-dim);
+  letter-spacing: .4px;
+}
+.online .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-green);
+  box-shadow: 0 0 0 3px rgba(37,211,150,.18); animation: pulse 2.4s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+/* ---- pills / chips ---- */
+.sev-pill, .pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.sev-CRITICAL, .sev-pill.CRITICAL { color: var(--sev-crit); background: rgba(255,77,94,.13); border-color: rgba(255,77,94,.4); }
+.sev-HIGH, .sev-pill.HIGH { color: var(--sev-high); background: rgba(251,181,52,.13); border-color: rgba(251,181,52,.38); }
+.sev-MEDIUM, .sev-pill.MEDIUM { color: var(--sev-med); background: rgba(76,141,255,.14); border-color: rgba(76,141,255,.4); }
+.sev-LOW, .sev-pill.LOW { color: var(--sev-low); background: rgba(124,144,174,.14); border-color: rgba(124,144,174,.35); }
+.sev-INFO, .sev-pill.INFO { color: var(--sev-info); background: rgba(94,112,143,.12); border-color: rgba(94,112,143,.3); }
+
+.tag-mono {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .3px;
+  padding: 2px 7px; border-radius: 4px; color: var(--g-text-dim);
+  background: rgba(124,144,174,.12); border: 1px solid var(--g-border-soft);
+}
+.mitre-tag {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .3px;
+  padding: 2px 7px; border-radius: 4px;
+  color: var(--g-violet); background: rgba(167,139,250,.12); border: 1px solid rgba(167,139,250,.28);
+}
+
+.eyebrow {
+  font-size: 10.5px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--g-text-mute); font-weight: 600;
+}
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600; letter-spacing: .2px;
+  border: 1px solid var(--g-border); color: var(--g-text-dim); transition: all .14s;
+}
+.btn:hover { color: var(--g-text); border-color: var(--g-text-mute); background: var(--g-surface); }
+.btn.primary {
+  background: linear-gradient(180deg, var(--g-blue), #2D63D6);
+  border-color: transparent; color: #fff; box-shadow: var(--glow-blue);
+}
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.ghost { border-color: transparent; }
+
+/* ---- scrollbars ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--g-border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--g-text-faint); background-clip: padding-box; }
+
+/* entity dot helper */
+.edot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+.edot.user { border-radius: 50%; background: var(--ent-user); }
+.edot.pc { background: var(--ent-pc); }
+.edot.server { background: var(--ent-server); }
+.edot.mobile { background: var(--ent-mobile); }
+.edot.network { background: var(--ent-network); }
+.edot.service { border-radius: 50%; background: var(--ent-service); }
+.edot.evidence { background: var(--ent-evidence); }
+.edot.threat { transform: rotate(45deg); background: var(--ent-threat); }
