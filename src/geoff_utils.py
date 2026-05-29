@@ -625,7 +625,11 @@ class FindingsWriter:
 
     def is_completed(self, step_key: str) -> bool:
         with self._lock:
-            return self._index.get(step_key) == "completed"
+            status = self._index.get(step_key)
+            if status is None:
+                return False
+            # Failed/skipped steps should be retried on resume
+            return status not in ("failed", "skipped", "error")
 
     def all_records(self) -> list:
         """Return all records. Combines in-memory and disk records when cap was exceeded."""

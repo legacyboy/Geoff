@@ -167,9 +167,9 @@ def execute_step_parallel(module, function, params_list, playbook_id,
             code = result["code"]
             if code == -1:
                 step_record["status"] = "failed"
-                step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                step_record["error"] = f"Timeout: {result.get('stderr', '')} (CIFS network latency may cause slow reads on compressed E01 images)"
                 step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
-                _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
+                _fe_log(job_id, f"  ✗ {module}.{function} → timeout (CIFS network latency may cause slow reads on compressed E01 images)")
                 f = 1
             elif code < 0:
                 step_record["status"] = "failed"
@@ -5019,10 +5019,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     if isinstance(result, dict) and result.get("code") is not None:
                                         if result["code"] == -1:
                                             step_record["status"] = "failed"
-                                            step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                                            step_record["error"] = f"Timeout: {result.get('stderr', '')} (CIFS network latency may cause slow reads on compressed E01 images)"
                                             step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                             steps_failed += 1
-                                            _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
+                                            _fe_log(job_id, f"  ✗ {module}.{function} → timeout (CIFS network latency may cause slow reads on compressed E01 images)")
                                             findings_writer.append(step_record)
                                             pb_findings.append(step_record)
                                             continue
