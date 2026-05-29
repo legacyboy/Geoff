@@ -354,16 +354,16 @@ def chat():
                     with _state_lock:
                         _find_evil_jobs[job_id]["status"] = "complete"
                         _find_evil_jobs[job_id]["result"] = report
-                        _save_jobs()  # persist complete state
+                        _gu._save_jobs()  # persist complete state
                 except Exception as e:
                     with _state_lock:
                         _find_evil_jobs[job_id]["status"] = "error"
                         _find_evil_jobs[job_id]["error"] = str(e)
-                    _save_jobs()  # persist error state
+                    _gu._save_jobs()  # persist error state
 
             threading.Thread(target=_run, daemon=True).start()
             # persist initial state
-            _save_jobs()
+            _gu._save_jobs()
 
             return jsonify({
                 'response': f"Roger that. Starting investigation on {evidence_dir}.\n"
@@ -1133,18 +1133,18 @@ def find_evil_route():
                 with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "complete"
                     _find_evil_jobs[job_id]["result"] = report
-                    _save_jobs()  # persist complete state
+                    _gu._save_jobs()  # persist complete state
             except Exception as e:
                 _fe_log_with_exception(job_id, "Find Evil job failed", e)
                 with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "error"
                     _find_evil_jobs[job_id]["error"] = str(e)
-                    _save_jobs()  # persist error state
+                    _gu._save_jobs()  # persist error state
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
         # persist initial state
-        _save_jobs()
+        _gu._save_jobs()
 
         return jsonify({
             "job_id": job_id,
@@ -1214,7 +1214,7 @@ def find_evil_cancel(job_id):
         job["status"] = "cancelled"
         job["error"] = "Cancelled by user"
         _fe_log(job_id, f"Job {job_id} cancelled by DELETE request")
-        _save_jobs()  # persist cancellation
+        _gu._save_jobs()  # persist cancellation
 
     return jsonify({
         "job_id": job_id,
