@@ -290,15 +290,32 @@ def _require_auth(f):
 # Route Handler Functions
 # ===================================================================
 
+INDEX_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))), 'static', 'index.html')
+
+
 def index():
-    """GET / — Serve the main Geoff UI."""
+    """GET / — Serve the main Geoff UI.
+
+    Reads static/index.html at request time so UI updates (HTML/CSS/JS)
+    don't require a server restart — just edit files under static/ and
+    refresh the browser.  Running find-evil jobs are not interrupted.
+    """
     key_meta = (
         f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
         if GEOFF_API_KEY else ''
     )
     evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
+
+    # Prefer the standalone file so UI updates don't need a restart.
+    # Falls back to the embedded Python string if the file is missing.
+    if os.path.isfile(INDEX_HTML_PATH):
+        with open(INDEX_HTML_PATH, 'r', encoding='utf-8') as f:
+            html = f.read()
+    else:
+        html = HTML_TEMPLATE
+
     return render_template_string(
-        HTML_TEMPLATE
+        html
         .replace('<!-- GEOFF_API_KEY_META -->', key_meta)
         .replace('<!-- GEOFF_EVIDENCE_BASE_DIR -->', evidence_base_js)
     )

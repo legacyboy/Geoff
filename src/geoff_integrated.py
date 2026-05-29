@@ -110,6 +110,9 @@ sys.excepthook = _global_exception_handler
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+# Disable static-file caching so browser picks up UI/CSS/JS changes
+# on refresh without needing a server restart.
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app)
 
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
