@@ -24,12 +24,43 @@
     { id: "report",    name: "Report",    desc: "Score severity, assemble incident report" },
   ];
 
-  function pctToPhase(pct) {
-    if (pct < 12) return 0;
-    if (pct < 28) return 1;
-    if (pct < 46) return 2;
-    if (pct < 64) return 3;
-    if (pct < 84) return 4;
+  // Maps current_playbook values emitted by the backend pipeline to UI phase index.
+  // Values sourced from _update_job() calls in geoff_pipeline.py.
+  const PLAYBOOK_PHASE = {
+    // Phase 0 — Discover: evidence inventory & device identification
+    initializing: 0, validation: 0, extraction: 0, revalidation: 0,
+    discovery: 0, inventory: 0, setup: 0,
+    // Phase 1 — Triage: PB-SIFT-000 rapid indicator sweep
+    'PB-SIFT-000': 1,
+    // Phase 2 — Timeline: autonomous batch playbook execution (PB-SIFT-001…024)
+    'PB-SIFT-001': 2, 'PB-SIFT-002': 2, 'PB-SIFT-003': 2,
+    'PB-SIFT-004': 2, 'PB-SIFT-005': 2, 'PB-SIFT-006': 2,
+    'PB-SIFT-007': 2, 'PB-SIFT-008': 2, 'PB-SIFT-009': 2,
+    'PB-SIFT-010': 2, 'PB-SIFT-011': 2, 'PB-SIFT-012': 2,
+    'PB-SIFT-013': 2, 'PB-SIFT-014': 2, 'PB-SIFT-015': 2,
+    'PB-SIFT-016': 2, 'PB-SIFT-017': 2, 'PB-SIFT-018': 2,
+    'PB-SIFT-019': 2, 'PB-SIFT-020': 2, 'PB-SIFT-021': 2,
+    'PB-SIFT-022': 2, 'PB-SIFT-023': 2, 'PB-SIFT-024': 2,
+    // Phase 3 — Correlate: super-timeline, pass-2, batch Critic, Manager review
+    'super-timeline': 3, 'timeline-intel': 3, 'manager-review': 3,
+    pass2: 3, 'batch-critic': 3, replay: 3,
+    // Phase 4 — Hunt: behavioral analysis, host correlation
+    behavioral: 4, correlation: 4, 'network-map': 4, reporting: 4,
+    // Phase 5 — Report: IOC validation, narrative, MITRE mapping
+    email_extract: 5, ioc_validation: 5, narrative: 5,
+    mitre_mapping: 5, complete: 5,
+  };
+
+  function playbookToPhase(pb, pct) {
+    if (pb && Object.prototype.hasOwnProperty.call(PLAYBOOK_PHASE, pb)) {
+      return PLAYBOOK_PHASE[pb];
+    }
+    // Fallback: derive from progress percentage for unknown/future playbook names
+    if (pct < 9)  return 0;
+    if (pct < 10) return 1;
+    if (pct < 68) return 2;
+    if (pct < 85) return 3;
+    if (pct < 95) return 4;
     return 5;
   }
 
@@ -330,7 +361,7 @@
     }
 
     // Update phase
-    const phaseIdx = pct >= 100 ? PHASES.length - 1 : pctToPhase(pct);
+    const phaseIdx = pct >= 100 ? PHASES.length - 1 : playbookToPhase(data.current_playbook, pct);
     setPhase(phaseIdx, status === 'complete' ? "done" : "active");
 
     // Drain new log entries
