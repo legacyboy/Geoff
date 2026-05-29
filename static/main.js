@@ -481,12 +481,20 @@
       const clsText = classification ? ` — ${classification}` : '';
       const findingCount = totalFindings || Object.values(behavioralFlags).reduce((s, f) => s + (Array.isArray(f) ? f.length : 0), 0);
       const hostCount = Object.keys(behavioralFlags).length || Object.keys(deviceMap).length;
+
+      // Build viewer URL: extract case directory name from result.case_work_dir
+      let viewerUrl = '/reports/viewer';
+      if (result.case_work_dir) {
+        const caseDirName = result.case_work_dir.split('/').filter(Boolean).pop();
+        viewerUrl += '?case=' + encodeURIComponent(caseDirName);
+      }
+
       card.innerHTML = `<div class="verdict">${evilFound ? "EVIL" : evilFound === false ? "CLEAN" : "DONE"}</div>
         <div class="ct">
           <div style="font-size:14px;font-weight:600;color:var(--g-text);">Investigation complete${clsText} — ${findingCount} findings across ${hostCount} hosts</div>
           <div class="cl">${result.executive_summary || result.summary || 'See reports for full narrative.'}</div>
         </div>
-        <a class="btn primary" href="/reports/viewer">View full report →</a>`;
+        <a class="btn primary" href="${viewerUrl}">View full report →</a>`;
       feed.appendChild(card);
       scrollFeed();
     }
@@ -710,7 +718,8 @@
           <div class="rt-desc">${escHtml(rpt.evidence_dir || '')}</div>
         `;
         card.onclick = () => {
-          window.open('/reports/viewer', '_blank');
+          const caseDir = encodeURIComponent(rpt.dir);
+          window.open('/reports/viewer?case=' + caseDir, '_blank');
         };
         body.appendChild(card);
       });
