@@ -216,6 +216,60 @@ HTML_TEMPLATE = r"""
   .chat-in input:focus { border-color: var(--g-blue); }
   .chat-in button { width: 38px; height: 38px; border-radius: 50%; background: var(--g-blue); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
   .chat-in button:hover { filter: brightness(1.1); }
+
+  /* ---- evidence panel ---- */
+  .panel-view { display: none; flex: 1; min-height: 0; flex-direction: column; background: rgba(8,13,24,.3); }
+  .panel-view.active { display: flex; }
+  .panel-view .panel-head {
+    padding: 18px 26px 12px; display: flex; align-items: center; gap: 16px;
+    border-bottom: 1px solid var(--g-border-soft);
+  }
+  .panel-view .panel-head h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.2px; }
+  .panel-view .panel-head .cnt { font-family: var(--font-mono); font-size: 12px; color: var(--g-text-mute); }
+  .panel-view .panel-body { flex: 1; overflow-y: auto; padding: 16px 26px 26px; }
+
+  /* ---- case cards ---- */
+  .case-card {
+    border: 1px solid var(--g-border-soft); border-radius: var(--radius);
+    padding: 16px 20px; margin-bottom: 12px; background: var(--g-surface);
+    transition: all .14s; cursor: pointer;
+  }
+  .case-card:hover { border-color: var(--g-border); box-shadow: var(--shadow-1); }
+  .case-card .cc-top { display: flex; align-items: center; gap: 12px; }
+  .case-card .cc-name { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--g-text); flex: 1; }
+  .case-card .cc-meta { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+  .case-card .cc-meta span { font-family: var(--font-mono); font-size: 10.5px; color: var(--g-text-mute); }
+  .case-card .cc-items { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .case-card .cc-items .ci { font-family: var(--font-mono); font-size: 10.5px; color: var(--g-text-dim); padding: 2px 0; }
+  .case-card .cc-items .ci.dir { color: var(--g-blue-soft); }
+  .case-empty { padding: 32px 0; text-align: center; color: var(--g-text-mute); font-size: 14px; }
+
+  /* ---- report cards ---- */
+  .rpt-card {
+    border: 1px solid var(--g-border-soft); border-left: 3px solid var(--g-border);
+    border-radius: var(--radius); padding: 16px 20px; margin-bottom: 12px;
+    background: var(--g-surface); transition: all .14s; cursor: pointer;
+  }
+  .rpt-card:hover { border-color: var(--g-border); box-shadow: var(--shadow-1); }
+  .rpt-card.evil { border-left-color: var(--sev-crit); }
+  .rpt-card.clean { border-left-color: var(--g-green); }
+  .rpt-card .rt-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .rpt-card .rt-name { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--g-text); flex: 1; }
+  .rpt-card .rt-meta { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .rpt-card .rt-meta span { font-family: var(--font-mono); font-size: 10.5px; color: var(--g-text-mute); }
+  .rpt-card .rt-desc { font-size: 12.5px; color: var(--g-text-dim); margin-top: 6px; line-height: 1.45; }
+
+  /* ---- live job banner ---- */
+  .job-banner {
+    display: none; align-items: center; gap: 14px;
+    padding: 12px 22px; border-bottom: 1px solid var(--g-border-soft);
+    background: linear-gradient(90deg, rgba(76,141,255,.08), rgba(31,200,219,.04), transparent);
+  }
+  .job-banner.active { display: flex; }
+  .job-banner .liveflag { display: inline-flex; align-items: center; gap: 6px; color: var(--g-blue-soft); font-family: var(--font-mono); font-size: 12px; flex-shrink: 0; }
+  .job-banner .liveflag .d { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); animation: pulse 1.1s infinite; }
+  .job-banner .jb-info { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--g-text-dim); }
+  .job-banner .jb-pct { font-family: var(--font-mono); font-size: 13px; color: var(--g-blue-soft); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -229,14 +283,24 @@ HTML_TEMPLATE = r"""
       <div class="wordmark"><b>GEOFF</b><span>Forensic Framework</span></div>
     </div>
     <nav style="display:flex;gap:4px;">
-      <a class="navlink active">Find Evil</a>
-      <a class="navlink" id="nav-evidence" href="/cases">Evidence</a>
-      <a class="navlink" href="/reports/viewer">Reports</a>
+      <a class="navlink active" data-tab="console" id="nav-console">Find Evil</a>
+      <a class="navlink" data-tab="evidence" id="nav-evidence">Evidence</a>
+      <a class="navlink" data-tab="reports" id="nav-reports">Reports</a>
     </nav>
     <div class="spacer"></div>
     <div class="online"><span class="dot"></span>ENGINE ONLINE</div>
   </header>
 
+  <!-- live job banner (hidden until a running job is detected) -->
+  <div class="job-banner" id="job-banner">
+    <span class="liveflag"><span class="d"></span>LIVE JOB</span>
+    <span class="jb-info" id="jb-info">—</span>
+    <span class="jb-pct" id="jb-pct">0%</span>
+    <button class="btn primary" id="jb-resume" style="font-size:12px;padding:6px 14px;">Resume</button>
+  </div>
+
+  <!-- Tab: Find Evil console -->
+  <div class="tab-view" id="tab-console" style="display:flex;flex-direction:column;flex:1;min-height:0;">
   <!-- operation bar -->
   <div class="opbar">
     <div class="evfield">
@@ -339,6 +403,32 @@ HTML_TEMPLATE = r"""
     </aside>
 
   </div>
+  </div><!-- /#tab-console -->
+
+  <!-- Tab: Evidence browser -->
+  <div class="panel-view" id="tab-evidence">
+    <div class="panel-head">
+      <h2>Evidence</h2>
+      <span class="cnt" id="ev-cnt">—</span>
+      <span style="flex:1;"></span>
+      <span class="eyebrow" style="color:var(--g-text-mute);">Base: <!-- GEOFF_EVIDENCE_BASE_DIR --></span>
+    </div>
+    <div class="panel-body" id="ev-panel-body">
+      <div class="case-empty">Loading cases…</div>
+    </div>
+  </div>
+
+  <!-- Tab: Reports browser -->
+  <div class="panel-view" id="tab-reports">
+    <div class="panel-head">
+      <h2>Reports</h2>
+      <span class="cnt" id="rp-cnt">—</span>
+    </div>
+    <div class="panel-body" id="rp-panel-body">
+      <div class="case-empty">Loading reports…</div>
+    </div>
+  </div>
+
 </div>
 
 <script>window.GEOFF_EVIDENCE_BASE_DIR = '<!-- GEOFF_EVIDENCE_BASE_DIR -->';</script>

@@ -347,6 +347,7 @@ def chat():
                     "started_at": datetime.now().isoformat(),
                     "result": None,
                     "error": None,
+                    "evidence_dir": evidence_dir,
                     "log": [{"time": datetime.now().strftime("%H:%M:%S"),
                              "msg": f"Find Evil started from chat: {evidence_dir}"}],
                 }
@@ -1137,6 +1138,7 @@ def find_evil_route():
                 "started_at": datetime.now().isoformat(),
                 "result": None,
                 "error": None,
+                "evidence_dir": evidence_dir,
                 "log": [{"time": datetime.now().strftime("%H:%M:%S"), "msg": "Find Evil job started"}],
             }
 
@@ -1235,6 +1237,29 @@ def find_evil_cancel(job_id):
         "status": "cancelled",
         "message": "Job cancelled successfully"
     })
+
+
+def find_evil_active():
+    """GET /find-evil/active — Return any currently running Find Evil jobs.
+
+    The UI calls this on page load to detect and display in-progress jobs.
+    """
+    with _state_lock:
+        active = [
+            {
+                "job_id": jid,
+                "status": job["status"],
+                "progress_pct": job["progress_pct"],
+                "current_playbook": job["current_playbook"],
+                "current_step": job["current_step"],
+                "elapsed_seconds": job["elapsed_seconds"],
+                "started_at": job.get("started_at", ""),
+                "evidence_dir": job.get("evidence_dir", "unknown"),
+            }
+            for jid, job in _find_evil_jobs.items()
+            if job.get("status") in ("running", "initializing")
+        ]
+    return jsonify({"active_jobs": active, "count": len(active)})
 
 
 def find_evil_info():
@@ -1460,6 +1485,7 @@ def register_routes(app):
     app.add_url_rule('/investigation/status/<case_name>', 'get_investigation_status', _require_auth(get_investigation_status))
     app.add_url_rule('/find-evil', 'find_evil_route', _require_auth(find_evil_route), methods=['POST'])
     app.add_url_rule('/find-evil', 'find_evil_info', _require_auth(find_evil_info), methods=['GET'])
+    app.add_url_rule('/find-evil/active', 'find_evil_active', _require_auth(find_evil_active), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_status', _require_auth(find_evil_status), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_cancel', _require_auth(find_evil_cancel), methods=['DELETE'])
     app.add_url_rule('/active-directory', 'set_active_directory', _require_auth(set_active_directory), methods=['POST'])
