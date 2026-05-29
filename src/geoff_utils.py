@@ -19,6 +19,7 @@ import time
 import uuid
 import traceback
 import signal
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,10 @@ _evidence_hash_memo: dict = {}
 
 __all__ = [
   "FindingsWriter",
+  "ConcurrentStepRunner",
+  "get_evidence_runner",
+  "reset_evidence_runner",
+  "run_evidence_parallel_batch",
   "_configure_agent_vis",
   "_emit_agent_trace",
   "_ExecResultCache",
@@ -101,6 +106,153 @@ _state_lock = threading.RLock()
 _log_lock = threading.Lock()
 _find_evil_jobs: dict = {}  # job_id -> {status, progress, result, ...}
 _active_mounts: list = []
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+GEOFF_MAX_WORKERS = int(os.environ.get("GEOFF_MAX_WORKERS", "4"))
+
+# ---------------------------------------------------------------------------
+# ConcurrentStepRunner - Evidence-level parallel execution
+# ---------------------------------------------------------------------------
+
+class ConcurrentStepRunner:
+    """Execute steps across evidence items using thread pools.
+    
+    Provides evidence-level parallelism: multiple evidence items can be
+    processed concurrently since they're independent. Also provides tool-level
+    concurrency when the same tool runs across multiple evidence items.
+    
+    Each step gets its own copy of inputs to avoid shared mutable state.
+    """
+    
+    def __init__(self, max_workers: int = None):
+        """Initialize the concurrent runner.
+        
+        Args:
+            max_workers: Maximum thread pool size. Defaults to GEOFF_MAX_WORKERS env var (4).
+        """
+        self.max_workers = max_workers or GEOFF_MAX_WORKERS
+    
+    def run_evidence_parallel(self, evidence_items: list, step_fn, step_fn_kwargs: dict, 
+                               job_id: str = None) -> list:
+        """Execute a step function across evidence items in parallel.
+        
+        Args:
+            evidence_items: List of evidence item paths to process
+            step_fn: Function to execute per item (must be pickleable or module-level)
+            step_fn_kwargs: Keyword arguments to pass to step_fn (copied per item)
+            job_id: Optional job ID for logging
+            
+        Returns:
+            List of (item, result) tuples in the same order as evidence_items
+        """
+        if not evidence_items:
+            return []
+        
+        # Use thread pool for evidence-level parallelism
+        # Each worker gets a copy of kwargs to avoid shared mutable state
+        results = []
+        
+        def worker(item: str) -> tuple:
+            """Worker function that executes step_fn with item-specific kwargs."""
+            try:
+                # Deep copy kwargs to ensure no shared mutable state
+                item_kwargs = copy.deepcopy(step_fn_kwargs)
+                item_kwargs["item"] = item  # Add item as last parameter
+                result = step_fn(**item_kwargs)
+                return (item, result)
+            except Exception as e:
+                _log_error(f"Concurrent step failed for {item}: {e}", e)
+                return (item, {"status": "error", "error": str(e)})
+        
+        # Execute with thread pool
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_item = {executor.submit(worker, item): item for item in evidence_items}
+            
+            # Collect results in order (maintain original evidence_items order)
+            item_order = {item: idx for idx, item in enumerate(evidence_items)}
+            temp_results = {}
+            
+            for future in as_completed(future_to_item):
+                item, result = future.result()
+                temp_results[item] = result
+            
+            # Return in original order
+            results = [(item, temp_results[item]) for item in evidence_items]
+        
+        return results
+
+    def run_tool_parallel(self, evidence_items: list, tool_fn, fn_kwargs: dict,
+                          job_id: str = None) -> list:
+        """Execute the same tool across multiple evidence items in parallel.
+        
+        This is a convenience wrapper for the common case where a playbook
+        runs the same tool (e.g., `strings`) across multiple evidence items.
+        
+        Args:
+            evidence_items: List of evidence item paths
+            tool_fn: Function that takes (item, **kwargs) and returns result
+            fn_kwargs: Shared kwargs (e.g., tool parameters like min_length)
+            job_id: Optional job ID for logging
+            
+        Returns:
+            List of results in the same order as evidence_items
+        """
+        # Delegate to evidence_parallel with wrapper
+        def wrapper_fn(item, **kwargs):
+            return tool_fn(item, **kwargs)
+        
+        results = self.run_evidence_parallel(
+            evidence_items=evidence_items,
+            step_fn=wrapper_fn,
+            step_fn_kwargs=fn_kwargs,
+            job_id=job_id
+        )
+        
+        # Return just results, not (item, result) tuples
+        return [r for _, r in results]
+
+
+# Global instance for evidence-level parallelism
+_evidence_runner = None
+
+
+def get_evidence_runner() -> ConcurrentStepRunner:
+    """Get or create the global evidence-level concurrent runner."""
+    global _evidence_runner
+    if _evidence_runner is None:
+        _evidence_runner = ConcurrentStepRunner()
+    return _evidence_runner
+
+
+def reset_evidence_runner(max_workers: int = None):
+    """Reset the global evidence runner (useful for testing)."""
+    global _evidence_runner
+    _evidence_runner = ConcurrentStepRunner(max_workers)
+
+
+def run_evidence_parallel_batch(evidence_items: list, step_fn, step_fn_kwargs: dict,
+                                 job_id: str = None, max_workers: int = None) -> list:
+    """Convenience wrapper for evidence-level parallel execution.
+    
+    Creates a new ConcurrentStepRunner instance for one-shot batch execution.
+    Useful for playbooks that need to process multiple evidence items.
+    
+    Args:
+        evidence_items: List of evidence item paths to process
+        step_fn: Function to execute per item
+        step_fn_kwargs: Keyword arguments to pass to step_fn (copied per item)
+        job_id: Optional job ID for logging
+        max_workers: Optional override for max workers (default: GEOFF_MAX_WORKERS)
+        
+    Returns:
+        List of (item, result) tuples in the same order as evidence_items
+    """
+    runner = ConcurrentStepRunner(max_workers)
+    return runner.run_evidence_parallel(evidence_items, step_fn, step_fn_kwargs, job_id)
+
 
 # ---------------------------------------------------------------------------
 # Find Evil job persistence (JSON file)
@@ -456,15 +608,14 @@ class FindingsWriter:
                 _log_info(cap_msg)
                 if self._job_id:
                     _fe_log(self._job_id, f"⚠ {cap_msg}")
-        # Write to JSONL outside the lock to avoid blocking
-        try:
-            with open(self._path, "a") as fh:
-                fh.write(json.dumps(record, default=str) + "\n")
-        except OSError as exc:
-            err_msg = f"FindingsWriter: failed to write {self._path}: {exc}"
-            _log_info(err_msg)
-            if self._job_id:
-                _fe_log(self._job_id, f"⚠ {err_msg}")
+            try:
+                with open(self._path, "a") as fh:
+                    fh.write(json.dumps(record, default=str) + "\n")
+            except OSError as exc:
+                err_msg = f"FindingsWriter: failed to write {self._path}: {exc}"
+                _log_info(err_msg)
+                if self._job_id:
+                    _fe_log(self._job_id, f"⚠ {err_msg}")
 
     def is_completed(self, step_key: str) -> bool:
         with self._lock:
@@ -710,6 +861,7 @@ class _ExecResultCache:
     def __init__(self, path=None):
         self._cache = {}
         self._path = path
+        self._lock = threading.Lock()  # Bug 4 fix: add lock for concurrent writes
         if path and os.path.isfile(path):
             try:
                 with open(path) as f:
@@ -718,25 +870,30 @@ class _ExecResultCache:
                 self._cache = {}
 
     def get(self, key):
-        return self._cache.get(key)
+        with self._lock:
+            return self._cache.get(key)
 
     def set(self, key, value):
-        self._cache[key] = value
-        if self._path:
-            try:
-                with open(self._path, "w") as f:
-                    json.dump(self._cache, f)
-            except IOError:
-                pass
+        with self._lock:
+            self._cache[key] = value
+            if self._path:
+                try:
+                    with open(self._path, "w") as f:
+                        json.dump(self._cache, f)
+                except IOError:
+                    pass
 
     def contains(self, key):
-        return key in self._cache
+        with self._lock:
+            return key in self._cache
 
     def keys(self):
-        return self._cache.keys()
+        with self._lock:
+            return self._cache.keys()
 
     def __contains__(self, key):
-        return key in self._cache
+        with self._lock:
+            return key in self._cache
 
 
 def _run_step_with_watchdog(func, args, step_timeout=1800):

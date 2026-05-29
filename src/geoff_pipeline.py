@@ -28,6 +28,8 @@ import threading
 import time
 import uuid
 import traceback
+import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -72,6 +74,165 @@ from geoff_fallback_chains import _execute_fallback_chain
 # Wire module-level references for orchestrator routing
 import geoff_utils as _gu
 import geoff_self_heal as _gsh
+
+# ---------------------------------------------------------------------------
+# Parallel execution helpers for evidence-level concurrency
+# ---------------------------------------------------------------------------
+
+def execute_step_parallel(module, function, params_list, playbook_id,
+                           job_id, dev_id, dev, output_dir, image_offsets,
+                           findings_writer, pb_findings, exec_cache):
+    """Execute a step across multiple evidence items in parallel.
+
+    Batches same (module, function) across items using ThreadPoolExecutor.
+    Each worker gets independent copies of all inputs.
+    Dedup is checked per-item; cache-hit items aren't double-appended.
+
+    Args:
+        params_list: List of (item, params_dict) tuples, one per evidence item
+        exec_cache: _ExecResultCache instance for dedup
+
+    Returns:
+        (completed_delta, failed_delta, skipped_delta)
+    """
+    if not params_list:
+        return (0, 0, 0)
+
+    max_workers = int(os.environ.get("GEOFF_MAX_WORKERS", "4"))
+    results = []
+    step_locks: dict = {}
+    step_locks_meta = threading.Lock()
+
+    def _run_single(item, item_params):
+        """Run one step on one evidence item and return a result tuple."""
+        step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+
+        # Idempotency check
+        if findings_writer.is_completed(step_key):
+            _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
+            return ("skipped", None, 0, 0, 1)
+
+        exec_key_inner = _make_exec_key(module, function, item, item_params)
+        with step_locks_meta:
+            if exec_key_inner not in step_locks:
+                step_locks[exec_key_inner] = threading.Lock()
+            step_lock = step_locks[exec_key_inner]
+
+        with step_lock:
+            _cached = exec_cache.get(exec_key_inner)
+            if _cached is not None:
+                _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
+                deduped_rec = {
+                    "playbook": playbook_id, "module": module, "function": function,
+                    "evidence_file": item, "device_id": dev_id,
+                    "status": "completed", "result": _cached, "_deduped": True,
+                }
+                findings_writer.append(deduped_rec)
+                pb_findings.append(deduped_rec)
+                return ("deduped", deduped_rec, 1, 0, 0)
+
+            raw_cmd = _reconstruct_raw_command(module, function, item_params)
+            exec_hash = hashlib.md5(
+                f"{step_key}:{json.dumps(item_params, sort_keys=True, default=str)}".encode()
+            ).hexdigest()[:12]
+
+            try:
+                command_logger.set_step(step_key, playbook_id)
+            except Exception:
+                pass  # worker threads don't inherit command_logger context
+
+            step_record = {
+                "playbook": playbook_id,
+                "step_key": step_key,
+                "execution_hash": exec_hash,
+                "module": module,
+                "function": function,
+                "params": item_params,
+                "raw_command": raw_cmd,
+                "evidence_file": item,
+                "device_id": dev_id,
+                "owner": dev.get("owner") if dev else None,
+                "status": "running",
+                "started_at": datetime.now().isoformat(),
+                "result": {},
+            }
+
+            result = _execute_fallback_chain(
+                module, function, item_params, evidence_path=item, job_id=job_id
+            )
+            exec_cache.set(exec_key_inner, result)
+
+        c = f = s = 0
+        if isinstance(result, dict) and result.get("code") is not None:
+            code = result["code"]
+            if code == -1:
+                step_record["status"] = "failed"
+                step_record["error"] = f"Timeout: {result.get('stderr', '')}"
+                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
+                _fe_log(job_id, f"  ✗ {module}.{function} → timeout")
+                f = 1
+            elif code < 0:
+                step_record["status"] = "failed"
+                step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
+                f = 1
+            else:
+                step_status = result.get("status", "error")
+                if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                    step_record["status"] = "skipped"
+                    step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
+                    s = 1
+                elif step_status in ("success", "success_partial"):
+                    stdout = result.get("stdout", "")
+                    if step_status == "success" and (not stdout or len(stdout.strip()) < 10):
+                        step_record["status"] = "failed"
+                        step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                        step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                        f = 1
+                    else:
+                        step_record["status"] = "completed"
+                        step_record["result"] = result
+                        if step_status == "success_partial":
+                            step_record["_fallback_primary_failed"] = result.get("_fallback_primary_failed", True)
+                            step_record["_fallback_final_method"] = result.get("_fallback_final_method", "")
+                        c = 1
+
+        findings_writer.append(step_record)
+        pb_findings.append(step_record)
+
+        return (step_record["status"], step_record, c, f, s)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_single, item, params): (item, params)
+            for item, params in params_list
+        }
+
+        item_order = {item: idx for idx, (item, _) in enumerate(params_list)}
+        temp = {}
+
+        for future in as_completed(futures):
+            item, params = futures[future]
+            try:
+                temp[item] = future.result()
+            except Exception as exc:
+                _log_error(f"Parallel step {module}.{function} on {item} failed: {exc}")
+                temp[item] = ("error", {"status": "error", "evidence_file": item, "error": str(exc)}, 0, 1, 0)
+
+        results = sorted(temp.items(), key=lambda x: item_order.get(x[0], 0))
+
+    delta_c = delta_f = delta_s = 0
+    for item, (status, step_record, c, f, s) in results:
+        # Bug 2 fix: step_record is None for idempotency-skipped items
+        if step_record is None:
+            delta_s += s
+            continue
+        delta_c += c
+        delta_f += f
+        delta_s += s
+
+    return (delta_c, delta_f, delta_s)
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton references (set by geoff_integrated.py after init)
@@ -4638,6 +4799,58 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             items = evidence_items
                         else:
                             items = evidence_items[:3]
+
+                        # Bug 1 fix: parallel execution for disk images and memory dumps
+                        if ev_type in ("disk_images", "memory_dumps"):
+                            for module, function, raw_params in step_templates:
+                                if module == "anti_forensics":
+                                    continue
+                                if _abort:
+                                    break
+                                _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
+                                params_list = []
+                                for item in items:
+                                    try:
+                                        _validate_evidence_path(item)
+                                    except ValueError as path_err:
+                                        _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
+                                        continue
+                                    item_stem = Path(item).stem
+                                    params = {}
+                                    for k, v in raw_params.items():
+                                        if isinstance(v, str):
+                                            v = v.replace("{image}", item)
+                                            v = v.replace("{mem}", item)
+                                            v = v.replace("{pcap}", item)
+                                            v = v.replace("{evtx}", item)
+                                            v = v.replace("{evt}", item)
+                                            v = v.replace("{syslog}", item)
+                                            v = v.replace("{hive}", item)
+                                            v = v.replace("{mobile}", str(Path(item).parent))
+                                            v = v.replace("{file}", item)
+                                            v = v.replace("{output_dir}", output_dir)
+                                            v = v.replace("{image_stem}", item_stem)
+                                            v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                        params[k] = v
+                                    for k, v in list(params.items()):
+                                        if isinstance(v, str) and v.isdigit():
+                                            params[k] = int(v)
+                                        elif isinstance(v, str) and v.lower() in ('true', 'false'):
+                                            params[k] = v.lower() == 'true'
+                                    params_list.append((item, params))
+                                if not params_list:
+                                    continue
+                                dc, df, ds = execute_step_parallel(
+                                    module, function, params_list, playbook_id,
+                                    job_id, dev_id, dev, output_dir, image_offsets,
+                                    findings_writer, pb_findings, exec_cache,
+                                )
+                                steps_completed += dc
+                                steps_failed += df
+                                steps_skipped += ds
+                                if dc or df or ds:
+                                    any_step_ran = True
+                            continue  # skip serial loop for disk_images/memory_dumps
 
                         for item in items:
                             if _abort:
