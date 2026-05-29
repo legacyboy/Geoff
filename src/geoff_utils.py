@@ -9,6 +9,7 @@ pathlib, threading, time, traceback, tempfile, uuid, signal, re, datetime).
 import os
 import sys
 import json
+import copy
 import re
 import subprocess
 import hashlib
@@ -64,6 +65,8 @@ __all__ = [
   "_run_step_with_watchdog",
   "_sanitize_tool_output",
   "_scan_completed_playbooks",
+  "_save_jobs",
+  "_load_jobs",
   "git_commit_action",
   "safe_git_commit",
   "safe_run",
@@ -79,6 +82,10 @@ __all__ = [
 MAX_STDOUT_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_STATE_FIELD_SIZE = 100 * 1024    # 100KB
 CHECKPOINT_FILE = ".geoff_checkpoint.json"
+FIND_EVIL_JOBS_FILE = os.environ.get(
+    "GEOFF_FIND_EVIL_JOBS_FILE",
+    os.path.join(tempfile.gettempdir(), "geoff-cases", "find_evil_jobs.json")
+)
 STRICT_MODE = os.environ.get("GEOFF_STRICT_MODE", "false").lower() == "true"
 CASES_WORK_DIR = os.environ.get(
     "GEOFF_CASES_PATH",
@@ -90,10 +97,40 @@ _MAX_IN_MEMORY_FINDINGS = int(os.environ.get("GEOFF_MAX_FINDINGS", "50000"))
 # Shared state (threading locks, job tracker, mount registry)
 # ---------------------------------------------------------------------------
 
-_state_lock = threading.Lock()
+_state_lock = threading.RLock()
 _log_lock = threading.Lock()
 _find_evil_jobs: dict = {}  # job_id -> {status, progress, result, ...}
 _active_mounts: list = []
+
+# ---------------------------------------------------------------------------
+# Find Evil job persistence (JSON file)
+# ---------------------------------------------------------------------------
+
+def _save_jobs():
+    """Atomically write _find_evil_jobs to disk."""
+    try:
+        # Deep copy to avoid serialization issues during mutation
+        with _state_lock:
+            snapshot = copy.deepcopy(_find_evil_jobs)
+        Path(FIND_EVIL_JOBS_FILE).parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(FIND_EVIL_JOBS_FILE, json.dumps(snapshot, indent=2, default=str))
+    except Exception as e:
+        _log_error(f"_save_jobs failed: {e}")
+
+def _load_jobs():
+    """Load _find_evil_jobs from disk, overwriting in-memory state."""
+    global _find_evil_jobs
+    try:
+        with _state_lock:
+            if not os.path.exists(FIND_EVIL_JOBS_FILE):
+                _find_evil_jobs = {}
+                return
+            with open(FIND_EVIL_JOBS_FILE) as f:
+                _find_evil_jobs = json.load(f)
+        _log_info(f"_load_jobs: loaded {len(_find_evil_jobs)} jobs from {FIND_EVIL_JOBS_FILE}")
+    except Exception as e:
+        _log_error(f"_load_jobs failed: {e}")
+        _find_evil_jobs = {}
 
 # ---------------------------------------------------------------------------
 # Agent-visibility state (set by bin/geoff-find-evil via _configure_agent_vis)
@@ -155,6 +192,7 @@ def _fe_log(job_id: str, msg: str, agent: Optional[str] = None):
 
     When agent= is provided and --show-agents is active, the stored message
     is prefixed with a color-tagged role label so the CLI tailer displays it.
+    Persists state after each mutation.
     """
     if job_id is None:
         return
@@ -167,6 +205,7 @@ def _fe_log(job_id: str, msg: str, agent: Optional[str] = None):
                 reset = _RESET if color else ""
                 display_msg = f"{color}[{agent}]{reset} {msg}"
             _find_evil_jobs[job_id].setdefault("log", []).append({"time": ts, "msg": display_msg})
+            _save_jobs()  # persist after mutation
     if agent and _AGENT_TRACE:
         _emit_agent_trace({
             "ts": datetime.now().isoformat(),
@@ -845,6 +884,7 @@ def _create_update_job(job_id: str, start_time: float):
                 _find_evil_jobs[job_id]["current_playbook"] = current_pb
                 _find_evil_jobs[job_id]["current_step"] = current_step
                 _find_evil_jobs[job_id]["elapsed_seconds"] = round(time.time() - start_time, 1)
+                _save_jobs()  # persist progress state
     return _update_job
 
 

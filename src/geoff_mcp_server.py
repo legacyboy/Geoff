@@ -49,6 +49,7 @@ from geoff_integrated import (
     CASES_WORK_DIR,
     PLAYBOOK_NAMES,
 )
+from geoff_utils import _save_jobs
 from sift_specialists_extended import ExtendedOrchestrator
 
 # ---------------------------------------------------------------------------
@@ -109,11 +110,13 @@ def _spawn_find_evil(evidence_dir: str, job_id: str) -> None:
         with _state_lock:
             _find_evil_jobs[job_id]["status"] = "complete"
             _find_evil_jobs[job_id]["result"] = report
+            _save_jobs()  # persist complete state
     except Exception as exc:
         _fe_log(job_id, f"MCP find_evil error: {exc}")
         with _state_lock:
             _find_evil_jobs[job_id]["status"] = "error"
             _find_evil_jobs[job_id]["error"] = str(exc)
+            _save_jobs()  # persist error state
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +162,8 @@ def start_find_evil(evidence_dir: str) -> Dict[str, Any]:
 
     thread = threading.Thread(target=_spawn_find_evil, args=(evidence_dir, job_id), daemon=True)
     thread.start()
+    # persist initial state
+    _save_jobs()
 
     return {
         "job_id": job_id,
@@ -591,6 +596,9 @@ def _parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = _parse_args()
+    # Load persisted job state on startup
+    from geoff_utils import _load_jobs
+    _load_jobs()
 
     if args.stdio:
         print("[Geoff MCP] Starting in stdio transport mode", file=sys.stderr)

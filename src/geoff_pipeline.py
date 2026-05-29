@@ -151,6 +151,7 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
             "started_at": datetime.now().isoformat(),
             "progress_pct": 0,
         }
+        _save_jobs()  # persist initial job
 
     def _run_find_evil_bg():
         try:
@@ -159,9 +160,12 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
             with _state_lock:
                 _find_evil_jobs[fe_job_id]["status"] = "error"
                 _find_evil_jobs[fe_job_id]["error"] = str(e)
+            _save_jobs()  # persist error state
 
     bg_thread = threading.Thread(target=_run_find_evil_bg, daemon=True)
     bg_thread.start()
+    # persist initial state after lock release
+    _save_jobs()
 
     return {
         "status": "started",
