@@ -45,7 +45,7 @@ from geoff_utils import (
 from geoff_models import action_logger, get_all_cases, get_available_tools_status
 from geoff_self_heal import call_llm, _self_check_chat_response
 from geoff_pipeline import find_evil, run_full_investigation
-from geoff_templates import HTML_TEMPLATE
+from geoff_templates import HTML_TEMPLATE, NARRATIVE_REPORT_HTML
 
 # Wire geoff_utils module reference for _save_jobs
 import geoff_utils as _gu
@@ -899,14 +899,24 @@ def viewer_static(filename):
 
 
 def ui_static(filename):
-    """GET /static/<filename> — Serve main UI static assets (tokens.css, main.js)."""
+    """GET /static/<filename> — Serve main UI static assets (tokens.css, main.js, report.js)."""
     static_dir = Path(__file__).parent.parent / 'static'
     if '..' in filename or filename.startswith('/') or '/' in filename:
         return jsonify({'error': 'Invalid path'}), 400
-    allowed = {'tokens.css', 'main.js'}
+    allowed = {'tokens.css', 'main.js', 'report.js'}
     if filename not in allowed:
         return jsonify({'error': 'Not found'}), 404
     return send_from_directory(str(static_dir), filename)
+
+
+def narrative_report_page():
+    """GET /reports/narrative — Serve the narrative report HTML (case picker or specific case view)."""
+    key_meta = (
+        f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+        if GEOFF_API_KEY else ''
+    )
+    html = NARRATIVE_REPORT_HTML.replace('<!-- GEOFF_API_KEY_META -->', key_meta)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
 def mitre_matrix():
@@ -1446,6 +1456,7 @@ def register_routes(app):
     app.add_url_rule('/reports/<case_dir>/download/markdown', 'download_markdown', _require_auth(download_markdown))
     app.add_url_rule('/reports/<case_dir>/download/json', 'download_json', _require_auth(download_json))
     app.add_url_rule('/reports/<case_dir>/download/summary', 'download_summary', _require_auth(download_summary))
+    app.add_url_rule('/reports/narrative', 'narrative_report_page', _require_auth(narrative_report_page))
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
     app.add_url_rule('/static/<filename>', 'ui_static', ui_static)
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
