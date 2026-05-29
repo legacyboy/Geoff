@@ -898,6 +898,17 @@ def viewer_static(filename):
     return send_from_directory(str(viewer_dir), filename)
 
 
+def ui_static(filename):
+    """GET /static/<filename> — Serve main UI static assets (tokens.css, main.js)."""
+    static_dir = Path(__file__).parent.parent / 'static'
+    if '..' in filename or filename.startswith('/') or '/' in filename:
+        return jsonify({'error': 'Invalid path'}), 400
+    allowed = {'tokens.css', 'main.js'}
+    if filename not in allowed:
+        return jsonify({'error': 'Not found'}), 404
+    return send_from_directory(str(static_dir), filename)
+
+
 def mitre_matrix():
     """GET /reports/mitre-matrix — Serve the MITRE ATT&CK matrix viewer."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
@@ -1436,6 +1447,7 @@ def register_routes(app):
     app.add_url_rule('/reports/<case_dir>/download/json', 'download_json', _require_auth(download_json))
     app.add_url_rule('/reports/<case_dir>/download/summary', 'download_summary', _require_auth(download_summary))
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
+    app.add_url_rule('/static/<filename>', 'ui_static', ui_static)
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
     app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
