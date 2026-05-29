@@ -13,7 +13,10 @@ import subprocess
 # Load .env file before reading env vars
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Use explicit path — find_dotenv() has a known crash in some python-dotenv versions
+    _dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(_dotenv_path):
+        load_dotenv(dotenv_path=_dotenv_path, override=True)
 except ImportError:
     pass
 from typing import Optional
