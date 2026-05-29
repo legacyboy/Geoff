@@ -253,7 +253,7 @@
   /* ---------- job state ---------- */
   let currentJobId = null;
   let pollTimer = null;
-  let seenLogCount = 0;
+  let lastLogTs = '';  // timestamp of last rendered log entry (HH:MM:SS)
   let t0 = 0;
   let elapsedTimer = null;
   let lastPct = 0;
@@ -279,7 +279,7 @@
     const vbadge = $("vbadge"); if (vbadge) vbadge.textContent = "— — —";
     const vs = $("v-sevpill"); if (vs) { vs.textContent = "PENDING"; vs.className = "sev-pill"; vs.style.opacity = ".3"; }
     renderPhases();
-    seenLogCount = 0;
+    lastLogTs = '';
     lastPct = 0;
     shownFlags = new Set();
     resetManifest();
@@ -364,13 +364,18 @@
     const phaseIdx = pct >= 100 ? PHASES.length - 1 : playbookToPhase(data.current_playbook, pct);
     setPhase(phaseIdx, status === 'complete' ? "done" : "active");
 
-    // Drain new log entries
+    // Drain new log entries (track by timestamp — backend may return sliding window)
     const log = data.log || [];
-    for (let i = seenLogCount; i < log.length; i++) {
-      const entry = log[i];
-      addLog(entry.msg || entry);
+    for (const entry of log) {
+      const ts = typeof entry === 'string' ? '' : (entry.time || '');
+      if (ts > lastLogTs || !lastLogTs) {
+        addLog(entry.msg || entry);
+      }
     }
-    seenLogCount = log.length;
+    if (log.length > 0) {
+      const last = log[log.length - 1];
+      lastLogTs = typeof last === 'string' ? '' : (last.time || '');
+    }
 
     if (status === 'complete') {
       finishRunSuccess(data.result || {});
