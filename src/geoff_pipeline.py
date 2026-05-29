@@ -2298,6 +2298,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Determine OS from dominant device type (for playbook selection)
         os_type = _detect_os_from_devices(device_map)
         # Triage indicators still useful for initial severity classification
+        _update_job(5, "triage", "Preparing triage scan")
         indicator_hits = _scan_triage_indicators(inventory)
 
         _update_job(5, "inventory", "Complete", log_msg="Evidence inventory complete")
@@ -3584,20 +3585,21 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         except (OSError, FileExistsError):
             pass
 
-        # Init git
-        try:
-            r = safe_run(['git', 'init'], cwd=case_work_dir, timeout=30)
-            if r.get("code", -1) != 0:
-                _fe_log(job_id, f"[WARN] git init failed (code {r.get('code')}): {r.get('stderr', '')}")
-            safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, timeout=10)
-            safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, timeout=10)
-            safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
-            # Write .gitignore for case directory
-            with open(case_work_dir / '.gitignore', 'w') as f:
-                f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n*.plaso\n*.json_line\n*.csv\n*.jsonl\n')
-            safe_git_commit('Initial case setup', base_path=str(case_work_dir))
-        except Exception as e:
-            _log_error(f"git init case_work_dir {case_work_dir}", e)
+        # Init git (skip on resume - already initialised in prior run)
+        if not resuming:
+            try:
+                r = safe_run(['git', 'init'], cwd=case_work_dir, timeout=30)
+                if r.get("code", -1) != 0:
+                    _fe_log(job_id, f"[WARN] git init failed (code {r.get('code')}): {r.get('stderr', '')}")
+                safe_run(['git', 'config', 'user.email', 'geoff@dfir.local'], cwd=case_work_dir, timeout=10)
+                safe_run(['git', 'config', 'user.name', 'Geoff DFIR'], cwd=case_work_dir, timeout=10)
+                safe_run(['git', 'config', '--add', 'safe.directory', str(case_work_dir)], cwd=case_work_dir, timeout=10)
+                # Write .gitignore for case directory
+                with open(case_work_dir / '.gitignore', 'w') as f:
+                    f.write('# GEOFF case directory - evidence artifacts\n*.E01\n*.E02\n*.E03\n*.dd\n*.raw\n*.img\n*.aff\n*.vmem\n*.dmp\n*.pcap\n*.pcapng\n*.plaso\n*.json_line\n*.csv\n*.jsonl\n')
+                safe_git_commit('Initial case setup', base_path=str(case_work_dir))
+            except Exception as e:
+                _log_error(f"git init case_work_dir {case_work_dir}", e)
 
         _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
         _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir))

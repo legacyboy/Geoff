@@ -290,15 +290,32 @@ def _require_auth(f):
 # Route Handler Functions
 # ===================================================================
 
+INDEX_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))), 'static', 'index.html')
+
+
 def index():
-    """GET / — Serve the main Geoff UI."""
+    """GET / — Serve the main Geoff UI.
+
+    Reads static/index.html at request time so UI updates (HTML/CSS/JS)
+    don't require a server restart — just edit files under static/ and
+    refresh the browser.  Running find-evil jobs are not interrupted.
+    """
     key_meta = (
         f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
         if GEOFF_API_KEY else ''
     )
     evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
+
+    # Prefer the standalone file so UI updates don't need a restart.
+    # Falls back to the embedded Python string if the file is missing.
+    if os.path.isfile(INDEX_HTML_PATH):
+        with open(INDEX_HTML_PATH, 'r', encoding='utf-8') as f:
+            html = f.read()
+    else:
+        html = HTML_TEMPLATE
+
     return render_template_string(
-        HTML_TEMPLATE
+        html
         .replace('<!-- GEOFF_API_KEY_META -->', key_meta)
         .replace('<!-- GEOFF_EVIDENCE_BASE_DIR -->', evidence_base_js)
     )
@@ -347,6 +364,7 @@ def chat():
                     "started_at": datetime.now().isoformat(),
                     "result": None,
                     "error": None,
+                    "evidence_dir": evidence_dir,
                     "log": [{"time": datetime.now().strftime("%H:%M:%S"),
                              "msg": f"Find Evil started from chat: {evidence_dir}"}],
                 }
@@ -1147,6 +1165,7 @@ def find_evil_route():
                 "started_at": datetime.now().isoformat(),
                 "result": None,
                 "error": None,
+                "evidence_dir": evidence_dir,
                 "log": [{"time": datetime.now().strftime("%H:%M:%S"), "msg": "Find Evil job started"}],
             }
 
@@ -1245,6 +1264,29 @@ def find_evil_cancel(job_id):
         "status": "cancelled",
         "message": "Job cancelled successfully"
     })
+
+
+def find_evil_active():
+    """GET /find-evil/active — Return any currently running Find Evil jobs.
+
+    The UI calls this on page load to detect and display in-progress jobs.
+    """
+    with _state_lock:
+        active = [
+            {
+                "job_id": jid,
+                "status": job["status"],
+                "progress_pct": job["progress_pct"],
+                "current_playbook": job["current_playbook"],
+                "current_step": job["current_step"],
+                "elapsed_seconds": job["elapsed_seconds"],
+                "started_at": job.get("started_at", ""),
+                "evidence_dir": job.get("evidence_dir", "unknown"),
+            }
+            for jid, job in _find_evil_jobs.items()
+            if job.get("status") in ("running", "initializing")
+        ]
+    return jsonify({"active_jobs": active, "count": len(active)})
 
 
 def find_evil_info():
@@ -1471,6 +1513,7 @@ def register_routes(app):
     app.add_url_rule('/investigation/status/<case_name>', 'get_investigation_status', _require_auth(get_investigation_status))
     app.add_url_rule('/find-evil', 'find_evil_route', _require_auth(find_evil_route), methods=['POST'])
     app.add_url_rule('/find-evil', 'find_evil_info', _require_auth(find_evil_info), methods=['GET'])
+    app.add_url_rule('/find-evil/active', 'find_evil_active', _require_auth(find_evil_active), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_status', _require_auth(find_evil_status), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_cancel', _require_auth(find_evil_cancel), methods=['DELETE'])
     app.add_url_rule('/active-directory', 'set_active_directory', _require_auth(set_active_directory), methods=['POST'])

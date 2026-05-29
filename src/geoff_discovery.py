@@ -2551,7 +2551,12 @@ def _strings_scan(binary_evidence: list,
     MIN_PATTERN_LENGTH = 5
 
     # Phase 2a: strings on disk images and memory dumps
+    _forensic_image_exts = {'.e01', '.e02', '.e03', '.e04', '.e05', '.aff'}
     for fpath in binary_evidence:
+        ext = Path(str(fpath)).suffix.lower()
+        if ext in _forensic_image_exts:
+            _log_info(f"  Skipping strings on forensic image: {Path(fpath).name} (E01/AFF not readable by strings)")
+            continue
         try:
             file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0
             if file_size > max_size:
@@ -2589,6 +2594,9 @@ def _strings_scan(binary_evidence: list,
                         ".ps1", ".vbs", ".js", ".html", ".php", ""}
         for fpath in other_files:
             if Path(str(fpath)).suffix.lower() in _phase3_exts:
+                continue
+            if Path(str(fpath)).suffix.lower() in _forensic_image_exts:
+                _log_info(f"  Skipping strings on forensic image: {Path(fpath).name} (E01/AFF not readable by strings)")
                 continue
             try:
                 file_size = Path(str(fpath)).stat().st_size if Path(str(fpath)).exists() else 0

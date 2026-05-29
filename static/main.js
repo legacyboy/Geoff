@@ -25,14 +25,10 @@
   ];
 
   // Maps current_playbook values emitted by the backend pipeline to UI phase index.
-  // Values sourced from _update_job() calls in geoff_pipeline.py.
   const PLAYBOOK_PHASE = {
-    // Phase 0 — Discover: evidence inventory & device identification
     initializing: 0, validation: 0, extraction: 0, revalidation: 0,
     discovery: 0, inventory: 0, setup: 0,
-    // Phase 1 — Triage: PB-SIFT-000 rapid indicator sweep
     'PB-SIFT-000': 1,
-    // Phase 2 — Timeline: autonomous batch playbook execution (PB-SIFT-001…024)
     'PB-SIFT-001': 2, 'PB-SIFT-002': 2, 'PB-SIFT-003': 2,
     'PB-SIFT-004': 2, 'PB-SIFT-005': 2, 'PB-SIFT-006': 2,
     'PB-SIFT-007': 2, 'PB-SIFT-008': 2, 'PB-SIFT-009': 2,
@@ -41,12 +37,9 @@
     'PB-SIFT-016': 2, 'PB-SIFT-017': 2, 'PB-SIFT-018': 2,
     'PB-SIFT-019': 2, 'PB-SIFT-020': 2, 'PB-SIFT-021': 2,
     'PB-SIFT-022': 2, 'PB-SIFT-023': 2, 'PB-SIFT-024': 2,
-    // Phase 3 — Correlate: super-timeline, pass-2, batch Critic, Manager review
     'super-timeline': 3, 'timeline-intel': 3, 'manager-review': 3,
     pass2: 3, 'batch-critic': 3, replay: 3,
-    // Phase 4 — Hunt: behavioral analysis, host correlation
     behavioral: 4, correlation: 4, 'network-map': 4, reporting: 4,
-    // Phase 5 — Report: IOC validation, narrative, MITRE mapping
     email_extract: 5, ioc_validation: 5, narrative: 5,
     mitre_mapping: 5, complete: 5,
   };
@@ -55,7 +48,6 @@
     if (pb && Object.prototype.hasOwnProperty.call(PLAYBOOK_PHASE, pb)) {
       return PLAYBOOK_PHASE[pb];
     }
-    // Fallback: derive from progress percentage for unknown/future playbook names
     if (pct < 9)  return 0;
     if (pct < 10) return 1;
     if (pct < 68) return 2;
@@ -74,11 +66,12 @@
   let activePlaybook = PLAYBOOKS[0];
 
   function renderPlaybooks() {
-    const wrap = $("playbooks"); wrap.innerHTML = "";
+    const wrap = $("playbooks"); if (!wrap) return;
+    wrap.innerHTML = "";
     PLAYBOOKS.forEach(p => {
       const n = el("div", "pb-opt" + (p.on ? " active" : ""));
       n.innerHTML = `<span class="rb"></span><span>${p.name}</span><small>${p.steps}</small>`;
-      n.onclick = () => { PLAYBOOKS.forEach(x => x.on = false); p.on = true; activePlaybook = p; renderPlaybooks(); $("pb-name").textContent = p.name; };
+      n.onclick = () => { PLAYBOOKS.forEach(x => x.on = false); p.on = true; activePlaybook = p; renderPlaybooks(); const pbName = $("pb-name"); if (pbName) pbName.textContent = p.name; };
       wrap.appendChild(n);
     });
   }
@@ -88,10 +81,10 @@
     evtx_logs: "EVTX", syslogs: "SYS", pcaps: "PCAP", mobile_backups: "BACKUP" };
 
   function renderManifestFromDeviceMap(deviceMap) {
-    const wrap = $("manifest"); wrap.innerHTML = "";
+    const wrap = $("manifest"); if (!wrap) return;
+    wrap.innerHTML = "";
     let totalFiles = 0;
     Object.entries(deviceMap).forEach(([id, d]) => {
-      // d may be raw device_map entry: {os, owner, evidence_files, ...} or our extended shape
       const files = d.evidence_files || d.evidence || 0;
       totalFiles += files;
       const kinds = d.evidence_types || d.ev_types || [];
@@ -106,7 +99,7 @@
           ${files ? `<span class="art-chip">${files} files</span>` : ''}</div>`;
       wrap.appendChild(n);
     });
-    $("man-cnt").textContent = totalFiles || Object.keys(deviceMap).length;
+    const cnt = $("man-cnt"); if (cnt) cnt.textContent = totalFiles || Object.keys(deviceMap).length;
   }
 
   function inferKind(d) {
@@ -117,7 +110,8 @@
   }
 
   function renderManifestPlaceholder() {
-    const wrap = $("manifest"); wrap.innerHTML = "";
+    const wrap = $("manifest"); if (!wrap) return;
+    wrap.innerHTML = "";
     const dirName = (EVIDENCE_DIR || '/evidence').split('/').filter(Boolean).pop() || 'evidence';
     const n = el("div", "man-host");
     n.innerHTML = `<div class="mh-top">
@@ -126,7 +120,7 @@
       </div>
       <div class="mh-arts"><span class="art-chip">awaiting inventory</span></div>`;
     wrap.appendChild(n);
-    $("man-cnt").textContent = "—";
+    const cnt = $("man-cnt"); if (cnt) cnt.textContent = "—";
   }
 
   function markIndexed(hostname) {
@@ -139,7 +133,8 @@
   }
 
   function resetManifest() {
-    $("manifest").querySelectorAll(".man-host").forEach(n => {
+    const mf = $("manifest"); if (!mf) return;
+    mf.querySelectorAll(".man-host").forEach(n => {
       n.classList.remove("indexed");
       const chk = n.querySelector(".mh-chk");
       if (chk) chk.textContent = "·";
@@ -148,7 +143,8 @@
 
   /* ---------- phase tracker ---------- */
   function renderPhases() {
-    const wrap = $("phases"); wrap.innerHTML = "";
+    const wrap = $("phases"); if (!wrap) return;
+    wrap.innerHTML = "";
     PHASES.forEach(p => {
       const n = el("div", "phase"); n.dataset.id = p.id;
       n.innerHTML = `<div class="bar"><i></i></div><div class="dot">✓</div>
@@ -158,7 +154,8 @@
   }
 
   function setPhase(idx, state) {
-    const nodes = $("phases").children;
+    const nodes = $("phases")?.children;
+    if (!nodes) return;
     for (let i = 0; i < nodes.length; i++) {
       nodes[i].classList.toggle("done", i < idx || (i === idx && state === "done"));
       nodes[i].classList.toggle("active", i === idx && state !== "done");
@@ -167,7 +164,7 @@
 
   /* ---------- entity renderer ---------- */
   function addEntity(id, kind, os, flagCount, topSev) {
-    const list = $("ent-list");
+    const list = $("ent-list"); if (!list) return;
     if ([...list.children].some(c => c.querySelector(".nm")?.textContent === id)) return;
     const fcCls = topSev === "CRITICAL" ? "crit" : topSev === "HIGH" ? "high" : "";
     const n = el("div", "ent-item");
@@ -175,7 +172,7 @@
       <div style="flex:1;min-width:0;"><div class="nm">${id}</div><div class="role">${kindWord(kind)} · ${os || ''}</div></div>
       <span class="fc ${fcCls}">${flagCount || 0}</span>`;
     list.appendChild(n);
-    $("ent-cnt").textContent = list.children.length;
+    const cnt = $("ent-cnt"); if (cnt) cnt.textContent = list.children.length;
   }
 
   function kindWord(k) {
@@ -184,7 +181,7 @@
 
   /* ---------- log line ---------- */
   function addLog(text) {
-    const feed = $("feed");
+    const feed = $("feed"); if (!feed) return;
     const n = el("div", "logline");
     n.innerHTML = `<span class="tk">${new Date().toISOString().slice(11, 19)}</span><span class="ar">›</span><span>${escHtml(text)}</span>`;
     feed.appendChild(n);
@@ -197,7 +194,7 @@
 
   /* ---------- finding card from behavioral flag ---------- */
   function addFlagCard(devId, flag) {
-    const feed = $("feed");
+    const feed = $("feed"); if (!feed) return;
     const sev = (flag.severity || 'MEDIUM').toUpperCase();
     const mitreTags = (flag.mitre_techniques || flag.mitre || []).map(m =>
       `<span class="mitre-tag">${escHtml(m)}</span>`).join('');
@@ -253,11 +250,11 @@
   /* ---------- job state ---------- */
   let currentJobId = null;
   let pollTimer = null;
-  let seenLogCount = 0;
+  let lastLogTs = '';
   let t0 = 0;
   let elapsedTimer = null;
   let lastPct = 0;
-  let shownFlags = new Set(); // track rendered finding ids to avoid duplicates
+  let shownFlags = new Set();
 
   function fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
@@ -279,7 +276,7 @@
     const vbadge = $("vbadge"); if (vbadge) vbadge.textContent = "— — —";
     const vs = $("v-sevpill"); if (vs) { vs.textContent = "PENDING"; vs.className = "sev-pill"; vs.style.opacity = ".3"; }
     renderPhases();
-    seenLogCount = 0;
+    lastLogTs = '';
     lastPct = 0;
     shownFlags = new Set();
     resetManifest();
@@ -287,21 +284,19 @@
 
   /* ---------- start run ---------- */
   async function runFindEvil() {
-    if (currentJobId && pollTimer) return; // already running
+    if (currentJobId && pollTimer) return;
 
     const evdir = $("evdir")?.value?.trim() || EVIDENCE_DIR;
     if (!evdir) { alert("Enter an evidence path first."); return; }
 
     resetRun();
-    $("runbtn").textContent = "■ Running…";
-    $("runbtn").style.opacity = ".7";
+    const runbtn = $("runbtn"); if (runbtn) { runbtn.textContent = "■ Running…"; runbtn.style.opacity = ".7"; }
     const live = $("op-live"); if (live) live.style.display = "inline-flex";
     t0 = Date.now();
     elapsedTimer = setInterval(() => {
       const el2 = $("op-elapsed"); if (el2) el2.textContent = "elapsed " + fmtElapsed(Date.now() - t0);
     }, 1000);
 
-    // Update case display
     const titleEl = $("op-title"); if (titleEl) {
       const dirName = evdir.split('/').filter(Boolean).pop() || evdir;
       titleEl.textContent = dirName;
@@ -330,6 +325,7 @@
 
     currentJobId = data.job_id;
     addLog("Job started — " + currentJobId);
+    showJobBanner(data.job_id, evdir, 0, "initializing", "");
     pollStatus();
   }
 
@@ -343,7 +339,7 @@
         handleStatus(data);
       } catch (e) {
         addLog("Poll error: " + e.message);
-        pollStatus(); // retry
+        pollStatus();
       }
     }, 1500);
   }
@@ -352,7 +348,6 @@
     const pct = Math.round(data.progress_pct || 0);
     const status = data.status;
 
-    // Update progress bar
     if (pct > lastPct) {
       lastPct = pct;
       const pf = $("pbar-fill"); if (pf) pf.style.width = pct + "%";
@@ -360,26 +355,53 @@
       const ps = $("pbar-steps"); if (ps) ps.textContent = `${data.current_playbook || ''} · ${data.current_step || ''}`.replace(/^ · | · $/, '') || (pct + "%");
     }
 
-    // Update phase
     const phaseIdx = pct >= 100 ? PHASES.length - 1 : playbookToPhase(data.current_playbook, pct);
     setPhase(phaseIdx, status === 'complete' ? "done" : "active");
 
-    // Drain new log entries
     const log = data.log || [];
-    for (let i = seenLogCount; i < log.length; i++) {
-      const entry = log[i];
-      addLog(entry.msg || entry);
+    for (const entry of log) {
+      const ts = typeof entry === 'string' ? '' : (entry.time || '');
+      if (ts > lastLogTs || !lastLogTs) {
+        addLog(entry.msg || entry);
+      }
     }
-    seenLogCount = log.length;
+    if (log.length > 0) {
+      const last = log[log.length - 1];
+      lastLogTs = typeof last === 'string' ? '' : (last.time || '');
+    }
+
+    // Update job banner
+    updateJobBanner(pct, data.current_playbook, data.current_step);
 
     if (status === 'complete') {
       finishRunSuccess(data.result || {});
     } else if (status === 'error') {
       finishRunError(data.error || 'Investigation failed');
     } else {
-      // keep polling
       pollStatus();
     }
+  }
+
+  /* ---------- job banner ---------- */
+  function showJobBanner(jobId, evidenceDir, pct, playbook, step) {
+    currentJobId = jobId;
+    const banner = $("job-banner"); if (!banner) return;
+    banner.classList.add("active");
+    updateJobBanner(pct, playbook, step);
+    const info = $("jb-info");
+    if (info) info.textContent = evidenceDir || 'unknown';
+  }
+
+  function updateJobBanner(pct, playbook, step) {
+    const jbPct = $("jb-pct");
+    if (jbPct) jbPct.textContent = pct + "%";
+    const jbInfo = $("jb-info");
+    if (jbInfo && playbook) jbInfo.textContent = (playbook + (step ? ' · ' + step : '')).replace(/^ · | · $/, '');
+  }
+
+  function hideJobBanner() {
+    const banner = $("job-banner"); if (!banner) return;
+    banner.classList.remove("active");
   }
 
   /* ---------- finish ---------- */
@@ -387,6 +409,7 @@
     clearInterval(elapsedTimer);
     pollTimer = null;
     currentJobId = null;
+    hideJobBanner();
 
     const live = $("op-live"); if (live) live.style.display = "none";
     const rb = $("runbtn"); if (rb) { rb.textContent = "↻ Replay Run"; rb.style.opacity = "1"; }
@@ -408,7 +431,6 @@
     const elEl = $("op-elapsed");
     if (elEl && elapsed) elEl.textContent = `elapsed ${Math.floor(elapsed / 60).toString().padStart(2,"0")}:${(elapsed % 60).toString().padStart(2,"0")}`;
 
-    // Verdict panel
     const vb = $("verdict-box");
     const vbadge = $("vbadge");
     const vs = $("v-sevpill");
@@ -425,22 +447,18 @@
     if (vs) { vs.textContent = sev; vs.className = `sev-pill ${sev}`; vs.style.opacity = "1"; }
     if ($("threat-fill")) updateThreat();
 
-    // Render behavioral flags as finding cards
     const behavioralFlags = result.behavioral_flags || {};
     let totalFindings = 0;
     Object.entries(behavioralFlags).forEach(([devId, flags]) => {
       if (!Array.isArray(flags)) return;
-      // infer device kind from device_map if available
       const dm = result.device_map || {};
       const devInfo = dm[devId] || {};
       const devKind = inferKind(devInfo);
-      // add entity
       const topFlag = flags.reduce((top, f) => {
         const order = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
         return (order[f.severity] || 0) > (order[top.severity] || 0) ? f : top;
       }, {});
       addEntity(devId, devKind, devInfo.os || '', flags.length, topFlag.severity);
-      // add flag cards (CRITICAL/HIGH first, up to 10 per device)
       const sorted = [...flags].sort((a, b) => {
         const o = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
         return (o[b.severity] || 0) - (o[a.severity] || 0);
@@ -451,31 +469,36 @@
       });
     });
 
-    // Also populate manifest from device_map
     const deviceMap = result.device_map || {};
     if (Object.keys(deviceMap).length > 0) {
       renderManifestFromDeviceMap(deviceMap);
       Object.keys(deviceMap).forEach(markIndexed);
     }
 
-    // Summary card
     const feed = $("feed");
     if (feed) {
       const card = el("div", "complete-card");
       const clsText = classification ? ` — ${classification}` : '';
       const findingCount = totalFindings || Object.values(behavioralFlags).reduce((s, f) => s + (Array.isArray(f) ? f.length : 0), 0);
       const hostCount = Object.keys(behavioralFlags).length || Object.keys(deviceMap).length;
+
+      // Build viewer URL: extract case directory name from result.case_work_dir
+      let viewerUrl = '/reports/viewer';
+      if (result.case_work_dir) {
+        const caseDirName = result.case_work_dir.split('/').filter(Boolean).pop();
+        viewerUrl += '?case=' + encodeURIComponent(caseDirName);
+      }
+
       card.innerHTML = `<div class="verdict">${evilFound ? "EVIL" : evilFound === false ? "CLEAN" : "DONE"}</div>
         <div class="ct">
           <div style="font-size:14px;font-weight:600;color:var(--g-text);">Investigation complete${clsText} — ${findingCount} findings across ${hostCount} hosts</div>
           <div class="cl">${result.executive_summary || result.summary || 'See reports for full narrative.'}</div>
         </div>
-        <a class="btn primary" href="/reports/viewer">View full report →</a>`;
+        <a class="btn primary" href="${viewerUrl}">View full report →</a>`;
       feed.appendChild(card);
       scrollFeed();
     }
 
-    // Chat notification
     const sevLabel = sev === 'CRITICAL' ? `<b style="color:var(--sev-crit)">evil</b>` : evilFound ? `<b>evil</b>` : 'nothing malicious';
     pushChat("geoff", `<b>GEOFF</b>Run complete. ${evilFound ? `I found ${sevLabel} — ${counts.CRITICAL} critical, ${counts.HIGH} high.` : 'No evil found.'} Open the report for the full narrative.`);
   }
@@ -484,6 +507,7 @@
     clearInterval(elapsedTimer);
     pollTimer = null;
     currentJobId = null;
+    hideJobBanner();
 
     const live = $("op-live"); if (live) live.style.display = "none";
     const rb = $("runbtn"); if (rb) { rb.textContent = "◎ Run Find Evil"; rb.style.opacity = "1"; }
@@ -518,10 +542,10 @@
       const reply = data.response || data.message || 'No response.';
       pushChat("geoff", `<b>GEOFF</b>${escHtml(reply)}`);
 
-      // If investigation was triggered from chat, start polling
       if (data.investigation_started && data.job_id && !currentJobId) {
         currentJobId = data.job_id;
         addLog("Investigation started from chat — " + currentJobId);
+        showJobBanner(data.job_id, $("evdir")?.value?.trim() || EVIDENCE_DIR, 0, "initializing", "");
         t0 = Date.now();
         elapsedTimer = setInterval(() => {
           const el2 = $("op-elapsed"); if (el2) el2.textContent = "elapsed " + fmtElapsed(Date.now() - t0);
@@ -533,40 +557,275 @@
     }
   }
 
-  /* ---------- load cases for manifest ---------- */
+  /* ============================================================
+     TAB SWITCHING — Evidence / Reports / Console
+     ============================================================ */
+  let activeTab = 'console';
+
+  function switchTab(tab) {
+    if (activeTab === tab) return;
+    activeTab = tab;
+
+    // Update nav links
+    document.querySelectorAll('.navlink').forEach(n => n.classList.remove('active'));
+    const navEl = document.getElementById('nav-' + tab);
+    if (navEl) navEl.classList.add('active');
+
+    // Show/hide panels
+    const consoleView = $("tab-console");
+    const evidenceView = $("tab-evidence");
+    const reportsView = $("tab-reports");
+
+    if (consoleView) consoleView.style.display = (tab === 'console') ? 'flex' : 'none';
+    if (evidenceView) { evidenceView.classList.toggle('active', tab === 'evidence'); }
+    if (reportsView) { reportsView.classList.toggle('active', tab === 'reports'); }
+
+    // Load data on first view
+    if (tab === 'evidence') loadEvidencePanel();
+    if (tab === 'reports') loadReportsPanel();
+  }
+
+  /* ============================================================
+     EVIDENCE PANEL — FETCH & RENDER CASES FROM /cases
+     ============================================================ */
+  let evidenceLoaded = false;
+
+  async function loadEvidencePanel() {
+    if (evidenceLoaded) return;
+    evidenceLoaded = true;
+    const body = $("ev-panel-body");
+    if (!body) return;
+    body.innerHTML = '<div class="case-empty">Loading cases…</div>';
+
+    try {
+      const resp = await apiFetch('/cases');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const cases = data.cases || data || {};
+      const caseNames = Object.keys(cases);
+
+      if (caseNames.length === 0) {
+        body.innerHTML = '<div class="case-empty">No evidence directories found in ' + escHtml(EVIDENCE_DIR || 'evidence base') + '</div>';
+        const cnt = $("ev-cnt"); if (cnt) cnt.textContent = '0 cases';
+        return;
+      }
+
+      const cnt = $("ev-cnt"); if (cnt) cnt.textContent = caseNames.length + ' cases';
+      body.innerHTML = '';
+
+      // Sort case names
+      const sorted = caseNames.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+      sorted.forEach(caseName => {
+        const items = Array.isArray(cases[caseName]) ? cases[caseName] : [];
+        const itemCount = items.length;
+        const dirs = items.filter(i => i.startsWith('[DIR]')).length;
+        const files = itemCount - dirs;
+
+        const card = el("div", "case-card");
+        card.innerHTML = `
+          <div class="cc-top">
+            <span class="edot" style="margin-right:4px;"></span>
+            <span class="cc-name">${escHtml(caseName)}</span>
+            <span class="sev-pill" style="font-size:9px;opacity:.6;">CASE</span>
+          </div>
+          <div class="cc-meta">
+            <span>${itemCount} items</span>
+            <span>${dirs} dirs</span>
+            <span>${files} files</span>
+          </div>
+          <div class="cc-items" style="display:none;" id="cc-items-${escHtml(caseName)}">
+            ${items.slice(0, 50).map(i => {
+              const isDir = i.startsWith('[DIR]');
+              const cls = isDir ? 'dir' : '';
+              return `<div class="ci ${cls}">${escHtml(isDir ? i.substring(6) : i)}</div>`;
+            }).join('')}
+            ${itemCount > 50 ? `<div class="ci" style="color:var(--g-text-mute);">… and ${itemCount - 50} more items</div>` : ''}
+          </div>
+        `;
+        card.onclick = () => {
+          const itemsDiv = card.querySelector('.cc-items');
+          if (itemsDiv) itemsDiv.style.display = itemsDiv.style.display === 'none' ? 'flex' : 'none';
+          // Also set active directory for chat context
+          apiFetch('/active-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ directory: EVIDENCE_DIR + '/' + caseName }),
+          }).catch(() => {});
+        };
+        body.appendChild(card);
+      });
+    } catch (e) {
+      body.innerHTML = '<div class="case-empty">Failed to load cases: ' + escHtml(e.message) + '</div>';
+    }
+  }
+
+  /* ============================================================
+     REPORTS PANEL — FETCH & RENDER REPORTS FROM /reports
+     ============================================================ */
+  let reportsLoaded = false;
+
+  async function loadReportsPanel() {
+    if (reportsLoaded) return;
+    reportsLoaded = true;
+    const body = $("rp-panel-body");
+    if (!body) return;
+    body.innerHTML = '<div class="case-empty">Loading reports…</div>';
+
+    try {
+      const resp = await apiFetch('/reports');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const reports = data.reports || [];
+      const sorted = [...reports].sort((a, b) => {
+        // Sort by timestamp descending
+        return (b.timestamp || '').localeCompare(a.timestamp || '');
+      });
+
+      if (sorted.length === 0) {
+        body.innerHTML = '<div class="case-empty">No completed reports found. Run Find Evil on an evidence directory to generate one.</div>';
+        const cnt = $("rp-cnt"); if (cnt) cnt.textContent = '0 reports';
+        return;
+      }
+
+      const cnt = $("rp-cnt"); if (cnt) cnt.textContent = sorted.length + ' reports';
+      body.innerHTML = '';
+
+      sorted.forEach(rpt => {
+        const isEvil = rpt.evil_found;
+        const sev = (rpt.severity || 'INFO').toUpperCase();
+        const elapsed = rpt.elapsed_seconds ? Math.round(rpt.elapsed_seconds) : 0;
+        const elapsedStr = elapsed >= 60
+          ? Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's'
+          : elapsed + 's';
+        const dateStr = rpt.timestamp
+          ? rpt.timestamp.substring(0, 4) + '-' + rpt.timestamp.substring(4, 6) + '-' + rpt.timestamp.substring(6, 8) +
+            ' ' + (rpt.timestamp.substring(9, 11) || '00') + ':' + (rpt.timestamp.substring(11, 13) || '00')
+          : 'unknown';
+
+        const card = el("div", "rpt-card " + (isEvil ? "evil" : "clean"));
+        card.innerHTML = `
+          <div class="rt-top">
+            <span class="rt-name">${escHtml(rpt.case_name || rpt.dir)}</span>
+            <span class="sev-pill ${sev}">${sev}</span>
+            ${isEvil ? '<span class="sev-pill CRITICAL" style="font-size:9px;">EVIL</span>' : '<span class="sev-pill" style="font-size:9px;background:var(--g-green);color:var(--g-bg);">CLEAN</span>'}
+          </div>
+          <div class="rt-meta">
+            <span>${dateStr}</span>
+            <span>${elapsedStr}</span>
+            <span>${rpt.classification || 'unclassified'}</span>
+          </div>
+          <div class="rt-desc">${escHtml(rpt.evidence_dir || '')}</div>
+        `;
+        card.onclick = () => {
+          const caseDir = encodeURIComponent(rpt.dir);
+          window.open('/reports/viewer?case=' + caseDir, '_blank');
+        };
+        body.appendChild(card);
+      });
+    } catch (e) {
+      body.innerHTML = '<div class="case-empty">Failed to load reports: ' + escHtml(e.message) + '</div>';
+    }
+  }
+
+  /* ============================================================
+     LIVE JOB DETECTION — CHECK FOR RUNNING JOBS ON PAGE LOAD
+     ============================================================ */
+  async function checkActiveJobs() {
+    try {
+      const resp = await apiFetch('/find-evil/active');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const jobs = data.active_jobs || [];
+
+      if (jobs.length === 0) return;
+
+      // Found a running job — show banner and start polling
+      const job = jobs[0]; // take the most recent
+      currentJobId = job.job_id;
+      showJobBanner(job.job_id, job.evidence_dir || 'unknown', job.progress_pct, job.current_playbook, job.current_step);
+
+      // Set up the console
+      const evdir = job.evidence_dir || EVIDENCE_DIR;
+      if (evdir && $("evdir")) $("evdir").value = evdir;
+      const titleEl = $("op-title"); if (titleEl) {
+        const dirName = evdir.split('/').filter(Boolean).pop() || evdir;
+        titleEl.textContent = dirName;
+      }
+      const caseEl = $("op-case"); if (caseEl) caseEl.textContent = evdir;
+      const live = $("op-live"); if (live) live.style.display = "inline-flex";
+
+      // Estimate elapsed from started_at
+      if (job.started_at) {
+        const startedMs = new Date(job.started_at).getTime();
+        t0 = Date.now() - (Date.now() - startedMs); // adjust t0
+      } else {
+        t0 = Date.now();
+      }
+      elapsedTimer = setInterval(() => {
+        const el2 = $("op-elapsed"); if (el2) el2.textContent = "elapsed " + fmtElapsed(Date.now() - t0);
+      }, 1000);
+
+      const runbtn = $("runbtn"); if (runbtn) { runbtn.textContent = "■ Running…"; runbtn.style.opacity = ".7"; }
+      addLog("Detected running job — " + job.job_id);
+      addLog("Evidence: " + (job.evidence_dir || 'unknown'));
+      pollStatus();
+
+      // Wire banner resume button
+      const resumeBtn = $("jb-resume");
+      if (resumeBtn) {
+        resumeBtn.onclick = () => switchTab('console');
+      }
+    } catch (e) {
+      // Silent — no active jobs is normal
+    }
+  }
+
+  /* ---------- evidence manifest initialization ---------- */
   async function loadManifest() {
     renderManifestPlaceholder();
     try {
       const resp = await apiFetch('/cases');
       if (!resp.ok) return;
       const data = await resp.json();
-      // cases is an object of case_name → {evil_found, severity, ...}
-      // If there are completed cases, show the most recent's device info if available
-      // Otherwise keep placeholder
       const cases = data.cases || data || {};
       if (typeof cases === 'object' && Object.keys(cases).length > 0) {
-        // show case list counts but keep placeholder — devices only known post-run
-        $("man-cnt").textContent = Object.keys(cases).length + " cases";
+        const cnt = $("man-cnt"); if (cnt) cnt.textContent = Object.keys(cases).length + " cases";
       }
     } catch (e) {
-      // silent — manifest stays as placeholder
+      // silent
     }
   }
 
-  /* ---------- init ---------- */
+  /* ============================================================
+     INIT
+     ============================================================ */
   renderPlaybooks();
   renderPhases();
   if ($("evdir") && EVIDENCE_DIR) $("evdir").value = EVIDENCE_DIR;
-  $("runbtn").onclick = runFindEvil;
 
+  // Run button
+  const runBtn = $("runbtn"); if (runBtn) runBtn.onclick = runFindEvil;
+
+  // Chat
   const sendBtn = $("chat-send"); if (sendBtn) sendBtn.onclick = sendChat;
   const chatInput = $("chat-input");
   if (chatInput) chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
 
-  $("nav-evidence").onclick = (e) => {
-    e.preventDefault();
-    window.location.href = '/cases';
-  };
+  // Tab switching
+  const navConsole = $("nav-console");
+  const navEvidence = $("nav-evidence");
+  const navReports = $("nav-reports");
+  if (navConsole) navConsole.onclick = (e) => { e.preventDefault(); switchTab('console'); };
+  if (navEvidence) navEvidence.onclick = (e) => { e.preventDefault(); switchTab('evidence'); };
+  if (navReports) navReports.onclick = (e) => { e.preventDefault(); switchTab('reports'); };
+
+  // Job banner resume button
+  const jbResume = $("jb-resume");
+  if (jbResume) jbResume.onclick = () => switchTab('console');
 
   loadManifest();
+
+  // Check for active jobs on page load
+  checkActiveJobs();
 })();

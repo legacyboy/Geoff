@@ -270,19 +270,25 @@ def _save_jobs():
         _log_error(f"_save_jobs failed: {e}")
 
 def _load_jobs():
-    """Load _find_evil_jobs from disk, overwriting in-memory state."""
-    global _find_evil_jobs
+    """Load _find_evil_jobs from disk, overwriting in-memory state.
+
+    IMPORTANT: Mutates the existing dict in-place rather than reassigning.
+    Other modules import `_find_evil_jobs` by reference at module-load time
+    (e.g. via `from geoff_utils import _find_evil_jobs`).  If we reassign
+    the name to a new dict, those imported references point to a stale empty
+    dict and progress updates from `_update_job` are silently dropped.
+    """
     try:
         with _state_lock:
-            if not os.path.exists(FIND_EVIL_JOBS_FILE):
-                _find_evil_jobs = {}
-                return
-            with open(FIND_EVIL_JOBS_FILE) as f:
-                _find_evil_jobs = json.load(f)
+            _find_evil_jobs.clear()
+            if os.path.exists(FIND_EVIL_JOBS_FILE):
+                with open(FIND_EVIL_JOBS_FILE) as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    _find_evil_jobs.update(loaded)
         _log_info(f"_load_jobs: loaded {len(_find_evil_jobs)} jobs from {FIND_EVIL_JOBS_FILE}")
     except Exception as e:
         _log_error(f"_load_jobs failed: {e}")
-        _find_evil_jobs = {}
 
 # ---------------------------------------------------------------------------
 # Agent-visibility state (set by bin/geoff-find-evil via _configure_agent_vis)
