@@ -21,3 +21,4 @@ TEST_PLAN_LOCAL.md
 *.vdi
 *.vhd
 *.vmdk
+.env
