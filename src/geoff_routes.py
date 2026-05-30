@@ -1207,6 +1207,48 @@ def find_evil_route():
         }), 500
 
 
+def find_evil_status_latest():
+    """
+    GET /find-evil/status/
+    Returns the most recent/active Find Evil job — running jobs take priority,
+    otherwise the most recently started job by started_at timestamp.
+    """
+    with _state_lock:
+        jobs_snapshot = list(_find_evil_jobs.items())
+
+    if not jobs_snapshot:
+        return jsonify({"status": "not_found", "error": "No Find Evil jobs found"}), 404
+
+    def _sort_key(item):
+        _, job = item
+        ts = job.get("started_at", "")
+        try:
+            return datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return datetime.min
+
+    running = [(jid, job) for jid, job in jobs_snapshot if job.get("status") in ("running", "initializing")]
+    if running:
+        job_id, job = max(running, key=_sort_key)
+    else:
+        job_id, job = max(jobs_snapshot, key=_sort_key)
+
+    resp = {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress_pct": job["progress_pct"],
+        "current_playbook": job["current_playbook"],
+        "current_step": job["current_step"],
+        "elapsed_seconds": job["elapsed_seconds"],
+        "log": job.get("log", [])[-50:],
+    }
+    if job["status"] == "complete":
+        resp["result"] = job["result"]
+    elif job["status"] in ("error", "cancelled"):
+        resp["error"] = job.get("error")
+    return jsonify(resp)
+
+
 def find_evil_status(job_id):
     """
     GET /find-evil/status/<job_id>
@@ -1514,6 +1556,7 @@ def register_routes(app):
     app.add_url_rule('/find-evil', 'find_evil_route', _require_auth(find_evil_route), methods=['POST'])
     app.add_url_rule('/find-evil', 'find_evil_info', _require_auth(find_evil_info), methods=['GET'])
     app.add_url_rule('/find-evil/active', 'find_evil_active', _require_auth(find_evil_active), methods=['GET'])
+    app.add_url_rule('/find-evil/status/', 'find_evil_status_latest', _require_auth(find_evil_status_latest), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_status', _require_auth(find_evil_status), methods=['GET'])
     app.add_url_rule('/find-evil/status/<job_id>', 'find_evil_cancel', _require_auth(find_evil_cancel), methods=['DELETE'])
     app.add_url_rule('/active-directory', 'set_active_directory', _require_auth(set_active_directory), methods=['POST'])

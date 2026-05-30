@@ -450,6 +450,8 @@ GEOFF is designed to meet three core requirements for autonomous forensic invest
 
 The agent detects and resolves errors or inconsistencies in its own output **without human intervention**:
 
+**At step execution time (tool self-healing):** When a forensic tool call fails, the error is first classified deterministically — tool not found, permission denied, mount failure, SQLite lock — and fixed without LLM involvement. Missing tools are installed automatically (`sudo apt-get install -y sleuthkit`, `pip3 install volatility3`, etc.) and the step is retried. Only errors that cannot be resolved deterministically are escalated to the Healer (Critic in recovery mode) for LLM diagnosis. A token-bucket rate limiter prevents heal loops from flooding the LLM backend. This fast path handles the most common field errors — tools absent from a fresh SIFT image — without interrupting the investigation.
+
 **In `find_evil()`:** After all playbooks complete, the Batch Critic reviews every finding holistically. If quality is below `GOOD` or replay candidates are identified, the Manager LLM generates adjusted parameters and triggers incremental replay — re-running only the affected steps without repeating the full investigation. Steps flagged by the Critic as unverified are marked `needs_review: true` and the final report includes `steps_needs_review` and `steps_unverified` counts.
 
 **In chat:** After each LLM response, a lightweight grounding check verifies the response does not assert claims absent from the available case context. If unsupported claims are detected, the response is regenerated once with an explicit correction prompt before being returned to the user.
@@ -530,6 +532,47 @@ GEOFF identifies devices and owners from evidence using a priority strategy:
 5. **Fallback** — Evidence filename stem as device ID
 
 Output: `device_map.json` + `user_map.json` in the case directory.
+
+---
+
+## Parallel Evidence Processing
+
+GEOFF handles large evidence collections — multiple disk images, PCAPs, mobile backups, and log archives from multiple hosts — without blocking or losing progress.
+
+### Multiple Evidence Directories
+
+Pass any top-level directory. GEOFF classifies and groups everything inside it:
+
+- **Subdirectory layout** — `evidence/PC1/`, `evidence/phone/` → each becomes a separate device with its own playbook execution
+- **Flat layout** — `disk1.E01`, `disk2.E01` side by side → correlated as separate devices; cross-image playbook PB-SIFT-016 auto-triggers
+- **Mixed** — disk images + PCAPs + mobile backups → classified by type, grouped by device, each stream processed in parallel
+
+Device discovery runs first and produces `device_map.json`, so every step output is stamped with the originating host before playbooks begin.
+
+### Checkpoint / Resume
+
+Investigation state is persisted to `.geoff_checkpoint.json` in the case directory after each phase. If a run is interrupted — power loss, OOM, Ctrl-C — re-run the same command to resume:
+
+```bash
+geoff-find-evil /evidence/IR-016   # interrupted mid-run
+geoff-find-evil /evidence/IR-016   # resumes from last completed phase
+```
+
+The checkpoint tracks phase status (`pending / running / complete / failed`), which disk images have been walked, and which archives have been extracted (keyed by content SHA-256 to prevent double-extraction). Per-step idempotency (`findings_writer.is_completed(step_key)`) means a resumed run skips steps already committed to git individually, not just whole phases.
+
+### Execution Cache Dedup
+
+When two playbooks request the same tool on the same evidence file with identical parameters, the second call returns the cached result without spawning a subprocess:
+
+1. Cache key = MD5(`module` + `function` + `evidence_path` + `params`)
+2. First execution: result stored in `_ExecResultCache`, persisted to the case directory
+3. Repeat request: cached result returned immediately; a `deduped` record is written to findings
+
+This eliminates redundant invocations across playbooks — common when multiple playbooks each want `fls_list_files` or `strings` on the same image.
+
+### Parallel Execution
+
+Steps against different evidence items run concurrently via a thread pool. Set `GEOFF_MAX_WORKERS` (default: 4) to control concurrency. Each worker deep-copies its parameters to avoid shared mutable state; a per-`(module, function, evidence_item)` lock prevents the same call from running twice simultaneously across workers.
 
 ---
 
@@ -634,7 +677,7 @@ http://localhost:9999/mcp
 | `registry_analyze` | Call a RegRipper registry analysis function directly |
 | `network_analyze` | Call a Zeek/tshark network analysis function directly |
 | `log_analyze` | Call a log analysis function directly (EVTX, syslog, auth.log) |
-| `malware_analyze` | Call a REMnux/YARA malware analysis function directly |
+| `malware_analyze` | Call a REMnux malware analysis function directly |
 | `timeline_analyze` | Call a Plaso super-timeline function directly |
 | `browser_analyze` | Call a browser forensics function directly |
 | `run_specialist` | Generic dispatcher — call any module/function pair |
@@ -944,6 +987,7 @@ Findings are streamed to `findings.jsonl` on disk as each step completes rather 
 
 ```
 case_work_dir/
+├── .geoff_checkpoint.json        # Checkpoint state for resume-on-interrupt
 ├── device_map.json               # Device grouping + metadata
 ├── user_map.json                 # User-to-device mapping
 ├── execution_plan.json           # Triage-generated plan
@@ -976,7 +1020,7 @@ case_work_dir/
 
 ## License
 
-MIT License - See LICENSE file
+Apache 2.0 License — see [LICENSE](LICENSE)
 
 ---
 

@@ -15,6 +15,7 @@ Exports:
 import os
 import json
 import re
+import subprocess
 import sys
 import time
 import tempfile
@@ -134,41 +135,37 @@ def classify_error_fast(ctx: ErrorContext) -> Optional[str]:
 # _fast_heal — deterministic remedies for environmental errors (no LLM)
 # ---------------------------------------------------------------------------
 
-# We cannot reliably auto-install tools mid-run (no guaranteed sudo, and the
-# network policy may block package fetches). Instead we emit the exact install
-# command so the investigator — or a future re-run on a provisioned box — has a
-# concrete fix, and skip the step cleanly rather than failing opaquely.
-_TOOL_INSTALL_HINTS = {
-    "vol": "pip install volatility3",
-    "vol.py": "pip install volatility3",
-    "volatility3": "pip install volatility3",
-    "fls": "apt-get install -y sleuthkit",
-    "mmls": "apt-get install -y sleuthkit",
-    "icat": "apt-get install -y sleuthkit",
-    "fsstat": "apt-get install -y sleuthkit",
-    "istat": "apt-get install -y sleuthkit",
-    "tsk_recover": "apt-get install -y sleuthkit",
-    "log2timeline.py": "pip install plaso",
-    "psort.py": "pip install plaso",
-    "pinfo.py": "pip install plaso",
-    "tshark": "apt-get install -y tshark",
-    "tcpflow": "apt-get install -y tcpflow",
-    "bulk_extractor": "apt-get install -y bulk-extractor",
-    "photorec": "apt-get install -y testdisk",
-    "foremost": "apt-get install -y foremost",
-    "scalpel": "apt-get install -y scalpel",
-    "readpst": "apt-get install -y pst-utils",
-    "rip.pl": "clone RegRipper: https://github.com/keydet89/RegRipper3.0",
-    "regripper": "clone RegRipper: https://github.com/keydet89/RegRipper3.0",
-    "vshadowmount": "apt-get install -y libvshadow-utils",
-    "ewfmount": "apt-get install -y ewf-tools",
-    "exiftool": "apt-get install -y libimage-exiftool-perl",
-    "clamscan": "apt-get install -y clamav",
-    "ssdeep": "apt-get install -y ssdeep",
-    "hashdeep": "apt-get install -y hashdeep",
-    "oledump.py": "pip install oletools",
-    "upx": "apt-get install -y upx-ucl",
-    "r2": "apt-get install -y radare2",
+_TOOL_INSTALL_CMDS = {
+    "vol": "pip3 install volatility3 --break-system-packages",
+    "vol.py": "pip3 install volatility3 --break-system-packages",
+    "volatility3": "pip3 install volatility3 --break-system-packages",
+    "fls": "sudo apt-get install -y -qq sleuthkit",
+    "mmls": "sudo apt-get install -y -qq sleuthkit",
+    "icat": "sudo apt-get install -y -qq sleuthkit",
+    "fsstat": "sudo apt-get install -y -qq sleuthkit",
+    "istat": "sudo apt-get install -y -qq sleuthkit",
+    "tsk_recover": "sudo apt-get install -y -qq sleuthkit",
+    "log2timeline.py": "pip3 install plaso --break-system-packages",
+    "psort.py": "pip3 install plaso --break-system-packages",
+    "pinfo.py": "pip3 install plaso --break-system-packages",
+    "tshark": "sudo apt-get install -y -qq tshark",
+    "tcpflow": "sudo apt-get install -y -qq tcpflow",
+    "bulk_extractor": "sudo apt-get install -y -qq bulk-extractor",
+    "photorec": "sudo apt-get install -y -qq testdisk",
+    "foremost": "sudo apt-get install -y -qq foremost",
+    "scalpel": "sudo apt-get install -y -qq scalpel",
+    "readpst": "sudo apt-get install -y -qq pst-utils",
+    "vshadowmount": "sudo apt-get install -y -qq libvshadow-utils",
+    "ewfmount": "sudo apt-get install -y -qq ewf-tools",
+    "exiftool": "sudo apt-get install -y -qq libimage-exiftool-perl",
+    "clamscan": "sudo apt-get install -y -qq clamav",
+    "ssdeep": "sudo apt-get install -y -qq ssdeep",
+    "hashdeep": "sudo apt-get install -y -qq hashdeep",
+    "oledump.py": "pip3 install oletools --break-system-packages",
+    "upx": "sudo apt-get install -y -qq upx-ucl",
+    "r2": "sudo apt-get install -y -qq radare2",
+    "inetsim": "sudo apt-get install -y -qq inetsim",
+    "fakedns": "pip3 install fakedns --break-system-packages",
 }
 
 
@@ -196,15 +193,37 @@ def _fast_heal(fast_class: str, module: str, function: str, params: dict,
     about but the LLM healer was never given. Returns a result dict (success or
     skipped-with-remediation), or None to defer to the LLM.
     """
-    # --- Missing tool: emit a precise install remediation, skip cleanly ---
+    # --- Missing tool: attempt non-interactive install, then retry the step ---
     if fast_class == "tool_missing":
         binary = _extract_missing_binary(ctx)
-        hint = _TOOL_INSTALL_HINTS.get(binary) or _TOOL_INSTALL_HINTS.get(binary.lower(), "")
+        install_cmd = _TOOL_INSTALL_CMDS.get(binary) or _TOOL_INSTALL_CMDS.get(binary.lower())
+
+        if install_cmd:
+            _fe_log(job_id, f"  [_HEAL] tool_missing: {binary} — installing via: {install_cmd}")
+            try:
+                proc = subprocess.run(
+                    install_cmd, shell=True, timeout=120,
+                    capture_output=True, text=True,
+                )
+                if proc.returncode == 0:
+                    _fe_log(job_id, f"  [_HEAL] {binary} installed — retrying {module}.{function}")
+                    retry_result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
+                    if isinstance(retry_result, dict):
+                        retry_result["_self_healed"] = True
+                        retry_result["_heal_fix_type"] = "tool_install_and_retry"
+                    return retry_result
+                _fe_log(job_id, f"  [_HEAL] install failed for {binary} (rc={proc.returncode}) — skipping")
+            except subprocess.TimeoutExpired:
+                _fe_log(job_id, f"  [_HEAL] install timed out for {binary} — skipping")
+            except Exception as exc:
+                _fe_log(job_id, f"  [_HEAL] install error for {binary}: {exc} — skipping")
+
+        # Fallback: skip with remediation text
         remediation = (
-            f"Install '{binary}' and re-run this step ({hint})" if hint
+            f"Install '{binary}' and re-run this step ({install_cmd})" if install_cmd
             else f"Install the missing tool '{binary or function}' and re-run this step"
         )
-        _fe_log(job_id, f"  ⎘ [HEAL] tool_missing: {binary or function} — {remediation}")
+        _fe_log(job_id, f"  ⎘ [_HEAL] tool_missing: {binary or function} — {remediation}")
         return {
             "status": "skipped",
             "_heal_skipped": True,
