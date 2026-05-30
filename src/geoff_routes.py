@@ -660,14 +660,33 @@ def list_reports():
         for d in sorted(cases_root.iterdir(), reverse=True):
             if not d.is_dir():
                 continue
-            report_file = d / "reports" / "find_evil_report.json"
-            if not report_file.exists():
+            if '_findevil_' not in d.name:
                 continue
-            try:
-                if report_file.stat().st_size > 50 * 1024 * 1024:  # 50 MB guard
+
+            # Try primary report first, then fallback completion indicators
+            candidate_files = [
+                d / "reports" / "find_evil_report.json",
+                d / "findings.json",
+                d / "summary.json",
+                d / ".geoff_checkpoint.json",
+            ]
+            data = None
+            for candidate in candidate_files:
+                if not candidate.exists():
                     continue
-                with open(report_file) as f:
-                    data = json.load(f)
+                try:
+                    if candidate.stat().st_size > 50 * 1024 * 1024:  # 50 MB guard
+                        continue
+                    with open(candidate) as f:
+                        data = json.load(f)
+                    break
+                except (OSError, json.JSONDecodeError):
+                    continue
+
+            if data is None:
+                continue
+
+            try:
                 # Directory name pattern: {case_name}_findevil_{timestamp}
                 dir_name = d.name
                 parts = dir_name.rsplit('_findevil_', 1)
@@ -683,7 +702,7 @@ def list_reports():
                     'elapsed_seconds': data.get('elapsed_seconds', 0),
                     'evidence_dir': data.get('evidence_dir', ''),
                 })
-            except (OSError, json.JSONDecodeError, KeyError):
+            except KeyError:
                 continue
     return jsonify({'reports': reports})
 

@@ -331,10 +331,9 @@
 
   /* ---------- poll ---------- */
   function pollStatus() {
-    if (!currentJobId) return;
     pollTimer = setTimeout(async () => {
       try {
-        const resp = await apiFetch('/find-evil/status/' + currentJobId);
+        const resp = await apiFetch('/find-evil/status/');
         const data = await resp.json();
         handleStatus(data);
       } catch (e) {
@@ -345,6 +344,7 @@
   }
 
   function handleStatus(data) {
+    if (data.job_id) currentJobId = data.job_id;
     const pct = Math.round(data.progress_pct || 0);
     const status = data.status;
 
@@ -654,6 +654,18 @@
           }).catch(() => {});
         };
         body.appendChild(card);
+
+        // Clicking the case name populates the find-evil path input
+        const nameEl = card.querySelector('.cc-name');
+        if (nameEl) {
+          nameEl.style.cursor = 'pointer';
+          nameEl.title = 'Click to set as Find Evil target';
+          nameEl.onclick = (e) => {
+            e.stopPropagation();
+            const evdirInput = $("evdir");
+            if (evdirInput) evdirInput.value = EVIDENCE_DIR ? EVIDENCE_DIR + '/' + caseName : caseName;
+          };
+        }
       });
     } catch (e) {
       body.innerHTML = '<div class="case-empty">Failed to load cases: ' + escHtml(e.message) + '</div>';
