@@ -317,7 +317,7 @@ Key environment variables and their defaults:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GEOFF_MAX_WORKERS` | `4` | Max parallel threads for evidence processing. Increase for large multi-image cases (>8 devices) on high-core machines; decrease if CPU-bound tools thrash the host. Set in `.env` or `export GEOFF_MAX_WORKERS=8`. |
+| `GEOFF_MAX_WORKERS` | `3` | Max parallel threads for evidence processing. Increase for large multi-image cases on high-core machines with a local Ollama; decrease if you hit Ollama connection limits. Set in `.env` or `export GEOFF_MAX_WORKERS=3`. |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint for local LLM inference. |
 | `GEOFF_API_KEY` | _(empty — auth disabled)_ | Shared secret for HTTP API authentication. Set to enable `X-API-Key` / `Bearer` header checks. |
 | `EVIDENCE_BASE_DIR` | `/mnt/evidence` | Default evidence root path for Find Evil UI. |
@@ -677,7 +677,7 @@ This eliminates redundant invocations across playbooks — common when multiple 
 
 ### Parallel Execution
 
-Steps against different evidence items run concurrently via a thread pool. Set `GEOFF_MAX_WORKERS` (default: 4) to control concurrency. Each worker deep-copies its parameters to avoid shared mutable state; a per-`(module, function, evidence_item)` lock prevents the same call from running twice simultaneously across workers.
+Steps against different evidence items run concurrently via a thread pool. Set `GEOFF_MAX_WORKERS` (default: 3) to control concurrency. Each worker deep-copies its parameters to avoid shared mutable state; a per-`(module, function, evidence_item)` lock prevents the same call from running twice simultaneously across workers.
 
 ---
 

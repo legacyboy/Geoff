@@ -98,7 +98,7 @@ def execute_step_parallel(module, function, params_list, playbook_id,
     if not params_list:
         return (0, 0, 0)
 
-    max_workers = int(os.environ.get("GEOFF_MAX_WORKERS", "4"))
+    max_workers = int(os.environ.get("GEOFF_MAX_WORKERS", "3"))
     results = []
     step_locks: dict = {}
     step_locks_meta = threading.Lock()

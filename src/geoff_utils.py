@@ -115,7 +115,7 @@ _active_mounts: list = []
 # Configuration
 # ---------------------------------------------------------------------------
 
-GEOFF_MAX_WORKERS = int(os.environ.get("GEOFF_MAX_WORKERS", "4"))
+GEOFF_MAX_WORKERS = int(os.environ.get("GEOFF_MAX_WORKERS", "3"))
 
 # ---------------------------------------------------------------------------
 # ConcurrentStepRunner - Evidence-level parallel execution
@@ -135,7 +135,7 @@ class ConcurrentStepRunner:
         """Initialize the concurrent runner.
         
         Args:
-            max_workers: Maximum thread pool size. Defaults to GEOFF_MAX_WORKERS env var (4).
+            max_workers: Maximum thread pool size. Defaults to GEOFF_MAX_WORKERS env var (3).
         """
         self.max_workers = max_workers or GEOFF_MAX_WORKERS
     
