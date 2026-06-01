@@ -1578,6 +1578,104 @@ def report_chat(case_dir):
     return jsonify({'answer': answer})
 
 
+def get_execution_log(case_id):
+    """GET /reports/execution/<case_id> — Structured execution log for a completed case."""
+    safe_id = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_id)
+    if not safe_id:
+        return jsonify({'error': 'Invalid case ID'}), 400
+
+    case_path = _find_case_dir(safe_id)
+    if not case_path:
+        return jsonify({'error': 'Case not found'}), 404
+
+    def _read_jsonl(path, limit=5000):
+        records = []
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                for i, line in enumerate(f):
+                    if i >= limit:
+                        break
+                    line = line.strip()
+                    if line:
+                        try:
+                            records.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+        except OSError:
+            pass
+        return records
+
+    def _read_json_file(path):
+        try:
+            return json.loads(Path(path).read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    result = {
+        'agent_trace': None,
+        'audit_trail': None,
+        'findings': None,
+        'critic_assessment': None,
+        'manager_decision': None,
+        'custody': None,
+        'narrative': None,
+        'metadata': {},
+    }
+
+    for key, fname in [('agent_trace', 'agent_trace.jsonl'),
+                       ('audit_trail', 'audit_trail.jsonl'),
+                       ('findings', 'findings.jsonl')]:
+        p = case_path / fname
+        if p.exists():
+            result[key] = _read_jsonl(p)
+
+    for key, fname in [('critic_assessment', 'batch_critic_assessment.json'),
+                       ('manager_decision', 'manager_decision.json')]:
+        p = case_path / fname
+        if p.exists():
+            result[key] = _read_json_file(p)
+
+    custody_dir = case_path / 'custody'
+    if custody_dir.exists() and custody_dir.is_dir():
+        records = []
+        for f in sorted(custody_dir.glob('*.json'))[:500]:
+            rec = _read_json_file(f)
+            if rec is not None:
+                rec['_filename'] = f.name
+                records.append(rec)
+        if records:
+            result['custody'] = records
+
+    narrative_p = case_path / 'reports' / 'narrative_report.md'
+    if narrative_p.exists():
+        try:
+            if narrative_p.stat().st_size <= 10 * 1024 * 1024:
+                result['narrative'] = narrative_p.read_text(encoding='utf-8')
+        except OSError:
+            pass
+
+    metadata = {'case_id': safe_id, 'case_dir': str(case_path)}
+    report_p = case_path / 'reports' / 'find_evil_report.json'
+    if report_p.exists():
+        rd = _read_json_file(report_p)
+        if rd and isinstance(rd, dict):
+            for k in ('elapsed_seconds', 'evidence_dir', 'evil_found',
+                      'verdict', 'severity', 'classification'):
+                if k in rd:
+                    metadata[k] = rd[k]
+            inv = rd.get('inventory', {})
+            if isinstance(inv, dict):
+                metadata['total_evidence_items'] = sum(
+                    len(v) if isinstance(v, list) else int(v or 0)
+                    for v in inv.values()
+                )
+    result['metadata'] = metadata
+
+    return json.dumps(result, indent=2, default=str), 200, {
+        'Content-Type': 'application/json; charset=utf-8'
+    }
+
+
 def _fallback_answer(question, report):
     """Template fallback when LLM is unreachable."""
     q = question.lower()
@@ -1633,3 +1731,4 @@ def register_routes(app):
     app.add_url_rule('/active-directory', 'get_active_directory', _require_auth(get_active_directory), methods=['GET'])
     app.add_url_rule('/reports/<case_dir>/chat', 'report_chat', _require_auth(report_chat), methods=['POST'])
     app.add_url_rule('/reports/<case_dir>/history', 'report_history', _require_auth(report_history))
+    app.add_url_rule('/reports/execution/<case_id>', 'get_execution_log', _require_auth(get_execution_log))

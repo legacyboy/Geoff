@@ -264,6 +264,61 @@
   .job-banner .liveflag .d { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); animation: pulse 1.1s infinite; }
   .job-banner .jb-info { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--g-text-dim); }
   .job-banner .jb-pct { font-family: var(--font-mono); font-size: 13px; color: var(--g-blue-soft); font-weight: 600; }
+
+  /* ---- execution log ---- */
+  .exec-case-hdr { padding: 0 0 18px; }
+  .exec-case-hdr .ech-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .exec-case-hdr .ech-id { font-family: var(--font-mono); font-size: 15px; font-weight: 600; color: var(--g-text); }
+  .exec-case-hdr .ech-path { font-family: var(--font-mono); font-size: 11px; color: var(--g-text-dim); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; }
+  .exec-case-hdr .ech-meta { display: flex; gap: 16px; margin-top: 7px; flex-wrap: wrap; }
+  .exec-case-hdr .ech-meta span { font-family: var(--font-mono); font-size: 11px; color: var(--g-text-mute); }
+
+  .exec-section { border: 1px solid var(--g-border-soft); border-radius: var(--radius); background: var(--g-surface); margin-bottom: 9px; overflow: hidden; }
+  .exec-section-head { display: flex; align-items: center; gap: 10px; padding: 11px 16px; cursor: pointer; transition: background .14s; user-select: none; }
+  .exec-section-head:hover { background: var(--g-surface-2); }
+  .exec-section-head .esh-title { font-size: 12px; font-weight: 600; color: var(--g-text); flex: 1; letter-spacing: .2px; }
+  .exec-section-head .esh-cnt { font-family: var(--font-mono); font-size: 11px; color: var(--g-text-mute); }
+  .exec-section-head .esh-arrow { font-family: var(--font-mono); font-size: 10px; color: var(--g-text-faint); transition: transform .2s; display: inline-block; }
+  .exec-section.open .esh-arrow { transform: rotate(90deg); }
+  .exec-section-body { display: none; border-top: 1px solid var(--g-border-soft); max-height: 540px; overflow-y: auto; }
+  .exec-section.open .exec-section-body { display: block; }
+
+  .exec-trace-row { display: grid; grid-template-columns: 118px 72px 110px 1fr 18px; gap: 0 10px; padding: 7px 16px; border-bottom: 1px solid var(--g-line); font-family: var(--font-mono); font-size: 11px; align-items: start; }
+  .exec-trace-row:last-child { border-bottom: none; }
+  .exec-trace-row .etr-ts { color: var(--g-text-faint); }
+  .exec-trace-row .etr-agent { color: var(--g-cyan); }
+  .exec-trace-row .etr-event { color: var(--g-text-mute); }
+  .exec-trace-row .etr-msg { color: var(--g-text-dim); overflow-wrap: anywhere; }
+  .exec-trace-row .etr-expand { color: var(--g-text-faint); cursor: pointer; text-align: right; }
+  .exec-trace-row .etr-expand:hover { color: var(--g-blue-soft); }
+
+  .exec-cust-row { display: grid; grid-template-columns: 200px 1fr 140px; gap: 0 12px; padding: 7px 16px; border-bottom: 1px solid var(--g-line); font-family: var(--font-mono); font-size: 11px; align-items: center; }
+  .exec-cust-row:last-child { border-bottom: none; }
+  .exec-cust-row .ecr-key { color: var(--g-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .exec-cust-row .ecr-hash { color: var(--g-text-faint); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+  .exec-cust-row .ecr-ts { color: var(--g-text-mute); font-size: 10px; text-align: right; }
+
+  .exec-audit-row { display: flex; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--g-line); font-family: var(--font-mono); font-size: 11px; align-items: baseline; }
+  .exec-audit-row:last-child { border-bottom: none; }
+  .exec-audit-row .ear-ts { color: var(--g-text-faint); flex-shrink: 0; }
+  .exec-audit-row .ear-event { color: var(--g-blue-soft); flex-shrink: 0; min-width: 130px; }
+  .exec-audit-row .ear-detail { color: var(--g-text-dim); overflow-wrap: anywhere; flex: 1; }
+
+  .exec-finding-row { padding: 11px 16px; border-bottom: 1px solid var(--g-line); }
+  .exec-finding-row:last-child { border-bottom: none; }
+  .exec-finding-row .efr-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .exec-finding-row .efr-note { font-size: 12.5px; color: var(--g-text-dim); margin: 5px 0 4px; line-height: 1.45; }
+  .exec-finding-row .efr-iocs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+
+  .exec-critic-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; }
+  .exec-critic-box { border: 1px solid var(--g-border-soft); border-radius: var(--radius-sm); padding: 14px 16px; background: var(--g-surface-2); }
+  .exec-critic-box .ecb-label { font-size: 9.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--g-text-mute); margin-bottom: 10px; display: block; }
+  .exec-critic-box .ecb-val { font-family: var(--font-mono); font-size: 11px; color: var(--g-text-dim); line-height: 1.6; overflow-wrap: anywhere; }
+  .exec-critic-box .ecb-big { font-family: var(--font-mono); font-size: 18px; font-weight: 600; color: var(--g-text); }
+
+  .exec-dl-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 16px; }
+  .exec-dl-btn { font-family: var(--font-mono); font-size: 10.5px; color: var(--g-blue-soft); border: 1px solid rgba(76,141,255,.3); border-radius: var(--radius-sm); padding: 4px 10px; text-decoration: none; transition: all .14s; }
+  .exec-dl-btn:hover { background: rgba(76,141,255,.08); border-color: var(--g-blue); }
 </style>
 </head>
 <body>
@@ -280,6 +335,7 @@
       <a class="navlink active" data-tab="console" id="nav-console">Find Evil</a>
       <a class="navlink" data-tab="evidence" id="nav-evidence">Evidence</a>
       <a class="navlink" data-tab="reports" id="nav-reports" href="/reports/narrative">Reports</a>
+      <a class="navlink" data-tab="execution" id="nav-execution">Execution Log</a>
     </nav>
     <div class="spacer"></div>
     <div class="online"><span class="dot"></span>ENGINE ONLINE</div>
@@ -420,6 +476,17 @@
     </div>
     <div class="panel-body" id="rp-panel-body">
       <div class="case-empty">Loading reports…</div>
+    </div>
+  </div>
+
+  <!-- Tab: Execution Log -->
+  <div class="panel-view" id="tab-execution">
+    <div class="panel-head">
+      <h2>Execution Log</h2>
+      <span class="cnt" id="exec-case-label">Select a case</span>
+    </div>
+    <div class="panel-body" id="exec-body">
+      <div class="case-empty">Select a completed case to view the execution trace.</div>
     </div>
   </div>
 

@@ -1,0 +1,17 @@
+{
+  "_comment": "Chain-of-custody sidecar written by _commit_step_with_custody() (src/geoff_pipeline.py:457) immediately when a step completes. SHA-256 of the evidence file and SHA-256 of the step parameters are recorded so any modification to the evidence after the step ran produces a detectable hash mismatch. This is detective (not preventive) — it proves tampering but does not prevent it.",
+  "step_key": "logs.parse_evtx_security:security.evt.txt",
+  "playbook_id": "PB-SIFT-000",
+  "module": "logs",
+  "function": "parse_evtx_security",
+  "evidence_file": "/tmp/synthetic_evidence/logs/security.evt.txt",
+  "evidence_sha256": "a3f2c1b9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1",
+  "params_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+  "tool_version": "python-evtx-0.8.0",
+  "geoff_version": "HEAD-475f5e9",
+  "ts": "2026-05-01T10:23:01.250Z",
+  "job_id": "fe-a3b9c1",
+  "git_commit": "pending",
+  "significance": "HIGH",
+  "verdict": "ACCEPTABLE"
+}

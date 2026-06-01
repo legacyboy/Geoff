@@ -592,14 +592,17 @@
     const consoleView = $("tab-console");
     const evidenceView = $("tab-evidence");
     const reportsView = $("tab-reports");
+    const executionView = $("tab-execution");
 
     if (consoleView) consoleView.style.display = (tab === 'console') ? 'flex' : 'none';
     if (evidenceView) { evidenceView.classList.toggle('active', tab === 'evidence'); }
     if (reportsView) { reportsView.classList.toggle('active', tab === 'reports'); }
+    if (executionView) { executionView.classList.toggle('active', tab === 'execution'); }
 
     // Load data on first view
     if (tab === 'evidence') loadEvidencePanel();
     if (tab === 'reports') loadReportsPanel();
+    if (tab === 'execution') loadExecutionPanel();
   }
 
   /* ============================================================
@@ -836,9 +839,11 @@
   const navConsole = $("nav-console");
   const navEvidence = $("nav-evidence");
   const navReports = $("nav-reports");
+  const navExecution = $("nav-execution");
   if (navConsole) navConsole.onclick = (e) => { e.preventDefault(); switchTab('console'); };
   if (navEvidence) navEvidence.onclick = (e) => { e.preventDefault(); switchTab('evidence'); };
   if (navReports) navReports.onclick = (e) => { e.preventDefault(); switchTab('reports'); };
+  if (navExecution) navExecution.onclick = (e) => { e.preventDefault(); switchTab('execution'); };
 
   // Job banner resume button
   const jbResume = $("jb-resume");
@@ -852,4 +857,372 @@
 
   // Check for active jobs on page load
   checkActiveJobs();
+
+  /* ============================================================
+     EXECUTION LOG TAB
+     ============================================================ */
+
+  let executionLoaded = false;
+
+  async function loadExecutionPanel() {
+    const body = $("exec-body");
+    if (!body) return;
+    if (executionLoaded) return;
+    executionLoaded = true;
+
+    body.innerHTML = '<div class="case-empty">Loading cases…</div>';
+    try {
+      const resp = await apiFetch('/reports');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const reports = (data.reports || []).filter(r => r.elapsed_seconds > 0);
+      const label = $("exec-case-label");
+
+      if (reports.length === 0) {
+        body.innerHTML = '<div class="case-empty">No completed investigations found. Run Find Evil first.</div>';
+        return;
+      }
+      if (label) label.textContent = reports.length + ' cases';
+      body.innerHTML = '';
+
+      const sorted = [...reports].sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+      sorted.forEach(rpt => {
+        const isEvil = rpt.evil_found;
+        const sev = (rpt.severity || 'INFO').toUpperCase();
+        const elapsed = rpt.elapsed_seconds ? Math.round(rpt.elapsed_seconds) : 0;
+        const elapsedStr = elapsed >= 60
+          ? Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's'
+          : elapsed + 's';
+        const card = el("div", "rpt-card " + (isEvil ? "evil" : "clean"));
+        card.innerHTML = `
+          <div class="rt-top">
+            <span class="rt-name">${escHtml(rpt.case_name || rpt.dir)}</span>
+            <span class="sev-pill ${isEvil ? sev : ''}">${isEvil ? 'EVIL FOUND' : 'CLEAN'}</span>
+          </div>
+          <div class="rt-meta">
+            <span>${escHtml(elapsedStr)}</span>
+            <span>${escHtml(rpt.classification || 'unclassified')}</span>
+          </div>
+          <div class="rt-desc">${escHtml(rpt.evidence_dir || rpt.dir || '')}</div>
+        `;
+        card.onclick = () => loadExecutionCase(rpt.dir);
+        body.appendChild(card);
+      });
+    } catch (e) {
+      const b = $("exec-body");
+      if (b) b.innerHTML = '<div class="case-empty">Failed to load cases: ' + escHtml(e.message) + '</div>';
+    }
+  }
+
+  async function loadExecutionCase(caseDir) {
+    const body = $("exec-body");
+    const label = $("exec-case-label");
+    if (!body) return;
+    body.innerHTML = '<div class="case-empty">Loading execution log…</div>';
+    if (label) label.textContent = 'Loading…';
+    try {
+      const resp = await apiFetch('/reports/execution/' + encodeURIComponent(caseDir));
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'HTTP ' + resp.status }));
+        throw new Error(err.error || 'HTTP ' + resp.status);
+      }
+      const data = await resp.json();
+      renderExecutionLog(data, caseDir);
+    } catch (e) {
+      const b = $("exec-body");
+      if (b) b.innerHTML = '<div class="case-empty" style="color:var(--sev-crit)">Error: ' + escHtml(e.message) + '</div>';
+      if (label) label.textContent = 'Error';
+    }
+  }
+
+  // Expose for back button (called from inline onclick)
+  window._execGoBack = function() {
+    executionLoaded = false;
+    const label = $("exec-case-label");
+    if (label) label.textContent = 'Select a case';
+    loadExecutionPanel();
+  };
+
+  function renderExecutionLog(data, caseDir) {
+    const body = $("exec-body");
+    const label = $("exec-case-label");
+    if (!body) return;
+    const meta = data.metadata || {};
+    if (label) label.textContent = meta.case_id || caseDir;
+
+    const elapsed = meta.elapsed_seconds ? Math.round(meta.elapsed_seconds) : 0;
+    const elapsedStr = elapsed >= 60
+      ? Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's'
+      : elapsed + 's';
+    const isEvil = meta.evil_found;
+    const sev = (meta.severity || '').toUpperCase();
+
+    body.innerHTML = '';
+
+    // Back button
+    const back = el("div", "");
+    back.style.cssText = "display:flex;align-items:center;gap:10px;padding:0 0 14px;";
+    back.innerHTML = `<button class="btn" onclick="window._execGoBack()" style="font-size:11px;padding:5px 12px;">← Cases</button>
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute)">${escHtml(caseDir)}</span>`;
+    body.appendChild(back);
+
+    // Case header
+    const hdr = el("div", "exec-case-hdr");
+    hdr.innerHTML = `
+      <div class="ech-top">
+        ${isEvil
+          ? `<span class="sev-pill ${sev}" style="font-size:12px;">${escHtml(sev || 'EVIL')}</span>`
+          : '<span class="sev-pill" style="font-size:12px;background:var(--g-green);color:var(--g-bg);">CLEAN</span>'}
+        <span class="ech-id">${escHtml(meta.case_id || caseDir)}</span>
+        ${meta.verdict ? `<span class="tag-mono">${escHtml(meta.verdict)}</span>` : ''}
+      </div>
+      ${meta.evidence_dir ? `<div class="ech-path">${escHtml(meta.evidence_dir)}</div>` : ''}
+      <div class="ech-meta">
+        ${elapsed ? `<span>Runtime: ${escHtml(elapsedStr)}</span>` : ''}
+        ${meta.total_evidence_items ? `<span>Evidence: ${escHtml(String(meta.total_evidence_items))} items</span>` : ''}
+        ${meta.classification ? `<span>${escHtml(meta.classification)}</span>` : ''}
+      </div>
+    `;
+    body.appendChild(hdr);
+
+    // Phase timeline from audit trail
+    const phaseSec = _execPhaseTimeline(data.audit_trail);
+    if (phaseSec) body.appendChild(phaseSec);
+
+    // Download bar
+    body.appendChild(_execDownloadBar(caseDir));
+
+    // Collapsible sections
+    body.appendChild(_execSection('Agent Trace',
+      data.agent_trace ? data.agent_trace.length : null,
+      data.agent_trace, _renderExecAgentTrace));
+    body.appendChild(_execSection('Chain of Custody',
+      data.custody ? data.custody.length : null,
+      data.custody, _renderExecCustody));
+    body.appendChild(_execSection('Critic Assessment & Manager Decision',
+      null, data, _renderExecCritic));
+    body.appendChild(_execSection('Audit Trail',
+      data.audit_trail ? data.audit_trail.length : null,
+      data.audit_trail, _renderExecAuditTrail));
+    body.appendChild(_execSection('Findings',
+      data.findings ? data.findings.length : null,
+      data.findings, _renderExecFindings));
+  }
+
+  function _execPhaseTimeline(auditTrail) {
+    if (!auditTrail || !auditTrail.length) return null;
+    const seenEvents = new Set(auditTrail.map(r => (r.event || '').toUpperCase()));
+    const phaseMap = [
+      { label: 'Inventory',  key: 'INVENTORY' },
+      { label: 'Triage',     key: 'TRIAGE' },
+      { label: 'Analysis',   key: 'PLAYBOOK' },
+      { label: 'Critic',     key: 'BATCH_CRITIC' },
+      { label: 'Manager',    key: 'MANAGER' },
+      { label: 'Report',     key: 'NARRATIVE' },
+    ];
+    const wrap = el("div", "");
+    wrap.style.cssText = "padding:0 0 16px;";
+    const phasesDiv = el("div", "phases");
+    phasesDiv.style.cssText = "padding:0 0 4px;overflow:visible;";
+    phaseMap.forEach(p => {
+      const done = [...seenEvents].some(e => e.includes(p.key));
+      const ph = el("div", "phase" + (done ? " done" : ""));
+      ph.innerHTML = `<div class="bar"><i></i></div><div class="dot">✓</div><div class="pn">${escHtml(p.label)}</div>`;
+      phasesDiv.appendChild(ph);
+    });
+    wrap.appendChild(phasesDiv);
+    return wrap;
+  }
+
+  function _execDownloadBar(caseDir) {
+    const bar = el("div", "exec-dl-bar");
+    const enc = encodeURIComponent(caseDir);
+    [
+      { label: '↓ Narrative MD', url: `/reports/${enc}/download/markdown` },
+      { label: '↓ Report JSON',  url: `/reports/${enc}/download/json` },
+      { label: '↓ Summary',      url: `/reports/${enc}/download/summary` },
+    ].forEach(d => {
+      const a = el("a", "exec-dl-btn");
+      a.href = d.url; a.textContent = d.label; a.target = '_blank';
+      bar.appendChild(a);
+    });
+    return bar;
+  }
+
+  function _execSection(title, count, data, renderFn) {
+    const sec = el("div", "exec-section");
+    const hasData = data !== null && data !== undefined &&
+      (Array.isArray(data) ? data.length > 0 : (typeof data === 'object'));
+    const countStr = count !== null && count !== undefined ? ` (${count})` : '';
+    const avail = hasData ? countStr : ' — not available';
+    sec.innerHTML = `
+      <div class="exec-section-head">
+        <span class="esh-title">${escHtml(title)}</span>
+        <span class="esh-cnt">${escHtml(avail)}</span>
+        <span class="esh-arrow">▶</span>
+      </div>
+      <div class="exec-section-body"></div>
+    `;
+    const head = sec.querySelector('.exec-section-head');
+    const bodyEl = sec.querySelector('.exec-section-body');
+    let rendered = false;
+    head.onclick = () => {
+      if (!hasData) return;
+      const isOpen = sec.classList.toggle('open');
+      if (isOpen && !rendered) {
+        rendered = true;
+        bodyEl.appendChild(renderFn(data));
+      }
+    };
+    return sec;
+  }
+
+  function _renderExecAgentTrace(records) {
+    const wrap = el("div", "");
+    const MAX = 300;
+    records.slice(0, MAX).forEach(r => {
+      const row = el("div", "exec-trace-row");
+      const ts = (r.ts || r.timestamp || '').replace('T', ' ').slice(0, 19);
+      const agent = r.agent || r.role || '—';
+      const event = r.event || r.event_type || '—';
+      const msg = String(r.msg || r.message || r.summary || '').slice(0, 220);
+      const detail = JSON.stringify(r, null, 2);
+      row.innerHTML = `
+        <span class="etr-ts">${escHtml(ts)}</span>
+        <span class="etr-agent">${escHtml(agent)}</span>
+        <span class="etr-event">${escHtml(event)}</span>
+        <span class="etr-msg">${escHtml(msg)}</span>
+        <span class="etr-expand">▶</span>
+      `;
+      let detailEl = null;
+      row.querySelector('.etr-expand').onclick = (e) => {
+        e.stopPropagation();
+        const btn = row.querySelector('.etr-expand');
+        if (!detailEl) {
+          detailEl = el("div", "");
+          detailEl.style.cssText = "grid-column:1/-1;margin-top:8px;background:var(--g-surface-2);border-radius:var(--radius-sm);padding:10px;color:var(--g-text-dim);font-family:var(--font-mono);font-size:10.5px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow-y:auto;";
+          detailEl.textContent = detail;
+          row.appendChild(detailEl);
+          btn.textContent = '▼';
+        } else {
+          detailEl.remove(); detailEl = null;
+          btn.textContent = '▶';
+        }
+      };
+      wrap.appendChild(row);
+    });
+    if (records.length > MAX) {
+      const more = el("div", "");
+      more.style.cssText = "padding:10px 16px;font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute);";
+      more.textContent = '… ' + (records.length - MAX) + ' more records (see agent_trace.jsonl for full log)';
+      wrap.appendChild(more);
+    }
+    return wrap;
+  }
+
+  function _renderExecCustody(records) {
+    const wrap = el("div", "");
+    records.forEach(r => {
+      const row = el("div", "exec-cust-row");
+      const stepKey = r.step_key || (r._filename || '').replace('.json', '') || '—';
+      const hash = r.evidence_sha256 || r.sha256 || r.hash || '—';
+      const ts = (r.timestamp || r.committed_at || '').replace('T', ' ').slice(0, 19);
+      const hashShort = String(hash).slice(0, 20) + (String(hash).length > 20 ? '…' : '');
+      row.innerHTML = `
+        <span class="ecr-key">${escHtml(stepKey)}</span>
+        <span class="ecr-hash" title="${escHtml(String(hash))}">${escHtml(hashShort)}</span>
+        <span class="ecr-ts">${escHtml(ts)}</span>
+      `;
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function _renderExecCritic(data) {
+    const wrap = el("div", "exec-critic-grid");
+    const ca = data.critic_assessment || {};
+    const md = data.manager_decision || {};
+
+    const criticBox = el("div", "exec-critic-box");
+    const qColor = ca.overall_quality === 'GOOD' ? 'var(--g-green)' :
+                   ca.overall_quality === 'POOR' ? 'var(--sev-crit)' : 'var(--g-text)';
+    criticBox.innerHTML = `
+      <span class="ecb-label">Batch Critic Assessment</span>
+      ${ca.overall_quality ? `<div class="ecb-big" style="color:${qColor}">${escHtml(ca.overall_quality)}</div>` : ''}
+      <div class="ecb-val" style="margin-top:10px;">${ca.assessment_summary ? escHtml(ca.assessment_summary) : '<span style="color:var(--g-text-faint)">Not available</span>'}</div>
+      ${ca.hallucination_flags && ca.hallucination_flags.length
+        ? `<div class="ecb-val" style="margin-top:8px;color:var(--sev-med);">&#9888; ${escHtml(String(ca.hallucination_flags.length))} hallucination flag(s)</div>` : ''}
+      ${ca.sufficient_for_report !== undefined
+        ? `<div class="ecb-val" style="margin-top:6px;">Sufficient for report: ${ca.sufficient_for_report ? 'Yes' : 'No'}</div>` : ''}
+      ${ca.critic_executed === false
+        ? `<div class="ecb-val" style="margin-top:6px;color:var(--g-text-mute);">Critic unavailable: ${escHtml(ca.critic_unavailable_reason || 'unknown')}</div>` : ''}
+    `;
+
+    const manBox = el("div", "exec-critic-box");
+    const aColor = md.action === 'approve' ? 'var(--g-green)' :
+                   md.action === 'replay'  ? 'var(--sev-med)' :
+                   md.action === 'flag'    ? 'var(--sev-high)' : 'var(--g-text)';
+    manBox.innerHTML = `
+      <span class="ecb-label">Manager Decision</span>
+      ${md.action ? `<div class="ecb-big" style="color:${aColor}">${escHtml(md.action.toUpperCase())}</div>` : ''}
+      <div class="ecb-val" style="margin-top:10px;">${md.reasoning ? escHtml(md.reasoning) : '<span style="color:var(--g-text-faint)">Not available</span>'}</div>
+      ${md.auto_approved ? `<div class="ecb-val" style="margin-top:6px;color:var(--g-text-mute);">Auto-approved: ${escHtml(md.auto_approve_reason || 'unknown')}</div>` : ''}
+    `;
+
+    wrap.appendChild(criticBox);
+    wrap.appendChild(manBox);
+    return wrap;
+  }
+
+  function _renderExecAuditTrail(records) {
+    const wrap = el("div", "");
+    records.forEach(r => {
+      const row = el("div", "exec-audit-row");
+      const ts = (r.ts || r.timestamp || '').replace('T', ' ').slice(0, 19);
+      const event = r.event || '—';
+      const detail = Object.entries(r)
+        .filter(([k]) => !['ts', 'timestamp', 'event'].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === 'object'
+          ? JSON.stringify(v).slice(0, 80)
+          : String(v).slice(0, 80)}`)
+        .join('  ');
+      row.innerHTML = `
+        <span class="ear-ts">${escHtml(ts)}</span>
+        <span class="ear-event">${escHtml(event)}</span>
+        <span class="ear-detail">${escHtml(detail)}</span>
+      `;
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function _renderExecFindings(records) {
+    const SEV_COLOR = {
+      CRITICAL: 'var(--sev-crit)', HIGH: 'var(--sev-high)',
+      MEDIUM: 'var(--sev-med)', LOW: 'var(--sev-low)', INFO: 'var(--g-text-mute)',
+    };
+    const wrap = el("div", "");
+    records.forEach(r => {
+      const row = el("div", "exec-finding-row");
+      const obs = r.observation || r.result || {};
+      const sev = (obs.significance || obs.severity || r.significance || '').toUpperCase();
+      const sevColor = SEV_COLOR[sev] || 'var(--g-text-mute)';
+      const note = obs.analyst_note || obs.description || obs.summary || r.analyst_note || '';
+      const iocs = obs.threat_indicators || obs.iocs || r.threat_indicators || [];
+      const stepKey = r.step_key || (r.module && r.function ? `${r.module}.${r.function}` : '—');
+      row.innerHTML = `
+        <div class="efr-head">
+          ${sev ? `<span class="sev-pill" style="background:${sevColor};font-size:10px;">${escHtml(sev)}</span>` : ''}
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-dim)">${escHtml(stepKey)}</span>
+        </div>
+        ${note ? `<div class="efr-note">${escHtml(note)}</div>` : ''}
+        ${iocs.length ? `<div class="efr-iocs">${
+          iocs.slice(0, 10).map(ioc => `<span class="tag-mono" style="font-size:9.5px;">${escHtml(String(ioc))}</span>`).join('')
+          }${iocs.length > 10 ? `<span style="font-family:var(--font-mono);font-size:9.5px;color:var(--g-text-faint)">&nbsp;+${iocs.length - 10} more</span>` : ''}</div>` : ''}
+      `;
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
 })();

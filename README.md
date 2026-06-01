@@ -94,6 +94,92 @@ User → Manager → Preflight Validation
 
 ## Architecture Overview
 
+### Geoff Triad — Three-Agent Pipeline
+
+The core execution engine is the **Geoff Triad**: three specialized agents that plan, execute, validate, and self-correct without per-step human approval.
+
+```mermaid
+flowchart TD
+    User([User / CLI / HTTP / MCP]) --> Manager
+
+    subgraph "Geoff Triad (autonomous loop)"
+        Manager["[Manager]\nReview triage output\nApprove execution plan\nPost-analysis decision"]
+        Forensicator["[Forensicator]\nSelect tools per step\nInterpret raw output\nStructured analyst note"]
+        Critic["[Critic]\nPer-step verdict\nHallucination detection\nBatch holistic review"]
+        Healer["[Healer]\n(Critic in recovery mode)\nDiagnose tool failure\nEmit HealDecision"]
+    end
+
+    subgraph "SIFT Tools (read-only evidence)"
+        Tools["SleuthKit · Volatility3 · RegRipper\nPlaso · tshark · bulk_extractor\nZimmerman Tools · REMnux · iLEAPP\n25-playbook execution engine"]
+    end
+
+    subgraph "Output Artifacts"
+        Artifacts["findings.jsonl\naudit_trail.jsonl\nagent_trace.jsonl\nbatch_critic_assessment.json\nmanager_decision.json\ncustody/<step_key>.json\nnarrative_report.md"]
+    end
+
+    Manager -->|"approved_execution_plan"| Forensicator
+    Forensicator -->|"ForensicatorObservation"| Critic
+    Critic -->|"CriticVerdict (per step)"| Forensicator
+    Forensicator -->|tool calls| Tools
+    Tools -->|raw stdout/stderr| Forensicator
+    Forensicator -->|"on tool failure"| Healer
+    Healer -->|"HealDecision → retry"| Tools
+    Forensicator -->|"per-step git commit + custody sidecar"| Artifacts
+    Critic -->|"BatchCriticAssessment"| Manager
+    Manager -->|"approve / flag / replay"| Artifacts
+    Manager -->|"if replay: patched params"| Forensicator
+    Manager -->|"if approve: generate"| NarrativeReport["Narrative Report\n(gated on Manager approval)"]
+    NarrativeReport --> Artifacts
+
+    subgraph "Security Boundary"
+        MCP["MCP Server\n127.0.0.1:9999 only\n(SSH tunnel for remote access)"]
+    end
+
+    User --> MCP
+    MCP --> Manager
+```
+
+#### Component Boundaries
+
+| Component | Boundary | Notes |
+|-----------|----------|-------|
+| **MCP Server** | `127.0.0.1:9999` only | Network is the auth layer; remote access via SSH tunnel |
+| **Evidence paths** | Path validation allowlist | Shell metacharacters rejected before any tool call (`src/geoff_routes.py`) |
+| **SIFT tool execution** | Subprocess calls with validated args | Tools read evidence; they do not write to the evidence directory |
+| **Case work directory** | Separate from evidence | All output (findings, custody sidecars, git repo) goes to `GEOFF_WORK_DIR`, never back into evidence |
+| **LLM backend** | Ollama API at `OLLAMA_URL` | All three agents call the same endpoint; model profiles configured per-agent |
+
+#### Security Boundaries
+
+| Boundary | Enforcement type | Mechanism |
+|----------|-----------------|-----------|
+| Evidence path injection prevention | **Architectural (code-enforced)** | `src/geoff_routes.py` validates paths against shell metacharacter blocklist before any subprocess call |
+| API authentication | **Architectural (code-enforced)** | `GEOFF_API_KEY` bearer token on all HTTP endpoints; absent = local-only unauthenticated mode |
+| MCP network isolation | **Architectural (code-enforced)** | Server binds `127.0.0.1` only; no unauthenticated remote access |
+| Evidence non-modification | **Detective (custody, not preventive)** | SHA-256 custody sidecars record evidence state per-step; modification is detectable but not prevented at the OS level |
+| Chat response grounding | **Architectural (code-enforced)** | `_self_check_chat_response` regenerates responses that assert claims absent from case context |
+
+#### Guardrail Types
+
+**Code-enforced (structural) guardrails** — a misbehaving model cannot bypass these:
+- Evidence path allowlist validation
+- Per-step git commit (append-only; steps cannot be deleted without detection)
+- SHA-256 custody sidecars (tamper-evident chain of custody)
+- `127.0.0.1`-only MCP bind
+- API key enforcement
+
+**Prompt-enforced guardrails** — depend on the model following instructions:
+- Forensicator: prohibited from speculating beyond tool output
+- Narrative report: required to cite evidence anchors; prohibited from asserting unverified claims
+- Chat: `Hypothesis → Evidence → Assessment` reasoning protocol
+- Attack chain synthesis: must write "Insufficient evidence to assess" for unsupported sections
+
+**Important disclosure:** Narrative report generation has no structural backstop equivalent to `_self_check_chat_response`. A model that ignores its system prompt could assert unsupported claims in the report. Chat responses have structural regeneration; narrative reports rely solely on prompt instructions. See `docs/ACCURACY_REPORT.md` for the full accuracy assessment.
+
+---
+
+### Component Architecture Diagram
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              GEOFF Web Interface (Flask)                 │

@@ -1,0 +1,21 @@
+{
+  "_comment": "manager_decision.json — written by _manager_post_critic_decision() (src/geoff_pipeline.py:1503). This is the FINAL decision after replay resolved the hallucination. The Manager reviewed the post-replay BatchCriticAssessment (overall_quality GOOD, no hallucination flags) and approved. A narrative report was generated. If the Manager LLM had been unavailable, auto_approved would be true and auto_approve_reason would be 'manager_llm_unavailable'.",
+  "action": "approve",
+  "replay_adjustments": {},
+  "generate_report": true,
+  "reasoning": "Replay resolved the only hallucination flag; post-replay Critic confirms GOOD quality across all 5 steps; IEX download cradle (HIGH) and failed admin logon (MEDIUM) are independently supported findings — proceeding to narrative report.",
+  "critic_executed": true,
+  "manager_executed": true,
+  "auto_approved": false,
+  "auto_approve_reason": null,
+  "job_id": "fe-a3b9c1",
+  "ts": "2026-05-01T10:23:09.500Z",
+  "post_replay": true,
+  "prior_action": "replay",
+  "prior_replay_adjustments": {
+    "registry.list_run_keys:test.raw": {
+      "skip_if_no_ntfs": true,
+      "fallback_to_strings": true
+    }
+  }
+}

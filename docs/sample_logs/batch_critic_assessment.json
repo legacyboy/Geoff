@@ -1,0 +1,24 @@
+{
+  "_comment": "batch_critic_assessment.json — written by _batch_critic_review_all_playbooks() (src/geoff_pipeline.py:1382) after all playbooks complete. The Critic reviews every finding in one pass, enabling cross-step correlation that per-step validation misses. This sample reflects the state BEFORE replay — note the hallucination flag on the registry step that triggered Manager replay.",
+  "overall_quality": "ACCEPTABLE",
+  "hallucination_flags": [
+    "registry.list_run_keys:test.raw — Forensicator claimed Run key presence in a FAT16 image; no NTFS hive is present in a 1 MB mkfs.fat synthetic image. Finding fabricated content not in tool output."
+  ],
+  "replay_candidates": [
+    "registry.list_run_keys:test.raw"
+  ],
+  "sufficient_for_report": true,
+  "assessment_summary": "Four of five steps completed with ACCEPTABLE or better verdicts; one HIGH-significance persistence finding is a hallucination on a non-NTFS image and must be replayed before narrative report generation.",
+  "total_findings": 5,
+  "completed": 4,
+  "unverified": 1,
+  "failed": 0,
+  "high_critical_findings": 2,
+  "cross_step_notes": [
+    "EventID 4688 (powershell IEX) in PB-SIFT-000 corroborates EventID 4624 logon from 192.168.1.100 — consistent with remote interactive session followed by payload delivery.",
+    "EventID 4625 (failed Administrator logon) is an independent indicator of credential stuffing or brute-force — not directly linked to the 4688 download cradle but worthy of separate timeline entry.",
+    "Registry step hallucination is isolated to the FAT image; no cross-step contamination — the logon and execution findings remain independently valid."
+  ],
+  "critic_executed": true,
+  "critic_unavailable_reason": null
+}

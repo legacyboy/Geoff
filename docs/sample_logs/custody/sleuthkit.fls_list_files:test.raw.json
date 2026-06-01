@@ -1,0 +1,21 @@
+{
+  "_comment": "Chain-of-custody sidecar for the sleuthkit fls step on the synthetic disk image. Note that this same custody file is referenced by both the registry step's replay finding (after replay succeeded with NTFS guard) and the original fls step — in production, each step has its own sidecar. The replay step would write a new sidecar at registry.list_run_keys:test.raw_replay.json. This sample consolidates for brevity.",
+  "step_key": "sleuthkit.fls_list_files:test.raw",
+  "playbook_id": "PB-SIFT-001",
+  "module": "sleuthkit",
+  "function": "fls_list_files",
+  "evidence_file": "/tmp/synthetic_evidence/disk_images/test.raw",
+  "evidence_sha256": "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2",
+  "params_sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+  "tool_version": "sleuthkit-4.12.1",
+  "geoff_version": "HEAD-475f5e9",
+  "ts": "2026-05-01T10:23:02.800Z",
+  "job_id": "fe-a3b9c1",
+  "git_commit": "pending",
+  "significance": "INFO",
+  "verdict": "ACCEPTABLE",
+  "filesystem_type": "FAT16",
+  "partition_offset_bytes": 0,
+  "files_recovered": 0,
+  "image_size_bytes": 1048576
+}
