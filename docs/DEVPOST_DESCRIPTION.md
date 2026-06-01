@@ -56,11 +56,11 @@ All three agents communicate via structured JSON. The entire state is persisted 
 
 ## What's next
 
-- Fixed the three mislabeled playbooks (PB-004, PB-011, PB-013) — content now matches the labeled scenario (privilege escalation, impact/data destruction, cloud/network data respectively).
-- Extended structural self-check to narrative report generation — hallucination-checked narrative output with evidence-citation verification.
-- Unified partition offset detection — single mmls-first approach replaces three-way cascade.
-- Extended PB-SIFT-025 with CloudTrail, Azure Sentinel, and GCP audit log parsing for cloud artifact detection.
-- Fixed PE-injected memory region classification — malfind output now correctly typed as `injected_pe`.
+- **Close installer tool gaps.** 13+ apt packages (foremost, scalpel, zeek, bulk_extractor, dc3dd, guestmount, bdeinfo, readpst, apfs-fuse, and others) and 8 pip packages (plyvel, pefile, lief, pyinstxtractor, uncompyle6, python-magic, construct, pycdc) are cited by playbooks but never installed by install.sh. A clean SIFT install will hit missing-tool failures in at least a dozen playbooks.
+- **Add Web Shell Indicators playbook.** Relabeling PB-011 removed web shell coverage from the library entirely. No playbook currently correlates IIS/Apache access logs for anomalous POSTs to static files, scans web directories for newly created .asp/.php/.aspx files, or traces `w3wp.exe → cmd.exe` parent-child process chains.
+- **Add Insider Threat behavioral analysis playbook.** Relabeling PB-013 removed insider threat coverage. Print spooler job history, Windows Search index (Windows.edb), UserAssist MRU timeline, clipboard artifacts, and behavioral baselining (off-hours access, volume anomalies) are now absent from the library.
+- **Stitch multi-block PowerShell 4104 events.** Heavily obfuscated PowerShell commands split across multiple EventID 4104 messages (via `ScriptBlockId` + `MessageNumber` continuation) are returned as truncated fragments. The full decoded script is never reassembled. This is a documented gap in the EVTX parser.
+- **Close RAR archive handling gap.** `.rar` evidence containers are not extracted during preprocessing. Files inside RAR archives bypass all playbook analysis — none of the evidence inventory, classification, or forensic tool steps ever see their contents.
 
 ---
 
