@@ -684,17 +684,27 @@ PLAYBOOK_STEPS = {
         ],
     },
     "PB-SIFT-013": {  # Data from Cloud/Network Share
-        "pcaps": [
-            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
-        ],
-        "memory_dumps": [
-            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
-            ("memory", "extract_network", {"memory_dump": "{mem}"}),
+        "registry_hives": [
+            ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "HKCU\\Network"}),
+            ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MountPoints2"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_usb_devices", {"system_path": "{hive}"}),
         ],
         "disk_images": [
+            ("cloud", "analyze_onedrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_googledrive", {"db_path": "{file}"}),
+            ("cloud", "analyze_dropbox", {"db_path": "{file}"}),
+            ("cloud", "analyze_icloud", {"db_path": "{file}"}),
+            ("cloud", "analyze_usb_staging", {"evidence_path": "{image}"}),
             ("cloud", "detect_exfiltration", {"evidence_path": "{image}"}),
-            ("vss", "list_vss", {"image": "{image}"}),
-            ("vss", "extract_vss_files", {"image": "{image}", "output_dir": "{output_dir}/vss"}),
+            ("registry", "extract_recentfilecache", {"recentfilecache_path": "{file}"}),
+        ],
+        "memory_dumps": [
+            ("memory", "extract_network", {"memory_dump": "{mem}"}),
+            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
+        ],
+        "pcaps": [
+            ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
         ],
     },
     "PB-SIFT-014": {  # Linux Forensics
