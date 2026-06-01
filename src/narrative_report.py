@@ -508,6 +508,9 @@ class NarrativeReportGenerator:
                 super_timeline_path, behavioral_flags)
 
         # 5. Behavioral Findings
+        # 5a. Self-corrections (auto-recovery events)
+        sections["self_corrections"] = self._render_self_corrections(report_json)
+
         # 5b. Failed steps analysis
         sections["failed_steps"] = self._render_failed_steps(report_json)
 
@@ -3573,6 +3576,12 @@ Write the following sections. ACCURACY RULES:
 
 ---
 
+### Self-Corrections (Auto-Recovery)
+
+{sections.get("self_corrections", "No self-corrections occurred during this investigation.")}
+
+---
+
 ## Failed Steps
 
 {sections.get("failed_steps", "No failed steps data.")}
@@ -3684,6 +3693,28 @@ Write the following sections. ACCURACY RULES:
 
         if len(failures) > 50:
             lines.append(f"| | | | | *(+{len(failures)-50} more)* |")
+
+        return "\n".join(lines)
+
+    def _render_self_corrections(self, report_json: dict) -> str:
+        """Render self-correction (auto-recovery) events as a markdown table."""
+        corrections = report_json.get("self_corrections", [])
+        if not corrections:
+            return "No self-corrections occurred during this investigation."
+
+        lines = []
+        lines.append("| # | Timestamp | Playbook | Module | Function | Device |")
+        lines.append("|---|-----------|----------|--------|----------|--------|")
+        for i, c in enumerate(corrections[:50], 1):
+            ts = str(c.get("timestamp", "")).replace("|", "/")
+            pb = str(c.get("playbook_id", "?")).replace("|", "/")
+            module = str(c.get("module", "?")).replace("|", "/")
+            func = str(c.get("function", "?")).replace("|", "/")
+            dev = str(c.get("device_id", "?")).replace("|", "/")
+            lines.append(f"| {i} | {ts} | {pb} | {module} | {func} | {dev} |")
+
+        if len(corrections) > 50:
+            lines.append(f"| | | | | | *(+{len(corrections)-50} more)* |")
 
         return "\n".join(lines)
 

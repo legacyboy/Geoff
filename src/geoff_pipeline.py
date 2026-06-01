@@ -1789,6 +1789,37 @@ Respond ONLY in valid JSON (no extra text):
     return decision
 
 
+def _read_self_corrections(case_work_dir, cap: int = 100) -> list:
+    """Read self_correction events from audit_trail.jsonl, capped at `cap` entries."""
+    try:
+        path = Path(str(case_work_dir)) / "audit_trail.jsonl"
+        if not path.exists():
+            return []
+        results = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("event") == "self_correction":
+                    results.append({
+                        "timestamp": rec.get("ts", ""),
+                        "playbook_id": rec.get("playbook_id", ""),
+                        "module": rec.get("module", ""),
+                        "function": rec.get("function", ""),
+                        "device_id": rec.get("device_id", ""),
+                    })
+                    if len(results) >= cap:
+                        break
+        return results
+    except Exception:
+        return []
+
+
 def _retry_unprocessed(
     findings_writer,
     inventory: dict,
@@ -6345,6 +6376,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 "cross_device_events": xdev_tl_results.get("cross_device_events", []),
                 "timeline_stub_note": xdev_tl_results.get("timeline_stub_note", ""),
             },
+            "self_corrections": _read_self_corrections(case_work_dir),
         }
 
         # --- Post-run retry: reprocess unprocessed files with relaxed limits ---
