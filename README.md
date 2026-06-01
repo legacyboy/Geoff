@@ -311,6 +311,25 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 11. **Host Correlation** — cross-device user activity, lateral movement detection
 12. **Narrative Report** — gated on Manager approval; LLM-written investigative narrative with explicit artifact citations
 
+### Configuration Reference
+
+Key environment variables and their defaults:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEOFF_MAX_WORKERS` | `4` | Max parallel threads for evidence processing. Increase for large multi-image cases (>8 devices) on high-core machines; decrease if CPU-bound tools thrash the host. Set in `.env` or `export GEOFF_MAX_WORKERS=8`. |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint for local LLM inference. |
+| `GEOFF_API_KEY` | _(empty — auth disabled)_ | Shared secret for HTTP API authentication. Set to enable `X-API-Key` / `Bearer` header checks. |
+| `EVIDENCE_BASE_DIR` | `/mnt/evidence` | Default evidence root path for Find Evil UI. |
+| `CASES_WORK_DIR` | `/mnt/cases` | Directory for investigation output cases. |
+
+Copy `.env.example` to `.env` and edit to taste:
+
+```bash
+cp .env.example .env
+# Edit GEOFF_MAX_WORKERS, OLLAMA_URL, etc.
+```
+
 ### What Triggers Each Playbook
 
 | Evidence / Indicator | Playbook(s) | Severity |
