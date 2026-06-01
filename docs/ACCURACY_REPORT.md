@@ -1,7 +1,7 @@
 # Geoff DFIR — Accuracy Report
 
 **Date:** 2026-06-01  
-**Version:** HEAD (commit 475f5e9)  
+**Version:** v1.0 (tagged at competition-submission HEAD)  
 **Purpose:** Judge-facing structured assessment of Geoff's accuracy, self-correction effectiveness, evidence integrity approach, and known limitations.
 
 ---
@@ -14,7 +14,9 @@ The Critic is designed to catch findings that are structurally invalid or unsupp
 
 **Incident 1 — `DROP TABLE` classified as SQL injection in host context (2026-05-24)**
 
-During internal audit testing (documented in the now-removed COMBINED_AUDIT_REPORT.md), the Forensicator produced a finding that classified `DROP TABLE` syntax found in Windows Registry string data as an SQL injection indicator. The registry value was a legitimate software installation string that contained the phrase incidentally. The Batch Critic flagged this as `invalid_iocs` — the finding had no network context, no database process, and no corroborating evidence. The Manager replayed the step with adjusted parameters that filtered registry string extraction for host-context relevance.
+During internal audit testing (2026-05-24), the Forensicator produced a finding that classified `DROP TABLE` syntax found in Windows Registry string data as an SQL injection indicator. The registry value was a legitimate software installation string that contained the phrase incidentally. The Batch Critic flagged this as `invalid_iocs` — the finding had no network context, no database process, and no corroborating evidence. The Manager replayed the step with adjusted parameters that filtered registry string extraction for host-context relevance.
+
+*(Traceable in git history: the `COMBINED_AUDIT_REPORT.md` containing the full audit was removed from HEAD in the cleanup commit `951df39` but is accessible via `git show 951df39^:COMBINED_AUDIT_REPORT.md`.)*
 
 **Lesson:** String-extraction-based IOC detection (bulk_extractor, strings) produces false positives when applied to registry or filesystem string data without host context. The Critic's cross-step correlation catches this; per-step validation alone would not.
 
@@ -24,7 +26,7 @@ Bulk IOC extraction flagged large numbers of well-known CDN IP addresses (Akamai
 
 **Incident 3 — Registry key path false positives in Run key analysis**
 
-PB-SIFT-003 (Persistence) flagged standard Windows Run key entries (Microsoft Teams, Windows Defender) as persistence indicators. Fixed 2026-05-19 with a registry key allowlist. Prior to this fix, the Forensicator was producing HIGH-significance findings for standard autorun entries.
+PB-SIFT-003 (Persistence) flagged standard Windows Run key entries (Microsoft Teams, Windows Defender) as persistence indicators. Fixed in commit `6946547` (2026-05-19) with a registry key allowlist. Prior to this fix, the Forensicator was producing HIGH-significance findings for standard autorun entries.
 
 ---
 
@@ -49,7 +51,7 @@ The following artifact categories are documented gaps where Geoff either fails s
 - Raw memory dump files (`.img` extension) were misclassified by the evidence inventory as `OTHER` instead of `memory`, causing them to bypass the Volatility playbook trigger.
 - PE-injected memory regions (`malfind` output) were classified as `OTHER` in the inventory schema.
 
-**Status:** Fixed in the 2026-06-01 commit. `.img` files are now checked for memory dump magic bytes before classification.
+**Status:** Fixed in the 2026-06-01 commit. `.mans` files (FTK Imager memory captures) are now classified as memory dumps directly. `.img` files are probed via Volatility `imageinfo` to confirm memory image type before classification.
 
 ### 2.3 LOLBin Detection Gaps
 
@@ -62,7 +64,7 @@ These are technique-without-tool gaps: the playbook identifies the category but 
 
 ### 2.4 RAR Archive Handling
 
-Prior to recent fixes, `.rar` archives were never extracted during evidence preprocessing. Files inside `.rar` archives were not analyzed by any playbook. This is documented in the internal audit (COMBINED_AUDIT_REPORT.md, 2026-05-24). Current status: RAR extraction was not confirmed fixed at the time of this report.
+Prior to recent fixes, `.rar` archives were never extracted during evidence preprocessing. Files inside `.rar` archives were not analyzed by any playbook. Current status: RAR extraction was not confirmed fixed at the time of this report.
 
 ---
 
@@ -165,7 +167,7 @@ Observed self-correction events across documented runs:
 
 **Mechanism 3 — Chat grounding check**
 
-After each chat response, `_self_check_chat_response` (`src/geoff_self_heal.py:881`) verifies the response does not assert claims absent from case context. If unsupported claims are detected, the response is regenerated once with a correction prompt.
+After each chat response, `_self_check_chat_response` (`src/geoff_self_heal.py:900`) verifies the response does not assert claims absent from case context. If unsupported claims are detected, the response is regenerated once with a correction prompt.
 
 ### 5.2 Limitations
 

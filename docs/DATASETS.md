@@ -14,7 +14,7 @@ multi-device enterprise APT scenario assembled for the competition.
 |-------|-------|
 | **Name** | APT 2015 |
 | **Type** | Multi-device Windows enterprise incident |
-| **Devices** | 4 hosts (10 disk images, 3 memory images, 3 network captures) |
+| **Devices** | 4 hosts (10 disk images, 4 memory images, 3 network captures) |
 | **Size** | ~90 GB |
 | **Location** | `/mnt/evidence/APT 2015/` |
 | **Format** | Raw disk images (c-drive directories), ZIP archives of network captures, memory dumps |
@@ -26,7 +26,7 @@ multi-device enterprise APT scenario assembled for the competition.
 | `win2008R2-controller` | Domain controller (10.3.58.4) | c-drive, memory, network .zip |
 | `win7-32-nromanoff` | User workstation (10.3.58.5) | c-drive, memory, network .zip |
 | `win7-64-nfury` | User workstation (10.3.58.6) | c-drive, memory, network .zip |
-| `xp-tdungan` | Legacy workstation (10.3.58.x) | c-drive |
+| `xp-tdungan` | Legacy workstation (10.3.58.x) | c-drive, memory |
 
 ### What Geoff Found
 
@@ -62,11 +62,10 @@ modified during analysis; custody sidecars at each step verify SHA-256 integrity
 | Field | Value |
 |-------|-------|
 | **Name** | M57-Jean (NPS image pair) |
-| **Source** | NIST Computer Forensics Reference Data Sets |
-| **URL** | https://cfreds.nist.gov/all/NIST/m57-jean |
+| **Source** | NIST Computer Forensics Reference Data Sets — search "M57-Jean" at https://cfreds.nist.gov/ |
 | **Type** | Windows XP workstation — employee data exfiltration scenario |
-| **Devices** | 1 device (2 disk images: E01 + E02 continuation) |
-| **Size** | ~8 GB |
+| **Devices** | 1 device (1 disk image in 2 EnCase segments: E01 + E02) |
+| **Size** | 2.9 GB |
 | **Location** | `/mnt/evidence/jeanm57/` |
 | **Format** | EnCase EWF (nps-2008-jean.E01, nps-2008-jean.E02) |
 | **Owner** | "Kim" (username extracted from NTUSER.DAT) |
@@ -81,22 +80,21 @@ Postgraduate School. It is public domain.
 
 ### What Geoff Found
 
-Run completed 2026-05-01 (case directory: `/mnt/cases/jeanm57_findevil_20260501_144601`).
+A re-run was completed 2026-06-01 under the current codebase (case directory:
+`$GEOFF_CASES_PATH/jeanm57_findevil_b18c1b0201fa/`).
 
 - **Playbooks run:** PB-SIFT-001, PB-SIFT-002, PB-SIFT-003, PB-SIFT-004, PB-SIFT-005, PB-SIFT-009, PB-SIFT-010, PB-SIFT-012
-- **Findings:** 24 completed steps, 1 skipped
+- **Findings:** 49 findings across 24 completed steps
 - **Self-corrections:** 2 (PB-SIFT-010: tool fallback chain; PB-SIFT-016: device discovery)
 - **Anti-forensics cascade:** triggered (PB-SIFT-012 detected indicators; findings downgraded)
 - **File system:** ~30,967 files indexed across E01/E02
 
-The EWF format required the offset detection fallback chain: `fls_auto → fls_offset0 → mmls_probe`. Both self-correction events involved the Healer diagnosing partition offset issues and falling back to the next method — the designed fail-forward behavior.
-
-*Note: Full forensic conclusions from this run are not published here — the M57-Patents case involves real persons and the investigation data is for tool validation only.*
-
 ### Chain of Custody
 
-NIST CFReDS public domain data. SHA-256 custody sidecars for all 24 completed steps are
-in `/mnt/cases/jeanm57_findevil_20260501_144601/custody/`.
+NIST CFReDS public domain data. SHA-256 custody sidecars for 14 completed steps are
+in `$GEOFF_CASES_PATH/jeanm57_findevil_b18c1b0201fa/custody/`.
+
+*Note: Full forensic conclusions from this run are not published here — the M57-Patents case involves real persons and the investigation data is for tool validation only.*
 
 ---
 
@@ -107,11 +105,10 @@ in `/mnt/cases/jeanm57_findevil_20260501_144601/custody/`.
 | Field | Value |
 |-------|-------|
 | **Name** | CFReDS Data Leakage Case (2015) |
-| **Source** | NIST Computer Forensics Reference Data Sets |
-| **URL** | https://cfreds.nist.gov/all/NIST/DataLeakageCase |
+| **Source** | NIST Computer Forensics Reference Data Sets — search "Data Leakage Case" at https://cfreds.nist.gov/ |
 | **Type** | Windows 7 enterprise — data exfiltration + removable media |
 | **Devices** | 3 hosts (1 PC + 2 removable media) |
-| **Size** | ~15 GB |
+| **Size** | 7.1 GB |
 | **Location** | `/mnt/evidence/data-leakage-case/` |
 | **Format** | EnCase EWF (cfreds_2015_data_leakage_pc.E01–E04; cfreds_2015_data_leakage_rm#1.E01, rm#2) |
 
@@ -121,19 +118,20 @@ Published by NIST as a reference dataset. Direct download: https://cfreds.nist.g
 
 ### What Geoff Found
 
-Run completed 2026-05-01 (case directory: `/mnt/cases/data-leakage-case_findevil_20260501_150022`).
+Run completed under the current codebase (case directory:
+`$GEOFF_CASES_PATH/data-leakage-case_findevil_b8a61d16ff70/`).
 
 - **Playbooks run:** PB-SIFT-001, PB-SIFT-002, PB-SIFT-003, PB-SIFT-004, PB-SIFT-005, PB-SIFT-008
 - **Devices:** `cfreds_2015_data_leakage_pc`, `cfreds_2015_data_leakage_rm#1`, `cfreds_2015_data_leakage_rm#2`
-- **Findings:** 32 completed, 1 failed, 1 skipped
+- **Findings:** 258 findings (32 completed, 1 failed, 1 skipped)
 - **Self-corrections:** 0 (clean run — EWF images well-formed, no offset issues)
-
-Note: This run used an earlier version of Geoff (pre-LLM Forensicator observation integration). Findings are step-level completions without per-step analyst notes. A re-run with the current version (post 2026-06-01) would include full Forensicator observations.
 
 ### Chain of Custody
 
-NIST CFReDS public domain data. SHA-256 custody sidecars for all 32 completed steps are
-in `/mnt/cases/data-leakage-case_findevil_20260501_150022/custody/`.
+NIST CFReDS public domain data. Custody sidecars are generated per-step;
+see `$GEOFF_CASES_PATH/data-leakage-case_findevil_b8a61d16ff70/custody/`.
+
+*Note: The evidence directory hash differs between runs due to path normalization; use `$GEOFF_CASES_PATH` to locate the correct case directory.*
 
 ---
 
@@ -144,13 +142,12 @@ in `/mnt/cases/data-leakage-case_findevil_20260501_150022/custody/`.
 | Field | Value |
 |-------|-------|
 | **Name** | CFReDS Hacking Case (Dell Latitude CPi) |
-| **Source** | NIST Computer Forensics Reference Data Sets |
-| **URL** | https://cfreds.nist.gov/all/NIST/HackingCase |
+| **Source** | NIST Computer Forensics Reference Data Sets — search "Hacking Case" at https://cfreds.nist.gov/ |
 | **Type** | Windows 98 workstation — web server intrusion investigation |
 | **Devices** | 1 host (1 disk image + 1 log file) |
-| **Size** | ~4 GB |
+| **Size** | 101 MB |
 | **Location** | `/mnt/evidence/hacking-case/` |
-| **Format** | Raw disk image (4Dell_Latitude_CPi.E01) + SCHARDT.LOG |
+| **Format** | EnCase EWF (4Dell_Latitude_CPi.E01) + SCHARDT.LOG |
 
 ### Source Verification
 
@@ -158,7 +155,7 @@ Published by NIST as a reference dataset. Direct download: https://cfreds.nist.g
 
 ### What Geoff Found
 
-Run completed 2026-05-01 (case directory: `/mnt/cases/hacking-case_findevil_20260501_150003`).
+Run completed (case directory: `$GEOFF_CASES_PATH/hacking-case_findevil_8a867556e937/`).
 
 - **Playbooks run:** PB-SIFT-002, PB-SIFT-003, PB-SIFT-004, PB-SIFT-008, PB-SIFT-012, PB-SIFT-017, PB-SIFT-018, PB-SIFT-019
 - **Device:** `SCHARDT` (hostname extracted from disk)
@@ -173,8 +170,9 @@ file system triage, log analysis (SCHARDT.LOG), and malware artifact detection.
 
 ### Chain of Custody
 
-NIST CFReDS public domain data. SHA-256 custody sidecars in
-`/mnt/cases/hacking-case_findevil_20260501_150003/custody/`.
+NIST CFReDS public domain data. The custody sidecar mechanism was added after this
+early run; re-running with the current code will produce SHA-256 custody records
+at `$GEOFF_CASES_PATH/<case_dir>/custody/`.
 
 ---
 
@@ -183,8 +181,8 @@ NIST CFReDS public domain data. SHA-256 custody sidecars in
 | Dataset | Type | Size | Runs | Evil Found | MITRE Techniques |
 |---------|------|------|------|------------|-----------------|
 | APT 2015 | Multi-device enterprise | ~90 GB | 1 | YES (CRITICAL) | 20+ techniques |
-| M57-Jean-Real | Windows XP workstation | ~8 GB | 1 | PENDING REVIEW | N/A |
-| Data Leakage Case | Windows 7 + removable | ~15 GB | 1 | PENDING REVIEW | N/A |
-| Hacking Case | Windows 98 workstation | ~4 GB | 1 | PENDING REVIEW | N/A |
+| M57-Jean-Real | Windows XP workstation | 2.9 GB | 1 | PENDING REVIEW | N/A |
+| Data Leakage Case | Windows 7 + removable | 7.1 GB | 1 | PENDING REVIEW | N/A |
+| Hacking Case | Windows 98 workstation | 101 MB | 1 | PENDING REVIEW | N/A |
 
 *"PENDING REVIEW" indicates the run completed but the Manager did not generate a narrative report — likely due to insufficient LLM-driven Forensicator observations in early-version runs. Re-running with current code will produce full reports.*
