@@ -55,7 +55,7 @@ _BEHAVIORAL_FLAG_MAP: Dict[str, List[str]] = {
 _FINDING_MODULE_MAP: Dict[str, List[str]] = {
     "volatility.network_scan":        ["network_scan"],
     "volatility.find_malware":        ["executable"],
-    "volatility.malfind":             ["executable"],
+    "volatility.malfind":             ["injected_pe"],
     "registry.extract_autoruns":      ["persistence"],
     "registry.extract_services":      ["persistence"],
     "scheduled.parse_windows_scheduled_tasks": ["persistence"],

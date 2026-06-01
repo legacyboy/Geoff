@@ -4341,13 +4341,19 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Cloud/Enterprise IR - triggered by cloud-specific artifacts
         # NOT triggered by generic unclassified files
         _cloud_artifact_patterns = {
-            "m365_ual": ["unified audit log", "ual", "audit log"],
+            # AWS artifacts
+            "cloudtrail": ["cloudtrail", "aws cloudtrail", "cloud-trail", "aws-cloudtrail"],
+            "aws_config": ["aws-config", "aws_config", "config.json", "credentials.json"],
+            "aws_sdk": ["aws-sdk", "amzn1-aws-aws-sdk"],
+            # Azure artifacts
             "azure_ad": ["azure ad", "sign-in log", "azuread", "conditional access"],
-            "cloudtrail": ["cloudtrail", "aws cloudtrail", "cloud-trail"],
-            "oauth": ["oauth app", "consent grant", "app consent"],
-            "exchange_fwd": ["exchange forwarding", "transport rule", "inbox rule"],
-            "sharepoint": ["sharepoint access", "onedrive audit", "sharepoint audit"],
+            "azure_sentinel": ["azure sentinel", "azuremonitor", "azure security center"],
+            "azure_audit": ["azure audit log", "azure activity log", "activitylogs"],
+            # GCP artifacts
+            "gcp_audit": ["gcp audit", "google audit log", "auditlog", "cloudaudit"],
             "gworkspace": ["google workspace", "gsuite audit", "admin log"],
+            # Service account keys
+            "gcp_keys": ["service-account", "service_account", "gcp-sa-", "serviceAccount"],
         }
         _cloud_detected = False
         for f in inventory.get("other_files", []) + inventory.get("disk_images", []):

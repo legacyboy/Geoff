@@ -56,11 +56,11 @@ All three agents communicate via structured JSON. The entire state is persisted 
 
 ## What's next
 
-- Fix the three mislabeled playbooks (PB-004, PB-011, PB-013) — the content is wrong for the labeled scenario (e.g., PB-004 contains network device forensics instead of privilege escalation).
-- Extend structural self-check to narrative report generation — currently narrative grounding is prompt-enforced only.
-- Unified partition offset detection: eliminate the `fls_auto / fls_offset0 / mmls_probe` three-way cascade with a single mmls-first approach.
-- Cloud IR playbook (PB-SIFT-025): AWS CloudTrail, Azure Sentinel, GCP Audit Logs — the toolchain exists but the playbook is not yet wired.
-- Memory artifact classification: `volatility malfind` output for PE-injected regions classified as `OTHER` in the current inventory schema.
+- Fixed the three mislabeled playbooks (PB-004, PB-011, PB-013) — content now matches the labeled scenario (privilege escalation, impact/data destruction, cloud/network data respectively).
+- Extended structural self-check to narrative report generation — hallucination-checked narrative output with evidence-citation verification.
+- Unified partition offset detection — single mmls-first approach replaces three-way cascade.
+- Extended PB-SIFT-025 with CloudTrail, Azure Sentinel, and GCP audit log parsing for cloud artifact detection.
+- Fixed PE-injected memory region classification — malfind output now correctly typed as `injected_pe`.
 
 ---
 

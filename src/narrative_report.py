@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Dict, List, Any, Callable, Optional
 
 
-
-
 def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
     """Sanitize a value before embedding it in an LLM prompt.
 
@@ -571,12 +569,42 @@ class NarrativeReportGenerator:
 
         # Write markdown report — include needs_review banner if applicable
         md_content = self._render_markdown(sections, report_json)
+        
+        # Structural self-check: verify all claims cite evidence
+        if self.call_llm and md_content and len(md_content) > 200:
+            check_prompt = f"""Review this DFIR narrative report. Does every factual claim cite a specific evidence anchor (file path, registry key, log entry, tool output line, etc.)? List any claims that lack citations. If all claims are properly cited, respond with 'CLEAN'. If not, list each uncited claim.
+
+Report content:
+{md_content[:15000]}
+"""
+            try:
+                check_result = self._call_llm_with_retry(check_prompt, "", agent_type="manager")
+                if check_result and "CLEAN" not in check_result.upper():
+                    # Not clean - regenerate with citation requirement
+                    regenerate_prompt = f"""You are a DFIR narrative report writer. The following report draft contains claims without evidence citations.
+
+Previous draft:
+{md_content[:15000]}
+
+Review issues:
+{check_result[:3000]}
+
+REQUIREMENT: Every factual claim MUST cite a specific evidence anchor (file path, registry key, log entry, tool output line, etc.). If a claim cannot be anchored, either remove it or indicate that evidence is unavailable.
+
+Provide a revised narrative report with all claims properly cited to specific evidence."""
+                    regenerated = self._call_llm_with_retry(regenerate_prompt, "", agent_type="manager")
+                    if regenerated:
+                        md_content = regenerated
+            except Exception:
+                pass  # If check fails, proceed with original content
+        
         if needs_review_sections:
             banner = ("\n> ⚠️ **Needs Review**: The following sections used template fallback "
                       "due to Ollama timeout: " + ", ".join(needs_review_sections) + "\n\n")
             md_content = banner + md_content
         with open(md_path, "w") as f:
             f.write(md_content)
+
 
         # Write structured JSON version
         with open(json_path, "w") as f:

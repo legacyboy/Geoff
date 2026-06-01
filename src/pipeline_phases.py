@@ -1724,12 +1724,34 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             skipped_playbooks.append({"id": "PB-SIFT-016", "reason": "Only one disk image in scope"})
 
-        # Generic File Analysis — ALWAYS run when unclassified files remain
-        if len(inventory["other_files"]) > 0:
+        # Cloud/Enterprise IR — triggered by cloud-specific artifacts
+        _cloud_patterns = {
+            "cloudtrail": ["cloudtrail", "aws cloudtrail", "cloud-trail", "aws-cloudtrail"],
+            "aws_config": ["aws-config", "aws_config", "config.json", "credentials.json"],
+            "azure_sentinel": ["azure sentinel", "azuremonitor", "azure security center"],
+            "azure_audit": ["azure audit log", "azure activity log", "activitylogs"],
+            "gcp_audit": ["gcp audit", "google audit log", "auditlog", "cloudaudit"],
+            "gcp_keys": ["service-account", "service_account", "gcp-sa-", "serviceAccount"],
+        }
+        _cloud_detected = False
+        for f in inventory.get("other_files", []) + inventory.get("disk_images", []):
+            f_lower = str(f).lower()
+            for _ctype, patterns in _cloud_patterns.items():
+                if any(p in f_lower for p in patterns):
+                    _cloud_detected = True
+                    break
+            if _cloud_detected:
+                break
+        if _cloud_detected:
             execution_plan.append("PB-SIFT-025")
-            _fe_log(job_id, f"  PB-SIFT-025: Generic File Analysis queued for {len(inventory['other_files'])} unclassified file(s)")
+            _fe_log(job_id, "  PB-SIFT-025: Cloud/Enterprise IR queued (cloud artifacts detected)")
         else:
-            skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files"})
+            # Generic File Analysis — run when unclassified files remain (but only if no cloud artifacts found)
+            if len(inventory["other_files"]) > 0:
+                execution_plan.append("PB-SIFT-025")
+                _fe_log(job_id, f"  PB-SIFT-025: Generic File Analysis queued for {len(inventory['other_files'])} unclassified file(s)")
+            else:
+                skipped_playbooks.append({"id": "PB-SIFT-025", "reason": "No unclassified files or cloud artifacts"})
 
         # --- Nuclear option: use deep classification results to intelligently
         # queue playbooks based on what was ACTUALLY found inside disk images.

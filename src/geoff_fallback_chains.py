@@ -79,9 +79,9 @@ FALLBACK_CHAINS: dict[str, list[dict[str, Any]]] = {
 
     # ── Disk Image Analysis ──────────────────────────────────────────────────
     "sleuthkit.list_files": [
-        {"module": "sleuthkit",      "function": "list_files",             "params_mod": None,                               "label": "fls_auto"},
-        {"module": "sleuthkit",      "function": "list_files",             "params_mod": {"offset": 0},                      "label": "fls_offset0"},
         {"module": "sleuthkit",      "function": "analyze_partition_table", "params_mod": None,                              "label": "mmls_probe"},
+        {"module": "sleuthkit",      "function": "list_files",             "params_mod": {"offset": 0},                      "label": "fls_offset0"},
+        {"module": "sleuthkit",      "function": "list_files",             "params_mod": None,                               "label": "fls_auto"},
         {"module": "photorec",       "function": "recover_files",         "params_mod": None,                               "label": "photorec_carve"},
         {"module": "bulk_extractor", "function": "scan_image",            "params_mod": None,                               "label": "bulk_extractor"},
         {"module": "strings",        "function": "extract_strings",        "params_mod": None,                               "label": "strings_terminal"},

@@ -444,9 +444,9 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-008": "Malware Hunting",
     "PB-SIFT-009": "Ransomware",
     "PB-SIFT-010": "Living-off-the-Land",
-    "PB-SIFT-011": "Web Shell",
+    "PB-SIFT-011": "Impact/Data Destruction",
     "PB-SIFT-012": "Anti-Forensics",
-    "PB-SIFT-013": "Insider Threat",
+    "PB-SIFT-013": "Data from Cloud/Network Share",
     "PB-SIFT-014": "Linux Forensics",
     "PB-SIFT-015": "Data Staging",
     "PB-SIFT-016": "Cross-Image Correlation",
@@ -527,16 +527,19 @@ PLAYBOOK_STEPS = {
     },
     "PB-SIFT-004": {  # Privilege Escalation
         "memory_dumps": [
-            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
             ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
+            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("sleuthkit", "analyze_filesystem", {"image": "{image}", "offset": "{offset}"}),
+            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
         ],
         "registry_hives": [
             ("registry", "extract_autoruns", {"software_path": "{hive}"}),
-            ("registry", "parse_hive", {"hive_path": "{hive}"}),
+            ("registry", "extract_services", {"system_path": "{hive}"}),
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
         ],
     },
     "PB-SIFT-005": {  # Credential Theft
@@ -630,15 +633,17 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
-    "PB-SIFT-011": {  # Web Shell
+    "PB-SIFT-011": {  # Impact/Data Destruction
+        "disk_images": [
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("vss", "list_vss", {"image": "{image}"}),
+        ],
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
         ],
         "evt_logs": [
             ("logs", "parse_evt", {"evt_file": "{evt}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-012": {  # Anti-Forensics
@@ -670,27 +675,18 @@ PLAYBOOK_STEPS = {
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
         ],
     },
-    "PB-SIFT-013": {  # Insider Threat — includes USB/Removable Media forensics
-        "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
-        ],
-        "evt_logs": [
-            ("logs", "parse_evt", {"evt_file": "{evt}"}),
-        ],
-        "syslogs": [
-            ("logs", "parse_syslog", {"log_file": "{syslog}"}),
-        ],
+    "PB-SIFT-013": {  # Data from Cloud/Network Share
         "pcaps": [
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
         ],
         "memory_dumps": [
-            ("volatility", "network_scan", {"memory_dump": "{mem}"}),
+            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
+            ("memory", "extract_network", {"memory_dump": "{mem}"}),
         ],
         "disk_images": [
-            ("fat_recovery", "recover_formatted_fat", {
-                "disk_image": "{image}",
-                "offset": "{offset}",
-            }),
+            ("cloud", "detect_exfiltration", {"evidence_path": "{image}"}),
+            ("vss", "list_vss", {"image": "{image}"}),
+            ("vss", "extract_vss_files", {"image": "{image}", "output_dir": "{output_dir}/vss"}),
         ],
     },
     "PB-SIFT-014": {  # Linux Forensics
@@ -931,6 +927,13 @@ PLAYBOOK_STEPS = {
     },
     "PB-SIFT-025": {  # Cloud & Enterprise IR — cloud logs and unclassified file analysis
         "other_files": [
+            # CloudTrail JSON parsing (AWS)
+            ("cloud", "parse_cloudtrail", {"file_path": "{file}"}),
+            # Azure log scanning (Azure Sentinel, Azure AD logs)
+            ("cloud", "scan_azure_logs", {"file_path": "{file}"}),
+            # GCP audit log pattern matching
+            ("cloud", "parse_gcp_audit", {"file_path": "{file}"}),
+            # Generic file analysis fallback for non-cloud artifacts
             ("remnux", "die_scan",       {"target_file": "{file}"}),
             ("remnux", "exiftool_scan",  {"target_file": "{file}"}),
             ("remnux", "clamav_scan",    {"target_file": "{file}"}),
