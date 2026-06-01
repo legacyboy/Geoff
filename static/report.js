@@ -109,7 +109,7 @@
       { id: 'summary',  num: '01', title: 'Executive Summary',           render: (r) => renderSummary(r, data) },
       { id: 'timeline', num: '02', title: 'Super Timeline',              render: (r) => renderTimeline(r, data) },
       { id: 'findings', num: '03', title: 'Findings by Device',          render: (r) => renderFindings(r, data) },
-      { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',  render: (r) => renderMitre(r, data) },
+      { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',  render: (r) => renderMitreLink(r, dir) },
       { id: 'iocs',     num: '05', title: 'Indicators of Compromise',    render: (r) => renderIocs(r, data) },
     ];
 
@@ -196,8 +196,11 @@
   }
 
   function renderTimeline(root, data) {
-    const events = (data.timeline || []).slice(0, 100);
-    if (!events.length) { root.innerHTML = '<p style="color:var(--g-text-mute)">No timeline data available.</p>'; return; }
+    const timeline = data.timeline || [];
+    if (!timeline.length) {
+      root.innerHTML = '<div class="info-box"><p>No timeline entries were generated for this case. This can happen when the pipeline completed without producing timeline data.</p></div>';
+      return;
+    }
     const rows = events.map(ev => {
       const ts = ev.timestamp || '';
       const devId = ev.device_id || ev.device || '';
@@ -275,80 +278,9 @@
     root.querySelectorAll('.dev-head').forEach(h => h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
   }
 
-  function renderMitre(root, data) {
-    // Try to build MITRE grid from attack_chain + behavioral_flags
-    const ac = data.attack_chain || {};
-    const seenTechniques = new Set(ac.mitre_techniques_observed || []);
-
-    // Also gather from behavioral flags
-    const flags = data.behavioral_flags || {};
-    const techBySev = {};
-    Object.values(flags).forEach(devFlags => {
-      (devFlags || []).forEach(f => {
-        (f.mitre_techniques || f.mitre || []).forEach(t => {
-          if (!techBySev[t]) techBySev[t] = f.severity || 'INFO';
-          seenTechniques.add(t);
-        });
-      });
-    });
-
-    // Get mitre_techniques from pipeline if available
-    const mitreList = data.mitre_techniques || [];
-
-    // Build tactic → techniques mapping using what we have
-    const TACTIC_ORDER = [
-      'Initial Access', 'Execution', 'Persistence', 'Privilege Escalation',
-      'Defense Evasion', 'Credential Access', 'Discovery', 'Lateral Movement',
-      'Collection', 'Command & Control', 'Exfiltration', 'Impact'
-    ];
-    const TECH_TACTIC = {
-      T1566: 'Initial Access', T1190: 'Initial Access', T1195: 'Initial Access', T1078: 'Initial Access',
-      T1059: 'Execution', T1203: 'Execution', T1204: 'Execution',
-      T1547: 'Persistence', T1543: 'Persistence', T1053: 'Persistence', T1505: 'Persistence',
-      T1548: 'Privilege Escalation', T1134: 'Privilege Escalation', T1055: 'Privilege Escalation',
-      T1070: 'Defense Evasion', T1027: 'Defense Evasion', T1218: 'Defense Evasion',
-      T1003: 'Credential Access', T1558: 'Credential Access', T1552: 'Credential Access',
-      T1057: 'Discovery', T1083: 'Discovery', T1018: 'Discovery',
-      T1021: 'Lateral Movement', T1570: 'Lateral Movement', T1550: 'Lateral Movement',
-      T1074: 'Collection', T1560: 'Collection', T1213: 'Collection',
-      T1071: 'Command & Control', T1090: 'Command & Control', T1573: 'Command & Control',
-      T1048: 'Exfiltration', T1567: 'Exfiltration', T1041: 'Exfiltration',
-      T1486: 'Impact', T1489: 'Impact', T1485: 'Impact', T1496: 'Impact',
-    };
-
-    const byTactic = {};
-    const addTech = (techId, name, sev) => {
-      const base = techId.split('.')[0];
-      const tactic = TECH_TACTIC[base] || 'Other';
-      if (!byTactic[tactic]) byTactic[tactic] = [];
-      if (!byTactic[tactic].some(t => t.id === techId)) {
-        byTactic[tactic].push({ id: techId, name: name || techId, sev: (sev || 'LOW').toUpperCase() });
-      }
-    };
-
-    // From pipeline mitre_techniques
-    mitreList.forEach(t => {
-      if (typeof t === 'string') addTech(t, t, techBySev[t] || 'LOW');
-      else if (t.technique_id) addTech(t.technique_id, t.name || t.technique_id, t.severity || techBySev[t.technique_id] || 'LOW');
-    });
-
-    // From attack_chain
-    seenTechniques.forEach(t => addTech(t, t, techBySev[t] || 'LOW'));
-
-    const tactics = TACTIC_ORDER.filter(t => byTactic[t]).concat(Object.keys(byTactic).filter(t => !TACTIC_ORDER.includes(t)));
-
-    if (!tactics.length) {
-      root.innerHTML = '<p style="color:var(--g-text-mute)">No MITRE technique data available.</p>';
-      return;
-    }
-
-    root.innerHTML = `<div class="mitre-grid">${tactics.map(tac => `
-      <div class="mitre-col">
-        <div class="tac">${esc(tac)}</div>
-        <div class="tech">${byTactic[tac].map(x =>
-          `<div class="tcell s-${x.sev}"><div class="tid">${esc(x.id)}</div><div class="tn">${esc(x.name)}</div></div>`
-        ).join('')}</div>
-      </div>`).join('')}</div>`;
+  function renderMitreLink(root, dir) {
+    const link = encodeURIComponent(dir);
+    root.innerHTML = `<div class="mitre-card"><p>Full MITRE ATT&CK coverage matrix with technique heatmap available.</p><a class="btn primary" href="/reports/mitre-heatmap?case=${link}" target="_blank">View MITRE ATT&CK Matrix →</a></div>`;
   }
 
   function renderIocs(root, data) {

@@ -374,10 +374,25 @@
     updateJobBanner(pct, data.current_playbook, data.current_step);
 
     if (status === 'complete') {
+      const titleEl = $("op-title");
+      if (titleEl) {
+        const res = data.result || {};
+        const dirName = (res.case_work_dir || res.evidence_dir || '').split('/').filter(Boolean).pop();
+        titleEl.textContent = dirName || "Find Evil";
+      }
       finishRunSuccess(data.result || {});
     } else if (status === 'error') {
+      const titleEl = $("op-title"); if (titleEl) titleEl.textContent = "Find Evil";
       finishRunError(data.error || 'Investigation failed');
     } else {
+      const vbadgeEl = $("vbadge");
+      const vsEl = $("v-sevpill");
+      if (vbadgeEl) {
+        const pb = data.current_playbook || '';
+        vbadgeEl.textContent = pb ? pb.toUpperCase() : (pct >= 50 ? 'ANALYZING' : 'SCANNING');
+      }
+      if (vsEl) { vsEl.textContent = 'SCANNING'; vsEl.className = 'sev-pill'; vsEl.style.opacity = '1'; }
+      updateThreat();
       pollStatus();
     }
   }
@@ -413,6 +428,7 @@
 
     const live = $("op-live"); if (live) live.style.display = "none";
     const rb = $("runbtn"); if (rb) { rb.textContent = "↻ Replay Run"; rb.style.opacity = "1"; }
+    const caseEl = $("op-case"); if (caseEl) caseEl.textContent = "Ready";
 
     const pf = $("pbar-fill"); if (pf) pf.style.width = "100%";
     const pp = $("pbar-pct"); if (pp) pp.textContent = "100%";
@@ -483,7 +499,7 @@
       const hostCount = Object.keys(behavioralFlags).length || Object.keys(deviceMap).length;
 
       // Build viewer URL: extract case directory name from result.case_work_dir
-      let viewerUrl = '/reports/viewer';
+      let viewerUrl = '/reports/narrative';
       if (result.case_work_dir) {
         const caseDirName = result.case_work_dir.split('/').filter(Boolean).pop();
         viewerUrl += '?case=' + encodeURIComponent(caseDirName);
@@ -511,6 +527,7 @@
 
     const live = $("op-live"); if (live) live.style.display = "none";
     const rb = $("runbtn"); if (rb) { rb.textContent = "◎ Run Find Evil"; rb.style.opacity = "1"; }
+    const caseEl2 = $("op-case"); if (caseEl2) caseEl2.textContent = "Ready";
 
     addLog("ERROR: " + msg);
     pushChat("geoff", `<b>GEOFF</b>Investigation failed: ${escHtml(msg)}`);
@@ -731,7 +748,7 @@
         `;
         card.onclick = () => {
           const caseDir = encodeURIComponent(rpt.dir);
-          window.open('/reports/viewer?case=' + caseDir, '_blank');
+          window.open('/reports/narrative?case=' + caseDir, '_blank');
         };
         body.appendChild(card);
       });
@@ -750,21 +767,19 @@
       const data = await resp.json();
       const jobs = data.active_jobs || [];
 
-      if (jobs.length === 0) return;
+      if (jobs.length === 0) {
+      const titleEl = $("op-title"); if (titleEl) titleEl.textContent = "Find Evil";
+      return;
+    }
 
       // Found a running job — show banner and start polling
       const job = jobs[0]; // take the most recent
       currentJobId = job.job_id;
       showJobBanner(job.job_id, job.evidence_dir || 'unknown', job.progress_pct, job.current_playbook, job.current_step);
 
-      // Set up the console
-      const evdir = job.evidence_dir || EVIDENCE_DIR;
-      if (evdir && $("evdir")) $("evdir").value = evdir;
-      const titleEl = $("op-title"); if (titleEl) {
-        const dirName = evdir.split('/').filter(Boolean).pop() || evdir;
-        titleEl.textContent = dirName;
-      }
-      const caseEl = $("op-case"); if (caseEl) caseEl.textContent = evdir;
+      // Set up the console — do NOT overwrite evdir input or op-title on page load;
+      // the job banner already shows the path context.
+      const evdir = job.evidence_dir || '';
       const live = $("op-live"); if (live) live.style.display = "inline-flex";
 
       // Estimate elapsed from started_at
@@ -782,12 +797,6 @@
       addLog("Detected running job — " + job.job_id);
       addLog("Evidence: " + (job.evidence_dir || 'unknown'));
       pollStatus();
-
-      // Wire banner resume button
-      const resumeBtn = $("jb-resume");
-      if (resumeBtn) {
-        resumeBtn.onclick = () => switchTab('console');
-      }
     } catch (e) {
       // Silent — no active jobs is normal
     }
@@ -814,7 +823,6 @@
      ============================================================ */
   renderPlaybooks();
   renderPhases();
-  if ($("evdir") && EVIDENCE_DIR) $("evdir").value = EVIDENCE_DIR;
 
   // Run button
   const runBtn = $("runbtn"); if (runBtn) runBtn.onclick = runFindEvil;
@@ -834,7 +842,11 @@
 
   // Job banner resume button
   const jbResume = $("jb-resume");
-  if (jbResume) jbResume.onclick = () => switchTab('console');
+  if (jbResume) jbResume.onclick = () => {
+    switchTab('console');
+    const path = $("evdir")?.value?.trim();
+    if (path) runFindEvil();
+  };
 
   loadManifest();
 

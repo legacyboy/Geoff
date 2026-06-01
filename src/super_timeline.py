@@ -335,8 +335,15 @@ class SuperTimeline:
 
         if json_line_files:
             for jlf in json_line_files:
+                try:
+                    jlf_size = jlf.stat().st_size
+                except OSError:
+                    jlf_size = -1
+                if jlf_size == 0:
+                    log_func(f"  Plaso: WARNING {jlf.name} is 0 bytes — psort produced no output (upstream log2timeline/psort failure)")
+                    continue
                 device_id = self._match_plaso_to_device(jlf, device_map)
-                log_func(f"  Plaso: streaming {jlf.name} for device {device_id}")
+                log_func(f"  Plaso: streaming {jlf.name} ({jlf_size} bytes) for device {device_id}")
                 count = 0
                 skipped = 0
                 try:
@@ -373,10 +380,19 @@ class SuperTimeline:
                       list(timeline_dir.glob("*.plaso"))
 
         if not plaso_files:
+            log_func("  Plaso: no .json_line and no .plaso files found — timeline will be empty")
             return events
 
         log_func(f"  Plaso: no .json_line files found; running psort for {len(plaso_files)} .plaso files")
         for plaso_path in plaso_files:
+            try:
+                plaso_size = plaso_path.stat().st_size
+            except OSError:
+                plaso_size = -1
+            if plaso_size == 0:
+                log_func(f"  Plaso: WARNING {plaso_path.name} is 0 bytes — log2timeline produced no output; skipping")
+                continue
+
             device_id = self._match_plaso_to_device(plaso_path, device_map)
             json_line_out = plaso_path.with_suffix('.json_line')
 
@@ -402,7 +418,11 @@ class SuperTimeline:
                         continue
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
                 if result.returncode != 0:
-                    log_func(f"  psort failed for {plaso_path.name}: {result.stderr[:200]}")
+                    log_func(
+                        f"  Plaso: WARNING psort failed for {plaso_path.name} "
+                        f"(rc={result.returncode}, size={plaso_size} bytes): "
+                        f"{result.stderr[:400]}"
+                    )
                     continue
             except Exception as e:
                 log_func(f"  Plaso extraction error for {plaso_path.name}: {e}")

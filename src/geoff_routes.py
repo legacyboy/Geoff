@@ -41,6 +41,7 @@ from geoff_config import (
 from geoff_utils import (
     _log_error, _log_info, _fe_log, _fe_log_with_exception,
     _state_lock, _find_evil_jobs, _run_step_via_orchestrator,
+    _auto_cancel_stale_jobs, _start_job_heartbeat,
 )
 from geoff_models import action_logger, get_all_cases, get_available_tools_status
 from geoff_self_heal import call_llm, _self_check_chat_response
@@ -354,6 +355,7 @@ def chat():
 
             # Use the existing async find_evil mechanism
             job_id = f"fe-{uuid.uuid4().hex[:12]}"
+            _chat_start_time = time.time()
             with _state_lock:
                 _find_evil_jobs[job_id] = {
                     "status": "running",
@@ -368,6 +370,8 @@ def chat():
                     "log": [{"time": datetime.now().strftime("%H:%M:%S"),
                              "msg": f"Find Evil started from chat: {evidence_dir}"}],
                 }
+
+            _start_job_heartbeat(job_id, _chat_start_time)
 
             def _run():
                 try:
@@ -653,24 +657,40 @@ def graph_viewer():
 
 
 def list_reports():
-    """GET /reports — List completed Find Evil cases that have a saved JSON report."""
-    cases_root = Path(CASES_WORK_DIR)
+    """GET /reports — List completed Find Evil cases that have a real report (not stubs)."""
+    # Scan current CASES_WORK_DIR plus the legacy evidence-storage-2 path
+    scan_roots = [Path(CASES_WORK_DIR)]
+    legacy_root = Path("/mnt/evidence-storage-2")
+    if legacy_root.exists() and legacy_root.resolve() != Path(CASES_WORK_DIR).resolve():
+        scan_roots.append(legacy_root)
+
     reports = []
-    if cases_root.exists():
+    seen_dirs: set = set()
+
+    for cases_root in scan_roots:
+        if not cases_root.exists():
+            continue
         for d in sorted(cases_root.iterdir(), reverse=True):
             if not d.is_dir():
                 continue
             if '_findevil_' not in d.name:
                 continue
+            if d.name in seen_dirs:
+                continue
+            seen_dirs.add(d.name)
 
-            # Try primary report first, then fallback completion indicators
+            # Only include cases with real report data — skip stubs
+            # A proper report has either:
+            #   - d / "reports" / "find_evil_report.json" (final narrative)
+            #   - d / "findings.json" (findings summary)
+            # .geoff_checkpoint.json alone is NOT sufficient (stub from cancelled/dead job)
             candidate_files = [
                 d / "reports" / "find_evil_report.json",
                 d / "findings.json",
                 d / "summary.json",
-                d / ".geoff_checkpoint.json",
             ]
-            data = None
+            data: dict = {}
+            matched_on = None
             for candidate in candidate_files:
                 if not candidate.exists():
                     continue
@@ -678,12 +698,17 @@ def list_reports():
                     if candidate.stat().st_size > 50 * 1024 * 1024:  # 50 MB guard
                         continue
                     with open(candidate) as f:
-                        data = json.load(f)
-                    break
+                        loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        data = loaded
+                        matched_on = candidate.name
+                        break
                 except (OSError, json.JSONDecodeError):
                     continue
 
-            if data is None:
+            # Skip stubs with no real report data — require at least elapsed_seconds > 0
+            # to confirm actual work was done
+            if not data or not data.get('elapsed_seconds'):
                 continue
 
             try:
@@ -702,9 +727,40 @@ def list_reports():
                     'elapsed_seconds': data.get('elapsed_seconds', 0),
                     'evidence_dir': data.get('evidence_dir', ''),
                 })
-            except KeyError:
+            except (KeyError, AttributeError):
                 continue
+
     return jsonify({'reports': reports})
+
+def _find_case_dir(safe_dir):
+    """Search CASES_WORK_DIR and legacy path for a matching case directory.
+    Returns Path or None."""
+    scan_roots = [Path(CASES_WORK_DIR)]
+    legacy_root = Path("/mnt/evidence-storage-2")
+    if legacy_root.exists() and legacy_root.resolve() != Path(CASES_WORK_DIR).resolve():
+        scan_roots.append(legacy_root)
+
+    safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
+
+    for root in scan_roots:
+        if not root.exists():
+            continue
+        # Exact match first
+        for candidate in sorted(root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            if cand_norm == safe_norm:
+                return candidate
+        # Fallback: prefix-only match (case name without _findevil_ suffix)
+        for candidate in sorted(root.iterdir(), reverse=True):
+            if not candidate.is_dir():
+                continue
+            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
+            cand_prefix = cand_norm.split('_findevil_')[0]
+            if cand_prefix == safe_norm:
+                return candidate
+    return None
 
 
 def get_report_json(case_dir):
@@ -714,36 +770,10 @@ def get_report_json(case_dir):
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
 
-    # Search CASES_WORK_DIR for a matching directory (normalized match)
-    cases_root = Path(CASES_WORK_DIR)
-    case_path = None
-    if cases_root.exists():
-        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
-        for candidate in sorted(cases_root.iterdir(), reverse=True):
-            if not candidate.is_dir():
-                continue
-            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            if cand_norm == safe_norm:
-                case_path = candidate
-                break
-        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
-        if case_path is None:
-            for candidate in sorted(cases_root.iterdir(), reverse=True):
-                if not candidate.is_dir():
-                    continue
-                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-                cand_prefix = cand_norm.split('_findevil_')[0]
-                if cand_prefix == safe_norm:
-                    case_path = candidate
-                    break
+    case_path = _find_case_dir(safe_dir)
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
-    # Verify resolved path stays within CASES_WORK_DIR (no traversal)
-    try:
-        case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
-    except ValueError:
-        return jsonify({'error': 'Invalid case directory'}), 400
     report_file = case_path / "reports" / "find_evil_report.json"
     if not report_file.exists():
         return jsonify({'error': 'Report not found'}), 404
@@ -770,6 +800,26 @@ def get_report_json(case_dir):
                     data['iocs'] = nr_data['iocs']
             except (json.JSONDecodeError, OSError):
                 pass
+        # Fallback: inject timeline from super_timeline.jsonl if report has 0 events
+        if not data.get('timeline'):
+            tl_file = case_path / "timeline" / "super_timeline.jsonl"
+            if tl_file.exists() and tl_file.stat().st_size > 50:
+                tl_events = []
+                try:
+                    with open(tl_file, 'r', encoding='utf-8', errors='replace') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    tl_events.append(json.loads(line))
+                                    if len(tl_events) >= 10000:
+                                        break
+                                except (json.JSONDecodeError, ValueError):
+                                    pass
+                except OSError:
+                    pass
+                if tl_events:
+                    data['timeline'] = tl_events
         return json.dumps(data, indent=2), 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         _log_error("Failed to read report JSON", e)
@@ -782,35 +832,10 @@ def download_markdown(case_dir):
     if not safe_dir:
         return jsonify({'error': 'Invalid case directory name'}), 400
 
-    # Search CASES_WORK_DIR for a matching directory (normalized match)
-    cases_root = Path(CASES_WORK_DIR)
-    case_path = None
-    if cases_root.exists():
-        safe_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', safe_dir)
-        for candidate in sorted(cases_root.iterdir(), reverse=True):
-            if not candidate.is_dir():
-                continue
-            cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-            if cand_norm == safe_norm:
-                case_path = candidate
-                break
-        # Fallback: prefix-only match (e.g. case name without _findevil_ suffix)
-        if case_path is None:
-            for candidate in sorted(cases_root.iterdir(), reverse=True):
-                if not candidate.is_dir():
-                    continue
-                cand_norm = re.sub(r'[^a-zA-Z0-9_\-]', '_', candidate.name)
-                cand_prefix = cand_norm.split('_findevil_')[0]
-                if cand_prefix == safe_norm:
-                    case_path = candidate
-                    break
+    case_path = _find_case_dir(safe_dir)
 
     if not case_path or not case_path.is_dir():
         return jsonify({'error': 'Case not found'}), 404
-    try:
-        case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
-    except ValueError:
-        return jsonify({'error': 'Invalid case directory'}), 400
     path = case_path / 'reports' / 'narrative_report.md'
     if not path.exists():
         return jsonify({'error': 'Narrative report not found'}), 404
@@ -1171,9 +1196,21 @@ def find_evil_route():
                 "evidence_dir": evidence_dir,
             }), 404
 
+        # Check for existing running job targeting the same evidence directory
+        with _state_lock:
+            for existing_job_id, existing_job in _find_evil_jobs.items():
+                if existing_job.get("status") in ("running", "initializing"):
+                    if existing_job.get("evidence_dir") == evidence_dir:
+                        return jsonify({
+                            "status": "error",
+                            "error": "A job is already running for this evidence directory. Cancel it first or wait for it to complete.",
+                            "existing_job_id": existing_job_id,
+                        }), 409
+
         # Create a job ID and register it
         job_id = f"fe-{uuid.uuid4().hex[:12]}"
 
+        _job_start_time = time.time()
         with _state_lock:
             _find_evil_jobs[job_id] = {
                 "status": "running",
@@ -1187,6 +1224,8 @@ def find_evil_route():
                 "evidence_dir": evidence_dir,
                 "log": [{"time": datetime.now().strftime("%H:%M:%S"), "msg": "Find Evil job started"}],
             }
+
+        _start_job_heartbeat(job_id, _job_start_time)
 
         # Spawn the find_evil run in a background thread
         def _run():
@@ -1234,6 +1273,9 @@ def find_evil_status_latest():
     """
     with _state_lock:
         jobs_snapshot = list(_find_evil_jobs.items())
+    
+    # Auto-cancel stale jobs before processing
+    _auto_cancel_stale_jobs()
 
     if not jobs_snapshot:
         return jsonify({"status": "not_found", "error": "No Find Evil jobs found"}), 404
@@ -1259,6 +1301,7 @@ def find_evil_status_latest():
         "current_playbook": job["current_playbook"],
         "current_step": job["current_step"],
         "elapsed_seconds": job["elapsed_seconds"],
+        "last_heartbeat": job.get("last_heartbeat"),
         "log": job.get("log", [])[-50:],
     }
     if job["status"] == "complete":
@@ -1273,6 +1316,9 @@ def find_evil_status(job_id):
     GET /find-evil/status/<job_id>
     Returns current progress of a Find Evil job.
     """
+    # Auto-cancel stale jobs before processing
+    _auto_cancel_stale_jobs()
+    
     with _state_lock:
         job = _find_evil_jobs.get(job_id)
 
@@ -1286,6 +1332,7 @@ def find_evil_status(job_id):
         "current_playbook": job["current_playbook"],
         "current_step": job["current_step"],
         "elapsed_seconds": job["elapsed_seconds"],
+        "last_heartbeat": job.get("last_heartbeat"),
         "log": job.get("log", [])[-50:],  # Last 50 entries
     }
 
@@ -1347,6 +1394,10 @@ def find_evil_active():
             for jid, job in _find_evil_jobs.items()
             if job.get("status") in ("running", "initializing")
         ]
+    
+    # Auto-cancel stale jobs before returning active jobs
+    _auto_cancel_stale_jobs()
+    
     return jsonify({"active_jobs": active, "count": len(active)})
 
 

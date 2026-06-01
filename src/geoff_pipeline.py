@@ -2408,30 +2408,35 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                                 break
                                             else:
                                                 _fe_log(job_id, f"  ⚠ mmls on ewf1 failed for {img_name}: {mmls_r.stderr.strip()[:200]}")
-                                                # Try mmls with explicit partition table types
-                                                for pt_type in ["gpt", "dos", "mac", "bsd"]:
-                                                    try:
-                                                        mmls_t = subprocess.run(
-                                                            ["mmls", "-t", pt_type, ewf1_path],
-                                                            capture_output=True, text=True, timeout=30,
-                                                        )
-                                                        if mmls_t.returncode == 0:
-                                                            for line in mmls_t.stdout.splitlines():
-                                                                line = line.strip()
-                                                                m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                                if not m:
-                                                                    m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
-                                                                if m:
-                                                                    start = int(m.group(1))
-                                                                    desc = m.group(4).lower() if m.lastindex >= 4 else ""
-                                                                    if start > 0 and any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                        image_offsets[img] = start
-                                                                        _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls -t {pt_type})")
-                                                                        break
-                                                            if img in image_offsets:
-                                                                break
-                                                    except Exception:
-                                                        pass
+                                                _pless_errs = ("Invalid sector address", "No partition table found", "Unable to determine partition type")
+                                                if any(s in mmls_r.stderr for s in _pless_errs) or (mmls_r.returncode == 0 and not mmls_r.stdout.strip()):
+                                                    image_offsets[img] = 0
+                                                    _fe_log(job_id, f"  📂 Partitionless NTFS volume for {img_name}: no MBR/GPT, using offset 0")
+                                                else:
+                                                    # Try mmls with explicit partition table types
+                                                    for pt_type in ["gpt", "dos", "mac", "bsd"]:
+                                                        try:
+                                                            mmls_t = subprocess.run(
+                                                                ["mmls", "-t", pt_type, ewf1_path],
+                                                                capture_output=True, text=True, timeout=30,
+                                                            )
+                                                            if mmls_t.returncode == 0:
+                                                                for line in mmls_t.stdout.splitlines():
+                                                                    line = line.strip()
+                                                                    m = re.match(r'^\d+:\s+\d+:\d+\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+                                                                    if not m:
+                                                                        m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
+                                                                    if m:
+                                                                        start = int(m.group(1))
+                                                                        desc = m.group(4).lower() if m.lastindex >= 4 else ""
+                                                                        if start > 0 and any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
+                                                                            image_offsets[img] = start
+                                                                            _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls -t {pt_type})")
+                                                                            break
+                                                                if img in image_offsets:
+                                                                    break
+                                                        except Exception:
+                                                            pass
                                         except subprocess.TimeoutExpired:
                                             _fe_log(job_id, f"  ⚠ mmls on ewf1 timed out for {img_name}")
                                         except Exception as e:
@@ -2490,6 +2495,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         # ────────────────────────────────────────────────────────
                         if img not in image_offsets:
                             # Try default mmls first
+                            _partitionless = False
                             try:
                                 raw_mmls = subprocess.run(
                                     ['mmls', img], capture_output=True, text=True, timeout=30
@@ -2505,13 +2511,25 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 image_offsets[img] = start
                                                 _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (direct mmls)")
                                                 break
+                                else:
+                                    _pless_errs = ("Invalid sector address", "No partition table found", "Unable to determine partition type")
+                                    if any(s in raw_mmls.stderr for s in _pless_errs):
+                                        _partitionless = True
+                                    elif not raw_mmls.stdout.strip():
+                                        # mmls succeeded (exit 0) with zero output — no partition table
+                                        _partitionless = True
+                                        _fe_log(job_id, f"  mmls returned empty output — partitionless volume detected for {img_name}")
                             except subprocess.TimeoutExpired:
                                 _fe_log(job_id, f"  ⚠ mmls timed out on raw image for {img_name}")
                             except Exception:
                                 pass
 
+                            # Partitionless volume: skip all -t type retries
+                            if _partitionless:
+                                image_offsets[img] = 0
+                                _fe_log(job_id, f"  📂 Partitionless NTFS volume for {img_name}: no MBR/GPT, using offset 0")
                             # If default mmls failed, try with explicit partition table types
-                            if img not in image_offsets:
+                            elif img not in image_offsets:
                                 for pt_type in ["gpt", "dos", "mac", "bsd"]:
                                     try:
                                         mmls_t = subprocess.run(
@@ -4786,7 +4804,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     any_step_ran = False
 
                     for ev_type, step_templates in pb_steps_def.items():
-                        if _abort:
+                        if _abort or _is_job_cancelled(job_id):
                             break
                         evidence_items = dev_ev.get(ev_type, [])
                         # If no evidence of this type, skip the steps for this evidence type
@@ -4807,7 +4825,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             for module, function, raw_params in step_templates:
                                 if module == "anti_forensics":
                                     continue
-                                if _abort:
+                                if _abort or _is_job_cancelled(job_id):
                                     break
                                 _update_job(pb_progress_base, playbook_id, f"{module}.{function}")
                                 params_list = []
@@ -4855,7 +4873,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             continue  # skip serial loop for disk_images/memory_dumps
 
                         for item in items:
-                            if _abort:
+                            if _abort or _is_job_cancelled(job_id):
                                 break
                             # Validate evidence path before substitution to prevent command injection
                             try:

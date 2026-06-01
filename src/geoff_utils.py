@@ -63,6 +63,7 @@ __all__ = [
   "_log_error",
   "_active_mounts",
   "_find_evil_jobs",
+  "_is_job_cancelled",
   "_log_info",
   "_make_exec_key",
   "_resolve_params",
@@ -72,6 +73,8 @@ __all__ = [
   "_scan_completed_playbooks",
   "_save_jobs",
   "_load_jobs",
+  "_auto_cancel_stale_jobs",
+  "_start_job_heartbeat",
   "git_commit_action",
   "safe_git_commit",
   "safe_run",
@@ -97,6 +100,7 @@ CASES_WORK_DIR = os.environ.get(
     os.path.join(tempfile.gettempdir(), "geoff-cases")
 )
 _MAX_IN_MEMORY_FINDINGS = int(os.environ.get("GEOFF_MAX_FINDINGS", "50000"))
+GEOFF_JOB_TIMEOUT_SECONDS = int(os.environ.get("GEOFF_JOB_TIMEOUT_SECONDS", "7200"))
 
 # ---------------------------------------------------------------------------
 # Shared state (threading locks, job tracker, mount registry)
@@ -269,6 +273,74 @@ def _save_jobs():
     except Exception as e:
         _log_error(f"_save_jobs failed: {e}")
 
+def _auto_cancel_stale_jobs(max_elapsed: int = None):
+    """Auto-cancel running jobs that have exceeded the max elapsed time.
+
+    Args:
+        max_elapsed: Maximum seconds a job can run before being cancelled.
+                    Defaults to GEOFF_JOB_TIMEOUT_SECONDS env var (default 7200).
+    """
+    if max_elapsed is None:
+        max_elapsed = GEOFF_JOB_TIMEOUT_SECONDS
+    try:
+        with _state_lock:
+            current_time = time.time()
+            cancelled_count = 0
+            for jid, job in _find_evil_jobs.items():
+                if job.get("status") == "running":
+                    started_at_str = job.get("started_at", "")
+                    try:
+                        started_at = datetime.fromisoformat(started_at_str)
+                        elapsed_seconds = current_time - started_at.timestamp()
+                        if elapsed_seconds > max_elapsed:
+                            job["status"] = "cancelled"
+                            job["error"] = f"Job timed out after {int(elapsed_seconds)} seconds"
+                            cancelled_count += 1
+                            _log_info(f"_auto_cancel_stale_jobs: cancelled {jid} (elapsed: {int(elapsed_seconds)}s)")
+                    except (ValueError, TypeError, AttributeError) as e:
+                        # If we can't parse started_at, log it but don't cancel
+                        _log_info(f"_auto_cancel_stale_jobs: could not parse started_at for {jid}: {e}")
+            
+            if cancelled_count > 0:
+                _save_jobs()  # persist the cancelled state
+                _log_info(f"_auto_cancel_stale_jobs: cancelled {cancelled_count} stale job(s)")
+    except Exception as e:
+        _log_error(f"_auto_cancel_stale_jobs failed: {e}")
+
+def _is_job_cancelled(job_id: str) -> bool:
+    """Return True if the job's status field has been set to 'cancelled'."""
+    if job_id is None:
+        return False
+    with _state_lock:
+        job = _find_evil_jobs.get(job_id)
+        return job is not None and job.get("status") == "cancelled"
+
+
+def _start_job_heartbeat(job_id: str, start_time: float) -> threading.Thread:
+    """Start a daemon thread that updates elapsed_seconds every 5 seconds.
+
+    Fixes the frozen timer that occurs during blocking I/O (mmls, strings, etc.)
+    by updating elapsed_seconds from wall clock rather than waiting for
+    _update_job() calls.  Also writes last_heartbeat so callers can detect
+    a stuck pipeline.
+    """
+    def _heartbeat():
+        while True:
+            time.sleep(5)
+            with _state_lock:
+                job = _find_evil_jobs.get(job_id)
+                if job is None:
+                    return
+                if job.get("status") not in ("running", "initializing"):
+                    return
+                job["elapsed_seconds"] = round(time.time() - start_time, 1)
+                job["last_heartbeat"] = datetime.now().isoformat()
+            _save_jobs()
+    t = threading.Thread(target=_heartbeat, daemon=True, name=f"heartbeat-{job_id}")
+    t.start()
+    return t
+
+
 def _load_jobs():
     """Load _find_evil_jobs from disk, overwriting in-memory state.
 
@@ -277,6 +349,9 @@ def _load_jobs():
     (e.g. via `from geoff_utils import _find_evil_jobs`).  If we reassign
     the name to a new dict, those imported references point to a stale empty
     dict and progress updates from `_update_job` are silently dropped.
+
+    On load, stale "running" jobs (those whose threads died on a prior
+    server restart) are auto-transitioned to "cancelled".
     """
     try:
         with _state_lock:
@@ -285,8 +360,23 @@ def _load_jobs():
                 with open(FIND_EVIL_JOBS_FILE) as f:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
+                    # Auto-cancel stale running jobs — threads are daemon
+                    # and die on process exit; any "running" job from a
+                    # prior server instance is orphaned.
+                    stale_count = 0
+                    for jid, job in loaded.items():
+                        if job.get("status") == "running":
+                            job["status"] = "cancelled"
+                            job["error"] = "Cancelled: job thread died on server restart"
+                            stale_count += 1
                     _find_evil_jobs.update(loaded)
+                    if stale_count:
+                        _log_info(f"_load_jobs: auto-cancelled {stale_count} stale running job(s)")
+                        # Persist the corrected state immediately
+                        _atomic_write(FIND_EVIL_JOBS_FILE, json.dumps(loaded, indent=2, default=str))
         _log_info(f"_load_jobs: loaded {len(_find_evil_jobs)} jobs from {FIND_EVIL_JOBS_FILE}")
+        # Auto-cancel any jobs that exceeded their runtime
+        _auto_cancel_stale_jobs()
     except Exception as e:
         _log_error(f"_load_jobs failed: {e}")
 

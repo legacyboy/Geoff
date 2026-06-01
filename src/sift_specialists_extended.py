@@ -29,6 +29,22 @@ import sys
 import inspect
 from file_scanner import FileScanner
 import time
+import threading
+
+
+# ---------------------------------------------------------------------------
+# Per-evidence-file lock to prevent concurrent log2timeline writes to the
+# same SQLite storage file (causes "database is locked" errors).
+# ---------------------------------------------------------------------------
+_create_timeline_locks: Dict[str, threading.Lock] = {}
+_create_timeline_locks_mu = threading.Lock()
+
+
+def _get_timeline_lock(evidence_path: str) -> threading.Lock:
+    with _create_timeline_locks_mu:
+        if evidence_path not in _create_timeline_locks:
+            _create_timeline_locks[evidence_path] = threading.Lock()
+        return _create_timeline_locks[evidence_path]
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +899,15 @@ class PLASO_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
+        # Serialize concurrent calls targeting the same evidence file so that
+        # Plaso's SQLite storage doesn't hit "database is locked" errors.
+        lock = _get_timeline_lock(evidence_path)
+        with lock:
+            return self._run_create_timeline(evidence_path, output_file, parsers)
+
+    def _run_create_timeline(self, evidence_path: str, output_file: str,
+                             parsers: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Inner implementation of create_timeline (called while holding the per-evidence lock)."""
         try:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -900,30 +925,45 @@ class PLASO_Specialist:
                 [self.log2timeline_path, output_file, evidence_path],
             ]
 
-            result = None
-            for cmd in variants:
-                try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-                    if result.returncode == 0:
+            for attempt in range(2):
+                result = None
+                for cmd in variants:
+                    try:
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                        if result.returncode == 0:
+                            break
+                        # If it's an arg error, try next variant
+                        if 'unrecognized arguments' in result.stderr or 'unrecognized option' in result.stderr:
+                            continue
+                        # If it's a ModuleNotFoundError, try direct script
+                        if 'ModuleNotFoundError' in result.stderr and cmd[0] == system_python:
+                            continue
+                        # Other error — stop trying variants
                         break
-                    # If it's an arg error, try next variant
-                    if 'unrecognized arguments' in result.stderr or 'unrecognized option' in result.stderr:
+                    except Exception:
                         continue
-                    # If it's a ModuleNotFoundError, try direct script
-                    if 'ModuleNotFoundError' in result.stderr and cmd[0] == system_python:
-                        continue
-                    # Other error — stop trying
-                    break
-                except Exception:
-                    continue
 
-            if result is None:
-                return {
-                    'tool': 'log2timeline',
-                    'status': 'error',
-                    'error': 'All log2timeline command variants failed',
-                    'timestamp': datetime.now().isoformat(),
-                }
+                if result is None:
+                    return {
+                        'tool': 'log2timeline',
+                        'status': 'error',
+                        'error': 'All log2timeline command variants failed',
+                        'timestamp': datetime.now().isoformat(),
+                    }
+
+                # Detect "database is locked" — clean up broken storage and retry once
+                combined_output = (result.stdout or '') + (result.stderr or '')
+                if 'database is locked' in combined_output and attempt == 0:
+                    broken = Path(output_file)
+                    if broken.exists():
+                        try:
+                            broken.unlink()
+                        except OSError:
+                            pass
+                    time.sleep(5)
+                    continue  # retry
+
+                break  # no lock error, or second attempt done
 
             parsed = self._parse_log2timeline_stdout(result.stdout)
 
@@ -966,6 +1006,29 @@ class PLASO_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
+        # Bail out early on empty/missing storage file — psort will fail anyway
+        plaso_path = Path(storage_file)
+        if not plaso_path.exists():
+            return {
+                'tool': 'psort',
+                'input': storage_file,
+                'status': 'error',
+                'error': f'Storage file not found: {storage_file}',
+                'event_count': 0,
+                'timestamp': datetime.now().isoformat(),
+            }
+        plaso_size = plaso_path.stat().st_size
+        if plaso_size == 0:
+            return {
+                'tool': 'psort',
+                'input': storage_file,
+                'status': 'error',
+                'error': 'Storage file is 0 bytes — log2timeline produced no output',
+                'event_count': 0,
+                'plaso_size_bytes': 0,
+                'timestamp': datetime.now().isoformat(),
+            }
+
         try:
             output_file = storage_file.replace('.plaso', f'.{output_format}')
 
@@ -976,6 +1039,38 @@ class PLASO_Specialist:
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
 
+            if result.returncode != 0:
+                # Try fallback: psort with --status_view none and json_line format
+                fallback_output = storage_file.replace('.plaso', '.json_line')
+                fallback_cmd = [
+                    '/usr/bin/python3', self.psort_path,
+                    '--status_view', 'none',
+                    '-o', 'json_line', '-w', fallback_output,
+                    storage_file,
+                ]
+                fallback_result = subprocess.run(
+                    fallback_cmd, capture_output=True, text=True, timeout=3600
+                )
+                # Report what we actually got, including the original error
+                parsed = self._parse_psort_stdout(result.stdout)
+                fallback_parsed = self._parse_psort_stdout(fallback_result.stdout)
+                event_count = fallback_parsed['event_count'] if fallback_result.returncode == 0 else parsed['event_count']
+                return {
+                    'tool': 'psort',
+                    'input': storage_file,
+                    'output': output_file,
+                    'format': output_format,
+                    'status': 'error',
+                    'returncode': result.returncode,
+                    'error': result.stderr[-1000:] if result.stderr else 'psort failed (no stderr)',
+                    'fallback_status': 'success' if fallback_result.returncode == 0 else 'failed',
+                    'fallback_returncode': fallback_result.returncode,
+                    'fallback_error': fallback_result.stderr[-500:] if fallback_result.returncode != 0 else '',
+                    'event_count': event_count,
+                    'plaso_size_bytes': plaso_size,
+                    'timestamp': datetime.now().isoformat(),
+                }
+
             parsed = self._parse_psort_stdout(result.stdout)
 
             return {
@@ -983,17 +1078,20 @@ class PLASO_Specialist:
                 'input': storage_file,
                 'output': output_file,
                 'format': output_format,
-                'status': 'success' if result.returncode == 0 else 'error',
+                'status': 'success',
                 'returncode': result.returncode,
                 'event_count': parsed['event_count'],
                 'parsed_output_file': parsed['output_file'],
+                'plaso_size_bytes': plaso_size,
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
             return {
                 'tool': 'psort',
+                'input': storage_file,
                 'status': 'error',
                 'error': str(e),
+                'plaso_size_bytes': plaso_size,
                 'timestamp': datetime.now().isoformat(),
             }
 

@@ -197,3 +197,20 @@ a { color: inherit; text-decoration: none; }
 .edot.service { border-radius: 50%; background: var(--ent-service); }
 .edot.evidence { background: var(--ent-evidence); }
 .edot.threat { transform: rotate(45deg); background: var(--ent-threat); }
+
+/* ---- info boxes ---- */
+.mitre-card, .info-box {
+  background: var(--g-surface-2);
+  border: 1px solid var(--g-border-soft);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+}
+.mitre-card p, .info-box p {
+  margin: 0 0 16px 0;
+  color: var(--g-text-dim);
+}
+.info-box {
+  background: rgba(76, 141, 255, 0.08);
+  border-color: rgba(76, 141, 255, 0.2);
+}

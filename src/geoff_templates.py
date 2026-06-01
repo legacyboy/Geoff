@@ -128,9 +128,12 @@ HTML_TEMPLATE = r"""
   .feed-head .eyebrow { font-size: 10px; }
   .feed-head .line { flex: 1; height: 1px; background: var(--g-border-soft); }
 
+  @keyframes slidein { from { transform: translateY(7px); opacity: 0; } to { transform: none; opacity: 1; } }
+
   .logline {
     display: flex; align-items: baseline; gap: 10px; padding: 5px 0;
     font-family: var(--font-mono); font-size: 12px; color: var(--g-text-dim);
+    animation: slidein .35s ease;
   }
   .logline .tk { color: var(--g-text-faint); flex-shrink: 0; }
   .logline .ar { color: var(--g-cyan); flex-shrink: 0; }
@@ -141,7 +144,7 @@ HTML_TEMPLATE = r"""
     border: 1px solid var(--g-border-soft); border-left: 3px solid var(--sev-med);
     border-radius: var(--radius-sm); background: var(--g-surface);
     padding: 13px 15px; margin-bottom: 10px;
-    box-shadow: var(--shadow-1);
+    box-shadow: var(--shadow-1); animation: slidein .4s ease;
   }
   .find-card.sev-CRITICAL { border-left-color: var(--sev-crit); }
   .find-card.sev-HIGH     { border-left-color: var(--sev-high); }
@@ -160,6 +163,7 @@ HTML_TEMPLATE = r"""
     border: 1px solid rgba(255,77,94,.35); border-radius: var(--radius);
     background: linear-gradient(180deg, rgba(255,77,94,.08), rgba(255,77,94,.02));
     padding: 18px 20px; margin: 4px 0 14px; display: flex; align-items: center; gap: 18px;
+    animation: slidein .5s ease;
   }
   .complete-card .verdict { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--sev-crit); letter-spacing: 1px; }
   .complete-card .ct { flex: 1; }
@@ -196,7 +200,7 @@ HTML_TEMPLATE = r"""
   .sevstat.crit .n { color: var(--sev-crit); } .sevstat.high .n { color: var(--sev-high); }
   .sevstat.med  .n { color: var(--sev-med);  } .sevstat.low  .n { color: var(--sev-low);  }
 
-  .ent-item { display: flex; align-items: center; gap: 9px; padding: 7px 4px; border-bottom: 1px solid var(--g-line); }
+  .ent-item { display: flex; align-items: center; gap: 9px; padding: 7px 4px; border-bottom: 1px solid var(--g-line); animation: slidein .35s ease; }
   .ent-item:last-child { border-bottom: none; }
   .ent-item .nm { font-family: var(--font-mono); font-size: 11.5px; color: var(--g-text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ent-item .role { font-size: 10px; color: var(--g-text-mute); }

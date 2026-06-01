@@ -2832,6 +2832,24 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 fe_log_func=_fe_log,
             )
             _fe_log(job_id, f"Super-timeline: {len(super_timeline_events)} events across {len(device_map)} devices")
+            if len(super_timeline_events) == 0:
+                # Diagnose why the timeline is empty
+                _fe_log(job_id, "Super-timeline DIAGNOSTIC: 0 events — inspecting source files")
+                for search_dir in [case_work_dir / "output", case_work_dir / "timeline"]:
+                    if not search_dir.exists():
+                        continue
+                    for plaso_f in search_dir.glob("*.plaso"):
+                        try:
+                            sz = plaso_f.stat().st_size
+                        except OSError:
+                            sz = -1
+                        _fe_log(job_id, f"  .plaso: {plaso_f.name} — {sz} bytes")
+                    for jl_f in search_dir.glob("*.json_line"):
+                        try:
+                            sz = jl_f.stat().st_size
+                        except OSError:
+                            sz = -1
+                        _fe_log(job_id, f"  .json_line: {jl_f.name} — {sz} bytes")
         except Exception as e:
             _fe_log(job_id, f"Super-timeline build failed: {e}")
             super_timeline_path = None
