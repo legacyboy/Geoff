@@ -528,18 +528,20 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-004": {  # Privilege Escalation
         "memory_dumps": [
             ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
-            ("memory", "extract_processes", {"memory_dump": "{mem}"}),
-        ],
-        "disk_images": [
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
-            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
-            ("registry", "extract_services", {"system_path": "{hive}"}),
-            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
+            ("windows", "lsadump", {"memory_dump": "{mem}"}),
+            ("windows", "malfind", {"memory_dump": "{mem}"}),
         ],
         "registry_hives": [
-            ("registry", "extract_autoruns", {"software_path": "{hive}"}),
             ("registry", "extract_services", {"system_path": "{hive}"}),
-            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"}),
+            ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Installer"}),
+            ("registry", "extract_sam_users", {"sam_path": "{hive}"}),
+        ],
+        "disk_images": [
+            ("windows", "analyze_prefetch", {"image": "{image}"}),
+            ("windows", "analyze_amcache", {"image": "{image}"}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
     },
     "PB-SIFT-005": {  # Credential Theft
@@ -635,15 +637,21 @@ PLAYBOOK_STEPS = {
     },
     "PB-SIFT-011": {  # Impact/Data Destruction
         "disk_images": [
-            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("vss", "list_vss", {"image": "{image}"}),
+            ("vss", "analyze_vss_timeline", {"image": "{image}"}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+            ("windows", "analyze_prefetch", {"image": "{image}"}),
+            ("sleuthkit", "list_files_mactime", {"image": "{image}", "offset": "{offset}"}),
         ],
         "evtx_logs": [
-            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}", "event_ids": [1102, 104, 517]}),
         ],
         "evt_logs": [
             ("logs", "parse_evt", {"evt_file": "{evt}"}),
+        ],
+        "registry_hives": [
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            ("windows", "analyze_shimcache", {"registry_hive": "{hive}"}),
         ],
     },
     "PB-SIFT-012": {  # Anti-Forensics
