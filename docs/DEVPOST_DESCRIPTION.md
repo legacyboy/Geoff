@@ -1,5 +1,4 @@
 # GEOFF — Devpost Project Description
-*Draft for Dan to edit before submission. Word count target: 800–1200 words.*
 
 ---
 
