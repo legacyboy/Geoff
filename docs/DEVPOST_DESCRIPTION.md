@@ -7,6 +7,50 @@
 GEOFF (Git-backed Evidence Operations Forensic Framework) is an autonomous multi-agent digital forensic investigation platform that runs a full DFIR triage-to-narrative pipeline on raw evidence without per-step human intervention. You point it at a directory of disk images, memory dumps, PCAPs, and logs; it classifies the evidence, builds an investigation plan, executes 25 MITRE ATT&CK-aligned forensic playbooks using the full SANS SIFT toolchain, validates its own findings for hallucinations, self-corrects on tool failures, and writes a structured investigative narrative with explicit evidence citations. The investigation produces a legally-defensible audit trail: a per-case git repository where every completed step is a git commit with a SHA-256 chain-of-custody sidecar, a batch Critic assessment, a Manager decision record, and an 8-section narrative report — all traceable back to specific artifacts, offsets, and log entries in the original evidence.
 
 ---
+## Human authors notes
+This project started over a bunch of mojitos in a pool in Mexico.  I had just setup OpenClaw before I left and was playing around with what I could do with it and saw a posting announcing the competition.  The idea of Geoff and its architecture is all mine, git, playbooks, critic, healing. But I wrote absolutely nothing besides some documentation and architecture designs for the project.  I have been using a variety of models to do the work, GLM5.1, Deepseek, Qwen (multiple), Kimi, ChatGPT and recently Claude. Some worked better than others; others worked much much worse and caused all sorts of chaos. 
+
+  
+
+I tried multiple approaches to development, I had Claude act as an architect and direct others, working with the agents in teams, and individual efforts being validated by another agent. I ended up preferring individual agents spawned by a manager agent on OpenClaw that monitored them and then passed the final work off to another for validation. I found great success with the non-frontier agents; GLM5.1 was very capable but expensive. Qwen and its derivatives were some of my favorites. DeepSeek I found very capable, flash was ok, Pro was impressive. 
+
+  
+
+Could I have written this without them?  
+
+ 
+
+Not to this level, I had a functional system with no gui before I got on a plane. Then the gui, the gui and its connection to the backend are beyond what I could have done on my own. Not just in 60 days, I am not sure if I had the time or the inclination to do it at all. 
+
+  
+
+### What I am proud of 
+
+  
+
+## git back end 
+
+I was about 5 mojitos into the morning, I still think this is a good idea. My agents have extended it further but it opens many doors to new features. 
+
+  
+
+## Playbooks 
+
+The playbooks were a necessity, it almost acts like a set of guard rails to keep Geoff on task. But it also makes it extensible. We can add new playbooks and if there are tools missing, it should be able to recognize that and install them. If there are new evidence types, we can just give Geoff a new playbook and off it goes. 
+
+  
+
+## Multi agents and the Critic 
+
+Initially, my plan was to leverage OpenClaw as a base and use it for my agents. To be blunt I have no idea if even did, but eventually I ended up with the current architecture which works fine. This is one of my biggest criticisms of vibe coding right now. It just adds things without asking, even when I am very specific, it will add new features and buttons without being prompted. It makes testing an adventure since I never know what I am going to find. 
+
+  
+
+## Checkpoints 
+
+Sadly, this was a late addition, I had a release that was very unstable and it was tedious to restart.  I could have resolved this sooner, but it was not as painful as it was when I finally did. 
+
+---
 
 ## How we built it
 
