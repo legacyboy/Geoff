@@ -104,7 +104,6 @@ All three agents communicate via structured JSON. The entire state is persisted 
 - **Real-time collaborative analysis** — multiple analysts watching the same live investigation, commenting on findings, and pinning evidence while Geoff updates the report in real-time, turning solo forensics into a team sport.
 - **Cloud-native deployment** — Geoff as a fully containerized service with a web dashboard, user authentication, case management, and evidence upload via browser, so any analyst on any machine can open a case without touching a command line.
 - **ML-driven triage ranking** — a classifier trained on prior case outcomes that automatically scores and ranks findings by likelihood of being malicious, so the analyst sees the most important evidence at the top of every report.
-- **Conversational case Q&A** — a chat window connected to the Manager that answers analyst questions about a case in natural language. Ask "what executables ran on this system?" and it delegates to a Forensicator against the completed report JSON, or routes a new specialist if the case is still running, replacing spelunking through raw step output.
 - **Live incident response collection** — not just post-mortem forensics on disk images, but live acquisition from running systems via WinRM and SSH, with Geoff deploying lightweight collectors to pull memory, process trees, and network state before the attacker cleans up.
 
 ---
