@@ -470,9 +470,10 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-034": "Network Device Forensics",
     "PB-SIFT-035": "Active Directory DC Forensics",
     "PB-SIFT-036": "PCAP Network Forensics",
-    "PB-SIFT-037": "IoT Device Forensics",
+    "PB-SIFT-037": "EDR Telemetry Analysis",
     "PB-SIFT-038": "Web Shell Indicators",
     "PB-SIFT-039": "Insider Threat Behavioral Analysis",
+    "PB-SIFT-040": "IoT Device Forensics",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1071,7 +1072,16 @@ PLAYBOOK_STEPS = {
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
         ],
     },
-    "PB-SIFT-037": {  # IoT Device Forensics — triggered by IoT device images/directories
+    "PB-SIFT-037": {  # EDR Telemetry Analysis — triggered by JSON/CSV/log files from EDR agents
+        "other_files": [
+            ("logs", "parse_evtx", {"evtx_file": "{file}"}),  # Generic log parser for EDR outputs
+        ],
+        "disk_images": [
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+        ],
+    },
+    "PB-SIFT-040": {  # IoT Device Forensics — triggered by IoT device images/directories
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "fsstat", {"image": "{image}"}),

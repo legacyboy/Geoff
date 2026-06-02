@@ -5785,192 +5785,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     _fe_log(job_id, f"  ✗ Replay error for {_rk}: {_re}")
 
         # ------------------------------------------------------------------
-        # Fallback: generate behavioral flags from raw findings when analyzer finds nothing
-        # ------------------------------------------------------------------
-        def _generate_fallback_behavioral_flags(dev_id, dev_findings, dev_timeline_events):
-            """Generate behavioral flags from findings data when the BehavioralAnalyzer
-            produces no flags (e.g., no Volatility/registry data available)."""
-            import hashlib
-            flags = []
-            completed = [f for f in dev_findings if f.get('status') == 'completed']
-            if not completed:
-                return flags
-
-            # Group findings by module
-            by_module = {}
-            for f in completed:
-                mod = f.get('module', 'unknown')
-                by_module.setdefault(mod, []).append(f)
-
-            # 1. Findings available flag - at minimum signal that analysis happened
-            modules_with_data = [m for m, fs in by_module.items()
-                                 if any(isinstance(f.get('result', {}), dict) and
-                                        [k for k in f['result']
-                                         if k not in ('status', 'error', 'timestamp',
-                                                      '_fallback_chain', '_fallback_attempt_count',
-                                                      '_fallback_final_method', '_fallback_primary_failed')]
-                                        for f in fs)]
-            if modules_with_data:
-                flags.append({
-                    'flag_type': 'findings_available',
-                    'severity': 'LOW',
-                    'summary': f'{len(completed)} completed analysis steps across {len(by_module)} modules',
-                    'description': f'Forensic analysis completed {len(completed)} steps for {dev_id}. Modules with results: {", ".join(modules_with_data[:6])}.',
-                    'evidence': {'completed_steps': len(completed), 'modules': modules_with_data[:10]},
-                    'device_id': dev_id,
-                })
-
-            # 2. Plaso timeline events → check for suspicious activity
-            plaso_findings = by_module.get('plaso', [])
-            for f in plaso_findings:
-                r = f.get('result', {})
-                events = r.get('events', []) if isinstance(r, dict) else []
-                if isinstance(events, list) and len(events) > 0:
-                    suspicious_events = [e for e in events
-                                         if isinstance(e, dict) and e.get('suspicious')]
-                    if suspicious_events:
-                        flags.append({
-                            'flag_type': 'suspicious_timeline_events',
-                            'severity': 'MEDIUM',
-                            'summary': f'{len(suspicious_events)} suspicious timeline events from Plaso analysis',
-                            'description': f'Plaso timeline analysis found {len(suspicious_events)} events flagged as suspicious on {dev_id}.',
-                            'evidence': {'suspicious_count': len(suspicious_events),
-                                        'total_events': len(events),
-                                        'sample': [e.get('summary', '')[:100] for e in suspicious_events[:5]]},
-                            'device_id': dev_id,
-                        })
-                    # Check for execution events (potential malware)
-                    exec_events = [e for e in events
-                                   if isinstance(e, dict) and
-                                   e.get('event_type') in ('process_execution', 'execution')]
-                    if len(exec_events) > 5:
-                        flags.append({
-                            'flag_type': 'execution_activity',
-                            'severity': 'LOW',
-                            'summary': f'{len(exec_events)} process execution events detected',
-                            'description': f'{len(exec_events)} execution events found in Plaso timeline for {dev_id}.',
-                            'evidence': {'execution_count': len(exec_events)},
-                            'device_id': dev_id,
-                        })
-                    break  # Only process first plaso finding with events
-
-            # 3. Strings analysis → check for IOC hits
-            strings_findings = by_module.get('strings', [])
-            for f in strings_findings:
-                r = f.get('result', {})
-                if isinstance(r, dict):
-                    iocs = r.get('iocs', {})
-                    ioc_counts = r.get('ioc_counts', {})
-                    if isinstance(ioc_counts, dict) and any(v > 0 for v in ioc_counts.values() if isinstance(v, (int, float))):
-                        ioc_details = {k: v for k, v in ioc_counts.items() if isinstance(v, (int, float)) and v > 0}
-                        flags.append({
-                            'flag_type': 'string_ioc_hits',
-                            'severity': 'MEDIUM',
-                            'summary': f'IOC pattern matches in string extraction: {ioc_details}',
-                            'description': f'String analysis found pattern matches suggesting compromise indicators on {dev_id}.',
-                            'evidence': {'ioc_counts': ioc_details},
-                            'device_id': dev_id,
-                        })
-                    total_strings = r.get('total_strings', 0)
-                    if isinstance(total_strings, (int, float)) and total_strings > 0:
-                        flags.append({
-                            'flag_type': 'strings_analyzed',
-                            'severity': 'INFO',
-                            'summary': f'{total_strings:,} strings extracted from disk image',
-                            'description': f'String extraction found {total_strings:,} strings on {dev_id}.',
-                            'evidence': {'total_strings': total_strings},
-                            'device_id': dev_id,
-                        })
-                    break  # Only process first strings finding
-
-            # 4. SleuthKit filesystem analysis → check for suspicious partitions, deleted files
-            sleuthkit_findings = by_module.get('sleuthkit', [])
-            deleted_count = 0
-            filesystem_info = {}
-            for f in sleuthkit_findings:
-                r = f.get('result', {})
-                if not isinstance(r, dict):
-                    continue
-                td = r.get('total_deleted', 0)
-                if isinstance(td, (int, float)) and td > 0:
-                    deleted_count += td
-                fs_info = r.get('filesystem_info', {})
-                if isinstance(fs_info, dict):
-                    filesystem_info.update(fs_info)
-            if deleted_count > 0:
-                flags.append({
-                    'flag_type': 'deleted_files',
-                    'severity': 'MEDIUM' if deleted_count > 50 else 'LOW',
-                    'summary': f'{deleted_count} deleted files recovered from disk image',
-                    'description': f'SleuthKit analysis found {deleted_count} deleted files on {dev_id}, which may indicate anti-forensics or normal user activity.',
-                    'evidence': {'total_deleted': deleted_count},
-                    'device_id': dev_id,
-                })
-
-            # 5. Windows analysis findings (prefetch, amcache, etc.)
-            windows_findings = by_module.get('windows', [])
-            for f in windows_findings:
-                r = f.get('result', {})
-                if not isinstance(r, dict):
-                    continue
-                # Check for prefetch or amcache data
-                prefetch_count = r.get('prefetch_count', r.get('total_prefetch', 0))
-                if isinstance(prefetch_count, (int, float)) and prefetch_count > 0:
-                    flags.append({
-                        'flag_type': 'prefetch_analysis',
-                        'severity': 'LOW',
-                        'summary': f'{prefetch_count} prefetch entries analyzed',
-                        'description': f'Windows prefetch analysis found {prefetch_count} program execution traces on {dev_id}.',
-                        'evidence': {'prefetch_count': prefetch_count},
-                        'device_id': dev_id,
-                    })
-
-            # 6. Scheduled tasks analysis
-            scheduled_findings = by_module.get('scheduled', [])
-            for f in scheduled_findings:
-                r = f.get('result', {})
-                if not isinstance(r, dict):
-                    continue
-                suspicious = r.get('suspicious', [])
-                suspicious_count = r.get('suspicious_count', 0)
-                if (isinstance(suspicious, list) and len(suspicious) > 0) or \
-                   (isinstance(suspicious_count, (int, float)) and suspicious_count > 0):
-                    flags.append({
-                        'flag_type': 'suspicious_scheduled_task',
-                        'severity': 'HIGH',
-                        'summary': f'{suspicious_count or len(suspicious)} suspicious scheduled tasks detected',
-                        'description': f'Scheduled task analysis found persistence mechanisms on {dev_id}.',
-                        'evidence': {'suspicious_count': suspicious_count or len(suspicious),
-                                    'suspicious': suspicious[:5] if isinstance(suspicious, list) else []},
-                        'device_id': dev_id,
-                    })
-
-            # 7. Suspicious timeline events from super_timeline
-            if dev_timeline_events:
-                suspicious_tl = [e for e in dev_timeline_events
-                                 if isinstance(e, dict) and e.get('suspicious')]
-                if len(suspicious_tl) >= 1:
-                    flags.append({
-                        'flag_type': 'suspicious_timeline',
-                        'severity': 'HIGH' if len(suspicious_tl) > 5 else 'MEDIUM',
-                        'summary': f'{len(suspicious_tl)} suspicious events in super timeline',
-                        'description': f'Timeline analysis flagged {len(suspicious_tl)} events as suspicious on {dev_id}.',
-                        'evidence': {'suspicious_count': len(suspicious_tl),
-                                    'samples': [e.get('summary', '')[:80] for e in suspicious_tl[:5]]},
-                        'device_id': dev_id,
-                    })
-
-            # Deduplicate
-            seen = set()
-            deduped = []
-            for f in flags:
-                key = (f.get('flag_type', ''), f.get('summary', '')[:80])
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(f)
-            return deduped
-
-        # ------------------------------------------------------------------
         # Phase 3c-new: Behavioral Analysis (per device)
         # ------------------------------------------------------------------
         _update_job(93, "behavioral", "Analyzing process and file behavior")
@@ -5994,25 +5808,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             # Tag super-timeline events with behavioral flags
             if hasattr(super_tl, 'apply_behavioral_flags'):
                 super_tl.apply_behavioral_flags(super_timeline_events, all_behavioral_flags)
-
-            # ---- Fallback: generate behavioral flags from raw findings if analyzer found nothing ----
-            devices_with_zero = [d for d in device_map if len(all_behavioral_flags.get(d, [])) == 0]
-            if devices_with_zero:
-                _fe_log(job_id, f"  Behavioral analyzer found nothing for {len(devices_with_zero)} device(s), generating flags from raw findings")
-                for dev_id in devices_with_zero:
-                    dev_findings_fb = [f for f in _all_findings if f.get("device_id") == dev_id]
-                    dev_events_fb = [e for e in super_timeline_events if e.get("device_id") == dev_id]
-                    fallback_flags = _generate_fallback_behavioral_flags(dev_id, dev_findings_fb, dev_events_fb)
-                    if fallback_flags:
-                        all_behavioral_flags[dev_id] = fallback_flags
-                        _fe_log(job_id, f"  {dev_id}: {len(fallback_flags)} flags from findings-based analysis (fallback)")
         except Exception as e:
             _fe_log(job_id, f"Behavioral analysis failed: {e}")
             all_behavioral_flags = {}
 
         # Flag if no behavioral data recovered from any device
-        has_any_flags = any(len(flags) > 0 for flags in all_behavioral_flags.values() if isinstance(flags, list))
-        if not has_any_flags:
+        if not all_behavioral_flags or all(len(flags) == 0 for flags in all_behavioral_flags.values()):
             _fe_log(job_id, "⚠️  No behavioral data recovered from any device - potential anti-forensics")
             if not all_behavioral_flags:
                 all_behavioral_flags = {}
@@ -6941,36 +6742,9 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                 eml_count = sum(1 for _ in Path(eml_dir).rglob("*.eml"))
                 _fe_log(job_id, f"      Converted → {eml_count} .eml files")
 
-                # Step 5b: Identify home domains from Sent Items .eml headers
-                home_domains = []
-                try:
-                    import email as _email_lib_hd
-                    from email import policy as _email_policy_hd
-                    _sent_markers = ("sent", "sent items", "sent mail", "outbox")
-                    for _eml_f in list(Path(eml_dir).rglob("*.eml"))[:200]:
-                        try:
-                            _eml_lower = str(_eml_f).lower()
-                            if not any(sm in _eml_lower for sm in _sent_markers):
-                                continue
-                            with open(_eml_f, "rb") as _hd_fh:
-                                _hd_msg = _email_lib_hd.message_from_binary_file(
-                                    _hd_fh, policy=_email_policy_hd.default)
-                            _from_val = str(_hd_msg.get("From", "")).strip()
-                            _hd_match = re.search(r'@([\w.\-]+)', _from_val)
-                            if _hd_match:
-                                _hd = _hd_match.group(1).lower().rstrip('>')
-                                if _hd and _hd not in home_domains:
-                                    home_domains.append(_hd)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                if home_domains:
-                    _fe_log(job_id, f"      Home domains identified: {home_domains}")
-
                 # Step 6: Phishing detection
                 try:
-                    phishing_result = email_spec.detect_phishing(eml_dir, home_domains=home_domains)
+                    phishing_result = email_spec.detect_phishing(eml_dir)
                     phish_findings = phishing_result.get("findings", [])
                     emails_scanned = phishing_result.get("emails_scanned", 0)
                     phishing_found = phishing_result.get("phishing_found", 0)
@@ -7188,7 +6962,6 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 "tool": "email_scan",
                                 "emails_scanned": emails_scanned,
                                 "phishing_found": phishing_found,
-                                "home_domains": home_domains,
                                 "raw_output": ioc_text,
                                 "email_iocs": {
                                     "sender_ips": email_iocs_agg["sender_ips"],

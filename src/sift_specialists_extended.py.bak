@@ -6556,13 +6556,18 @@ class EMAIL_Specialist:
     _SUSPICIOUS_TLDS = {'.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.pw', '.cc', '.ws',
                         '.club', '.work', '.date', '.bid', '.win', '.loan', '.men', '.stream'}
 
-    def detect_phishing(self, email_dir: str, chat_dir: str = None, chat_files: List[str] = None, home_domains: List[str] = None) -> Dict[str, Any]:
+    def detect_phishing(self, email_dir: str, chat_dir: str = None, chat_files: List[str] = None) -> Dict[str, Any]:
         """LLM-powered phishing analysis of extracted .eml files and chat databases.
 
-        Collects all .eml artifacts, sends them to the LLM in one batch call
-        (60s timeout, 1 retry, 10s backoff), and falls back to per-email
-        heuristics on failure.  Optionally checks home_domains for
-        lookalike/homograph spoofing.
+        Walks *email_dir* for all .eml files, extracts key fields, sends a
+        structured prompt to the Manager LLM, and falls back to rule-based
+        heuristics when the LLM is unreachable.
+
+        Also scans for SMS/iMessage/WhatsApp/Telegram chat databases in
+        *chat_dir* (defaults to *email_dir*) or explicit *chat_files*.
+
+        Returns a finding-worthy dict with type='phishing' and
+        mitre_techniques=['T1566'].
         """
         import email as email_lib
         from email import policy
@@ -6577,6 +6582,8 @@ class EMAIL_Specialist:
                     if fn.lower().endswith('.eml'):
                         eml_files.append(fpath)
                     elif '.' not in fn and os.path.getsize(fpath) > 100:
+                        # readpst often outputs files without extensions (1, 2, 3...)
+                        # Check if it looks like an email by scanning first 200 bytes
                         try:
                             with open(fpath, 'rb') as _fh:
                                 hdr = _fh.read(200).decode('utf-8', errors='replace')
@@ -6592,18 +6599,20 @@ class EMAIL_Specialist:
                 'status': 'success',
                 'emails_scanned': 0,
                 'phishing_found': 0,
-                'home_domains': home_domains or [],
                 'findings': [],
                 'timestamp': datetime.now().isoformat(),
             }
 
-        # Build artifact list for all emails (parse once, reuse for LLM + heuristics)
-        artifacts: List[Dict[str, Any]] = []
-        for eml_path in eml_files[:500]:
+        all_findings: List[Dict[str, Any]] = []
+        emails_scanned = 0
+        phishing_count = 0
+
+        for eml_path in eml_files[:500]:  # safety cap
             try:
                 with open(eml_path, 'rb') as fh:
                     msg = email_lib.message_from_binary_file(fh, policy=policy.default)
 
+                # Extract body text (prefer plain, fall back to HTML snippet)
                 body_text = ''
                 if msg.is_multipart():
                     for part in msg.walk():
@@ -6622,6 +6631,7 @@ class EMAIL_Specialist:
                                 payload = part.get_payload(decode=True)
                                 if payload:
                                     try:
+                                        # Strip HTML tags for a rough text version
                                         html = payload.decode('utf-8', errors='replace')
                                         body_text = re.sub(r'<[^>]+>', ' ', html)[:2000]
                                     except Exception:
@@ -6634,8 +6644,9 @@ class EMAIL_Specialist:
                             body_text = payload.decode('utf-8', errors='replace')
                         except Exception:
                             body_text = str(payload)[:2000]
-                body_text = body_text[:2000]
+                body_text = body_text[:2000]  # cap for LLM
 
+                # Extract headers
                 headers = {}
                 for hdr in ('From', 'To', 'Reply-To', 'Return-Path', 'Subject',
                             'Date', 'Message-ID', 'Received'):
@@ -6643,17 +6654,20 @@ class EMAIL_Specialist:
                     if val:
                         headers[hdr] = str(val)[:500]
 
+                # Extract links from body
                 link_pattern = re.compile(r'https?://[^\s<>"\')\]]+')
                 links_raw = link_pattern.findall(body_text)
-                links = list(dict.fromkeys(links_raw))[:20]
+                links = list(dict.fromkeys(links_raw))[:20]  # dedupe + cap
 
+                # Extract attachment names
                 attachments: List[str] = []
                 for part in msg.walk():
                     fn = part.get_filename()
                     if fn:
                         attachments.append(str(fn))
 
-                artifacts.append({
+                # Build email artifact dict
+                artifact = {
                     'eml_path': eml_path,
                     'headers': headers,
                     'subject': headers.get('Subject', ''),
@@ -6662,48 +6676,30 @@ class EMAIL_Specialist:
                     'body_text': body_text,
                     'links': links,
                     'attachments': attachments,
-                })
+                }
+
+                # Run phishing analysis
+                assessment = self._analyze_single_email(artifact)
+                emails_scanned += 1
+
+                if assessment['is_phishing']:
+                    phishing_count += 1
+                    all_findings.append({
+                        'type': 'phishing',
+                        'eml_path': eml_path,
+                        'subject': artifact['subject'],
+                        'from': artifact['from'],
+                        'is_phishing': True,
+                        'confidence': assessment['confidence'],
+                        'indicators': assessment['indicators'],
+                        'explanation': assessment['explanation'],
+                        'llm_used': assessment.get('llm_used', False),
+                        'mitre_techniques': ['T1566'],
+                    })
             except Exception:
-                continue
+                continue  # skip malformed emails silently
 
-        all_findings: List[Dict[str, Any]] = []
-        emails_scanned = len(artifacts)
-        phishing_count = 0
-
-        # Attempt one batch LLM call for all artifacts
-        llm_results = self._llm_phishing_check(artifacts)
-
-        for idx, artifact in enumerate(artifacts):
-            if llm_results is not None and idx < len(llm_results):
-                assessment = llm_results[idx]
-            else:
-                assessment = self._heuristic_phishing_check(artifact)
-
-            # Home-domain homograph/lookalike check
-            if home_domains:
-                hd_indicators = self._homograph_check(artifact, home_domains)
-                if hd_indicators:
-                    assessment = dict(assessment)
-                    assessment['indicators'] = assessment.get('indicators', []) + hd_indicators
-                    assessment['is_phishing'] = True
-                    assessment['confidence'] = max(assessment.get('confidence', 0), 70)
-
-            if assessment['is_phishing']:
-                phishing_count += 1
-                all_findings.append({
-                    'type': 'phishing',
-                    'eml_path': artifact['eml_path'],
-                    'subject': artifact['subject'],
-                    'from': artifact['from'],
-                    'is_phishing': True,
-                    'confidence': assessment['confidence'],
-                    'indicators': assessment['indicators'],
-                    'explanation': assessment['explanation'],
-                    'llm_used': assessment.get('llm_used', False),
-                    'mitre_techniques': ['T1566'],
-                })
-
-        # Also scan for SMS/IM phishing in chat databases
+        # Also scan for SMS/IM phishing in chat databases (WhatsApp, Telegram, iMessage, etc.)
         scan_chat_dir = chat_dir or email_dir
         sms_result = self.detect_sms_phishing(chat_dir=scan_chat_dir, chat_files=chat_files)
         if sms_result.get('status') == 'success':
@@ -6717,201 +6713,96 @@ class EMAIL_Specialist:
             'status': 'success',
             'emails_scanned': emails_scanned,
             'phishing_found': phishing_count,
-            'home_domains': home_domains or [],
             'sms_databases_scanned': sms_result.get('databases_scanned', 0),
             'sms_messages_scanned': sms_result.get('messages_scanned', 0),
             'findings': all_findings,
             'timestamp': datetime.now().isoformat(),
         }
 
-    def _llm_phishing_check(self, artifacts: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-        """Batch phishing check: send all artifacts to LLM in one call.
+    def _analyze_single_email(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze a single email artifact for phishing indicators.
 
-        Uses a direct requests.post to ollama — 60s timeout, max 1 retry
-        with 10s backoff.  Does NOT use _call_manager_llm (avoids 30-min
-        retry window).  Returns a per-email result list on success, None on
-        any failure so the caller falls back to heuristics.
+        Tries LLM first; falls back to heuristics on any failure.
+        Returns {is_phishing, confidence, indicators, explanation, llm_used}.
         """
-        import time as _time
-
-        if not artifacts:
-            return None
-
+        # Try LLM path
         try:
-            from geoff_config import ollama_base_url, ollama_headers, AGENT_MODELS
+            result = self._llm_phishing_check(artifact)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+
+        # Fallback: heuristic analysis
+        return self._heuristic_phishing_check(artifact)
+
+    def _llm_phishing_check(self, artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Send phishing-analysis prompt to Manager LLM.
+
+        Returns parsed dict on success, None if the LLM is unreachable
+        or returns unparseable output.
+        """
+        # Late import to avoid circular dependency at module level
+        try:
+            from geoff_self_heal import _call_manager_llm
         except ImportError:
             return None
 
-        prompt = self._build_phishing_prompt(artifacts)
-        model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
+        prompt = self._build_phishing_prompt(artifact)
+        raw = _call_manager_llm(prompt, timeout=180)
+        if not raw:
+            return None
 
-        for attempt in range(2):
-            if attempt > 0:
-                _time.sleep(10)
-            try:
-                resp = requests.post(
-                    f"{ollama_base_url()}/generate",
-                    headers=ollama_headers(),
-                    json={"model": model, "prompt": prompt, "stream": False,
-                          "options": {"temperature": 0.1}},
-                    timeout=60,
-                )
-                if resp.status_code != 200:
-                    continue
-                raw = resp.json().get("response", "")
-                if not raw:
-                    continue
+        # Parse JSON from LLM response
+        try:
+            # Strip markdown fences if present
+            clean = raw.strip()
+            if clean.startswith('```'):
+                clean = re.sub(r'^```(?:json)?\s*', '', clean)
+                clean = re.sub(r'\s*```$', '', clean)
+            parsed = json.loads(clean)
+            return {
+                'is_phishing': bool(parsed.get('is_phishing', False)),
+                'confidence': min(max(int(parsed.get('confidence', 0)), 0), 100),
+                'indicators': parsed.get('indicators', []),
+                'explanation': str(parsed.get('explanation', 'No explanation provided')),
+                'llm_used': True,
+            }
+        except (json.JSONDecodeError, ValueError, KeyError):
+            return None
 
-                clean = raw.strip()
-                if clean.startswith('```'):
-                    clean = re.sub(r'^```(?:json)?\s*', '', clean)
-                    clean = re.sub(r'\s*```$', '', clean)
-                arr_match = re.search(r'\[.*\]', clean, re.DOTALL)
-                if arr_match:
-                    clean = arr_match.group(0)
-                parsed = json.loads(clean)
-                if not isinstance(parsed, list):
-                    continue
+    def _build_phishing_prompt(self, artifact: Dict[str, Any]) -> str:
+        """Build a structured phishing-analysis prompt for the LLM."""
+        body = artifact.get('body_text', '')
+        links = artifact.get('links', [])
+        attachments = artifact.get('attachments', [])
 
-                results: List[Dict[str, Any]] = []
-                for i in range(len(artifacts)):
-                    if i < len(parsed):
-                        entry = parsed[i]
-                        results.append({
-                            'is_phishing': bool(entry.get('is_phishing', False)),
-                            'confidence': min(max(int(entry.get('confidence', 0)), 0), 100),
-                            'indicators': list(entry.get('indicators', [])),
-                            'explanation': str(entry.get('explanation', 'No explanation')),
-                            'llm_used': True,
-                        })
-                    else:
-                        results.append({
-                            'is_phishing': False,
-                            'confidence': 0,
-                            'indicators': [],
-                            'explanation': 'No LLM result for this email',
-                            'llm_used': True,
-                        })
-                return results
-            except Exception:
-                continue
+        return f"""Analyze this email for phishing indicators. Return ONLY valid JSON (no markdown fences).
 
-        return None
+EMAIL ARTIFACT:
+  From:        {artifact.get('from', '')}
+  To:          {artifact.get('to', '')}
+  Subject:     {artifact.get('subject', '')}
+  Body (first 2000 chars):
+{body}
 
-    def _build_phishing_prompt(self, artifacts: List[Dict[str, Any]]) -> str:
-        """Build a batch phishing-analysis prompt covering all N artifacts."""
-        n = len(artifacts)
-        lines = [
-            f"Analyze these {n} email(s) for phishing indicators. "
-            f"Return ONLY a valid JSON array with exactly {n} objects (one per email, same order). "
-            "No markdown fences, no extra text.\n",
-            "EMAILS:",
-        ]
-        for i, a in enumerate(artifacts):
-            body_snippet = a.get('body_text', '')[:500]
-            links = a.get('links', [])
-            lines.append(
-                f"\n[{i}]\n"
-                f"  From:    {a.get('from', '')}\n"
-                f"  Subject: {a.get('subject', '')}\n"
-                f"  Body:    {body_snippet}\n"
-                f"  Links:   {', '.join(links[:5]) if links else 'none'}"
-            )
-        lines.append(
-            "\nFor each email return:\n"
-            '{"is_phishing": true|false, "confidence": 0-100, '
-            '"indicators": ["finding",...], "explanation": "1-2 sentence forensic summary"}\n'
-            f"\nReturn array of exactly {n} objects."
-        )
-        return "\n".join(lines)
+  Links extracted: {', '.join(links) if links else 'none'}
+  Attachments: {', '.join(attachments) if attachments else 'none'}
 
-    def _homograph_check(self, artifact: Dict[str, Any], home_domains: List[str]) -> List[str]:
-        """Check artifact for lookalike/homograph domains vs known-good home domains."""
-        indicators: List[str] = []
-        if not home_domains:
-            return indicators
+Analyze for:
+1. Sender spoofing (display name != envelope address, lookalike domains, free-mail impersonating corporate)
+2. Language patterns (urgency, threats, prize claims, password-reset pressure)
+3. Link risk (IP-literal URLs, URL shorteners, mismatched TLDs, homoglyphs)
+4. Attachment risk (executables, macro-enabled Office, password-protected archives)
+5. Header anomalies (Reply-To diverges from From, missing DKIM/SPF markers)
 
-        from_addr = artifact.get('from', '')
-        from_match = re.search(r'@([\w.\-]+)', from_addr)
-        sender_domain = from_match.group(1).lower().rstrip('>') if from_match else ''
-
-        return_path = artifact.get('headers', {}).get('Return-Path', '')
-        rp_match = re.search(r'@([\w.\-]+)', return_path)
-        rp_domain = rp_match.group(1).lower().rstrip('>') if rp_match else ''
-
-        # Display name spoofing: home domain name appears in display part but sender differs
-        from_display = re.sub(r'<[^>]+>', '', from_addr).strip().lower()
-        for hd in home_domains:
-            hd_lower = hd.lower()
-            if hd_lower in from_display and sender_domain and sender_domain != hd_lower:
-                indicators.append(
-                    f"Display name spoofs home domain '{hd}' but sent from '{sender_domain}'"
-                )
-
-        # Lookalike sender domain
-        for hd in home_domains:
-            if sender_domain and sender_domain != hd.lower():
-                if self._is_lookalike_domain(sender_domain, hd.lower()):
-                    indicators.append(
-                        f"Sender domain '{sender_domain}' is lookalike of home domain '{hd}'"
-                    )
-            if rp_domain and rp_domain != hd.lower():
-                if self._is_lookalike_domain(rp_domain, hd.lower()):
-                    indicators.append(
-                        f"Return-Path domain '{rp_domain}' is lookalike of home domain '{hd}'"
-                    )
-
-        # Lookalike domains in links
-        for link in artifact.get('links', []):
-            lm = re.search(r'https?://([^/\s]+)', link)
-            if not lm:
-                continue
-            link_domain = lm.group(1).lower().split(':')[0]
-            for hd in home_domains:
-                if link_domain != hd.lower() and self._is_lookalike_domain(link_domain, hd.lower()):
-                    if f"Link domain '{link_domain}'" not in ' '.join(indicators):
-                        indicators.append(
-                            f"Link domain '{link_domain}' is lookalike of home domain '{hd}'"
-                        )
-
-        return indicators
-
-    def _is_lookalike_domain(self, candidate: str, known: str) -> bool:
-        """Return True if candidate is a homograph/typosquat of known domain."""
-        if candidate == known:
-            return False
-
-        # Normalize common character substitutions
-        _subs = [
-            ('rn', 'm'), ('0', 'o'), ('1', 'l'), ('vv', 'w'),
-            ('3', 'e'), ('4', 'a'), ('5', 's'), ('6', 'g'),
-            ('cornp', 'comp'),
-        ]
-        normalized = candidate
-        for fake, real in _subs:
-            normalized = normalized.replace(fake, real)
-        if normalized == known:
-            return True
-
-        # Compare second-level domains with edit distance ≤ 1
-        def _sld(d: str) -> str:
-            parts = d.rsplit('.', 1)
-            return parts[0] if len(parts) > 1 else d
-
-        c_sld = _sld(candidate)
-        k_sld = _sld(known)
-        if not c_sld or not k_sld or c_sld == k_sld:
-            return False
-        if abs(len(c_sld) - len(k_sld)) > 2:
-            return False
-        if len(c_sld) == len(k_sld):
-            return sum(1 for a, b in zip(c_sld, k_sld) if a != b) <= 1
-        longer, shorter = (c_sld, k_sld) if len(c_sld) > len(k_sld) else (k_sld, c_sld)
-        if len(longer) - len(shorter) == 1:
-            for skip in range(len(longer)):
-                if longer[:skip] + longer[skip + 1:] == shorter:
-                    return True
-        return False
+Return JSON:
+{{
+  "is_phishing": true|false,
+  "confidence": 0-100,
+  "indicators": ["specific finding 1", ...],
+  "explanation": "2-3 sentence forensic summary"
+}}"""
 
     def _heuristic_phishing_check(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         """Rule-based phishing detection fallback.

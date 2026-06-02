@@ -22,3 +22,4 @@ TEST_PLAN_LOCAL.md
 *.vhd
 *.vmdk
 .env
+venv/

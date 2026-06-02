@@ -789,21 +789,61 @@ def get_report_json(case_dir):
                 data['narrative_report'] = narrative_md.read_text(encoding='utf-8')
         else:
             data['narrative_report'] = None
-        # Enrich with executive summary and IOCs from narrative report JSON
+        # Enrich with ALL sections from narrative report JSON
         narrative_json = case_path / "reports" / "narrative_report.json"
         if narrative_json.exists():
             try:
                 nr_data = json.loads(narrative_json.read_text(encoding='utf-8'))
-                if nr_data.get('executive_summary'):
-                    data['executive_summary'] = nr_data['executive_summary']
-                if nr_data.get('iocs'):
-                    data['iocs'] = nr_data['iocs']
-            except (json.JSONDecodeError, OSError):
-                pass
+                # Copy all narrative sections into the report data
+                # (don't overwrite pipeline-generated keys that are richer)
+                for nr_key in [
+                    'executive_summary', 'iocs', 'attack_chain',
+                    'kill_chain_timeline', 'devices_and_users', 'blast_radius',
+                    'dwell_time', 'evidence_confidence', 'conclusion',
+                    'user_narratives', 'significant_events', 'self_corrections',
+                    'failed_steps', 'findings', 'email_phishing',
+                    'full_written_report', 'unprocessed_files',
+                ]:
+                    if nr_key in nr_data and nr_data[nr_key] is not None:
+                        # Only set if pipeline didn't already populate a richer version
+                        if nr_key not in data or data[nr_key] is None or data[nr_key] == '' or data[nr_key] == []:
+                            data[nr_key] = nr_data[nr_key]
+                        elif nr_key == 'iocs':
+                            # Merge narrative IOCs into pipeline IOCs
+                            pipeline_iocs = data.get('iocs', {})
+                            narrative_iocs = nr_data['iocs']
+                            if isinstance(pipeline_iocs, dict) and isinstance(narrative_iocs, dict):
+                                for ioc_cat, ioc_vals in narrative_iocs.items():
+                                    if ioc_cat not in pipeline_iocs:
+                                        pipeline_iocs[ioc_cat] = ioc_vals
+                                    elif isinstance(pipeline_iocs[ioc_cat], list) and isinstance(ioc_vals, list):
+                                        # Merge and deduplicate
+                                        existing = set(str(x) for x in pipeline_iocs[ioc_cat])
+                                        for v in ioc_vals:
+                                            if str(v) not in existing:
+                                                pipeline_iocs[ioc_cat].append(v)
+                                                existing.add(str(v))
+                        elif nr_key == 'attack_chain':
+                            # Merge narrative attack_chain fields into pipeline attack_chain
+                            pipeline_ac = data.get('attack_chain', {})
+                            narrative_ac = nr_data['attack_chain']
+                            if isinstance(pipeline_ac, dict) and isinstance(narrative_ac, str):
+                                # Pipeline has structured dict, narrative has text -- store narrative separately
+                                data['attack_chain_narrative'] = narrative_ac
+                            elif isinstance(pipeline_ac, dict) and isinstance(narrative_ac, dict):
+                                for k, v in narrative_ac.items():
+                                    if k not in pipeline_ac or pipeline_ac[k] is None:
+                                        pipeline_ac[k] = v
+            except (json.JSONDecodeError, OSError) as e:
+                _log_error("Failed to parse narrative report JSON", e)
         # Fallback: inject timeline from super_timeline.jsonl if report has 0 events
         if not data.get('timeline'):
             tl_file = case_path / "timeline" / "super_timeline.jsonl"
-            if tl_file.exists() and tl_file.stat().st_size > 50:
+            if not tl_file.exists():
+                _log_info(f"Timeline fallback: file not found at {tl_file}")
+            elif tl_file.stat().st_size <= 50:
+                _log_info(f"Timeline fallback: file too small ({tl_file.stat().st_size} bytes) at {tl_file}")
+            else:
                 tl_events = []
                 try:
                     with open(tl_file, 'r', encoding='utf-8', errors='replace') as f:
@@ -820,6 +860,9 @@ def get_report_json(case_dir):
                     pass
                 if tl_events:
                     data['timeline'] = tl_events
+                    _log_info(f"Timeline fallback: loaded {len(tl_events)} events from {tl_file}")
+                else:
+                    _log_error(f"Timeline fallback: no valid events parsed from {tl_file}", None)
         return json.dumps(data, indent=2), 200, {'Content-Type': 'application/json; charset=utf-8'}
     except OSError as e:
         _log_error("Failed to read report JSON", e)

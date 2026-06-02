@@ -115,39 +115,6 @@ geoff_critic = None
 geoff_forensicator = None
 
 # ---------------------------------------------------------------------------
-# EWF container routing: tools that need a mounted filesystem cannot operate
-# on a raw EWF container file.
-# ---------------------------------------------------------------------------
-_EWF_EXTENSIONS = frozenset({'.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01'})
-
-_SKIP_ON_EWF_CONTAINER = frozenset({
-    # strings: reads EWF header bytes, not filesystem content
-    'extract_strings',
-    # Windows artifact tools: need mounted filesystem directory
-    'analyze_prefetch', 'analyze_amcache', 'analyze_srum', 'analyze_timeline',
-    'analyze_defender', 'analyze_bits', 'analyze_jumplists', 'analyze_lnk',
-    # Directory-walk tools: need mounted filesystem directory
-    'parse_lnk_files', 'parse_windows_scheduled_tasks',
-    'parse_linux_crontabs', 'detect_backdoors',
-    # Anti-forensics artifact tools: need mounted filesystem directory
-    'detect_eraser', 'detect_ccleaner', 'detect_sdelete',
-    'detect_general_anti_forensics', 'parse_usnjrnl',
-    # VSS tools: vshadowmount needs raw block device, not EWF container
-    'list_vss', 'analyze_vss_timeline', 'extract_vss_files',
-    # VM tools: scanning EWF container for VM artifacts is meaningless
-    'detect_escape', 'extract_disk', 'extract_memory', 'detect_snapshots',
-    # Cloud/registry tools: need mounted filesystem, not EWF container
-    'analyze_onedrive', 'analyze_googledrive', 'analyze_dropbox', 'analyze_icloud',
-    'analyze_usb_staging', 'detect_exfiltration', 'extract_recentfilecache',
-    # REMnux tools: scanning EWF container bytes is forensically useless
-    'die_scan', 'clamav_scan', 'exiftool_scan', 'hashdeep_audit',
-    # Host correlator: needs extracted timeline data, not EWF container
-    'merge_timelines', 'correlate_cross_image',
-    # Photorec/file carving: already runs via fallback chains in sleuthkit
-    'recover_files',
-})
-
-# ---------------------------------------------------------------------------
 # Pipeline functions
 # ---------------------------------------------------------------------------
 
@@ -1740,18 +1707,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-036")
             _fe_log(job_id, f"  PB-SIFT-036: PCAP Network Forensics queued ({len(inventory['pcaps'])} capture(s))")
 
-        # EDR Telemetry Analysis (PB-SIFT-037) — trigger when JSON/CSV/log files from EDR agents present
-        edr_exts = {'.json', '.csv', '.log'}
-        edr_keywords = {'crowdstrike', 'sentinelone', 'carbon_black', 'carbonblack', 'cbr', 'edr', 'falcon', 's1_'}
-        has_edr_files = any(
-            (any(str(f).lower().endswith(ext) for ext in edr_exts)
-             and any(kw in str(f).lower() for kw in edr_keywords))
-            for f in inventory.get('other_files', [])
-        )
-        if has_edr_files or inventory['disk_images']:
-            execution_plan.append('PB-SIFT-037')
-            _fe_log(job_id, '  PB-SIFT-037: EDR Telemetry Analysis queued')
-
         # --- END NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-015/034-036) ---
 
         # Web Shell Indicators (PB-SIFT-038) — trigger when IIS/Apache logs or web server disk images present
@@ -2471,19 +2426,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 _atomic_write(pb_output, json.dumps(pb_findings_running, default=str, indent=2))
                             except Exception as persist_exc:
                                 _log_info(f"playbook state persistence skipped for {playbook_id}: {persist_exc}")
-
-                            # EWF container guard: skip tools that require a mounted filesystem
-                            if (ev_type == "disk_images"
-                                    and Path(item).suffix.lower() in _EWF_EXTENSIONS
-                                    and function in _SKIP_ON_EWF_CONTAINER):
-                                _fe_log(job_id, f"  SKIP {module}.{function} -- not valid on EWF container {Path(item).name}")
-                                step_record["status"] = "skipped"
-                                step_record["error"] = f"Skipped: {function} requires mounted filesystem, not EWF container"
-                                step_record["completed_at"] = datetime.now().isoformat()
-                                findings_writer.append(step_record)
-                                pb_findings.append(step_record)
-                                steps_skipped += 1
-                                continue
 
                             # Dedup: skip if this exact tool+file+params already ran
                             exec_key = _make_exec_key(module, function, item, params)

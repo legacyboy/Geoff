@@ -3033,10 +3033,10 @@ Write the following sections. ACCURACY RULES:
         return "\n".join(lines)
 
     def _render_email_phishing_section(self, report_json: dict) -> str:
-        """Render standalone Email & Phishing Threats section.
+        """Render standalone Email & Phishing Analysis section.
 
-        Includes home domains identified, emails scanned, phishing count,
-        and detail on each suspicious email.
+        Scans findings_detail for EMAIL-playbook findings, groups into
+        phishing hits vs clean, returns formatted markdown.
         """
         findings = report_json.get("findings_detail", [])
         if not findings:
@@ -3049,6 +3049,7 @@ Write the following sections. ACCURACY RULES:
         if not email_findings:
             return "No email/phishing data."
 
+        lines = []
         phishing_hits = [
             f for f in email_findings
             if f.get("result", {}).get("is_phishing") is True
@@ -3058,72 +3059,41 @@ Write the following sections. ACCURACY RULES:
             if f.get("function") == "email_scan"
         ]
 
-        # Collect home domains from scan records
-        all_home_domains: list = []
-        total_scanned = 0
-        for sr in scan_records:
-            result = sr.get("result", {})
-            total_scanned += result.get("emails_scanned", 0)
-            for hd in result.get("home_domains", []):
-                if hd not in all_home_domains:
-                    all_home_domains.append(hd)
-
-        lines = ["## Phishing / Email Threats\n"]
-
-        # Home domains
-        if all_home_domains:
-            lines.append(
-                f"**Home domain(s) identified:** "
-                f"{', '.join(f'`{d}`' for d in sorted(all_home_domains))}"
-            )
-        else:
-            lines.append("**Home domain(s) identified:** none detected from Sent Items")
-
-        # Counts
-        lines.append(f"**Emails scanned:** {total_scanned}")
-        lines.append(f"**Flagged as phishing:** {len(phishing_hits)}\n")
-
         if phishing_hits:
-            lines.append("### Suspicious Emails\n")
-            for i, ph in enumerate(phishing_hits[:20], 1):
+            lines.append(f"**{len(phishing_hits)} phishing email(s)** identified.\n")
+            for i, ph in enumerate(phishing_hits[:10], 1):
                 result = ph.get("result", {})
-                conf = result.get("confidence", 0)
-                conf_pct = f"{conf}%" if isinstance(conf, (int, float)) else str(conf)
                 lines.append(
-                    f"{i}. **{result.get('subject', 'No subject')}**"
+                    f"{i}. **{result.get('subject', 'No subject')}** — "
+                    f"From: `{result.get('from', 'Unknown')}` "
+                    f"(confidence: {result.get('confidence', 0):.0%})"
                 )
-                lines.append(f"   - From: `{result.get('from', 'Unknown')}`")
-                lines.append(f"   - Confidence: {conf_pct}")
-                indicators = result.get("indicators", [])
-                if indicators:
-                    lines.append(f"   - Indicators: {'; '.join(indicators[:5])}")
-                explanation = result.get("explanation", "")
-                if explanation:
-                    lines.append(f"   - {explanation}")
-                llm_used = result.get("llm_used", False)
-                lines.append(f"   - Analysis: {'LLM-assisted' if llm_used else 'heuristic fallback'}")
                 eiocs = result.get("email_iocs", {})
                 if isinstance(eiocs, dict):
                     src_ips = eiocs.get("sender_ips", [])
                     mismatches = eiocs.get("return_path_mismatches", [])
                     if src_ips:
-                        lines.append(f"   - Sender IPs: {len(src_ips)}")
+                        lines.append(f"   — Sender IPs: {len(src_ips)}")
                     if mismatches:
-                        lines.append("   - Return-Path mismatch detected (spoofing indicator)")
-                lines.append("")
+                        lines.append(f"   — Return-Path mismatch (spoofing indicator)")
         elif scan_records:
+            total_scanned = sum(
+                r.get("result", {}).get("emails_scanned", 0)
+                for r in scan_records
+            )
             lines.append(
-                f"No phishing indicators detected across {total_scanned} email(s) scanned."
+                f"Direct email extraction scanned **{total_scanned} email(s)** "
+                f"from disk images. No phishing indicators were detected.\n"
             )
         else:
             lines.append(
                 f"{len(email_findings)} email-related finding(s) present, "
-                f"none flagged as phishing."
+                f"none flagged as phishing.\n"
             )
 
         # Aggregate email IOCs across all email findings
         all_iocs = {"sender_ips": set(), "from_addresses": set(),
-                    "to_addresses": set(), "return_path_mismatches": 0}
+                     "to_addresses": set(), "return_path_mismatches": 0}
         for f in email_findings:
             eiocs = f.get("result", {}).get("email_iocs", {})
             if isinstance(eiocs, dict):
@@ -3137,26 +3107,17 @@ Write the following sections. ACCURACY RULES:
                     eiocs.get("return_path_mismatches", []))
 
         if all_iocs["sender_ips"] or all_iocs["from_addresses"] or all_iocs["return_path_mismatches"]:
-            lines.append("\n### Email IOC Summary\n")
+            lines.append("\n**Email IOC Summary:**\n")
             if all_iocs["sender_ips"]:
-                ip_list = ", ".join(sorted(all_iocs["sender_ips"])[:10])
-                extra = f" (+{len(all_iocs['sender_ips'])-10} more)" if len(all_iocs["sender_ips"]) > 10 else ""
-                lines.append(f"- **Sender IPs:** {ip_list}{extra}")
+                lines.append(f"- **Sender IPs:** {', '.join(sorted(all_iocs['sender_ips'])[:10])}")
+                if len(all_iocs["sender_ips"]) > 10:
+                    lines[-1] += f" (+{len(all_iocs['sender_ips'])-10} more)"
             if all_iocs["from_addresses"]:
-                lines.append(
-                    f"- **From Addresses:** "
-                    f"{', '.join(sorted(all_iocs['from_addresses'])[:10])}"
-                )
+                lines.append(f"- **From Addresses:** {', '.join(sorted(all_iocs['from_addresses'])[:10])}")
             if all_iocs["to_addresses"]:
-                lines.append(
-                    f"- **To Addresses:** "
-                    f"{', '.join(sorted(all_iocs['to_addresses'])[:10])}"
-                )
+                lines.append(f"- **To Addresses:** {', '.join(sorted(all_iocs['to_addresses'])[:10])}")
             if all_iocs["return_path_mismatches"]:
-                lines.append(
-                    f"- **Return-Path Mismatches:** "
-                    f"{all_iocs['return_path_mismatches']} (spoofing indicator)"
-                )
+                lines.append(f"- **Return-Path Mismatches:** {all_iocs['return_path_mismatches']} (spoofing indicator)")
 
         return "\n".join(lines)
 
