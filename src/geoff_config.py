@@ -550,11 +550,7 @@ PLAYBOOK_STEPS = {
             ("windows", "analyze_prefetch", {"image": "{image}"}),
             ("windows", "analyze_amcache", {"image": "{image}"}),
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
-            # DLL search-order abuse: enumerate System32 to identify unexpected or hijacked DLLs
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "System32"}),
-            # Linux priv-esc: check for sudo misconfiguration in /etc/sudoers
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "/etc/sudoers"}),
-            # Linux priv-esc: find SUID markers, setuid references, and unquoted service paths
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
     },
@@ -649,10 +645,8 @@ PLAYBOOK_STEPS = {
         ],
         "disk_images": [
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
-            # Base64 decode: extract encoded content from disk (certutil -decode artifacts, payload blobs)
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
-            # Decoded outputs: find certutil-cached files and mshta-dropped artifacts in Temp
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "Temp"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
         ],
     },
     "PB-SIFT-011": {  # Impact/Data Destruction
@@ -904,22 +898,6 @@ PLAYBOOK_STEPS = {
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "extract_browser_artifacts", {"image": "{image}", "offset": "{offset}"}),
         ],
-        "mounted_search": [  # Post-mount IE/Edge history artifact discovery
-            ("browser", "parse_ie_webcache", {
-                "search_paths": [
-                    "Users\\\\{user}\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\WebCache\\\\WebCacheV01.dat",
-                    "Users\\\\{user}\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\History\\\\index.dat",
-                ],
-            }),
-            ("browser", "parse_browser_search_terms", {
-                "keyword_list": [
-                    "leak", "exfil", "exfiltrate", "anti-forensic", "anti_forensic",
-                    "wipe", "delete", "eraser", "ccleaner", "bleachbit", "shred",
-                    "timestomp", "log clear", "wevtutil", "drop table",
-                    "secure delete", "overwrite", "evidence wipe",
-                ],
-            }),
-        ],
         "other_files": [
             ("browser", "extract_history", {"db_path": "{file}"}),
             ("browser", "extract_cookies", {"db_path": "{file}"}),
@@ -931,16 +909,6 @@ PLAYBOOK_STEPS = {
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "extract_email_artifacts", {"image": "{image}", "offset": "{offset}"}),
-        ],
-        "mounted_search": [  # Post-mount email artifact discovery phase
-            ("email", "search_email_artifacts", {
-                "patterns": ["*.pst", "*.ost", "*.eml", "*.msg", "*.edb"],
-                "search_paths": [
-                    "Users\\{user}\\AppData\\Local\\Microsoft\\Outlook\\",
-                    "Users\\{user}\\Documents\\Outlook Files\\",
-                    "ProgramData\\Microsoft\\Search\\Data\\Applications\\Windows\\",
-                ],
-            }),
         ],
         "other_files": [  # NOTE: processes .pst/.ost/.dbx/.mbox/.eml/.msg/.edb files
             ("email", "analyze_pst", {"pst_path": "{file}"}),
@@ -1126,9 +1094,7 @@ PLAYBOOK_STEPS = {
              "patterns": ["POST.*\\.(js|css|png|jpg|gif|ico|woff|ttf|svg)", "POST.*\\.asp", "POST.*\\.php", "POST.*\\.aspx"]}),
         ],
         "disk_images": [
-            # Enumerate web directories for newly created .asp/.php/.aspx/.jsp files
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True,
-             "filter_path": "inetpub|wwwroot|htdocs|www|webroot|public_html"}),
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
         "memory_dumps": [
@@ -1153,9 +1119,8 @@ PLAYBOOK_STEPS = {
             ("registry", "extract_shimcache", {"system_path": "{hive}"}),
         ],
         "disk_images": [
-            # Enumerate print spool directory and Windows Search index (Windows.edb)
-            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True,
-             "filter_path": "spool|Windows.edb|ESE|SearchIndex|WINDOWSSEARCH"}),
+            # Full filesystem walk — discover all user activity and staging artifacts dynamically
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             # Recover deleted staged files that may indicate data collection
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
         ],
@@ -1260,10 +1225,9 @@ PLAYBOOK_STEPS_PASS2 = {
                 "time_filter_start": "{time_window_start}",
                 "time_filter_end": "{time_window_end}",
             }),
-            # Check for scheduled task creation in window
+            # Enumerate all files in the time window to detect task creation and other activity
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}",
              "recursive": True,
-             "filter_path": "Windows/System32/Tasks",
              "time_window_start": "{time_window_start}",
              "time_window_end": "{time_window_end}"}),
         ],

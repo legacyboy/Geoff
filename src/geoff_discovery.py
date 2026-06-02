@@ -1268,15 +1268,39 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                     if os.path.isfile(e01):
                                         fls_target = e01
                                     break
-                            fls_result = subprocess.run(
-                                ["fls", "-o", str(fls_offset), "-r", fls_target],
-                                capture_output=True, text=True, timeout=600,
-                            )
+                            # Try fls with the mmls-discovered offset; if it returns nothing,
+                            # retry with common legacy offsets before giving up.
+                            _fls_try_offsets = [fls_offset] + [
+                                o for o in COMMON_LEGACY_OFFSETS if o != fls_offset
+                            ]
+                            fls_result = None
+                            for _fls_try_off in _fls_try_offsets:
+                                _fr = subprocess.run(
+                                    ["fls", "-o", str(_fls_try_off), "-r", fls_target],
+                                    capture_output=True, text=True, timeout=600,
+                                )
+                                if _fr.returncode == 0 and _fr.stdout.strip():
+                                    fls_result = _fr
+                                    fls_offset = _fls_try_off
+                                    break
+                                if _fr.returncode == 0 and fls_result is None:
+                                    fls_result = _fr  # empty but valid: keep as fallback
+                            if fls_result is None:
+                                fls_result = subprocess.run(
+                                    ["fls", "-o", str(fls_offset), "-r", fls_target],
+                                    capture_output=True, text=True, timeout=600,
+                                )
                             if fls_result.returncode == 0:
                                 found = 0
                                 _reg_basenames = frozenset([
                                     "software", "system", "sam", "security", "default",
                                     "ntuser.dat", "usrclass.dat", "amcache.hve",
+                                    "srudb.dat", "syscache.hve",
+                                ])
+                                _doc_exts = frozenset([
+                                    ".doc", ".docx", ".xls", ".xlsx", ".xlsm",
+                                    ".ppt", ".pptx", ".pdf", ".rtf", ".odt", ".ods",
+                                    ".txt", ".csv", ".zip", ".rar", ".7z", ".tar", ".gz",
                                 ])
                                 for fls_line in fls_result.stdout.splitlines():
                                     if not fls_line.strip() or fls_line.strip().startswith("|"):
@@ -1301,6 +1325,8 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                         ev_type = "evt_logs"
                                     elif basename_lower in _reg_basenames:
                                         ev_type = "registry_hives"
+                                    elif ext == ".hve":
+                                        ev_type = "registry_hives"
                                     elif ext in (".e01", ".dd", ".raw", ".vmdk", ".vhdx", ".qcow2"):
                                         ev_type = "nested_disk_images"
                                     elif ext in (".pst", ".ost", ".dbx", ".eml", ".mbox"):
@@ -1309,6 +1335,12 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                         ev_type = "browser_artifacts"
                                     elif ext in (".sqlite", ".sqlite3", ".db", ".db3") and basename_lower not in _reg_basenames:
                                         ev_type = "sqlite_dbs"
+                                    elif ext == ".pf":
+                                        ev_type = "documents"
+                                    elif ext == ".lnk":
+                                        ev_type = "documents"
+                                    elif ext in _doc_exts:
+                                        ev_type = "documents"
 
                                     if ev_type is None:
                                         continue
@@ -1391,8 +1423,8 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
 
                                         if not _extracted_ok:
                                             _fe_log(job_id, f"  ✗ icat pst FAILED for {name} — will try ewfmount fallback")
-                                    elif ev_type in ("browser_artifacts", "sqlite_dbs") and inode:
-                                        # Extract browser SQLite DBs for history/cookie analysis
+                                    elif ev_type in ("browser_artifacts", "sqlite_dbs", "documents") and inode:
+                                        # Extract browser SQLite DBs, prefetch, lnk, and documents via icat
                                         inode_num = inode.split("-")[0]
                                         safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
                                         out_path = os.path.join(extract_dir, safe_name)
@@ -1405,7 +1437,7 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                                 with open(out_path, "wb") as fout:
                                                     fout.write(icat_r.stdout)
                                                 extracted_path = out_path
-                                                _fe_log(job_id, f"  📥 icat db: {basename_lower} → {out_path}")
+                                                _fe_log(job_id, f"  📥 icat artifact: {basename_lower} → {out_path}")
                                         except Exception as icat_e:
                                             _fe_log(job_id, f"  ⚠ icat failed for {basename_lower}: {icat_e}")
 

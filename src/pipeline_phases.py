@@ -541,9 +541,22 @@ def _batch_critic_review_all_playbooks(
         f"{summary['high_critical_findings']} HIGH/CRITICAL"
     ))
 
+    # Count per-step Critic REQUIRES_REVIEW / REJECTED verdicts (unresolved = not self-corrected)
+    requires_review_count = sum(
+        1 for f in findings
+        if isinstance(f.get("critic"), dict)
+        and f["critic"].get("verdict") in ("REQUIRES_REVIEW", "REJECTED")
+        and not f.get("self_corrected")
+    )
+    summary["requires_review_count"] = requires_review_count
+
     # Build concise finding snippets for the LLM (cap at 50)
+    # Include per-step Critic verdicts so the batch LLM sees the validation state.
     finding_snippets = []
     for f in (high_critical + unverified)[:50]:
+        _critic = f.get("critic", {})
+        _critic_verdict = _critic.get("verdict", "") if isinstance(_critic, dict) else ""
+        _critic_hallucinations = (_critic.get("hallucinations", []) if isinstance(_critic, dict) else [])[:3]
         finding_snippets.append({
             "step_key": f.get("step_key", ""),
             "status": f.get("status", ""),
@@ -551,6 +564,8 @@ def _batch_critic_review_all_playbooks(
             "analyst_note": f.get("forensicator", {}).get("analyst_note", ""),
             "needs_review": f.get("needs_review", False),
             "unverified_reason": f.get("unverified_reason"),
+            "critic_verdict": _critic_verdict,
+            "critic_hallucinations": _critic_hallucinations,
         })
 
     prompt = f"""You are the Critic agent in a DFIR batch investigation. All playbooks have completed.
@@ -561,6 +576,9 @@ BATCH SUMMARY:
 
 HIGH/CRITICAL AND UNVERIFIED FINDINGS (up to 50):
 {json.dumps(finding_snippets, indent=2, default=str)}
+
+IMPORTANT: {requires_review_count} step(s) have unresolved per-step Critic REQUIRES_REVIEW or REJECTED verdicts.
+If requires_review_count > 0, set sufficient_for_report to false and list those step_keys in hallucination_flags.
 
 Assess the batch:
 1. Are there findings that are clearly unsupported by evidence (hallucinations)?
@@ -585,6 +603,30 @@ Respond ONLY in valid JSON (no extra text):
             batch_assessment = json.loads(m.group())
     except Exception as e:
         _fe_log(job_id, f"  ⚠ Batch critic parse error: {e} — using defaults")
+
+    # Hard gate: if per-step critics flagged REQUIRES_REVIEW/REJECTED steps that were not
+    # self-corrected, the batch LLM assessment cannot declare sufficient_for_report=True.
+    # This prevents the batch LLM from overriding individual Critic verdicts.
+    if requires_review_count > 0 and batch_assessment.get("sufficient_for_report", True):
+        batch_assessment["sufficient_for_report"] = False
+        batch_assessment.setdefault("hallucination_flags", [])
+        for f in findings:
+            _c = f.get("critic", {})
+            if (isinstance(_c, dict)
+                    and _c.get("verdict") in ("REQUIRES_REVIEW", "REJECTED")
+                    and not f.get("self_corrected")):
+                sk = f.get("step_key", "unknown")
+                hall = _c.get("hallucinations", [])
+                entry = f"{sk}: {'; '.join(str(h) for h in hall[:2])}" if hall else f"{sk}: {_c.get('verdict')}"
+                if entry not in batch_assessment["hallucination_flags"]:
+                    batch_assessment["hallucination_flags"].append(entry)
+        batch_assessment["assessment_summary"] = (
+            f"{requires_review_count} step(s) have unresolved Critic flags. Report requires manual review before use."
+        )
+        _fe_log(job_id, (
+            f"  [BATCH-CRITIC] Overriding sufficient_for_report=False "
+            f"({requires_review_count} unresolved Critic REQUIRES_REVIEW/REJECTED flag(s))"
+        ))
 
     # Write batch assessment to disk
     _atomic_write(
@@ -1691,6 +1733,14 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         if has_user_artifacts or inventory["disk_images"]:
             execution_plan.append("PB-SIFT-039")
             _fe_log(job_id, "  PB-SIFT-039: Insider Threat Behavioral Analysis queued")
+
+        # File Carving & Recovery (PB-SIFT-026) — always run for Windows disk images to recover
+        # deleted files. Catches M57-Jean class artifacts: deleted .txt files with webmail names,
+        # deleted spreadsheets, and other staged-then-wiped exfiltration artifacts.
+        if inventory["disk_images"] and os_type == "windows":
+            if "PB-SIFT-026" not in execution_plan:
+                execution_plan.append("PB-SIFT-026")
+                _fe_log(job_id, "  PB-SIFT-026: File Carving & Recovery queued (Windows disk image)")
 
         # Container Forensics — detect Docker/container artifacts
         container_patterns = {
@@ -3367,6 +3417,25 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             report["email_iocs"] = _email_result["email_iocs"].copy()
             report["email_direct_findings"] = True
 
+        # Refresh findings_detail so EMAIL_DIRECT records appear in the report
+        report["findings_detail"] = findings_writer.all_records()
+        # Rebuild step list too
+        report["steps"] = [
+            {
+                "index": i,
+                "module": f.get("module", "unknown"),
+                "function": f.get("function", "unknown"),
+                "status": f.get("status", "pending"),
+                "started_at": f.get("started_at"),
+                "completed_at": f.get("completed_at"),
+                "result": f.get("result", {}),
+            }
+            for i, f in enumerate(findings_writer.all_records())
+        ]
+
+        # Refresh failures list too
+        report["failures"] = [f for f in findings_writer.all_records() if f.get("status") == "failed"]
+
         # ------------------------------------------------------------------
         # Phase 5c: Narrative Report
         # Gated on manager_decision['generate_report'].
@@ -3375,6 +3444,31 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _generate_narrative = manager_decision.get("generate_report", True)
         if not _generate_narrative:
             _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
+
+        # Collect all per-step Critic flags that were not self-corrected so the
+        # narrative generator can include a prominent warning when unverified findings exist.
+        unresolved_critic_flags = []
+        for _f in findings_writer.all_records():
+            _c = _f.get("critic", {})
+            if (isinstance(_c, dict)
+                    and _c.get("verdict") in ("REQUIRES_REVIEW", "REJECTED")
+                    and not _f.get("self_corrected")):
+                unresolved_critic_flags.append({
+                    "step_key": _f.get("step_key", ""),
+                    "module": _f.get("module", ""),
+                    "function": _f.get("function", ""),
+                    "verdict": _c.get("verdict", ""),
+                    "verdict_reason": _c.get("verdict_reason", ""),
+                    "hallucinations": _c.get("hallucinations", []),
+                })
+        report["unresolved_critic_flags"] = unresolved_critic_flags
+        report["unresolved_critic_count"] = len(unresolved_critic_flags)
+        if unresolved_critic_flags:
+            _fe_log(job_id, (
+                f"  [NARRATIVE] {len(unresolved_critic_flags)} unresolved Critic flag(s) — "
+                "narrative will include unverified-findings warning"
+            ))
+
         if _generate_narrative:
             try:
                 narrator = NarrativeReportGenerator(call_llm_func=call_llm)
@@ -3394,6 +3488,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     behavioral_flags=all_behavioral_flags if all_behavioral_flags is not None else {},
                     case_work_dir=case_work_dir,
                     step_evidence_anchors=step_evidence_anchors,
+                    unresolved_critic_flags=unresolved_critic_flags,
                 )
                 report["narrative_report_path"] = str(narrative_path)
                 _fe_log(job_id, f"Narrative report: {narrative_path}")
@@ -3476,12 +3571,24 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
     disk_images = inventory.get("disk_images", [])
     if not disk_images:
         _fe_log(job_id, "  [EMAIL_DIRECT] No disk images in inventory — skipping")
-        return
+        return {"email_iocs": {}}
 
     _fe_log(job_id, f"  [EMAIL_DIRECT] Direct PST scan on {len(disk_images)} disk image(s)")
 
     from sift_specialists_extended import EMAIL_Specialist
     email_spec = EMAIL_Specialist()
+
+    # Aggregate across ALL images so the final return always has data
+    email_iocs_agg_all = {
+        "from_addresses": [],
+        "to_addresses": [],
+        "return_paths": [],
+        "sender_ips": [],
+        "subjects": [],
+        "urls_in_body": [],
+        "return_path_mismatches": [],
+        "spoofed_domains": [],
+    }
 
     for img_path in disk_images:
         img_name = Path(img_path).name
@@ -3803,6 +3910,29 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         f"{len(email_iocs_agg['urls_in_body'])} URL(s), "
                         f"{len(email_iocs_agg['return_path_mismatches'])} R-P mismatch(es)")
 
+                    # Merge per-PST IOCs into global aggregate for final return
+                    for ip in email_iocs_agg["sender_ips"]:
+                        if ip not in email_iocs_agg_all["sender_ips"]:
+                            email_iocs_agg_all["sender_ips"].append(ip)
+                    for addr in email_iocs_agg["from_addresses"]:
+                        if addr not in email_iocs_agg_all["from_addresses"]:
+                            email_iocs_agg_all["from_addresses"].append(addr)
+                    for addr in email_iocs_agg["to_addresses"]:
+                        if addr not in email_iocs_agg_all["to_addresses"]:
+                            email_iocs_agg_all["to_addresses"].append(addr)
+                    for rp in email_iocs_agg["return_paths"]:
+                        if rp not in email_iocs_agg_all["return_paths"]:
+                            email_iocs_agg_all["return_paths"].append(rp)
+                    for url in email_iocs_agg["urls_in_body"]:
+                        if url not in email_iocs_agg_all["urls_in_body"]:
+                            email_iocs_agg_all["urls_in_body"].append(url)
+                    for mm in email_iocs_agg["return_path_mismatches"]:
+                        if mm not in email_iocs_agg_all["return_path_mismatches"]:
+                            email_iocs_agg_all["return_path_mismatches"].append(mm)
+                    for d in email_iocs_agg["spoofed_domains"]:
+                        if d not in email_iocs_agg_all["spoofed_domains"]:
+                            email_iocs_agg_all["spoofed_domains"].append(d)
+
                     # Build a text dump of IOCs for the regex scanner in
                     # _extract_iocs() to pick up (IPs, email addresses, URLs)
                     ioc_text_lines = []
@@ -3938,10 +4068,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         _fe_log(job_id, f"  [EMAIL_DIRECT] Stamped {_email_hash[:12]} on EMAIL_DIRECT findings")
 
     _fe_log(job_id, "  [EMAIL_DIRECT] Direct email extraction complete")
-    try:
-        return {"email_iocs": email_iocs_agg}
-    except NameError:
-        return {}
+    return {"email_iocs": email_iocs_agg_all}
 
 
 # Phase 10 functions → geoff_utils.py (_is_rfc1918, _extract_ips_from_evidence, _build_connectivity_map)

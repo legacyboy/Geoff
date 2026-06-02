@@ -454,7 +454,8 @@ class NarrativeReportGenerator:
                  user_map: dict, super_timeline_path: str,
                  correlated_users: dict, behavioral_flags: dict,
                  case_work_dir: Path,
-                 step_evidence_anchors: Optional[List[dict]] = None) -> Path:
+                 step_evidence_anchors: Optional[List[dict]] = None,
+                 unresolved_critic_flags: Optional[List[dict]] = None) -> Path:
         """
         Generate the full narrative report.
 
@@ -462,6 +463,9 @@ class NarrativeReportGenerator:
             step_evidence_anchors: Optional list of evidence_chain dicts from
                 completed find_evil steps (CRITICAL/HIGH significance), used to
                 anchor the attack chain narrative to specific artifacts.
+            unresolved_critic_flags: Optional list of per-step Critic REQUIRES_REVIEW/REJECTED
+                findings that were not self-corrected. When present, a prominent warning banner
+                is prepended to the narrative stating the report contains unverified findings.
 
         Returns:
             Path to narrative_report.md
@@ -598,6 +602,30 @@ Provide a revised narrative report with all claims properly cited to specific ev
             except Exception:
                 pass  # If check fails, proceed with original content
         
+        # If per-step Critic flagged unresolved REQUIRES_REVIEW/REJECTED verdicts, prepend a
+        # prominent warning. This makes it impossible for a reader to miss that unverified
+        # claims exist. It replaces silent hallucination with explicit disclosure.
+        if unresolved_critic_flags:
+            _flag_lines = []
+            for _flg in unresolved_critic_flags[:10]:
+                _hall = _flg.get("hallucinations", [])
+                _line = f"  - `{_flg.get('step_key', '')}` ({_flg.get('verdict', '')}): {str(_flg.get('verdict_reason', ''))[:120]}"
+                if _hall:
+                    _line += f"\n    Hallucinations flagged: {'; '.join(str(h) for h in _hall[:2])}"
+                _flag_lines.append(_line)
+            _more = f"\n  - ... and {len(unresolved_critic_flags) - 10} more" if len(unresolved_critic_flags) > 10 else ""
+            critic_warning = (
+                "\n> **UNVERIFIED FINDINGS WARNING**\n"
+                ">\n"
+                "> This report contains findings that the Critic validation agent flagged as REQUIRES_REVIEW "
+                "or REJECTED because they could not be confirmed against raw tool output. "
+                "Treat all findings as **preliminary** pending manual verification against the underlying evidence.\n"
+                ">\n"
+                f"> **{len(unresolved_critic_flags)} unresolved Critic flag(s):**\n"
+                + "\n".join(_flag_lines) + _more + "\n\n"
+            )
+            md_content = critic_warning + md_content
+
         if needs_review_sections:
             banner = ("\n> ⚠️ **Needs Review**: The following sections used template fallback "
                       "due to Ollama timeout: " + ", ".join(needs_review_sections) + "\n\n")
@@ -714,7 +742,12 @@ Provide a revised narrative report with all claims properly cited to specific ev
             prompt += (
                 f"\nWrite a factual executive summary. Do not speculate "
                 f"beyond what the evidence shows. Use professional tone "
-                f"suitable for legal documentation."
+                f"suitable for legal documentation.\n"
+                f"\nCRITICAL RULE: If the email_direct_findings list is empty or "
+                f"email_iocs is empty, state clearly that no email or phishing "
+                f"indicators were found. DO NOT invent numbers, Return-Path "
+                f"mismatches, or spoofing counts that are not in the evidence. "
+                f"Report ONLY what the data above shows."
             )
 
             try:
