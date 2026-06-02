@@ -2780,12 +2780,74 @@ Write the following sections. ACCURACY RULES:
 
         return "\n".join(lines)
 
+    SIGNIFICANCE_WEIGHT = {
+        "CRITICAL": 100,
+        "HIGH": 75,
+        "MEDIUM": 50,
+        "LOW": 25,
+        "NONE": 0,
+        "": 0
+    }
+
+    def _compute_finding_priority(self, finding: dict) -> int:
+        """Compute a priority score (0-150) for a single finding.
+        Uses the Forensicator's significance field + deterministic rule boosts.
+        No LLM calls. No YARA references. Works on case #1."""
+        
+        # Base weight from significance field
+        annotations = finding.get("annotations") or {}
+        if isinstance(annotations, dict):
+            sig = annotations.get("significance", "NONE")
+        else:
+            sig = "NONE"
+        weight = self.SIGNIFICANCE_WEIGHT.get(sig, 0)
+        
+        # Check result content for indicators of malicious activity
+        result = finding.get("result") or {}
+        if isinstance(result, dict):
+            # Known malicious indicators
+            if result.get("known_malicious_hashes"):
+                weight += 50
+            if result.get("infected_files"):
+                weight += 40
+            if result.get("malware_hits"):
+                weight += 35
+            if result.get("suspicious_connections"):
+                weight += 25
+            if result.get("suspicious_processes"):
+                weight += 25
+            if result.get("anomalous_process"):
+                weight += 25
+            if result.get("credential_theft"):
+                weight += 20
+            if result.get("rootkit_indicators"):
+                weight += 35
+            if result.get("anomalies"):
+                weight += 15
+            if result.get("threat_indicators"):
+                weight += 10
+        
+        # Status penalties
+        status = finding.get("status", "")
+        if status in ("skipped", "failed", "error"):
+            weight -= 50
+        
+        return max(0, weight)
+
+
+    def _sort_findings_by_priority(self, findings: list) -> list:
+        """Sort findings by priority score descending.
+        Higher priority = more likely to be malicious."""
+        scored = [(self._compute_finding_priority(f), f) for f in findings]
+        scored.sort(key=lambda x: (-x[0], x[1].get("playbook", ""), x[1].get("step_key", "")))
+        return [f for _, f in scored]
+
     def _render_detailed_steps(self, report_json: dict) -> str:
         """Render detailed step-by-step execution log showing actual CLI commands,
         raw output excerpts, critic verdicts, and status for every step."""
         # Lazy import to avoid circular dependency (geoff_pipeline imports narrative_report)
         from geoff_pipeline import _reconstruct_raw_command
-        findings = report_json.get("findings_detail", [])
+        findings = self._sort_findings_by_priority(report_json.get("findings_detail", []))
         if not findings:
             return "No step execution data available."
 
@@ -2836,6 +2898,12 @@ Write the following sections. ACCURACY RULES:
                 lines.append(f"#### Step {i}: `{module}.{function}`\n")
                 lines.append(f"- **Evidence:** `{evidence}` (device: {device})")
                 lines.append(f"- **Status:** {status_badge}")
+                
+                # Priority badge
+                priority = self._compute_finding_priority(f)
+                priority_label = "🔴 High Priority" if priority >= 75 else ("🟡 Medium Priority" if priority >= 40 else "⚪ Low Priority")
+                lines.append(f"- **Priority:** {priority_label} ({priority}/150)")
+                
                 if step_key:
                     lines.append(f"- **Step Key:** `{step_key}`")
 
