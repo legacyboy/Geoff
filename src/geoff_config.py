@@ -471,6 +471,8 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-035": "Active Directory DC Forensics",
     "PB-SIFT-036": "PCAP Network Forensics",
     "PB-SIFT-037": "IoT Device Forensics",
+    "PB-SIFT-038": "Web Shell Indicators",
+    "PB-SIFT-039": "Insider Threat Behavioral Analysis",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -531,17 +533,29 @@ PLAYBOOK_STEPS = {
             ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
             ("windows", "lsadump", {"memory_dump": "{mem}"}),
             ("windows", "malfind", {"memory_dump": "{mem}"}),
+            # Token analysis: enumerate process command lines for elevated/suspicious processes
+            ("windows", "cmdline", {"memory_dump": "{mem}"}),
+            # Token analysis: find SeDebugPrivilege, SeBackupPrivilege strings in raw memory
+            ("strings", "extract_strings", {"file_path": "{mem}", "min_length": 8}),
         ],
         "registry_hives": [
             ("registry", "extract_services", {"system_path": "{hive}"}),
             ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"}),
             ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Installer"}),
             ("registry", "extract_sam_users", {"sam_path": "{hive}"}),
+            # Service binary path hijacking: enumerate raw service keys for unquoted ImagePath detection
+            ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SYSTEM\\CurrentControlSet\\Services"}),
         ],
         "disk_images": [
             ("windows", "analyze_prefetch", {"image": "{image}"}),
             ("windows", "analyze_amcache", {"image": "{image}"}),
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+            # DLL search-order abuse: enumerate System32 to identify unexpected or hijacked DLLs
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "System32"}),
+            # Linux priv-esc: check for sudo misconfiguration in /etc/sudoers
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "/etc/sudoers"}),
+            # Linux priv-esc: find SUID markers, setuid references, and unquoted service paths
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
         ],
     },
     "PB-SIFT-005": {  # Credential Theft
@@ -630,9 +644,15 @@ PLAYBOOK_STEPS = {
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            # Encoded PowerShell: find -EncodedCommand, FromBase64String, IEX patterns in memory
+            ("strings", "extract_strings", {"file_path": "{mem}", "min_length": 8}),
         ],
         "disk_images": [
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+            # Base64 decode: extract encoded content from disk (certutil -decode artifacts, payload blobs)
+            ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+            # Decoded outputs: find certutil-cached files and mshta-dropped artifacts in Temp
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True, "filter_path": "Temp"}),
         ],
     },
     "PB-SIFT-011": {  # Impact/Data Destruction
@@ -1089,6 +1109,66 @@ PLAYBOOK_STEPS = {
         ],
         "other_files": [
             ("strings", "extract_strings", {"target_file": "{file}"}),
+        ],
+    },
+    "PB-SIFT-038": {  # Web Shell Indicators — triggered by IIS/Apache logs or web server disk images
+        "evtx_logs": [
+            # IIS and W3SVC events; parse all event IDs then analyst filters for anomalous POSTs
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+        ],
+        "evt_logs": [
+            ("logs", "parse_evt", {"evt_file": "{evt}"}),
+        ],
+        "syslogs": [
+            # Apache/nginx access logs — parse for anomalous POST requests to static files
+            ("logs", "parse_syslog", {"log_file": "{syslog}",
+             "patterns": ["POST.*\\.(js|css|png|jpg|gif|ico|woff|ttf|svg)", "POST.*\\.asp", "POST.*\\.php", "POST.*\\.aspx"]}),
+        ],
+        "disk_images": [
+            # Enumerate web directories for newly created .asp/.php/.aspx/.jsp files
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True,
+             "filter_path": "inetpub|wwwroot|htdocs|www|webroot|public_html"}),
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+        ],
+        "memory_dumps": [
+            # Detect w3wp.exe → cmd.exe / powershell.exe parent-child chains
+            ("volatility", "process_list", {"memory_dump": "{mem}"}),
+            ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+        ],
+        "other_files": [
+            # Grep standalone web files for common web shell keywords
+            ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
+        ],
+    },
+    "PB-SIFT-039": {  # Insider Threat Behavioral Analysis — triggered by Windows registry/logon artifacts
+        "registry_hives": [
+            # UserAssist MRU: programs launched by user, with run count and timestamps
+            ("registry", "extract_user_assist", {"ntuser_path": "{hive}"}),
+            # Shellbags: folder browsing history including removable/network paths
+            ("registry", "extract_shellbags", {"ntuser_path": "{hive}"}),
+            # SRUM: per-app network/CPU/energy usage — reveals off-hours activity bursts
+            ("registry", "extract_srum", {"srum_path": "{hive}"}),
+            # Shimcache / AppCompatCache: application execution evidence
+            ("registry", "extract_shimcache", {"system_path": "{hive}"}),
+        ],
+        "disk_images": [
+            # Enumerate print spool directory and Windows Search index (Windows.edb)
+            ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True,
+             "filter_path": "spool|Windows.edb|ESE|SearchIndex|WINDOWSSEARCH"}),
+            # Recover deleted staged files that may indicate data collection
+            ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
+        ],
+        "evtx_logs": [
+            # Logon/logoff events (4624/4634/4647) for off-hours access patterns; volume shadow events
+            ("logs", "parse_evtx", {"evtx_file": "{evtx}",
+             "event_ids": [4624, 4634, 4647, 4648, 4688, 4698, 4702, 7045]}),
+        ],
+        "evt_logs": [
+            ("logs", "parse_evt", {"evt_file": "{evt}"}),
+        ],
+        "other_files": [
+            # Scan standalone artifacts (exports, archives, docs) for PII/sensitive patterns
+            ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
         ],
     },
 }

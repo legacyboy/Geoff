@@ -1667,6 +1667,31 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # --- END NEW PLAYBOOK AUTO-TRIGGERS (PB-SIFT-015/034-036) ---
 
+        # Web Shell Indicators (PB-SIFT-038) — trigger when IIS/Apache logs or web server disk images present
+        web_log_patterns = {"iis", "w3svc", "httperr", "access_log", "error_log", "apache", "nginx", "httpd"}
+        web_shell_exts = {".asp", ".aspx", ".php", ".jsp", ".jspx"}
+        has_web_logs = any(
+            any(pat in str(f).lower() for pat in web_log_patterns)
+            for f in inventory.get("evtx_logs", []) + inventory.get("syslogs", []) + inventory.get("other_files", [])
+        )
+        has_web_shell_files = any(
+            any(str(f).lower().endswith(ext) for ext in web_shell_exts)
+            for f in inventory.get("other_files", [])
+        )
+        if has_web_logs or has_web_shell_files or inventory["disk_images"]:
+            execution_plan.append("PB-SIFT-038")
+            _fe_log(job_id, "  PB-SIFT-038: Web Shell Indicators queued")
+
+        # Insider Threat Behavioral Analysis (PB-SIFT-039) — trigger when Windows user artifacts present
+        has_user_artifacts = (
+            inventory["registry_hives"]
+            or inventory.get("evtx_logs", [])
+            or inventory.get("evt_logs", [])
+        )
+        if has_user_artifacts or inventory["disk_images"]:
+            execution_plan.append("PB-SIFT-039")
+            _fe_log(job_id, "  PB-SIFT-039: Insider Threat Behavioral Analysis queued")
+
         # Container Forensics — detect Docker/container artifacts
         container_patterns = {
             "docker": ["docker", "containerd", "overlay2", "config.v2.json"],

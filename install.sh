@@ -330,6 +330,19 @@ DIE_EOF
         info "apfs-fuse already installed"
     fi
 
+    # pycdc — Python bytecode decompiler (PB-009 Malware Hunting); not in apt, build from source
+    if ! command -v pycdc &>/dev/null; then
+        info "Building pycdc (Python bytecode decompiler) from source..."
+        sudo apt-get install -y -qq cmake 2>/dev/null || true
+        git clone --depth=1 https://github.com/zrax/pycdc.git /tmp/pycdc 2>/dev/null && \
+            cd /tmp/pycdc && cmake . -DCMAKE_BUILD_TYPE=Release 2>/dev/null && make -j2 2>/dev/null && \
+            sudo cp pycdc pycdas /usr/local/bin/ 2>/dev/null && \
+            cd / && rm -rf /tmp/pycdc || \
+            warn "pycdc build failed — Python bytecode decompilation (PB-009) will fall back to uncompyle6"
+    else
+        info "pycdc already installed"
+    fi
+
     # dive — Docker layer explorer (container forensics playbook)
     if ! command -v dive &>/dev/null; then
         info "Installing dive for Docker layer analysis..."
@@ -668,6 +681,26 @@ if kill -0 ${MCP_PID} 2>/dev/null; then
 else
     warn "Geoff MCP server may have failed to start (check logs/mcp.log)"
 fi
+
+# ── External tool presence checks ────────────────────────────────────────────
+# These tools are large/dependency-heavy; we don't install them, just warn if absent.
+info "Checking for externally-managed tools (not installed here)..."
+for _ext_tool in NetworkMiner networkminer; do
+    if command -v "$_ext_tool" &>/dev/null; then
+        ok "NetworkMiner found: $(command -v $_ext_tool)"
+        break
+    fi
+done
+if ! command -v NetworkMiner &>/dev/null && ! command -v networkminer &>/dev/null; then
+    warn "NetworkMiner not found — install mono + NetworkMiner manually for network forensics (PB-005)"
+fi
+for _jtr_tool in john johnny; do
+    if command -v "$_jtr_tool" &>/dev/null; then
+        ok "$_jtr_tool found: $(command -v $_jtr_tool)"
+    else
+        warn "$_jtr_tool not found — install john/johnny manually for password cracking support"
+    fi
+done
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
