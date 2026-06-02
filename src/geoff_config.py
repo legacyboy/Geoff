@@ -836,6 +836,7 @@ PLAYBOOK_STEPS = {
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
             ("zeek", "analyze_pcap", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/zeek"}),
+            ("network", "extract_tls_fingerprints", {"pcap_file": "{pcap}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),

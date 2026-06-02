@@ -1364,6 +1364,37 @@ class NETWORK_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
+    def extract_tls_fingerprints(self, pcap_file: str) -> Dict[str, Any]:
+        """Extract JA3/JA3S TLS fingerprints from PCAP using tshark."""
+        import subprocess, json
+        from typing import Dict, Any
+        try:
+            result = subprocess.run(
+                ['tshark', '-r', pcap_file, '-T', 'fields',
+                 '-e', 'tls.handshake.ja3', '-e', 'tls.handshake.ja3s',
+                 '-e', 'ip.src', '-e', 'ip.dst', '-e', 'tls.handshake.type'],
+                capture_output=True, text=True, timeout=120
+            )
+            fingerprints = []
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.split('\t')
+                    if len(parts) >= 1 and parts[0]:
+                        fingerprints.append({
+                            "ja3": parts[0] if len(parts) > 0 else "",
+                            "ja3s": parts[1] if len(parts) > 1 else "",
+                            "src_ip": parts[2] if len(parts) > 2 else "",
+                            "dst_ip": parts[3] if len(parts) > 3 else "",
+                        })
+            return {
+                "status": "completed",
+                "fingerprint_count": len(fingerprints),
+                "fingerprints": fingerprints[:100],
+                "unique_ja3": len(set(f['ja3'] for f in fingerprints if f['ja3'])),
+            }
+        except Exception as e:
+            return {"status": "failed", "error": str(e), "fingerprints": []}
+
     def extract_http(self, pcap_file: str) -> Dict[str, Any]:
         """Extract HTTP objects from PCAP – fully parsed requests with method/URI/host."""
         if not self.tshark_path:
@@ -1610,6 +1641,60 @@ except Exception as e:
                 'privilege_use': event_id_counts.get('4672', 0),
                 'object_access': event_id_counts.get('4663', 0),
             }
+
+            # PowerShell 4104 multi-block reassembly
+            reassembled = {}
+            if isinstance(raw_events, list):
+                for evt in raw_events:
+                    # Check for EventID 4104 in both legacy and new field formats
+                    evt_id = None
+                    sb_id = None
+                    sb_text = None
+                    msg_num = None
+
+                    # Try new format: Event -> System -> EventID
+                    sys_block = evt.get('Event', {}).get('System', {})
+                    if sys_block.get('EventID') == 4104 or sys_block.get('EventID') == '4104':
+                        evt_id = '4104'
+                        event_data = evt.get('Event', {}).get('EventData', {})
+                        if isinstance(event_data, dict):
+                            sb_id = event_data.get('ScriptBlockId') or event_data.get('scriptBlockId')
+                            sb_text = event_data.get('ScriptBlockText') or event_data.get('scriptBlockText')
+                            msg_num = event_data.get('MessageNumber') or event_data.get('messageNumber')
+
+                    # Try legacy format: EventID directly
+                    if not evt_id:
+                        eid = sys_block.get('EventID')
+                        if eid == 4104 or eid == '4104':
+                            evt_id = '4104'
+                            # Legacy EVTX format might have ScriptBlock fields at top level
+                            legacy_data = evt.get('Event', {}).get('EventData', {})
+                            if isinstance(legacy_data, dict):
+                                sb_id = legacy_data.get('ScriptBlockId') or legacy_data.get('scriptBlockId')
+                                sb_text = legacy_data.get('ScriptBlockText') or legacy_data.get('scriptBlockText')
+                                msg_num = legacy_data.get('MessageNumber') or legacy_data.get('messageNumber')
+                            else:
+                                # Check raw event for direct fields
+                                sb_id = evt.get('ScriptBlockId') or evt.get('scriptBlockId')
+                                sb_text = evt.get('ScriptBlockText') or evt.get('scriptBlockText')
+                                msg_num = evt.get('MessageNumber') or evt.get('messageNumber')
+
+                    if evt_id == '4104' and sb_id and sb_text:
+                        if sb_id not in reassembled:
+                            reassembled[sb_id] = []
+                        try:
+                            num = int(msg_num) if msg_num else 0
+                        except (ValueError, TypeError):
+                            num = 0
+                        reassembled[sb_id].append((num, sb_text))
+
+            if reassembled:
+                full_scripts = {}
+                for sb_id, fragments in reassembled.items():
+                    fragments.sort(key=lambda x: x[0])
+                    full_scripts[sb_id] = "\n".join(text for _, text in fragments)
+                result["reassembled_scripts"] = full_scripts
+                result["reassembled_count"] = len(full_scripts)
 
             return {
                 'tool': 'evtx_parser',
@@ -11258,7 +11343,7 @@ class ExtendedOrchestrator:
             },
             'network': {
                 'category': 'Network Forensics',
-                'functions': ['analyze_pcap', 'extract_flows', 'extract_http'],
+                'functions': ['analyze_pcap', 'extract_flows', 'extract_http', 'extract_tls_fingerprints'],
                 'tool_availability': avail(['tshark', 'tcpflow']),
             },
             'logs': {'category': 'Log Analysis', 'functions': ['parse_evtx', 'parse_evt', 'parse_syslog', 'extract_linux_users', 'extract_wtmp_logins', 'extract_ssh_authorized_keys'], 'tool_availability': {'python-evtx': evtx_available}},

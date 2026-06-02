@@ -2359,6 +2359,28 @@ def _extract_archive(archive_path: str, extract_dir: str | None = None,
             else:
                 extracted_files = _list_extracted_files(extract_dir)
 
+        elif header[:7] == b'Rar!\x1a\x07\x00' or header[:8] == b'Rar!\x1a\x07\x01\x00':
+            # RAR archive — try rarfile Python library first, fall back to unrar CLI
+            try:
+                import rarfile
+                with rarfile.RarFile(archive_path, 'r') as rf:
+                    rf.extractall(extract_dir)
+                extracted_files = _list_extracted_files(extract_dir)
+            except ImportError:
+                result = safe_run(
+                    ["unrar", "x", "-y", archive_path, extract_dir + "/"],
+                    timeout=3600
+                )
+                if result["code"] != 0:
+                    return {
+                        "status": "error",
+                        "error": (
+                            f"RAR extraction failed (install rarfile or unrar): "
+                            f"{result.get('stderr', '')[:200]}"
+                        ),
+                    }
+                extracted_files = _list_extracted_files(extract_dir)
+
         else:
             return {"status": "error", "error": f"Unknown archive format: {archive.name}"}
 

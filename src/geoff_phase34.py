@@ -1088,9 +1088,20 @@ def _parse_evtx_with_library(path: str) -> list:
                             data_pairs[name] = value[:256]
                 summary = "; ".join(f"{k}={v}" for k, v in list(data_pairs.items())[:6])
 
+                # For 4104 (PS script block) events capture full untruncated data
+                # so multi-fragment blocks can be stitched by ScriptBlockId later.
+                evtx_data = None
+                if event_id == 4104 and event_data is not None:
+                    evtx_data = {}
+                    for data_elem in event_data.findall("e:Data", ns):
+                        name = data_elem.get("Name", "")
+                        value = data_elem.text or ""
+                        if name:
+                            evtx_data[name] = value
+
                 tag, severity = _EVTX_INTERESTING.get(event_id, ("OTHER", "INFO"))
                 if tag != "OTHER" or event_id in _EVTX_INTERESTING:
-                    records.append({
+                    rec = {
                         "source": path,
                         "event_id": event_id,
                         "timestamp": timestamp,
@@ -1098,7 +1109,10 @@ def _parse_evtx_with_library(path: str) -> list:
                         "summary": summary[:512],
                         "severity": severity,
                         "tag": tag,
-                    })
+                    }
+                    if evtx_data is not None:
+                        rec["evtx_data"] = evtx_data
+                    records.append(rec)
             except ET.ParseError:
                 continue
     return records
@@ -1176,6 +1190,56 @@ def parse_windows_event_logs(
             result["events_of_interest"].extend(recs)
         except Exception as e:
             _fe_log(job_id, f"  [EVTX] Error parsing {evtx_path} (non-fatal): {e}")
+
+    # Stitch multi-fragment PowerShell 4104 script block events.
+    # Windows splits large script blocks across sequential records that share
+    # the same ScriptBlockId but have different MessageNumber values.
+    _ps4104 = [e for e in result["events_of_interest"]
+               if e.get("event_id") == 4104 and e.get("evtx_data")]
+    if _ps4104:
+        from collections import defaultdict as _dd
+        _blocks = _dd(list)
+        for _ev in _ps4104:
+            _sb_id = _ev["evtx_data"].get("ScriptBlockId", "")
+            if _sb_id:
+                _blocks[_sb_id].append(_ev)
+        _stitched_obj_ids = set()
+        _merged_recs = []
+        for _sb_id, _frags in _blocks.items():
+            try:
+                _frags_sorted = sorted(
+                    _frags,
+                    key=lambda x: int(x["evtx_data"].get("MessageNumber", 1))
+                )
+            except (TypeError, ValueError):
+                _frags_sorted = _frags
+            _full_text = "".join(
+                f["evtx_data"].get("ScriptBlockText", "") for f in _frags_sorted
+            )
+            _base = _frags_sorted[0]
+            _total = _base["evtx_data"].get("MessageTotal", str(len(_frags)))
+            _path = _base["evtx_data"].get("Path", "")
+            _merged = {
+                "source": _base["source"],
+                "event_id": 4104,
+                "timestamp": _base["timestamp"],
+                "provider": _base["provider"],
+                "summary": (
+                    f"ScriptBlockId={_sb_id}; MessageTotal={_total}; "
+                    f"Path={_path}; ScriptBlockText={_full_text[:400]}"
+                )[:512],
+                "severity": _base["severity"],
+                "tag": _base["tag"],
+                "evtx_data": {**_base["evtx_data"], "ScriptBlockText": _full_text},
+                "script_block_stitched": True,
+            }
+            _merged_recs.append(_merged)
+            for _f in _frags:
+                _stitched_obj_ids.add(id(_f))
+        result["events_of_interest"] = [
+            e for e in result["events_of_interest"]
+            if not (e.get("event_id") == 4104 and id(e) in _stitched_obj_ids)
+        ] + _merged_recs
 
     for ev in result["events_of_interest"]:
         sev = ev.get("severity", "INFO")
