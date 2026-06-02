@@ -8,47 +8,40 @@ GEOFF (Git-backed Evidence Operations Forensic Framework) is an autonomous multi
 
 ---
 ## Human authors notes
-This project started over a bunch of mojitos in a pool in Mexico.  I had just setup OpenClaw before I left and was playing around with what I could do with it and saw a posting announcing the competition.  The idea of Geoff and its architecture is all mine, git, playbooks, critic, healing. But I wrote absolutely nothing besides some documentation and architecture designs for the project.  I have been using a variety of models to do the work, GLM5.1, Deepseek, Qwen (multiple), Kimi, ChatGPT and recently Claude. Some worked better than others; others worked much much worse and caused all sorts of chaos. 
 
-  
+This project started over a bunch of mojitos in a pool in Mexico.  I had just setup OpenClaw before I left and was playing around with what I could do with it and saw a posting announcing the competition.  The idea of Geoff and its architecture is all mine, git, playbooks, critic, healing. But I wrote absolutely nothing besides some documentation and architecture designs for the project.  I have been using a variety of models to do the work, GLM5.1, Deepseek, Qwen (multiple), Kimi, ChatGPT and recently Claude. Some worked better than others; others worked much much worse and caused all sorts of chaos. 
 
 I tried multiple approaches to development, I had Claude act as an architect and direct others, working with the agents in teams, and individual efforts being validated by another agent. I ended up preferring individual agents spawned by a manager agent on OpenClaw that monitored them and then passed the final work off to another for validation. I found great success with the non-frontier agents; GLM5.1 was very capable but expensive. Qwen and its derivatives were some of my favorites. DeepSeek I found very capable, flash was ok, Pro was impressive. 
 
-  
-
 Could I have written this without them?  
-
- 
 
 Not to this level, I had a functional system with no gui before I got on a plane. Then the gui, the gui and its connection to the backend are beyond what I could have done on my own. Not just in 60 days, I am not sure if I had the time or the inclination to do it at all. 
 
-  
 
 ### What I am proud of 
 
   
+## Git back end 
 
-## git back end 
-
-I was about 5 mojitos into the morning, I still think this is a good idea. My agents have extended it further but it opens many doors to new features. 
-
-  
+I was about 5 mojitos into the morning, I still think this is a good idea. My agents have extended it further but it opens many doors to new features. Teaming, history tracking are all enabled with git in the back.
 
 ## Playbooks 
 
-The playbooks were a necessity, it almost acts like a set of guard rails to keep Geoff on task. But it also makes it extensible. We can add new playbooks and if there are tools missing, it should be able to recognize that and install them. If there are new evidence types, we can just give Geoff a new playbook and off it goes. 
+The playbooks were a necessity, it almost acts like a set of guard rails to keep Geoff on task. But it also makes it extensible. We can add new skills by playbooks and if there are tools missing, it should be able to recognize that and install them. If there are new evidence types, we can just give Geoff a new playbook and off it goes. 
 
-  
 
 ## Multi agents and the Critic 
 
 Initially, my plan was to leverage OpenClaw as a base and use it for my agents. To be blunt I have no idea if even did, but eventually I ended up with the current architecture which works fine. This is one of my biggest criticisms of vibe coding right now. It just adds things without asking, even when I am very specific, it will add new features and buttons without being prompted. It makes testing an adventure since I never know what I am going to find. 
 
-  
 
 ## Checkpoints 
 
 Sadly, this was a late addition, I had a release that was very unstable and it was tedious to restart.  I could have resolved this sooner, but it was not as painful as it was when I finally did. 
+
+## Challenges with Vibecoding
+
+Having the agents check everything into a git repo is a must at every single step. I had several cases where we were going on one part of the applcation and the report page was altered. I would rate working with current non-frontier models between workable and terrifying.
 
 ---
 
@@ -100,11 +93,12 @@ All three agents communicate via structured JSON. The entire state is persisted 
 
 ## What's next
 
-- **Multi-endpoint team investigations** — Geoff agents running across multiple machines simultaneously, sharing evidence and coordinating playbook execution so one analyst can queue a case and Geoff auto-distributes work across SIFT, Kali, macOS, and cloud instances.
-- **Real-time collaborative analysis** — multiple analysts watching the same live investigation, commenting on findings, and pinning evidence while Geoff updates the report in real-time, turning solo forensics into a team sport.
+- **Multi-endpoint team investigations** — Geoff agents running across multiple machines simultaneously, sharing evidence and coordinating playbook execution. Currently we are experiance IO bound issues processing multiple large images. But with muiltiple endpoints working in teams we can increase speed greatly. A single manager LLM should be able to do this, move the evidence around and coordinate the execution. Coverting Geoff and SIFT into a docker container should help here.
+- **Real-time collaborative analysis** — multiple analysts watching the same live investigation, commenting on findings, and pinning evidence while Geoff updates the report in real-time, turning solo forensics into a team sport. Using git or GitHub this is possible.
 - **Cloud-native deployment** — Geoff as a fully containerized service with a web dashboard, user authentication, case management, and evidence upload via browser, so any analyst on any machine can open a case without touching a command line.
 - **ML-driven triage ranking** — a classifier trained on prior case outcomes that automatically scores and ranks findings by likelihood of being malicious, so the analyst sees the most important evidence at the top of every report.
 - **Live incident response collection** — not just post-mortem forensics on disk images, but live acquisition from running systems via WinRM and SSH, with Geoff deploying lightweight collectors to pull memory, process trees, and network state before the attacker cleans up.
+- **Model flexability** - Right now we have the 3(6) default models, the ability to use different providers and models in dropdowns would be helpful for future proofig.
 
 ---
 
