@@ -428,7 +428,7 @@ class NarrativeReportGenerator:
             return None
 
         if backoff is None:
-            backoff = [30, 60, 120]
+            backoff = [60, 120, 300]
 
         import time as _time
         for attempt in range(max_retries + 1):
@@ -474,6 +474,29 @@ class NarrativeReportGenerator:
         report_dir = case_work_dir / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
 
+        # Normalize field types: narrative output JSONs store sections as rendered
+        # strings, but the generator expects structured dicts/lists as input.
+        # Guard all fields that are accessed via .get() or iteration.
+        _needs_norm = (
+            not isinstance(report_json.get("attack_chain"), dict)
+            or not isinstance(report_json.get("self_corrections"), list)
+            or not isinstance(report_json.get("findings_detail"), list)
+        )
+        if _needs_norm:
+            report_json = dict(report_json)
+            if not isinstance(report_json.get("attack_chain"), dict):
+                report_json["attack_chain"] = {}
+            for _list_key in (
+                "self_corrections", "findings_detail", "failures",
+                "indicator_hits", "mitre_techniques", "timeline",
+                "playbook_runs", "unprocessed_files",
+            ):
+                if not isinstance(report_json.get(_list_key), list):
+                    report_json[_list_key] = []
+            for _dict_key in ("evidence_inventory", "email_iocs", "playbook_names"):
+                if not isinstance(report_json.get(_dict_key), dict):
+                    report_json[_dict_key] = {}
+
         md_path = report_dir / "narrative_report.md"
         json_path = report_dir / "narrative_report.json"
 
@@ -507,7 +530,7 @@ class NarrativeReportGenerator:
         # 4. Timeline of Significant Events
         sections["significant_events"] = \
             self._generate_significant_timeline(
-                super_timeline_path, behavioral_flags)
+                super_timeline_path, behavioral_flags, report_json=report_json)
 
         # 5. Behavioral Findings
         # 5a. Self-corrections (auto-recovery events)
@@ -1365,53 +1388,115 @@ class NarrativeReportGenerator:
             lines.append(
                 f"**{len(lateral)} lateral movement indicator(s) detected.**")
 
-        if not high_flags and not anomalies and not lateral:
+        medium_flags = [f for f in flags
+                        if f.get("severity") == "MEDIUM"]
+        if medium_flags:
+            lines.append("")
+            lines.append(
+                f"**{len(medium_flags)} medium-severity behavioral indicator(s) noted:**")
+            for flag in medium_flags[:8]:
+                lines.append(f"- {flag.get('summary', 'Unknown')}")
+
+        if not high_flags and not anomalies and not lateral and not medium_flags:
             lines.append(
                 "No suspicious activity was detected for this user.")
 
         return "\n".join(lines)
 
     def _generate_significant_timeline(self, super_timeline_path: str,
-                                        behavioral_flags: dict) -> str:
+                                        behavioral_flags: dict,
+                                        report_json: dict = None) -> str:
         """
-        Extract significant (suspicious) events from super-timeline.
+        Extract significant events from super-timeline.
 
-        Reads the JSONL file and filters for suspicious events.
+        Tries JSONL, then CSV, then report_json["timeline"], then behavioral flags.
+        Shows all events (not just suspicious), capped at 50.
         """
-        significant = []
-        try:
-            with open(super_timeline_path, "r") as f:
-                for line in f:
-                    try:
-                        event = json.loads(line)
-                        if event.get("suspicious"):
-                            significant.append(event)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-        except (FileNotFoundError, IOError):
-            # If super-timeline doesn't exist, extract from flags
+        events = []
+        file_read_ok = False
+
+        if super_timeline_path:
+            # Try JSONL format first
+            try:
+                with open(super_timeline_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            events.append(event)
+                            file_read_ok = True
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+            except (FileNotFoundError, IOError):
+                pass
+
+            # Try CSV format if JSONL yielded nothing
+            if not file_read_ok:
+                try:
+                    import csv as _csv
+                    with open(super_timeline_path, "r", newline="", errors="replace") as f:
+                        reader = _csv.DictReader(f)
+                        for row in reader:
+                            ts = row.get("datetime", row.get("timestamp", row.get("date", "")))
+                            msg = row.get("message", row.get("description", row.get("short", row.get("name", ""))))
+                            src = row.get("source", row.get("type", ""))
+                            events.append({
+                                "timestamp": ts,
+                                "summary": msg,
+                                "source": src,
+                                "device_id": row.get("device_id", ""),
+                            })
+                            file_read_ok = True
+                except (FileNotFoundError, IOError):
+                    pass
+
+        # Fall back to report_json timeline if file unreadable or empty
+        if not file_read_ok and report_json is not None:
+            for e in report_json.get("timeline", []):
+                events.append({
+                    "timestamp": e.get("timestamp", ""),
+                    "summary": e.get("description", e.get("event", e.get("summary", ""))),
+                    "device_id": e.get("device_id", e.get("source_device", "")),
+                    "severity": e.get("severity", "INFO"),
+                    "suspicious": e.get("suspicious", False),
+                })
+
+        # Last resort: behavioral flags
+        if not events:
             for dev_id, flags in behavioral_flags.items():
                 for flag in flags:
-                    significant.append({
-                        "timestamp": "",
+                    events.append({
+                        "timestamp": flag.get("timestamp", ""),
                         "device_id": dev_id,
                         "summary": flag.get("summary", ""),
                         "severity": flag.get("severity", ""),
+                        "suspicious": True,
                     })
 
         # Sort by timestamp
-        significant.sort(key=lambda e: e.get("timestamp", ""))
+        events.sort(key=lambda e: e.get("timestamp", "") or "")
 
-        # Format as readable timeline
+        # Format as readable timeline — show all events, flag suspicious ones
         lines = []
-        for event in significant[:50]:  # Cap at 50 events
-            ts = event.get("timestamp", "N/A")
+        for event in events[:50]:
+            ts = event.get("timestamp", "") or "N/A"
             dev = event.get("device_id", "")
             summary = event.get("summary", "Unknown event")
-            lines.append(f"- **{ts}** [{dev}] {summary}")
+            sev = event.get("severity", "")
+            susp = event.get("suspicious", False)
+            dev_str = f" [{dev}]" if dev else ""
+            sev_str = f" **[{sev}]**" if sev and sev not in ("INFO", "") else ""
+            flag_str = " ⚠️" if susp else ""
+            lines.append(f"- **{ts}**{dev_str}{sev_str}{flag_str} {summary}")
 
-        return "\n".join(lines) if lines else \
-            "No suspicious events were identified in the timeline."
+        if not lines:
+            return "No timeline events were identified in the evidence."
+
+        total = len(events)
+        header = f"*{total} event(s) total" + (f" — showing first 50" if total > 50 else "") + "*\n"
+        return header + "\n".join(lines)
 
     def _generate_findings_section(self, behavioral_flags: dict,
                                     report_json: dict) -> str:
@@ -1480,7 +1565,10 @@ class NarrativeReportGenerator:
         and attack_chain data. Shows how the investigation unfolded."""
         ac = report_json.get("attack_chain", {}) or {}
         kill_phases = ac.get("kill_chain_phases", [])
-        mitres_observed = ac.get("mitre_techniques_observed", [])
+        mitres_observed = ac.get("mitre_techniques_observed", []) or [
+            t["technique_id"] for t in report_json.get("mitre_techniques", [])
+            if isinstance(t, dict) and "technique_id" in t
+        ]
         classification = report_json.get("classification", "")
 
         # Collect all behavioral flags across all devices
@@ -1584,8 +1672,21 @@ class NarrativeReportGenerator:
 
         if not entries and classification:
             cls_lower = classification.lower()
+            # Synonym map: common classification terms -> phase_mitre_map keys
+            cls_synonyms = {
+                "exfil": "exfiltration", "data exfil": "exfiltration",
+                "data exfiltration": "exfiltration",
+                "phishing": "phishing", "spearphishing": "phishing",
+                "ransomware": "persistence", "lateral": "lateral_movement",
+                "c2": "command_and_control", "command and control": "command_and_control",
+            }
+            expanded = set([cls_lower])
+            for syn, target in cls_synonyms.items():
+                if syn in cls_lower:
+                    expanded.add(target)
             for phase_key, (tid, tactic) in phase_mitre_map.items():
-                if phase_key.replace("_", " ") in cls_lower or phase_key in cls_lower:
+                pk_spaced = phase_key.replace("_", " ")
+                if any(pk_spaced in e or phase_key in e for e in expanded) or pk_spaced in cls_lower or phase_key in cls_lower:
                     entries.append({
                         "timeframe": "Unknown",
                         "event": f"{phase_key.replace('_', ' ').title()} ({tid})",
@@ -1593,6 +1694,33 @@ class NarrativeReportGenerator:
                         "source": "Classification metadata",
                         "confidence": "Inferred",
                     })
+
+        # Always append MITRE techniques not already covered by classification phases
+        covered_tids = {e["event"].split("(")[-1].rstrip(")") for e in entries if "(" in e["event"]}
+        for tid in mitres_observed[:10]:
+            base = tid.split(".")[0]
+            tactic = self._MITRE_PHASES.get(base, "Other")
+            if tid not in covered_tids and base not in covered_tids:
+                entries.append({
+                    "timeframe": "Unknown",
+                    "event": f"{tid}",
+                    "tactic": tactic,
+                    "source": "Forensic artifact",
+                    "confidence": "Inferred",
+                })
+
+        # Final fallback: if still no entries and we have MITRE techniques, build from those
+        if not entries and mitres_observed:
+            for tid in mitres_observed[:10]:
+                phase = self._MITRE_PHASES.get(tid.split(".")[0], tid)
+                tactic = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
+                entries.append({
+                    "timeframe": "Unknown",
+                    "event": f"{tid}",
+                    "tactic": tactic,
+                    "source": "Forensic artifact",
+                    "confidence": "Inferred",
+                })
 
         if not entries:
             return "Insufficient data to reconstruct attack timeline. No kill-chain phases, behavioral flags, or suspicious timeline events were identified."
@@ -1700,13 +1828,11 @@ class NarrativeReportGenerator:
         else:
             worst_case = "No compromise confirmed. Unresolved anomalies should be investigated to rule out nascent threats."
 
-        # Render
-        lines = []
-        lines.append("### Affected Assets")
+        # Render as HTML
         asset_parts = []
         if num_users > 0:
             priv_str = f" ({privileged_count} privileged)" if privileged_count else ""
-            asset_parts.append(f"**{num_users}** user accounts{priv_str}")
+            asset_parts.append(f"<strong>{num_users}</strong> user account(s){priv_str}")
         if num_devices > 0:
             type_parts = []
             if servers: type_parts.append(f"{servers} server{'s' if servers != 1 else ''}")
@@ -1714,29 +1840,47 @@ class NarrativeReportGenerator:
             if workstations: type_parts.append(f"{workstations} workstation{'s' if workstations != 1 else ''}")
             if mobile: type_parts.append(f"{mobile} mobile")
             if network: type_parts.append(f"{network} network capture{'s' if network != 1 else ''}")
-            if unknown: type_parts.append(f"{unknown} unknown")
+            if unknown: type_parts.append(f"{unknown} other/unknown")
             type_str = ", ".join(type_parts)
-            asset_parts.append(f"**{num_devices}** devices ({type_str})")
+            asset_parts.append(f"<strong>{num_devices}</strong> device(s) ({type_str})")
 
+        _cia_color = {"HIGH": "#c0392b", "MEDIUM": "#e67e22", "LOW": "#27ae60"}
+
+        html_parts = []
+        html_parts.append('<div class="blast-radius">')
+        html_parts.append('<h3>Affected Assets</h3>')
+        html_parts.append('<ul>')
         if asset_parts:
-            lines.append("- " + ", ".join(asset_parts))
+            for ap in asset_parts:
+                html_parts.append(f'  <li>{ap}</li>')
         else:
-            lines.append("- No assets identified in evidence scope")
+            html_parts.append('  <li>No assets identified in evidence scope</li>')
         if data_categories:
-            lines.append(f"- **Data at risk**: {', '.join(data_categories)}")
+            html_parts.append(f'  <li><strong>Data at risk:</strong> {", ".join(data_categories)}</li>')
+        html_parts.append('</ul>')
 
-        lines.append("")
-        lines.append("### CIA Impact Assessment")
-        lines.append("| Dimension | Score | Rationale |")
-        lines.append("|-----------|-------|-----------|")
+        html_parts.append('<h3>CIA Impact Assessment</h3>')
+        html_parts.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">')
+        html_parts.append('  <thead><tr><th>Dimension</th><th>Score</th><th>Rationale</th></tr></thead>')
+        html_parts.append('  <tbody>')
         for dim in ("Confidentiality", "Integrity", "Availability"):
-            lines.append(f"| {dim} | {cia[dim]} | {cia_rationale[dim]} |")
+            score = cia[dim]
+            color = _cia_color.get(score, "#555")
+            html_parts.append(
+                f'    <tr>'
+                f'<td>{dim}</td>'
+                f'<td style="color:{color};font-weight:bold">{score}</td>'
+                f'<td>{cia_rationale[dim]}</td>'
+                f'</tr>'
+            )
+        html_parts.append('  </tbody>')
+        html_parts.append('</table>')
 
-        lines.append("")
-        lines.append("### Worst-Case Projection")
-        lines.append(f"If not contained: {worst_case}")
+        html_parts.append('<h3>Worst-Case Projection</h3>')
+        html_parts.append(f'<p>If not contained: {worst_case}</p>')
+        html_parts.append('</div>')
 
-        return "\n".join(lines)
+        return "\n".join(html_parts)
 
     # ----------------------------------------------------------------
     # Evidence Confidence & Gaps (Section 3)
@@ -1890,9 +2034,37 @@ class NarrativeReportGenerator:
         lines.append("### Dwell Time & Progression")
 
         if not first_seen and not last_seen and dwell_days is None and not lateral_path:
-            lines.append("")
-            lines.append("*No temporal or lateral movement data available for this investigation.*")
-            return "\n".join(lines)
+            # Try to derive timestamps from timeline events
+            timeline = report_json.get("timeline", [])
+            ts_list = sorted(
+                e.get("timestamp", "") for e in timeline if e.get("timestamp")
+            )
+            ts_list = [ts for ts in ts_list if ts]
+            if ts_list:
+                first_seen = ts_list[0]
+                last_seen = ts_list[-1]
+                try:
+                    from datetime import datetime as _dt
+                    _fmt_options = [
+                        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                        "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%d",
+                    ]
+                    _dt_first = _dt_last = None
+                    for _fmt in _fmt_options:
+                        try:
+                            _dt_first = _dt.strptime(first_seen[:len(_fmt)], _fmt)
+                            _dt_last = _dt.strptime(last_seen[:len(_fmt)], _fmt)
+                            break
+                        except Exception:
+                            pass
+                    if _dt_first and _dt_last and _dt_last > _dt_first:
+                        dwell_days = (_dt_last - _dt_first).total_seconds() / 86400
+                except Exception:
+                    pass
+            if not first_seen:
+                lines.append("")
+                lines.append("*No temporal or lateral movement data available for this investigation.*")
+                return "\n".join(lines)
 
         lines.append("| Milestone | Estimated Timeframe |")
         lines.append("|-----------|--------------------|")
@@ -2569,20 +2741,90 @@ class NarrativeReportGenerator:
 
     # Maps MITRE ATT&CK technique IDs to kill-chain phase names
     _MITRE_PHASES = {
+        # Initial Access
         "T1566": "Initial Access", "T1190": "Initial Access",
         "T1133": "Initial Access", "T1078": "Initial Access",
+        "T1091": "Initial Access", "T1195": "Initial Access",
+        "T1199": "Initial Access", "T1200": "Initial Access",
+        # Execution
         "T1059": "Execution", "T1204": "Execution",
         "T1053": "Execution/Persistence", "T1047": "Execution",
+        "T1129": "Execution", "T1106": "Execution",
+        "T1203": "Execution", "T1218": "Execution",
+        "T1559": "Execution", "T1569": "Execution",
+        "T1072": "Execution",
+        # Persistence
         "T1547": "Persistence", "T1060": "Persistence",
         "T1112": "Persistence", "T1543": "Persistence",
+        "T1037": "Persistence", "T1098": "Persistence",
+        "T1136": "Persistence", "T1137": "Persistence",
+        "T1176": "Persistence", "T1197": "Persistence",
+        "T1505": "Persistence", "T1525": "Persistence",
+        "T1546": "Persistence", "T1574": "Persistence",
+        # Privilege Escalation
+        "T1134": "Privilege Escalation", "T1055": "Privilege Escalation",
+        "T1068": "Privilege Escalation", "T1484": "Privilege Escalation",
+        "T1611": "Privilege Escalation",
+        # Defense Evasion
         "T1036": "Defense Evasion", "T1070": "Defense Evasion",
         "T1027": "Defense Evasion", "T1140": "Defense Evasion",
+        "T1197": "Defense Evasion", "T1202": "Defense Evasion",
+        "T1205": "Defense Evasion", "T1207": "Defense Evasion",
+        "T1211": "Defense Evasion", "T1216": "Defense Evasion",
+        "T1221": "Defense Evasion", "T1222": "Defense Evasion",
+        "T1480": "Defense Evasion", "T1497": "Defense Evasion",
+        "T1548": "Defense Evasion", "T1553": "Defense Evasion",
+        "T1562": "Defense Evasion", "T1564": "Defense Evasion",
+        "T1600": "Defense Evasion", "T1601": "Defense Evasion",
+        "T1610": "Defense Evasion", "T1612": "Defense Evasion",
+        # Credential Access
         "T1003": "Credential Access", "T1110": "Credential Access",
-        "T1555": "Credential Access",
+        "T1555": "Credential Access", "T1056": "Credential Access",
+        "T1111": "Credential Access", "T1187": "Credential Access",
+        "T1212": "Credential Access", "T1528": "Credential Access",
+        "T1539": "Credential Access", "T1552": "Credential Access",
+        "T1558": "Credential Access",
+        # Discovery
         "T1046": "Discovery", "T1083": "Discovery", "T1082": "Discovery",
+        "T1010": "Discovery", "T1012": "Discovery", "T1016": "Discovery",
+        "T1018": "Discovery", "T1033": "Discovery", "T1040": "Discovery",
+        "T1049": "Discovery", "T1057": "Discovery", "T1069": "Discovery",
+        "T1087": "Discovery", "T1120": "Discovery", "T1124": "Discovery",
+        "T1135": "Discovery", "T1201": "Discovery", "T1217": "Discovery",
+        "T1497": "Discovery", "T1518": "Discovery",
+        # Lateral Movement
         "T1021": "Lateral Movement", "T1076": "Lateral Movement",
+        "T1080": "Lateral Movement", "T1210": "Lateral Movement",
+        "T1534": "Lateral Movement", "T1550": "Lateral Movement",
+        "T1563": "Lateral Movement", "T1570": "Lateral Movement",
+        # Collection
+        "T1074": "Collection", "T1114": "Collection",
+        "T1005": "Collection", "T1025": "Collection",
+        "T1039": "Collection", "T1056": "Collection",
+        "T1113": "Collection", "T1115": "Collection",
+        "T1119": "Collection", "T1123": "Collection",
+        "T1125": "Collection", "T1213": "Collection",
+        "T1530": "Collection", "T1557": "Collection",
+        "T1560": "Collection", "T1602": "Collection",
+        # Exfiltration
         "T1041": "Exfiltration", "T1048": "Exfiltration",
+        "T1052": "Exfiltration", "T1011": "Exfiltration",
+        "T1020": "Exfiltration", "T1029": "Exfiltration",
+        "T1030": "Exfiltration", "T1537": "Exfiltration",
+        "T1567": "Exfiltration",
+        # Command & Control
         "T1071": "Command & Control", "T1105": "Command & Control",
+        "T1008": "Command & Control", "T1090": "Command & Control",
+        "T1092": "Command & Control", "T1095": "Command & Control",
+        "T1102": "Command & Control", "T1104": "Command & Control",
+        "T1132": "Command & Control", "T1568": "Command & Control",
+        "T1571": "Command & Control", "T1572": "Command & Control",
+        "T1573": "Command & Control",
+        # Impact
+        "T1485": "Impact", "T1486": "Impact", "T1489": "Impact",
+        "T1490": "Impact", "T1491": "Impact", "T1496": "Impact",
+        "T1498": "Impact", "T1499": "Impact", "T1529": "Impact",
+        "T1531": "Impact", "T1561": "Impact", "T1565": "Impact",
     }
 
     def _synthesize_attack_chain(self, report_json: dict,
@@ -2711,7 +2953,10 @@ Write the following sections. ACCURACY RULES:
                 pass  # fall through to template
 
         # ---- Template fallback ----
-        mitres_observed = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
+        mitres_observed = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", []) or [
+            t["technique_id"] for t in report_json.get("mitre_techniques", [])
+            if isinstance(t, dict) and "technique_id" in t
+        ]
         return self._template_attack_chain(
             evil, severity, all_flags, lateral_indicators,
             hit_categories, devices, users, mitres_observed=mitres_observed)
@@ -2856,6 +3101,14 @@ Write the following sections. ACCURACY RULES:
             mapped = phase_map.get(phase.lower(), None)
             if mapped:
                 active_tactics.add(mapped)
+        # Also mark tactics active from MITRE technique IDs directly
+        for tid in mitres:
+            tactic_from_id = self._MITRE_PHASES.get(tid.split(".")[0], "")
+            if tactic_from_id and tactic_from_id != "Execution/Persistence":
+                active_tactics.add(tactic_from_id)
+            elif tactic_from_id == "Execution/Persistence":
+                active_tactics.add("Execution")
+                active_tactics.add("Persistence")
 
         lines = []
         lines.append("| Tactic | Active | Techniques |")
@@ -2940,7 +3193,10 @@ Write the following sections. ACCURACY RULES:
         """Render detailed step-by-step execution log showing actual CLI commands,
         raw output excerpts, critic verdicts, and status for every step."""
         # Lazy import to avoid circular dependency (geoff_pipeline imports narrative_report)
-        from geoff_pipeline import _reconstruct_raw_command
+        try:
+            from geoff_pipeline import _reconstruct_raw_command
+        except ImportError:
+            _reconstruct_raw_command = None
         findings = self._sort_findings_by_priority(report_json.get("findings_detail", []))
         if not findings:
             return "No step execution data available."
@@ -3008,7 +3264,10 @@ Write the following sections. ACCURACY RULES:
                 else:
                     # Fallback: reconstruct CLI command using _reconstruct_raw_command
                     params = f.get("params", {})
-                    reconstructed = _reconstruct_raw_command(module, function, params)
+                    if _reconstruct_raw_command is not None:
+                        reconstructed = _reconstruct_raw_command(module, function, params)
+                    else:
+                        reconstructed = f"{module}.{function}({', '.join(f'{k}={v}' for k, v in (params or {}).items())})"
                     lines.append(f"\n**Command:**")
                     lines.append(f"```bash\n{reconstructed}\n```")
 
@@ -3246,9 +3505,23 @@ Write the following sections. ACCURACY RULES:
                 rp = mm.get("return_path", "?")
                 from_dom = mm.get("from_domain", "?")
                 rp_dom = mm.get("return_path_domain", "?")
+                subject = mm.get("subject", "")
+                to_addr = mm.get("to", "")
+                date_str = mm.get("date", "")
+                body_snippet = mm.get("body_snippet", mm.get("body_text", ""))
                 lines.append(f"{i}. **From:** `{from_addr}` (domain: `{from_dom}`)")
                 lines.append(f"   **Return-Path:** `{rp}` (domain: `{rp_dom}`)")
+                if subject:
+                    lines.append(f"   **Subject:** {subject}")
+                if to_addr:
+                    lines.append(f"   **To:** `{to_addr}`")
+                if date_str:
+                    lines.append(f"   **Date:** {date_str}")
+                if body_snippet:
+                    snippet = str(body_snippet)[:500].replace("\n", " ")
+                    lines.append(f"   **Body excerpt:** {snippet}")
                 lines.append(f"   ⚠️ **From domain does not match Return-Path domain — SPOOFED**")
+                lines.append("")
             if _bounce_mismatches:
                 lines.append(f"\n*Additionally, {_bounce_mismatches} mailing-list bounce-path mismatches detected (not shown — these are normal for mailing lists).*")
 
@@ -3579,10 +3852,23 @@ Write the following sections. ACCURACY RULES:
                 f"Overall severity is assessed as **{severity}**."
             )
         lines.append("")
-        lines.append(
-            f"Behavioral analysis produced **{len(all_flags)}** anomaly indicator(s), "
-            f"of which **{high_flags_count}** were rated CRITICAL or HIGH severity."
-        )
+        if high_flags_count == 0 and medium_flags:
+            _med_types = list(dict.fromkeys(
+                f.get("flag_type", f.get("summary", ""))[:60]
+                for f in medium_flags if f.get("flag_type") or f.get("summary")
+            ))[:5]
+            lines.append(
+                f"Behavioral analysis produced **{len(all_flags)}** anomaly indicator(s). "
+                f"No CRITICAL or HIGH severity indicators were identified; however, "
+                f"**{len(medium_flags)} MEDIUM-severity** findings warrant attention, including: "
+                f"{', '.join(_med_types)}. Medium-severity findings indicate suspicious patterns "
+                f"that require analyst review but did not independently confirm malicious activity."
+            )
+        else:
+            lines.append(
+                f"Behavioral analysis produced **{len(all_flags)}** anomaly indicator(s), "
+                f"of which **{high_flags_count}** were rated CRITICAL or HIGH severity."
+            )
         lines.append("")
 
         # 5a. CRITICAL findings with evidence references
@@ -3908,10 +4194,20 @@ Write the following sections. ACCURACY RULES:
         mitres = ac.get("mitre_techniques_observed", []) or [t["technique_id"] for t in report_json.get("mitre_techniques", []) if isinstance(t, dict) and "technique_id" in t]
         class_str = ", ".join(kp.replace("_", " ").title() for kp in kill_phases[:6]) if kill_phases else report_json.get("classification", "Unknown")
 
+        # Build evidence source list: disk image names from inventory, fallback to path
+        _inv = report_json.get("evidence_inventory", {})
+        _disk_images = _inv.get("disk_images", []) if isinstance(_inv, dict) else []
+        _disk_names = [Path(p).name for p in _disk_images if p] if _disk_images else []
+        _evidence_display = (
+            ", ".join(f"`{n}`" for n in _disk_names)
+            if _disk_names
+            else report_json.get("evidence_dir", "N/A")
+        )
+
         md = f"""# {title}
 
 **Generated:** {generated}
-**Evidence Directory:** {report_json.get("evidence_dir", "N/A")}
+**Evidence Sources:** {_evidence_display}
 **Analysis:** {report_json.get("steps_completed", 0)} steps completed, {report_json.get("steps_failed", 0)} failed, {report_json.get("steps_skipped", 0)} skipped, {report_json.get("steps_unprocessable", 0)} unprocessable
 **Playbooks:** {report_json.get("playbooks_total", 0)} unique, {report_json.get("specialist_steps_executed", 0)} specialist steps
 
@@ -4164,8 +4460,12 @@ Write the following sections. ACCURACY RULES:
 
             if key == "file_hashes":
                 # File hashes are dicts with hash/algorithm/filename/path/source_image
-                lines.append(f"**{label}** ({len(values)})\\n")
+                lines.append(f"**{label}** ({len(values)})\n")
                 for v in values[:50]:
+                    if not isinstance(v, dict):
+                        # Guard: if somehow stored as string, render as plain hash
+                        lines.append(f" • `{v}`")
+                        continue
                     h = v.get("hash", "")
                     algo = v.get("algorithm", "")
                     fn = v.get("filename", "") or "(unknown)"
@@ -4188,7 +4488,7 @@ Write the following sections. ACCURACY RULES:
                 continue
 
             # Standard rendering for non-hash IOCs
-            lines.append(f"**{label}** ({len(values)})\\n")
+            lines.append(f"**{label}** ({len(values)})\n")
             lines.append("| Value |")
             lines.append("|-------|")
             for v in values[:50]:  # cap at 50 per category
