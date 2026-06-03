@@ -3039,15 +3039,36 @@ Write the following sections. ACCURACY RULES:
         and detail on each suspicious email.
         """
         findings = report_json.get("findings_detail", [])
-        if not findings:
-            return "No email/phishing data."
-
         email_findings = [
             f for f in findings
             if "EMAIL" in (f.get("playbook", "") or "").upper()
         ]
-        if not email_findings:
+
+        # Fallback: if no EMAIL playbook findings in findings_detail, check
+        # top-level email_iocs from _direct_email_extraction (which writes IOCs
+        # to the report top-level but may not have per-PST findings_detail entries)
+        top_email_iocs = report_json.get("email_iocs", {})
+        email_direct = report_json.get("email_direct_findings", False)
+
+        if not email_findings and not top_email_iocs:
             return "No email/phishing data."
+
+        # Synthesize email_findings from top-level email_iocs when direct extraction
+        # ran but findings_detail has no EMAIL entries (common with E01 images where
+        # the direct path bypasses the playbook framework)
+        if not email_findings and top_email_iocs and email_direct:
+            email_findings = [{
+                "playbook": "EMAIL_DIRECT",
+                "function": "email_scan",
+                "status": "completed",
+                "result": {
+                    "tool": "email_scan",
+                    "emails_scanned": len(top_email_iocs.get("subjects", [])),
+                    "phishing_found": len(top_email_iocs.get("return_path_mismatches", [])),
+                    "home_domains": [],
+                    "email_iocs": top_email_iocs,
+                },
+            }]
 
         phishing_hits = [
             f for f in email_findings
@@ -3120,6 +3141,26 @@ Write the following sections. ACCURACY RULES:
                 f"{len(email_findings)} email-related finding(s) present, "
                 f"none flagged as phishing."
             )
+
+        # Return-Path mismatches from top-level email_iocs (direct extraction path)
+        _top_iocs = report_json.get("email_iocs", {})
+        _rp_mismatches = _top_iocs.get("return_path_mismatches", [])
+        _spoofed = _top_iocs.get("spoofed_domains", [])
+        if _rp_mismatches:
+            lines.append("\n### Return-Path Mismatches (Spoofing Indicators)\n")
+            for i, mm in enumerate(_rp_mismatches[:10], 1):
+                if isinstance(mm, dict):
+                    lines.append(f"{i}. From: `{mm.get('from', '?')}` — Return-Path: `{mm.get('return_path', '?')}`")
+                else:
+                    lines.append(f"{i}. {mm}")
+            if len(_rp_mismatches) > 10:
+                lines.append(f"\n... and {len(_rp_mismatches) - 10} more mismatches")
+        if _spoofed:
+            lines.append("\n### Spoofed Domains\n")
+            for d in _spoofed[:10]:
+                lines.append(f"- `{d}`")
+            if len(_spoofed) > 10:
+                lines.append(f"\n... and {len(_spoofed) - 10} more")
 
         # Aggregate email IOCs across all email findings
         all_iocs = {"sender_ips": set(), "from_addresses": set(),
