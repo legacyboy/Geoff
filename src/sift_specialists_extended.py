@@ -8965,17 +8965,18 @@ class WINDOWS_Specialist:
         except Exception:
             return {}
 
-    def analyze_prefetch(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_prefetch(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         import platform
         out_dir = output_dir or '/tmp'
-        
+        base_dir = mount_path or image
+
         # Try PECmd first (Eric Zimmerman tool)
         if shutil.which('pecmd') or shutil.which('PECmd'):
             try:
                 import subprocess
                 cmd_name = shutil.which('pecmd') or shutil.which('PECmd')
                 result = subprocess.run(
-                    [cmd_name, '-d', image, '--csv', out_dir],
+                    [cmd_name, '-d', base_dir, '--csv', out_dir],
                     capture_output=True, text=True, timeout=120
                 )
                 # Check for Linux/mono "Non-Windows platforms" error
@@ -8999,10 +9000,9 @@ class WINDOWS_Specialist:
                     return {'tool': 'PECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
         # Python fallback: parse prefetch files structurally
-        pf_dir = Path(image) / 'Windows' / 'Prefetch' if not Path(image).is_file() else Path(image)
+        pf_dir = Path(base_dir) / 'Windows' / 'Prefetch' if not Path(base_dir).is_file() else Path(base_dir)
         if not pf_dir.exists():
-            # Try as direct path
-            pf_dir = Path(image)
+            pf_dir = Path(base_dir)
         
         results = []
         for pf_path in sorted(pf_dir.rglob('*.pf')):
@@ -9033,15 +9033,16 @@ class WINDOWS_Specialist:
             return {
                 'tool': 'PECmd',
                 'status': 'error',
-                'error': 'No prefetch files found in ' + str(image),
+                'error': 'No prefetch files found in ' + str(base_dir),
                 'timestamp': datetime.now().isoformat(),
             }
 
-    def analyze_jumplists(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_jumplists(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
             import subprocess
+            base_dir = mount_path or image
             result = subprocess.run(
-                ['jlecmd', '-d', image, '--csv', output_dir or '/tmp'],
+                ['jlecmd', '-d', base_dir, '--csv', output_dir or '/tmp'],
                 capture_output=True, text=True, timeout=120
             )
             return {
@@ -9055,11 +9056,12 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'JLECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_lnk(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_lnk(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
             import subprocess
+            base_dir = mount_path or image
             result = subprocess.run(
-                ['lecmd', '-d', image, '--csv', output_dir or '/tmp'],
+                ['lecmd', '-d', base_dir, '--csv', output_dir or '/tmp'],
                 capture_output=True, text=True, timeout=120
             )
             return {
@@ -9091,12 +9093,13 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'AppCompatCacheParser', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_amcache(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_amcache(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
             import subprocess
-            amcache_path = Path(image) / 'Windows' / 'appcompat' / 'Programs' / 'Amcache.hve'
+            base_dir = mount_path or image
+            amcache_path = Path(base_dir) / 'Windows' / 'appcompat' / 'Programs' / 'Amcache.hve'
             if not amcache_path.exists():
-                return {'tool': 'AmcacheParser', 'status': 'error', 'error': f'Amcache.hve not found in {image}', 'timestamp': datetime.now().isoformat()}
+                return {'tool': 'AmcacheParser', 'status': 'error', 'error': f'Amcache.hve not found in {base_dir}', 'timestamp': datetime.now().isoformat()}
             result = subprocess.run(
                 ['AmcacheParser', '-f', str(amcache_path), '--csv', output_dir or '/tmp'],
                 capture_output=True, text=True, timeout=120
@@ -9112,12 +9115,13 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'AmcacheParser', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_srum(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_srum(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
             import subprocess
-            srum_path = Path(image) / 'Windows' / 'System32' / 'sru' / 'SRUDB.dat'
+            base_dir = mount_path or image
+            srum_path = Path(base_dir) / 'Windows' / 'System32' / 'sru' / 'SRUDB.dat'
             if not srum_path.exists():
-                return {'tool': 'SrumECmd', 'status': 'error', 'error': f'SRUDB.dat not found in {image}', 'timestamp': datetime.now().isoformat()}
+                return {'tool': 'SrumECmd', 'status': 'error', 'error': f'SRUDB.dat not found in {base_dir}', 'timestamp': datetime.now().isoformat()}
             result = subprocess.run(
                 ['SrumECmd', '-f', str(srum_path), '--csv', output_dir or '/tmp'],
                 capture_output=True, text=True, timeout=120
@@ -9133,9 +9137,10 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'SrumECmd', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_timeline(self, image: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_timeline(self, image: str, output_dir: Optional[str] = None, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            activities_path = Path(image) / 'Users' / '*' / 'AppData' / 'Local' / 'ConnectedDevicesPlatform'
+            base_dir = mount_path or image
+            activities_path = Path(base_dir) / 'Users' / '*' / 'AppData' / 'Local' / 'ConnectedDevicesPlatform'
             return {
                 'tool': 'WindowsTimeline',
                 'status': 'success',
@@ -9146,9 +9151,10 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'WindowsTimeline', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_defender(self, image: str) -> Dict[str, Any]:
+    def analyze_defender(self, image: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            mp_log = Path(image) / 'ProgramData' / 'Microsoft' / 'Windows Defender' / 'Scans' / 'History' / 'Service' / 'DetectionHistory.log'
+            base_dir = mount_path or image
+            mp_log = Path(base_dir) / 'ProgramData' / 'Microsoft' / 'Windows Defender' / 'Scans' / 'History' / 'Service' / 'DetectionHistory.log'
             entries = []
             if mp_log.exists():
                 with open(mp_log, 'r', errors='replace') as f:
@@ -9163,9 +9169,10 @@ class WINDOWS_Specialist:
         except Exception as e:
             return {'tool': 'WindowsDefender', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_bits(self, image: str) -> Dict[str, Any]:
+    def analyze_bits(self, image: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            bits_dir = Path(image) / 'ProgramData' / 'Microsoft' / 'Network' / 'Downloader'
+            base_dir = mount_path or image
+            bits_dir = Path(base_dir) / 'ProgramData' / 'Microsoft' / 'Network' / 'Downloader'
             jobs = []
             if bits_dir.exists():
                 for f in bits_dir.iterdir():
@@ -9583,12 +9590,31 @@ class CLOUD_Specialist:
         except Exception:
             return []
 
-    def analyze_onedrive(self, db_path: str) -> Dict[str, Any]:
+    def _find_cloud_db(self, mount_path: str, patterns: list) -> Optional[str]:
+        """Search a mounted filesystem for a cloud sync database by glob patterns."""
+        base = Path(mount_path)
+        for pattern in patterns:
+            matches = list(base.rglob(pattern))
+            if matches:
+                return str(matches[0])
+        return None
+
+    def analyze_onedrive(self, db_path: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            rows = self._parse_sqlite(db_path, "SELECT name, value FROM settings LIMIT 50")
+            actual_path = db_path
+            if mount_path and (not Path(db_path).exists() or not Path(db_path).is_file()):
+                found = self._find_cloud_db(mount_path, [
+                    'Users/*/AppData/Local/Microsoft/OneDrive/settings/Personal/*.dat',
+                    'Users/*/AppData/Local/Microsoft/OneDrive/logs/*.log',
+                    'Users/*/.config/onedrive/*.db',
+                ])
+                if found:
+                    actual_path = found
+            rows = self._parse_sqlite(actual_path, "SELECT name, value FROM settings LIMIT 50")
             return {
                 'tool': 'onedrive',
                 'status': 'success',
+                'db_found': actual_path,
                 'settings_count': len(rows),
                 'settings': rows[:20],
                 'timestamp': datetime.now().isoformat(),
@@ -9596,12 +9622,21 @@ class CLOUD_Specialist:
         except Exception as e:
             return {'tool': 'onedrive', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_googledrive(self, db_path: str) -> Dict[str, Any]:
+    def analyze_googledrive(self, db_path: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            rows = self._parse_sqlite(db_path, "SELECT local_title, modified_date, doc_id FROM items LIMIT 50")
+            actual_path = db_path
+            if mount_path and (not Path(db_path).exists() or not Path(db_path).is_file()):
+                found = self._find_cloud_db(mount_path, [
+                    'Users/*/AppData/Local/Google/DriveFS/**/*.db',
+                    'Users/*/.config/google-drive-ocamlfuse/settings.db',
+                ])
+                if found:
+                    actual_path = found
+            rows = self._parse_sqlite(actual_path, "SELECT local_title, modified_date, doc_id FROM items LIMIT 50")
             return {
                 'tool': 'googledrive',
                 'status': 'success',
+                'db_found': actual_path,
                 'files_count': len(rows),
                 'files': rows[:20],
                 'timestamp': datetime.now().isoformat(),
@@ -9609,12 +9644,21 @@ class CLOUD_Specialist:
         except Exception as e:
             return {'tool': 'googledrive', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_dropbox(self, db_path: str) -> Dict[str, Any]:
+    def analyze_dropbox(self, db_path: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            rows = self._parse_sqlite(db_path, "SELECT file_id, local_path, server_modified FROM file_cache LIMIT 50")
+            actual_path = db_path
+            if mount_path and (not Path(db_path).exists() or not Path(db_path).is_file()):
+                found = self._find_cloud_db(mount_path, [
+                    'Users/*/AppData/Local/Dropbox/instance*/*.db',
+                    'Users/*/.dropbox/*.db',
+                ])
+                if found:
+                    actual_path = found
+            rows = self._parse_sqlite(actual_path, "SELECT file_id, local_path, server_modified FROM file_cache LIMIT 50")
             return {
                 'tool': 'dropbox',
                 'status': 'success',
+                'db_found': actual_path,
                 'files_count': len(rows),
                 'files': rows[:20],
                 'timestamp': datetime.now().isoformat(),
@@ -9622,12 +9666,21 @@ class CLOUD_Specialist:
         except Exception as e:
             return {'tool': 'dropbox', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
-    def analyze_icloud(self, db_path: str) -> Dict[str, Any]:
+    def analyze_icloud(self, db_path: str, mount_path: Optional[str] = None) -> Dict[str, Any]:
         try:
+            extra = {}
+            if mount_path:
+                found = self._find_cloud_db(mount_path, [
+                    'Users/*/AppData/Local/Apple/Internet Accounts/*.db',
+                    'Users/*/Library/Mobile Documents/**/*.db',
+                ])
+                if found:
+                    extra['db_found'] = found
             return {
                 'tool': 'icloud',
                 'status': 'success',
                 'note': 'iCloud sync artifacts found. Parse ubiquity containers and CloudDocs databases for detailed analysis.',
+                **extra,
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:

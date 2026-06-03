@@ -121,30 +121,16 @@ geoff_forensicator = None
 _EWF_EXTENSIONS = frozenset({'.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01'})
 
 _SKIP_ON_EWF_CONTAINER = frozenset({
-    # strings: reads EWF header bytes, not filesystem content
+    # strings: reads raw EWF header bytes, not filesystem content
     'extract_strings',
-    # Windows artifact tools: need mounted filesystem directory
-    'analyze_prefetch', 'analyze_amcache', 'analyze_srum', 'analyze_timeline',
-    'analyze_defender', 'analyze_bits', 'analyze_jumplists', 'analyze_lnk',
-    # Directory-walk tools: need mounted filesystem directory
-    'parse_lnk_files', 'parse_windows_scheduled_tasks',
-    'parse_linux_crontabs', 'detect_backdoors',
-    # Anti-forensics artifact tools: need mounted filesystem directory
-    'detect_eraser', 'detect_ccleaner', 'detect_sdelete',
-    'detect_general_anti_forensics', 'parse_usnjrnl',
-    # VSS tools: vshadowmount needs raw block device, not EWF container
-    'list_vss', 'analyze_vss_timeline', 'extract_vss_files',
-    # VM tools: scanning EWF container for VM artifacts is meaningless
+    # VM tools: need raw image scanning, not filesystem
     'detect_escape', 'extract_disk', 'extract_memory', 'detect_snapshots',
-    # Cloud/registry tools: need mounted filesystem, not EWF container
-    'analyze_onedrive', 'analyze_googledrive', 'analyze_dropbox', 'analyze_icloud',
-    'analyze_usb_staging', 'detect_exfiltration', 'extract_recentfilecache',
-    # REMnux tools: scanning EWF container bytes is forensically useless
-    'die_scan', 'clamav_scan', 'exiftool_scan', 'hashdeep_audit',
-    # Host correlator: needs extracted timeline data, not EWF container
+    # Host correlator: operates on extracted timeline data, not images
     'merge_timelines', 'correlate_cross_image',
     # Photorec/file carving: already runs via fallback chains in sleuthkit
     'recover_files',
+    # REMnux tools on disk images: scanning EWF container bytes is forensically useless
+    'die_scan', 'clamav_scan', 'exiftool_scan', 'hashdeep_audit',
 })
 
 # ---------------------------------------------------------------------------
@@ -186,6 +172,39 @@ def _pypff_extract_messages(folder, output_dir: str, depth: int = 0) -> int:
     except Exception:
         pass
     return count
+
+
+# ---------------------------------------------------------------------------
+# EWF early-mount cleanup
+# ---------------------------------------------------------------------------
+
+def _cleanup_ewf_early_mounts(ewf_mounts: dict) -> None:
+    """Unmount FUSE ewfmount directories created during the Phase 2.5 pre-mount.
+
+    The filesystem mounts (mount_dir) are tracked via _active_mounts and
+    cleaned up by _cleanup_mounts(). Only the FUSE ewfmount dirs need
+    fusermount here.
+    """
+    import shutil as _shutil
+    for _img, _mnt in ewf_mounts.items():
+        _ewf_dir = _mnt.get("ewf_dir")
+        if _ewf_dir and os.path.exists(_ewf_dir):
+            for _fuse_cmd in (["fusermount", "-u", _ewf_dir], ["fusermount3", "-u", _ewf_dir]):
+                try:
+                    subprocess.run(_fuse_cmd, capture_output=True, timeout=15)
+                    break
+                except Exception:
+                    continue
+            try:
+                _shutil.rmtree(_ewf_dir, ignore_errors=True)
+            except Exception:
+                pass
+        _mnt_dir = _mnt.get("mount_dir")
+        if _mnt_dir and os.path.exists(_mnt_dir):
+            try:
+                _shutil.rmtree(_mnt_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +820,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
     classification = None
     pass2_triggers = None
     super_timeline_path = None
+    _ewf_mounts = {}  # image_path -> {ewf_dir, ewf1, mount_dir} for pre-mounted E01 images
 
     # --- Checkpoint/Recovery: derive or use stable case work directory ---
     if case_work_dir is None:
@@ -2270,6 +2290,56 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         total_pb = len(execution_plan)
 
+        # ------------------------------------------------------------------
+        # Phase 2.5: Pre-mount E01 images once so filesystem tools can run.
+        # For each E01, ewfmount → ewf1 block device, then mount the primary
+        # NTFS/FAT partition → a real directory tree that tools can walk.
+        # _ewf_mounts[img_path] = {"ewf_dir": ..., "ewf1": ..., "mount_dir": ...}
+        # Cleanup happens via _active_mounts (filesystem) + fusermount (FUSE).
+        # ------------------------------------------------------------------
+        from geoff_utils import _active_mounts as _ewf_active_mounts_ref
+        for _ewf_img in inventory.get("disk_images", []):
+            if Path(_ewf_img).suffix.lower() not in _EWF_EXTENSIONS:
+                continue
+            if _ewf_img in _ewf_mounts:
+                continue  # already mounted (resuming from checkpoint)
+            _ewf_stem = Path(_ewf_img).stem
+            _ewf_dir = f"/tmp/geoff_ewf_{os.getpid()}_{_ewf_stem}"
+            _ewf_mnt = f"/tmp/geoff_mnt_{os.getpid()}_{_ewf_stem}"
+            try:
+                os.makedirs(_ewf_dir, exist_ok=True)
+                _ewf_r = subprocess.run(
+                    ["ewfmount", _ewf_img, _ewf_dir],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if _ewf_r.returncode != 0 or not os.path.exists(f"{_ewf_dir}/ewf1"):
+                    _fe_log(job_id, f"  ⚠ ewfmount failed for {_ewf_stem}: {_ewf_r.stderr[:120]}")
+                    continue
+                _ewf1 = f"{_ewf_dir}/ewf1"
+                _offset_sectors = image_offsets.get(_ewf_img, 2048)
+                _offset_bytes = _offset_sectors * 512
+                os.makedirs(_ewf_mnt, exist_ok=True)
+                _mnt_r = subprocess.run(
+                    ["sudo", "mount", "-o", f"ro,loop,offset={_offset_bytes}", _ewf1, _ewf_mnt],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if _mnt_r.returncode != 0:
+                    # Retry with explicit ntfs type
+                    _mnt_r = subprocess.run(
+                        ["sudo", "mount", "-t", "ntfs", "-o", f"ro,loop,offset={_offset_bytes}", _ewf1, _ewf_mnt],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                if _mnt_r.returncode == 0:
+                    _ewf_active_mounts_ref.append(_ewf_mnt)
+                    _ewf_mounts[_ewf_img] = {"ewf_dir": _ewf_dir, "ewf1": _ewf1, "mount_dir": _ewf_mnt}
+                    _fe_log(job_id, f"  EWF pre-mount OK: {_ewf_stem} → ewf1={_ewf1}, mnt={_ewf_mnt}")
+                else:
+                    _fe_log(job_id, f"  ⚠ filesystem mount failed for {_ewf_stem}: {_mnt_r.stderr[:120]}")
+                    # Still record ewf1 path so VSS/sleuthkit tools get the block device
+                    _ewf_mounts[_ewf_img] = {"ewf_dir": _ewf_dir, "ewf1": _ewf1, "mount_dir": None}
+            except Exception as _ewf_pre_exc:
+                _fe_log(job_id, f"  ⚠ EWF pre-mount error for {_ewf_stem}: {_ewf_pre_exc}")
+
         # Log orchestration intent before the main loop
         _batch_meta = _run_forensicator_batch(
             execution_plan=execution_plan,
@@ -2373,6 +2443,21 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     params[k] = int(v)
                                 elif isinstance(v, str) and v.lower() in ('true', 'false'):
                                     params[k] = v.lower() == 'true'
+
+                            # E01 mount injection: swap in ewf1 block device and mounted
+                            # filesystem paths so tools receive usable paths instead of the
+                            # raw .e01 container.
+                            if (ev_type == "disk_images"
+                                    and Path(item).suffix.lower() in _EWF_EXTENSIONS
+                                    and item in _ewf_mounts
+                                    and function not in _SKIP_ON_EWF_CONTAINER):
+                                _mnt_info = _ewf_mounts[item]
+                                params["image"] = _mnt_info["ewf1"]
+                                if _mnt_info.get("mount_dir"):
+                                    params["mount_path"] = _mnt_info["mount_dir"]
+                                    for _dir_param in ("evidence_dir", "evidence_path", "directory"):
+                                        if _dir_param in params:
+                                            params[_dir_param] = _mnt_info["mount_dir"]
 
                             # Idempotent step key — derive from findings (single source of truth)
                             step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
@@ -3635,6 +3720,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _ckpt_save(case_work_dir, ckpt)
 
     except (KeyboardInterrupt, SystemExit):
+        _cleanup_ewf_early_mounts(_ewf_mounts)
         _cleanup_mounts()
         raise
     except BaseException as e:
@@ -3644,6 +3730,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             f.write("---\n")
         traceback.print_exc(file=sys.stderr)
         _fe_log(job_id, f"  \U0001f480 FIND_EVIL CRASHED: {type(e).__name__}: {e}")
+        _cleanup_ewf_early_mounts(_ewf_mounts)
         _cleanup_mounts()
         return {
             "status": "error",
@@ -3651,6 +3738,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "evidence_dir": evidence_dir,
             "elapsed_seconds": round(time.time() - start_time, 1),
         }
+    _cleanup_ewf_early_mounts(_ewf_mounts)
     _cleanup_mounts()
     return report
 
