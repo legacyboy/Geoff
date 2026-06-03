@@ -43,7 +43,7 @@ The following artifact categories are documented gaps where Geoff either fails s
 
 **Status:** Fixed in the 2026-06-01 commit (part of "EVTX error handling" fix group). Error handling now falls back to python-evtx when EvtxECmd returns malformed output.
 
-**Remaining gap:** Multi-block PowerShell 4104 reassembly (stitching `MessageNumber` fragments into the complete script) is not implemented. This means heavily obfuscated PowerShell commands split across multiple 4104 events may appear as truncated fragments. See `docs/SANS-PLAYBOOK-GAP-ANALYSIS.md Part 3` for the full list.
+**Remaining gap:** Multi-block PowerShell 4104 reassembly (stitching `MessageNumber` fragments into the complete script) is not implemented. This means heavily obfuscated PowerShell commands split across multiple 4104 events may appear as truncated fragments. Known outstanding gaps: encoded command decoding (`certutil -decode`, base64 PowerShell), LOLBin obfuscation patterns (`mshta.exe` with `javascript:` URI, `rundll32.exe` with unsigned DLL), and WMI OBJECTS.DATA persistence parsing.
 
 ### 2.2 Memory Dump Classification Edge Cases
 
@@ -55,7 +55,7 @@ The following artifact categories are documented gaps where Geoff either fails s
 
 ### 2.3 LOLBin Detection Gaps
 
-The SANS-PLAYBOOK-GAP-ANALYSIS.md (2026-05-03) documents the following missing technique coverage in PB-SIFT-010 (Living-off-the-Land):
+The following missing technique coverage was identified in PB-SIFT-010 (Living-off-the-Land) as of 2026-05-03:
 - Encoded command decoding (`certutil -decode`, base64 PowerShell) — no automated decoding step
 - LOLBin obfuscation patterns (`mshta.exe` with `javascript:` URI, `rundll32.exe` with unsigned DLL)
 - WMI OBJECTS.DATA persistence — no `python-cim` or equivalent parsing step

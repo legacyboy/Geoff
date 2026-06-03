@@ -195,7 +195,7 @@ Navigate to the **Find Evil** tab, enter `/tmp/synthetic_evidence`, and click **
 - Web shell presence may be inferred from PB-SIFT-001 (Initial Access) filesystem listings
 - Insider threat behavioral signals appear in PB-SIFT-007 (Exfiltration) and PB-SIFT-015 (Data Staging)
 
-Full analysis in `docs/SANS-PLAYBOOK-GAP-ANALYSIS.md`.
+These gaps have since been addressed: PB-SIFT-037 is now EDR Telemetry Analysis (CrowdStrike/SentinelOne/Carbon Black), PB-SIFT-038 covers Web Shell Indicators, and PB-SIFT-039 covers Insider Threat Behavioral Analysis.
 
 ### Tool auto-installation (self-heal)
 

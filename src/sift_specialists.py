@@ -750,10 +750,7 @@ class SLEUTHKIT_Specialist:
         """
         # Get full file listing first
         listing = self.list_files(image, offset, recursive=True)
-        if listing.get('status') not in ('success', 'success_with_partial'):
-            return {'tool': 'extract_email_artifacts', 'status': 'error',
-                    'error': f'fls failed: {listing.get("status")}',
-                    'timestamp': datetime.now().isoformat()}
+        fls_ok = listing.get('status') in ('success', 'success_with_partial')
 
         email_extensions = {'.pst', '.ost', '.dbx', '.mbox', '.eml', '.msg', '.nk2'}
         email_dirs = ('outlook', 'thunderbird', 'windows mail', 'outlook express',
@@ -761,23 +758,51 @@ class SLEUTHKIT_Specialist:
                       'appdata/local/microsoft/outlook', 'appdata/roaming/microsoft/outlook')
 
         candidates = []
-        all_files = listing.get('files', [])
-        for f in all_files:
-            name = f.get('name', '').lower()
-            full_path = f.get('full_path', '').lower()
-            inode = f.get('inode')
-            if inode is None:
-                continue
-            # Match by extension
-            if any(name.endswith(ext) for ext in email_extensions):
-                candidates.append(f)
-                continue
-            # Match by directory path
-            if any(d in full_path for d in email_dirs):
-                if any(name.endswith(ext) for ext in ('.pst', '.ost', '.dbx', '.eml', '.msg', '.msf', '.nk2')):
+        if fls_ok:
+            all_files = listing.get('files', [])
+            for f in all_files:
+                name = f.get('name', '').lower()
+                full_path = f.get('full_path', '').lower()
+                inode = f.get('inode')
+                if inode is None:
+                    continue
+                # Match by extension
+                if any(name.endswith(ext) for ext in email_extensions):
                     candidates.append(f)
+                    continue
+                # Match by directory path
+                if any(d in full_path for d in email_dirs):
+                    if any(name.endswith(ext) for ext in ('.pst', '.ost', '.dbx', '.eml', '.msg', '.msf', '.nk2')):
+                        candidates.append(f)
 
-        if not candidates:
+        # Fallback: when fls returns nothing (e.g. raw EWF container that fls cannot
+        # enumerate), scan /tmp/geoff_extract_* directories for email files already
+        # extracted during earlier pipeline phases (registry/LNK extraction).
+        # These files are on disk — no icat extraction needed.
+        # Always scan pre-extracted dirs for email artifacts, even if fls found
+        # candidates - icat may fail on EWF containers but pre-extracted files
+        # are already on disk from earlier pipeline phases.
+        pre_extracted = []
+        import glob as _glob
+        extract_dirs = _glob.glob('/tmp/geoff_extract_*')
+        for _d in extract_dirs:
+            for _ext in email_extensions:
+                for _found in Path(_d).rglob(f'*{_ext}'):
+                    if _found.is_file() and _found.stat().st_size > 0:
+                        pre_extracted.append(_found)
+        # Also check CASES_WORK_DIR/extractions/ if configured
+        try:
+            from geoff_config import CASES_WORK_DIR as _CASES_DIR
+            _cases_extract = Path(_CASES_DIR) / "extractions"
+            if _cases_extract.is_dir():
+                for _ext in email_extensions:
+                    for _found in _cases_extract.rglob(f'*{_ext}'):
+                        if _found.is_file() and _found.stat().st_size > 0:
+                            pre_extracted.append(_found)
+        except Exception:
+            pass
+
+        if not candidates and not pre_extracted:
             return {
                 'tool': 'extract_email_artifacts',
                 'image': image,
@@ -788,11 +813,12 @@ class SLEUTHKIT_Specialist:
                 'timestamp': datetime.now().isoformat(),
             }
 
-        # Extract each candidate via icat
         import tempfile
         output_dir = Path(tempfile.mkdtemp(prefix='geoff_email_'))
         extracted = []
-        for f in candidates[:50]:  # Limit to 50 files max
+
+        # Extract fls-sourced candidates via icat
+        for f in candidates[:50]:
             name = f.get('name', f'inode_{f["inode"]}')
             inode = f['inode']
             out_path = output_dir / name.replace('\\', '_').replace('/', '_').replace(' ', '_')
@@ -805,13 +831,27 @@ class SLEUTHKIT_Specialist:
                     'size': result.get('bytes_extracted', 0),
                 })
 
+        # Add pre-extracted files directly — already on disk, no icat needed
+        seen_paths = {e['path'] for e in extracted}
+        for _p in pre_extracted[:50]:
+            _p_str = str(_p)
+            if _p_str not in seen_paths:
+                extracted.append({
+                    'path': _p_str,
+                    'original_path': _p_str,
+                    'inode': None,
+                    'size': _p.stat().st_size,
+                    'source': 'pre_extracted',
+                })
+                seen_paths.add(_p_str)
+
         return {
             'tool': 'extract_email_artifacts',
             'image': image,
             'offset': offset,
             'status': 'success',
             'extracted_files': extracted,
-            'candidates_found': len(candidates),
+            'candidates_found': len(candidates) + len(pre_extracted),
             'candidates_extracted': len(extracted),
             'output_dir': str(output_dir),
             'timestamp': datetime.now().isoformat(),

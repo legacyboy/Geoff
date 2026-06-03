@@ -2495,6 +2495,32 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 steps_completed += 1
                                 _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
                                 continue
+
+                            # PB-SIFT-023: list_files and extract_email_artifacts are intentionally
+                            # NOT in _SKIP_ON_EWF_CONTAINER — they must run on E01 images — but
+                            # they need the ewf1 block device path, not the raw EWF container.
+                            # Mount here and substitute params["image"] with the ewf1 path.
+                            _ewf_email_mount = None
+                            if (playbook_id == "PB-SIFT-023"
+                                    and ev_type == "disk_images"
+                                    and Path(item).suffix.lower() in _EWF_EXTENSIONS
+                                    and function in ("list_files", "extract_email_artifacts")):
+                                _ewf_dir = f"/tmp/geoff_ewf_email_{os.getpid()}_{function}_{Path(item).stem}"
+                                os.makedirs(_ewf_dir, exist_ok=True)
+                                try:
+                                    _ewf_r = subprocess.run(
+                                        ["ewfmount", item, _ewf_dir],
+                                        capture_output=True, text=True, timeout=60,
+                                    )
+                                    if _ewf_r.returncode == 0 and os.path.exists(f"{_ewf_dir}/ewf1"):
+                                        params["image"] = f"{_ewf_dir}/ewf1"
+                                        _ewf_email_mount = _ewf_dir
+                                        _fe_log(job_id, f"  EWF→ewf1 ({function}): {_ewf_dir}/ewf1")
+                                    else:
+                                        _fe_log(job_id, f"  ewfmount for {function} failed — using raw path")
+                                except Exception as _ewf_exc:
+                                    _fe_log(job_id, f"  ewfmount for {function} error: {_ewf_exc} — using raw path")
+
                             # Retry logic for transient failures
                             # Catches BOTH exceptions AND error-status results
                             # (orchestrator returns {"status": "error"} dicts, not exceptions)
@@ -2789,6 +2815,20 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             step_record["completed_at"] = datetime.now().isoformat()
                             findings_writer.append(step_record)
                             pb_findings.append(step_record)
+
+                            # Clean up per-step EWF mount used for PB-SIFT-023 email steps
+                            if _ewf_email_mount:
+                                try:
+                                    subprocess.run(
+                                        ["fusermount", "-u", _ewf_email_mount],
+                                        capture_output=True, timeout=10,
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    os.rmdir(_ewf_email_mount)
+                                except Exception:
+                                    pass
 
                             # Per-step git commit with chain-of-custody metadata
                             if step_record.get("status") in (

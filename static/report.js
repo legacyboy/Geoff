@@ -54,6 +54,53 @@
     }
   }
 
+  /* -------- text/paragraph rendering helper -------- */
+  function renderTextBlock(text) {
+    if (!text) return '<p style="color:var(--g-text-mute)">No data available.</p>';
+    if (typeof text === 'string') {
+      const escaped = esc(text);
+      return escaped
+        .replace(/\n\n+/g, '</p><p class="narrative">')
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+        .replace(/\*(.*?)\*/g, '<i>$1</i>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--g-surface-2);padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>');
+    }
+    return `<pre style="white-space:pre-wrap;font-size:12px;">${esc(JSON.stringify(text, null, 2))}</pre>`;
+  }
+
+  /* -------- full narrative report (markdown-ish to HTML) -------- */
+  function renderMarkdown(md) {
+    if (!md) return '';
+    const lines = md.split('\n');
+    let html = '';
+    let inList = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('### ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h4 style="margin:16px 0 8px;color:var(--g-text)">${esc(trimmed.slice(4))}</h4>`;
+      } else if (trimmed.startsWith('## ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h3 style="margin:20px 0 10px;color:var(--g-text);border-bottom:1px solid var(--g-border-soft);padding-bottom:6px;">${esc(trimmed.slice(3))}</h3>`;
+      } else if (trimmed.startsWith('# ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h2 style="margin:20px 0 10px;color:var(--g-text)">${esc(trimmed.slice(2))}</h2>`;
+      } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        if (!inList) { html += '<ul style="margin:8px 0;padding-left:20px;">'; inList = true; }
+        html += `<li>${esc(trimmed.slice(2)).replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code style="background:var(--g-surface-2);padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')}</li>`;
+      } else if (trimmed === '') {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += '<br>';
+      } else {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<p class="narrative">${esc(trimmed).replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*(.*?)\*/g, '<i>$1</i>').replace(/`([^`]+)`/g, '<code style="background:var(--g-surface-2);padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')}</p>`;
+      }
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+
   /* -------- full narrative report -------- */
   async function showReport(dir) {
     const content = $('content');
@@ -109,8 +156,19 @@
       { id: 'summary',  num: '01', title: 'Executive Summary',           render: (r) => renderSummary(r, data) },
       { id: 'timeline', num: '02', title: 'Super Timeline',              render: (r) => renderTimeline(r, data) },
       { id: 'findings', num: '03', title: 'Findings by Device',          render: (r) => renderFindings(r, data) },
-      { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',  render: (r) => renderMitreLink(r, dir) },
-      { id: 'iocs',     num: '05', title: 'Indicators of Compromise',    render: (r) => renderIocs(r, data) },
+      { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',      render: (r) => renderMitreLink(r, dir) },
+      { id: 'iocs',     num: '05', title: 'Indicators of Compromise',   render: (r) => renderIocs(r, data) },
+      // --- New narrative sections ---
+      { id: 'attack-chain', num: '06', title: 'Attack Chain / Attack Narrative', render: (r) => renderAttackChain(r, data) },
+      { id: 'kill-chain-timeline', num: '07', title: 'Kill Chain & Timeline Reconstruction', render: (r) => renderKillChainTimeline(r, data) },
+      { id: 'devices-users', num: '08', title: 'Devices & Users', render: (r) => renderDevicesUsers(r, data) },
+      { id: 'blast-radius', num: '09', title: 'Blast Radius & Business Impact', render: (r) => renderBlastRadius(r, data) },
+      { id: 'dwell-time', num: '10', title: 'Dwell Time & Lateral Movement', render: (r) => renderDwellTime(r, data) },
+      { id: 'evidence-confidence', num: '11', title: 'Evidence Confidence & Gaps', render: (r) => renderEvidenceConfidence(r, data) },
+      { id: 'conclusion', num: '12', title: 'Conclusion & Recommendations', render: (r) => renderConclusion(r, data) },
+      { id: 'user-narratives', num: '13', title: 'User Activity Narratives', render: (r) => renderUserNarratives(r, data) },
+      { id: 'significant-events', num: '14', title: 'Significant Events Timeline', render: (r) => renderSignificantEvents(r, data) },
+      { id: 'full-report', num: '15', title: 'Full Written Report', render: (r) => renderFullReport(r, data) },
     ];
 
     // TOC
@@ -201,16 +259,17 @@
       root.innerHTML = '<div class="info-box"><p>No timeline entries were generated for this case. This can happen when the pipeline completed without producing timeline data.</p></div>';
       return;
     }
-    const rows = events.map(ev => {
+    const rows = timeline.map(ev => {
       const ts = ev.timestamp || '';
       const devId = ev.device_id || ev.device || '';
       const sev = (ev.severity || 'INFO').toUpperCase();
       const devKind = inferKindFromMap(devId, data.device_map || {});
-      return `<div class="tl-row">
+      const isSuspicious = ev.suspicious;
+      return `<div class="tl-row${isSuspicious ? ' suspicious' : ''}">
         <div class="when"><span class="d">${fmtDate(ts)}</span><br>${fmtClock(ts)} UTC</div>
-        <div class="tl-rail"><div class="tl-dot s-${sev}"></div></div>
+        <div class="tl-rail"><div class="tl-dot ${isSuspicious ? 's-HIGH' : 's-' + sev}"></div></div>
         <div class="tl-card">
-          <div class="top"><span class="sev-pill ${sev}" style="font-size:9px;padding:2px 7px;">${sev}</span></div>
+          <div class="top"><span class="sev-pill ${isSuspicious ? 'HIGH' : sev}" style="font-size:9px;padding:2px 7px;">${isSuspicious ? 'SUSPICIOUS' : sev}</span></div>
           <div class="sum">${esc(ev.summary || ev.event_type || '')}</div>
           <div class="meta">
             <span class="dv"><span class="edot ${devKind}"></span>${esc(devId)}</span>
@@ -220,7 +279,7 @@
         </div>
       </div>`;
     }).join('');
-    root.innerHTML = `<div class="tl">${rows}</div>`;
+    root.innerHTML = `<div style="margin-bottom:8px;font-size:12px;color:var(--g-text-mute);">${timeline.length} timeline events</div><div class="tl">${rows}</div>`;
   }
 
   function renderFindings(root, data) {
@@ -307,7 +366,6 @@
     const flags = data.behavioral_flags || {};
     const ipSet = new Set(), domSet = new Set(), hashSet = new Set(), pathSet = new Set();
     const IP_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
-    const DOMAIN_RE = /(?:[a-z0-9-]+\.)+[a-z]{2,}/i;
     Object.values(flags).forEach(devFlags => {
       (devFlags || []).forEach(f => {
         Object.values(f.evidence || {}).forEach(v => {
@@ -338,6 +396,143 @@
       const o = b.textContent; b.textContent = '✓'; b.style.color = 'var(--g-green)';
       setTimeout(() => { b.textContent = o; b.style.color = ''; }, 1100);
     }));
+  }
+
+  /* -------- new narrative section renderers -------- */
+
+  function renderAttackChain(root, data) {
+    const ac = data.attack_chain;
+    if (!ac) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No attack chain data available.</p>';
+      return;
+    }
+    // attack_chain may be a dict (from pipeline) or a string (from narrative JSON)
+    if (typeof ac === 'string') {
+      root.innerHTML = renderTextBlock(ac);
+      return;
+    }
+    // Structured attack_chain object
+    let html = '';
+    if (ac.dwell_days != null) {
+      html += `<div class="keyfacts"><div class="kf"><div class="k">Dwell Time</div><div class="v">~${Math.round(ac.dwell_days)} days</div></div>`;
+      if (ac.first_seen_ts) html += `<div class="kf"><div class="k">First Seen</div><div class="v">${esc(ac.first_seen_ts)}</div></div>`;
+      if (ac.last_seen_ts) html += `<div class="kf"><div class="k">Last Seen</div><div class="v">${esc(ac.last_seen_ts)}</div></div>`;
+      html += `</div>`;
+    }
+    if (ac.lateral_movement_path && ac.lateral_movement_path.length) {
+      html += `<h4 style="margin:12px 0 6px;">Lateral Movement Path</h4><div style="font-family:var(--font-mono);font-size:13px;">${ac.lateral_movement_path.map(p => esc(p)).join(' → ')}</div>`;
+    }
+    if (ac.mitre_techniques_observed && ac.mitre_techniques_observed.length) {
+      html += `<h4 style="margin:12px 0 6px;">MITRE ATT&CK Techniques</h4><div style="display:flex;flex-wrap:wrap;gap:6px;">${ac.mitre_techniques_observed.map(t => `<span class="mitre-tag">${esc(t)}</span>`).join('')}</div>`;
+    }
+    if (ac.kill_chain_phases && ac.kill_chain_phases.length) {
+      html += `<h4 style="margin:12px 0 6px;">Kill Chain Phases</h4><div style="display:flex;flex-wrap:wrap;gap:8px;">${ac.kill_chain_phases.map(p => `<div style="padding:6px 12px;background:var(--g-surface-2);border:1px solid var(--g-border-soft);border-radius:var(--radius);font-size:12px;">${esc(typeof p === 'string' ? p : p.phase || p.name || JSON.stringify(p))}</div>`).join('')}</div>`;
+    }
+    root.innerHTML = html || '<p style="color:var(--g-text-mute)">No attack chain data available.</p>';
+  }
+
+  function renderKillChainTimeline(root, data) {
+    const kct = data.kill_chain_timeline;
+    if (!kct) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No kill chain timeline data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(kct);
+  }
+
+  function renderDevicesUsers(root, data) {
+    const du = data.devices_and_users;
+    if (!du) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No devices & users data available.</p>';
+      return;
+    }
+    // If it's a string (from narrative JSON), render as text
+    if (typeof du === 'string') {
+      root.innerHTML = renderTextBlock(du);
+      return;
+    }
+    // If it's an object, render structured
+    root.innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;">${esc(JSON.stringify(du, null, 2))}</pre>`;
+  }
+
+  function renderBlastRadius(root, data) {
+    const br = data.blast_radius;
+    if (!br) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No blast radius data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(br);
+  }
+
+  function renderDwellTime(root, data) {
+    const dt = data.dwell_time;
+    if (!dt) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No dwell time data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(dt);
+  }
+
+  function renderEvidenceConfidence(root, data) {
+    const ec = data.evidence_confidence;
+    if (!ec) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No evidence confidence data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(ec);
+  }
+
+  function renderConclusion(root, data) {
+    const c = data.conclusion;
+    if (!c) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No conclusion data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(c);
+  }
+
+  function renderUserNarratives(root, data) {
+    const un = data.user_narratives;
+    if (!un) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No user narratives available.</p>';
+      return;
+    }
+    if (typeof un === 'string') {
+      root.innerHTML = renderTextBlock(un);
+      return;
+    }
+    // Object with user → narrative text
+    let html = '';
+    Object.entries(un).forEach(([user, narrative]) => {
+      html += `<div style="margin-bottom:16px;"><h4 style="margin:8px 0 4px;color:var(--g-blue);font-size:14px;">${esc(user)}</h4>`;
+      html += `<div>${renderTextBlock(narrative)}</div></div>`;
+    });
+    root.innerHTML = html || '<p style="color:var(--g-text-mute)">No user narratives available.</p>';
+  }
+
+  function renderSignificantEvents(root, data) {
+    const se = data.significant_events;
+    if (!se) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No significant events data available.</p>';
+      return;
+    }
+    root.innerHTML = renderTextBlock(se);
+  }
+
+  function renderFullReport(root, data) {
+    const fr = data.full_written_report;
+    if (!fr) {
+      // Fallback: try narrative_report (markdown)
+      const nr = data.narrative_report;
+      if (nr) {
+        root.innerHTML = renderMarkdown(nr);
+        return;
+      }
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No full written report available.</p>';
+      return;
+    }
+    // full_written_report is likely markdown text
+    root.innerHTML = renderMarkdown(fr);
   }
 
   /* -------- helpers -------- */
