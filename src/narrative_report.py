@@ -532,6 +532,21 @@ class NarrativeReportGenerator:
             self._generate_significant_timeline(
                 super_timeline_path, behavioral_flags, report_json=report_json)
 
+        # 4b. HTML supertimeline popout
+        try:
+            _st_html = self._generate_supertimeline_html(
+                report_json, behavioral_flags, super_timeline_path)
+            with open(report_dir / "supertimeline.html", "w", encoding="utf-8") as _f:
+                _f.write(_st_html)
+            _m = re.search(r"\*(\d+) event", sections.get("significant_events", ""))
+            _ev_count = _m.group(1) if _m else "?"
+            sections["supertimeline_link"] = (
+                f"> 📊 **[Open Supertimeline](supertimeline.html)** — "
+                f"{_ev_count} events with filtering, sorting, and severity highlighting"
+            )
+        except Exception:
+            sections["supertimeline_link"] = ""
+
         # 5. Behavioral Findings
         # 5a. Self-corrections (auto-recovery events)
         sections["self_corrections"] = self._render_self_corrections(report_json)
@@ -1497,6 +1512,281 @@ class NarrativeReportGenerator:
         total = len(events)
         header = f"*{total} event(s) total" + (f" — showing first 50" if total > 50 else "") + "*\n"
         return header + "\n".join(lines)
+
+    def _generate_supertimeline_html(self, report_json: dict, behavioral_flags: dict,
+                                      super_timeline_path: str) -> str:
+        """Generate a standalone HTML supertimeline page with filtering, sorting, and search."""
+        import csv as _csv
+        import html as _html
+
+        events = []
+        file_read_ok = False
+
+        if super_timeline_path:
+            try:
+                with open(super_timeline_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                            events.append(ev)
+                            file_read_ok = True
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+            except (FileNotFoundError, IOError):
+                pass
+
+            if not file_read_ok:
+                try:
+                    with open(super_timeline_path, "r", newline="", errors="replace") as f:
+                        reader = _csv.DictReader(f)
+                        for row in reader:
+                            ts = row.get("timestamp", row.get("datetime", row.get("date", "")))
+                            name = row.get("name", row.get("message", row.get("description", row.get("short", ""))))
+                            sev = (row.get("severity", "") or "INFO").upper().strip()
+                            if sev not in ("CRITICAL", "HIGH", "MEDIUM", "INFO"):
+                                sev = "INFO"
+                            module = row.get("module", row.get("source", row.get("type", "")))
+                            func = row.get("function", "")
+                            src = "/".join(p for p in [module, func] if p)
+                            events.append({
+                                "timestamp": ts, "device_id": "",
+                                "summary": name, "severity": sev, "source": src,
+                            })
+                            file_read_ok = True
+                except (FileNotFoundError, IOError):
+                    pass
+
+        if not file_read_ok and report_json is not None:
+            for e in report_json.get("timeline", []):
+                sev = (e.get("severity", "") or "INFO").upper().strip()
+                if sev not in ("CRITICAL", "HIGH", "MEDIUM", "INFO"):
+                    sev = "INFO"
+                events.append({
+                    "timestamp": e.get("timestamp", ""),
+                    "device_id": e.get("device_id", e.get("source_device", "")),
+                    "summary": e.get("description", e.get("event", e.get("summary", ""))),
+                    "severity": sev,
+                    "source": "",
+                })
+
+        if not events:
+            for dev_id, flags in behavioral_flags.items():
+                for flag in flags:
+                    sev = (flag.get("severity", "") or "INFO").upper().strip()
+                    if sev not in ("CRITICAL", "HIGH", "MEDIUM", "INFO"):
+                        sev = "INFO"
+                    events.append({
+                        "timestamp": flag.get("timestamp", ""),
+                        "device_id": dev_id,
+                        "summary": flag.get("summary", ""),
+                        "severity": sev,
+                        "source": "behavioral_flags",
+                    })
+
+        events.sort(key=lambda e: e.get("timestamp", "") or "")
+
+        sev_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "INFO": 0}
+        rows = []
+        for ev in events:
+            sev = (ev.get("severity", "") or "INFO").upper().strip()
+            if sev not in ("CRITICAL", "HIGH", "MEDIUM", "INFO"):
+                sev = "INFO"
+            sev_counts[sev] += 1
+            rows.append({
+                "ts": ev.get("timestamp", "") or "",
+                "device": ev.get("device_id", "") or "",
+                "event": ev.get("summary", "") or "",
+                "severity": sev,
+                "source": ev.get("source", "") or "",
+            })
+
+        total = len(rows)
+        title = (report_json.get("title", "Forensic Investigation") if report_json else "Forensic Investigation")
+        title_esc = _html.escape(title)
+        summary = (
+            f"{total} event{'s' if total != 1 else ''}: "
+            f"{sev_counts['CRITICAL']} CRITICAL, "
+            f"{sev_counts['HIGH']} HIGH, "
+            f"{sev_counts['MEDIUM']} MEDIUM, "
+            f"{sev_counts['INFO']} INFO"
+        )
+        events_json_str = json.dumps(rows, ensure_ascii=False)
+
+        template = (
+            '<!DOCTYPE html>\n'
+            '<html lang="en">\n'
+            '<head>\n'
+            '  <meta charset="UTF-8">\n'
+            '  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+            '  <title>Supertimeline — TITLE_PLACEHOLDER</title>\n'
+            '  <style>\n'
+            '    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n'
+            '    body { background: #0d0d1a; color: #cdd6f4; font-family: \'Courier New\', Consolas, \'Lucida Console\', monospace; font-size: 13px; min-height: 100vh; }\n'
+            '    .header { background: #11111f; border-bottom: 2px solid #3050a0; padding: 16px 24px; }\n'
+            '    .header .label { color: #6c7086; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }\n'
+            '    .header h1 { color: #89b4fa; font-size: 20px; font-weight: bold; margin-bottom: 6px; }\n'
+            '    .summary { color: #a6e3a1; font-size: 13px; }\n'
+            '    .controls { background: #13132a; padding: 10px 24px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid #2a2a4a; position: sticky; top: 0; z-index: 100; }\n'
+            '    .filter-btn { background: #1e1e3a; border: 1px solid #3a3a6a; color: #cdd6f4; cursor: pointer; padding: 5px 12px; border-radius: 4px; font-family: inherit; font-size: 12px; transition: all 0.15s; }\n'
+            '    .filter-btn:hover { border-color: #89b4fa; color: #89b4fa; }\n'
+            '    .filter-btn.active { background: #3050a0; border-color: #89b4fa; color: #fff; }\n'
+            '    .filter-btn.btn-critical { border-color: #ff2040; }\n'
+            '    .filter-btn.btn-critical.active { background: #6e0010; border-color: #ff2040; color: #ff8090; }\n'
+            '    .filter-btn.btn-high { border-color: #ff7700; }\n'
+            '    .filter-btn.btn-high.active { background: #5a2200; border-color: #ff7700; color: #ffaa66; }\n'
+            '    .filter-btn.btn-medium { border-color: #f9c74f; }\n'
+            '    .filter-btn.btn-medium.active { background: #3a2e00; border-color: #f9c74f; color: #f9c74f; }\n'
+            '    .filter-btn.btn-info { border-color: #6c7086; }\n'
+            '    .filter-btn.btn-info.active { background: #2a2a3a; border-color: #9399b2; color: #9399b2; }\n'
+            '    #search { background: #1e1e3a; border: 1px solid #3a3a6a; color: #cdd6f4; padding: 5px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; margin-left: auto; min-width: 220px; }\n'
+            '    #search:focus { outline: none; border-color: #89b4fa; }\n'
+            '    #search::placeholder { color: #6c7086; }\n'
+            '    .result-count { color: #6c7086; font-size: 11px; white-space: nowrap; }\n'
+            '    .table-wrapper { overflow-x: auto; }\n'
+            '    table { width: 100%; border-collapse: collapse; }\n'
+            '    thead { position: sticky; top: 45px; z-index: 50; }\n'
+            '    thead th { background: #111130; color: #89b4fa; padding: 10px 12px; text-align: left; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; user-select: none; border-bottom: 2px solid #3050a0; white-space: nowrap; }\n'
+            '    thead th:hover { background: #1a1a40; color: #b9d0ff; }\n'
+            '    thead th.sort-asc::after { content: " ▲"; }\n'
+            '    thead th.sort-desc::after { content: " ▼"; }\n'
+            '    tbody tr { border-bottom: 1px solid #1a1a2e; transition: background 0.1s; }\n'
+            '    tbody tr:hover { background: #1a1a30; }\n'
+            '    tbody tr.row-critical { border-left: 3px solid #ff2040; }\n'
+            '    tbody tr.row-high { border-left: 3px solid #ff7700; }\n'
+            '    tbody tr.row-medium { border-left: 3px solid #f9c74f; }\n'
+            '    tbody tr.row-info { border-left: 3px solid #3a3a6a; }\n'
+            '    td { padding: 7px 12px; vertical-align: top; }\n'
+            '    td.ts { color: #89dceb; white-space: nowrap; font-size: 12px; }\n'
+            '    td.device { color: #cba6f7; white-space: nowrap; }\n'
+            '    td.event-cell { color: #cdd6f4; word-break: break-word; max-width: 600px; }\n'
+            '    td.source { color: #6c7086; font-size: 11px; white-space: nowrap; }\n'
+            '    .badge { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 11px; font-weight: bold; cursor: pointer; white-space: nowrap; }\n'
+            '    .badge-critical { background: #ff2040; color: #fff; }\n'
+            '    .badge-high { background: #ff7700; color: #fff; }\n'
+            '    .badge-medium { background: #f9c74f; color: #1a1a1a; }\n'
+            '    .badge-info { background: #313244; color: #9399b2; }\n'
+            '    .no-results { text-align: center; color: #6c7086; padding: 40px; font-style: italic; }\n'
+            '  </style>\n'
+            '</head>\n'
+            '<body>\n'
+            '  <div class="header">\n'
+            '    <div class="label">DFIR Forensics — Supertimeline</div>\n'
+            '    <h1>TITLE_PLACEHOLDER</h1>\n'
+            '    <div class="summary">SUMMARY_PLACEHOLDER</div>\n'
+            '  </div>\n'
+            '  <div class="controls">\n'
+            '    <button class="filter-btn active" data-sev="all" onclick="setSev(\'all\')">All</button>\n'
+            '    <button class="filter-btn btn-critical" data-sev="CRITICAL" onclick="setSev(\'CRITICAL\')">CRITICAL</button>\n'
+            '    <button class="filter-btn btn-high" data-sev="HIGH" onclick="setSev(\'HIGH\')">HIGH</button>\n'
+            '    <button class="filter-btn btn-medium" data-sev="MEDIUM" onclick="setSev(\'MEDIUM\')">MEDIUM</button>\n'
+            '    <button class="filter-btn btn-info" data-sev="INFO" onclick="setSev(\'INFO\')">INFO</button>\n'
+            '    <span class="result-count" id="result-count"></span>\n'
+            '    <input type="text" id="search" placeholder="Search events..." oninput="setSearch(this.value)">\n'
+            '  </div>\n'
+            '  <div class="table-wrapper">\n'
+            '    <table>\n'
+            '      <thead><tr>\n'
+            '        <th onclick="setSort(0)">Timestamp</th>\n'
+            '        <th onclick="setSort(1)">Device</th>\n'
+            '        <th onclick="setSort(2)">Event</th>\n'
+            '        <th onclick="setSort(3)">Severity</th>\n'
+            '        <th onclick="setSort(4)">Source</th>\n'
+            '      </tr></thead>\n'
+            '      <tbody id="tbody"></tbody>\n'
+            '    </table>\n'
+            '  </div>\n'
+            '  <script>\n'
+            '    var EVENTS = EVENTS_JSON_PLACEHOLDER;\n'
+            '    var currentSev = "all";\n'
+            '    var currentSearch = "";\n'
+            '    var sortCol = 0;\n'
+            '    var sortAsc = true;\n'
+            '\n'
+            '    function escHtml(s) {\n'
+            '      if (!s) return "";\n'
+            '      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");\n'
+            '    }\n'
+            '\n'
+            '    function renderTable() {\n'
+            '      var filtered = EVENTS.filter(function(e) {\n'
+            '        var matchesSev = currentSev === "all" || e.severity === currentSev;\n'
+            '        var q = currentSearch.toLowerCase();\n'
+            '        var matchesSearch = !q ||\n'
+            '          (e.ts||"").toLowerCase().indexOf(q) >= 0 ||\n'
+            '          (e.device||"").toLowerCase().indexOf(q) >= 0 ||\n'
+            '          (e.event||"").toLowerCase().indexOf(q) >= 0 ||\n'
+            '          (e.source||"").toLowerCase().indexOf(q) >= 0;\n'
+            '        return matchesSev && matchesSearch;\n'
+            '      });\n'
+            '      var cols = ["ts","device","event","severity","source"];\n'
+            '      var key = cols[sortCol];\n'
+            '      filtered.sort(function(a,b) {\n'
+            '        var va = (a[key]||"").toLowerCase();\n'
+            '        var vb = (b[key]||"").toLowerCase();\n'
+            '        if (va < vb) return sortAsc ? -1 : 1;\n'
+            '        if (va > vb) return sortAsc ? 1 : -1;\n'
+            '        return 0;\n'
+            '      });\n'
+            '      var tbody = document.getElementById("tbody");\n'
+            '      if (filtered.length === 0) {\n'
+            '        tbody.innerHTML = \'<tr><td colspan="5" class="no-results">No events match current filters.</td></tr>\';\n'
+            '        document.getElementById("result-count").textContent = "0 events";\n'
+            '        return;\n'
+            '      }\n'
+            '      var html = filtered.map(function(e) {\n'
+            '        var sc = e.severity.toLowerCase();\n'
+            '        return \'<tr class="row-\' + sc + \'">\' +\n'
+            '          \'<td class="ts">\' + escHtml(e.ts) + \'</td>\' +\n'
+            '          \'<td class="device">\' + escHtml(e.device) + \'</td>\' +\n'
+            '          \'<td class="event-cell">\' + escHtml(e.event) + \'</td>\' +\n'
+            '          \'<td><span class="badge badge-\' + sc + \'" onclick="setSev(\\"\' + sc.toUpperCase() + \'\\")">\' + escHtml(e.severity) + \'</span></td>\' +\n'
+            '          \'<td class="source">\' + escHtml(e.source) + \'</td>\' +\n'
+            '          \'</tr>\';\n'
+            '      }).join("");\n'
+            '      tbody.innerHTML = html;\n'
+            '      document.getElementById("result-count").textContent = filtered.length + " of " + EVENTS.length + " events";\n'
+            '    }\n'
+            '\n'
+            '    function setSev(sev) {\n'
+            '      currentSev = sev;\n'
+            '      document.querySelectorAll(".filter-btn").forEach(function(b) {\n'
+            '        b.classList.toggle("active", b.dataset.sev === sev);\n'
+            '      });\n'
+            '      renderTable();\n'
+            '    }\n'
+            '\n'
+            '    function setSearch(val) {\n'
+            '      currentSearch = val;\n'
+            '      renderTable();\n'
+            '    }\n'
+            '\n'
+            '    function setSort(col) {\n'
+            '      if (sortCol === col) {\n'
+            '        sortAsc = !sortAsc;\n'
+            '      } else {\n'
+            '        sortCol = col;\n'
+            '        sortAsc = true;\n'
+            '      }\n'
+            '      document.querySelectorAll("thead th").forEach(function(th, i) {\n'
+            '        th.classList.remove("sort-asc", "sort-desc");\n'
+            '        if (i === sortCol) th.classList.add(sortAsc ? "sort-asc" : "sort-desc");\n'
+            '      });\n'
+            '      renderTable();\n'
+            '    }\n'
+            '\n'
+            '    renderTable();\n'
+            '  </script>\n'
+            '</body>\n'
+            '</html>\n'
+        )
+
+        return (template
+                .replace("TITLE_PLACEHOLDER", title_esc)
+                .replace("SUMMARY_PLACEHOLDER", _html.escape(summary))
+                .replace("EVENTS_JSON_PLACEHOLDER", events_json_str))
 
     def _generate_findings_section(self, behavioral_flags: dict,
                                     report_json: dict) -> str:
@@ -4280,6 +4570,8 @@ Write the following sections. ACCURACY RULES:
         md += f"""---
 
 ## Significant Events Timeline
+
+{sections.get('supertimeline_link', '')}
 
 {sections.get('significant_events', 'No significant events.')}
 
