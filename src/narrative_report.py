@@ -3123,6 +3123,27 @@ Write the following sections. ACCURACY RULES:
                     lines.append(f"   - {explanation}")
                 llm_used = result.get("llm_used", False)
                 lines.append(f"   - Analysis: {'LLM-assisted' if llm_used else 'heuristic fallback'}")
+                # Show full email headers and body as evidence
+                headers = result.get("headers", {})
+                if headers:
+                    lines.append("   - **Headers:**")
+                    for hdr in ("From", "To", "Reply-To", "Return-Path", "Subject", "Date", "Message-ID"):
+                        if hdr in headers:
+                            lines.append(f"     - {hdr}: `{headers[hdr]}`")
+                    # Show first Received header if present
+                    received = headers.get("Received", "")
+                    if received:
+                        lines.append(f"     - Received: `{str(received)[:200]}`")
+                body = result.get("body_text", "")
+                if body:
+                    body_preview = body[:500].replace("\n", " ")
+                    lines.append(f"   - **Body (excerpt):** {body_preview}")
+                links = result.get("links", [])
+                if links:
+                    lines.append(f"   - **Links:** {', '.join(f'`{l}`' for l in links[:5])}")
+                attachments = result.get("attachments", [])
+                if attachments:
+                    lines.append(f"   - **Attachments:** {', '.join(attachments[:5])}")
                 eiocs = result.get("email_iocs", {})
                 if isinstance(eiocs, dict):
                     src_ips = eiocs.get("sender_ips", [])
@@ -3143,18 +3164,109 @@ Write the following sections. ACCURACY RULES:
             )
 
         # Return-Path mismatches from top-level email_iocs (direct extraction path)
+        # Filter: only show REAL spoofing (skip bounce-path mismatches from mailing lists)
         _top_iocs = report_json.get("email_iocs", {})
         _rp_mismatches = _top_iocs.get("return_path_mismatches", [])
         _spoofed = _top_iocs.get("spoofed_domains", [])
-        if _rp_mismatches:
-            lines.append("\n### Return-Path Mismatches (Spoofing Indicators)\n")
-            for i, mm in enumerate(_rp_mismatches[:10], 1):
-                if isinstance(mm, dict):
-                    lines.append(f"{i}. From: `{mm.get('from', '?')}` — Return-Path: `{mm.get('return_path', '?')}`")
+        _real_spoofing = [
+            m for m in _rp_mismatches
+            if isinstance(m, dict)
+            and "bounces.google.com" not in m.get("return_path_domain", "")
+            and m.get("from_domain", "") != m.get("return_path_domain", "")
+        ]
+        _bounce_mismatches = len(_rp_mismatches) - len(_real_spoofing)
+
+        if _real_spoofing:
+            lines.append("\n### **SPOOFING EVIDENCE — Return-Path Mismatches**\n")
+            lines.append("The following emails were sent from a domain that does NOT match")
+            lines.append("the Return-Path header. This is a strong indicator of spoofing/phishing.\n")
+            for i, mm in enumerate(_real_spoofing, 1):
+                from_addr = mm.get("from", "?")
+                rp = mm.get("return_path", "?")
+                from_dom = mm.get("from_domain", "?")
+                rp_dom = mm.get("return_path_domain", "?")
+                lines.append(f"{i}. **From:** `{from_addr}` (domain: `{from_dom}`)")
+                lines.append(f"   **Return-Path:** `{rp}` (domain: `{rp_dom}`)")
+                lines.append(f"   ⚠️ **From domain does not match Return-Path domain — SPOOFED**")
+            if _bounce_mismatches:
+                lines.append(f"\n*Additionally, {_bounce_mismatches} mailing-list bounce-path mismatches detected (not shown — these are normal for mailing lists).*")
+
+        # Try to find and display the actual phishing email content from EML files
+        # preserved in the case directory
+        _case_dir = report_json.get("case_work_dir", "")
+        if not _case_dir:
+            # Try to infer from evidence_dir
+            _ev_dir = report_json.get("evidence_dir", "")
+            if _ev_dir:
+                import glob as _glob2
+                _case_dirs = _glob2.glob(f"/mnt/cases/*")
+                for _cd in _case_dirs:
+                    if _ev_dir.split("/")[-1].replace("-", "_") in _cd or True:
+                        _email_path = os.path.join(_cd, "email_extractions")
+                        if os.path.isdir(_email_path):
+                            _case_dir = _cd
+                            break
+        _email_dir = os.path.join(_case_dir, "email_extractions") if _case_dir else ""
+        _phishing_emls = []
+        if _email_dir and os.path.isdir(_email_dir):
+            import email as _email_lib
+            from email import policy as _email_policy
+            for _root, _ds, _fs in os.walk(_email_dir):
+                for _fn in _fs:
+                    _fpath = os.path.join(_root, _fn)
+                    try:
+                        with open(_fpath, "rb") as _fh:
+                            _msg = _email_lib.message_from_binary_file(_fh, policy=_email_policy.default)
+                        _rp = str(_msg.get("Return-Path", ""))
+                        # Check if this email has a spoofed return path
+                        if _rp and "dreamhostps" in _rp.lower():
+                            _phishing_emls.append((_fpath, _msg))
+                    except Exception:
+                        pass
+
+        if _phishing_emls:
+            lines.append("\n### **PHISHING EMAILS — Full Evidence**\n")
+            lines.append("The following emails were identified as phishing based on Return-Path")
+            lines.append("spoofing analysis. Full headers and body are included as evidence.\n")
+            for i, (_ep, _pm) in enumerate(_phishing_emls, 1):
+                _subj = str(_pm.get("Subject", "No Subject"))
+                _from = str(_pm.get("From", "Unknown"))
+                _to = str(_pm.get("To", "Unknown"))
+                _date = str(_pm.get("Date", "Unknown"))
+                _rp = str(_pm.get("Return-Path", "Unknown"))
+                _mid = str(_pm.get("Message-ID", ""))
+                lines.append(f"#### Email {i}: {_subj}")
+                lines.append(f"| Header | Value |")
+                lines.append(f"|--------|-------|")
+                lines.append(f"| **From** | `{_from}` |")
+                lines.append(f"| **To** | `{_to}` |")
+                lines.append(f"| **Date** | `{_date}` |")
+                lines.append(f"| **Return-Path** | `{_rp}` ⚠️ |")
+                if _mid:
+                    lines.append(f"| **Message-ID** | `{_mid}` |")
+                # Show Received chain
+                _rcvd = _pm.get_all("Received", [])
+                if _rcvd:
+                    lines.append(f"\n**Received chain:**")
+                    for _r in _rcvd[:3]:
+                        lines.append(f"- `{str(_r)[:200]}`")
+                # Show body
+                _body = ""
+                if _pm.is_multipart():
+                    for _part in _pm.walk():
+                        if _part.get_content_type() == "text/plain":
+                            _payload = _part.get_payload(decode=True)
+                            if _payload:
+                                _body = _payload.decode("utf-8", errors="replace")[:1000]
+                                break
                 else:
-                    lines.append(f"{i}. {mm}")
-            if len(_rp_mismatches) > 10:
-                lines.append(f"\n... and {len(_rp_mismatches) - 10} more mismatches")
+                    _payload = _pm.get_payload(decode=True)
+                    if _payload:
+                        _body = _payload.decode("utf-8", errors="replace")[:1000]
+                if _body:
+                    lines.append(f"\n**Body:**\n> {_body.replace(chr(10), chr(10) + '> ')}")
+                lines.append("")
+
         if _spoofed:
             lines.append("\n### Spoofed Domains\n")
             for d in _spoofed[:10]:

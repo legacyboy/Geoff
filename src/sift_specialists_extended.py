@@ -6701,6 +6701,10 @@ class EMAIL_Specialist:
                     'explanation': assessment['explanation'],
                     'llm_used': assessment.get('llm_used', False),
                     'mitre_techniques': ['T1566'],
+                    'headers': artifact.get('headers', {}),
+                    'body_text': artifact.get('body_text', ''),
+                    'links': artifact.get('links', []),
+                    'attachments': artifact.get('attachments', []),
                 })
 
         # Also scan for SMS/IM phishing in chat databases

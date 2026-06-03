@@ -4056,6 +4056,15 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                             # Enrich finding with email IOCs
                             enriched_result = dict(pf)
                             enriched_result["raw_output"] = ioc_text
+                            # Preserve email headers and body for report display
+                            if "headers" in pf:
+                                enriched_result["headers"] = pf["headers"]
+                            if "body_text" in pf:
+                                enriched_result["body_text"] = pf["body_text"]
+                            if "links" in pf:
+                                enriched_result["links"] = pf["links"]
+                            if "attachments" in pf:
+                                enriched_result["attachments"] = pf["attachments"]
                             enriched_result["email_iocs"] = {
                                 "sender_ips": email_iocs_agg["sender_ips"],
                                 "from_addresses": email_iocs_agg["from_addresses"],
@@ -4136,12 +4145,27 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         except Exception as e:
             _fe_log(job_id, f"  [EMAIL_DIRECT] Error processing {img_name}: {e}")
         finally:
-            # Cleanup temp dirs
+            # Cleanup ewf mount but PRESERVE extracted EML files for report evidence
             import shutil
             if ewf_raw_dir:
                 shutil.rmtree(ewf_raw_dir, ignore_errors=True)
-            if extract_dir:
-                shutil.rmtree(extract_dir, ignore_errors=True)
+            # Move extracted email files to case dir so they survive cleanup
+            # and can be displayed in the report
+            if extract_dir and os.path.isdir(extract_dir):
+                _email_preserve = os.path.join(case_work_dir, "email_extractions", img_stem)
+                try:
+                    os.makedirs(_email_preserve, exist_ok=True)
+                    # Move contents (may already exist from prior run)
+                    for _item in os.listdir(extract_dir):
+                        _src = os.path.join(extract_dir, _item)
+                        _dst = os.path.join(_email_preserve, _item)
+                        if os.path.exists(_dst):
+                            shutil.rmtree(_dst, ignore_errors=True)
+                        shutil.move(_src, _dst)
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+                except Exception as _move_exc:
+                    _fe_log(job_id, f"  [EMAIL_DIRECT] Could not preserve email extractions: {_move_exc}")
+                    shutil.rmtree(extract_dir, ignore_errors=True)
 
     # Commit EMAIL_DIRECT findings and stamp source_commit on each record
     _commit_result = safe_git_commit(
