@@ -576,28 +576,66 @@ class NarrativeReportGenerator:
         
         # Structural self-check: verify all claims cite evidence
         if self.call_llm and md_content and len(md_content) > 200:
-            check_prompt = f"""Review this DFIR narrative report. Does every factual claim cite a specific evidence anchor (file path, registry key, log entry, tool output line, etc.)? List any claims that lack citations. If all claims are properly cited, respond with 'CLEAN'. If not, list each uncited claim.
-
-Report content:
-{md_content[:15000]}
-"""
+            # Build mandatory findings summary to ground the LLM — prevents it from
+            # concluding "no evidence" when evil_found=True just because the command
+            # history section (which appears first) has many "*(empty)*" raw outputs.
+            _evil = report_json.get("evil_found", False)
+            _sev = report_json.get("severity", "INFO")
+            _cls = report_json.get("classification", "")
+            _mitre_top = report_json.get("mitre_techniques", [])
+            _mitre_ids = [t["technique_id"] for t in _mitre_top if isinstance(t, dict) and "technique_id" in t]
+            _bf_count = sum(len(v) for v in behavioral_flags.values())
+            _rp_mismatches = report_json.get("email_iocs", {}).get("return_path_mismatches", [])
+            _real_spoof_count = sum(
+                1 for m in _rp_mismatches
+                if isinstance(m, dict)
+                and "bounces.google.com" not in m.get("return_path_domain", "")
+                and m.get("from_domain", "") != m.get("return_path_domain", "")
+            )
+            _findings_summary = (
+                f"MANDATORY FINDINGS (from forensic JSON — must be accurately reflected):\n"
+                f"  evil_found: {_evil}\n"
+                f"  severity: {_sev}\n"
+                f"  classification: {_cls}\n"
+                f"  mitre_techniques: {', '.join(_mitre_ids) if _mitre_ids else 'none'}\n"
+                f"  behavioral_flags: {_bf_count} total\n"
+                f"  email_spoofing: {_real_spoof_count} real spoofing email(s) (Return-Path mismatch)\n"
+            )
+            check_prompt = (
+                f"Review this DFIR narrative report for citation quality. "
+                f"Does every factual claim cite a specific evidence anchor "
+                f"(file path, tool output, timestamp, etc.)? List uncited claims. "
+                f"Respond 'CLEAN' if all claims are properly cited.\n\n"
+                f"{_findings_summary}\n"
+                f"Report content (first 10000 chars):\n{md_content[:10000]}"
+            )
             try:
                 check_result = self._call_llm_with_retry(check_prompt, "", agent_type="manager")
                 if check_result and "CLEAN" not in check_result.upper():
-                    # Not clean - regenerate with citation requirement
-                    regenerate_prompt = f"""You are a DFIR narrative report writer. The following report draft contains claims without evidence citations.
-
-Previous draft:
-{md_content[:15000]}
-
-Review issues:
-{check_result[:3000]}
-
-REQUIREMENT: Every factual claim MUST cite a specific evidence anchor (file path, registry key, log entry, tool output line, etc.). If a claim cannot be anchored, either remove it or indicate that evidence is unavailable.
-
-Provide a revised narrative report with all claims properly cited to specific evidence."""
+                    regenerate_prompt = (
+                        f"You are a DFIR narrative report writer improving citation quality.\n\n"
+                        f"{_findings_summary}\n"
+                        f"CRITICAL CONSTRAINT: The findings above come directly from the forensic "
+                        f"JSON and MUST be accurately reflected. If evil_found=True, the report MUST "
+                        f"state compromise was confirmed with the correct severity and classification. "
+                        f"Do NOT claim 'no evidence' or downgrade severity — the JSON is authoritative.\n\n"
+                        f"Report draft (first 10000 chars):\n{md_content[:10000]}\n\n"
+                        f"Citation issues found:\n{check_result[:2000]}\n\n"
+                        f"Provide a revised report that fixes citation gaps while accurately reflecting "
+                        f"all mandatory findings above. Preserve the original structure."
+                    )
                     regenerated = self._call_llm_with_retry(regenerate_prompt, "", agent_type="manager")
-                    if regenerated:
+                    # Only accept regenerated content if it does not contradict the JSON findings
+                    if regenerated and _evil:
+                        regen_lower = regenerated.lower()
+                        contradicts = (
+                            "no evidence" in regen_lower
+                            or "no confirmed indicators" in regen_lower
+                            or "inconclusive" in regen_lower[:500]
+                        )
+                        if not contradicts:
+                            md_content = regenerated
+                    elif regenerated and not _evil:
                         md_content = regenerated
             except Exception:
                 pass  # If check fails, proceed with original content
@@ -710,8 +748,11 @@ Provide a revised narrative report with all claims properly cited to specific ev
                 if r.get("_fallback_exhausted") or (isinstance(r.get("result"), dict) and r.get("result").get("_fallback_exhausted"))
             ],
             "classification": report_json.get("classification", ""),
-            "kill_chain_phases": (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []),
-            "mitre_techniques_observed": (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", []),
+            "kill_chain_phases": (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []) or [],
+            "mitre_techniques_observed": (
+                (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
+                or [t["technique_id"] for t in report_json.get("mitre_techniques", []) if isinstance(t, dict) and "technique_id" in t]
+            ),
             # Email / phishing findings from direct extraction
             "email_direct_findings": [
                 f for f in report_json.get("findings_detail", [])
@@ -830,7 +871,7 @@ Provide a revised narrative report with all claims properly cited to specific ev
                 "persistence": ["persistence"],
                 "lateral_movement": ["lateral movement", "lateral_movement"],
                 "cryptominer": ["cryptominer"],
-                "exfiltration": ["exfiltration"],
+                "exfiltration": ["exfiltration", "data exfil", "data exfiltration", "exfil"],
                 "c2": ["c2", "command and control", "command & control"],
                 "web_shell": ["web shell", "web_shell"],
                 "lolbin": ["lolbin", "living off the land"],
@@ -849,12 +890,32 @@ Provide a revised narrative report with all claims properly cited to specific ev
             lines.append("")
 
             narrative_parts = []
-            if "phishing" in all_cats or "initial_access" in all_cats:
-                narrative_parts.append(
-                    "**Phishing activity confirmed** — suspicious emails were identified "
-                    "through direct email extraction from disk images (T1566). See "
-                    "Email Findings section for details."
-                )
+            # Check top-level email_iocs for Return-Path spoofing evidence
+            _email_iocs_ctx = context.get("email_iocs", {})
+            _rp_ctx = _email_iocs_ctx.get("return_path_mismatches", []) if _email_iocs_ctx else []
+            _real_spoof_ctx = [
+                m for m in _rp_ctx
+                if isinstance(m, dict)
+                and "bounces.google.com" not in m.get("return_path_domain", "")
+                and m.get("from_domain", "") != m.get("return_path_domain", "")
+            ]
+
+            if "phishing" in all_cats or "initial_access" in all_cats or _real_spoof_ctx:
+                if _real_spoof_ctx:
+                    _spoof_domains = sorted(set(m.get("return_path_domain", "?") for m in _real_spoof_ctx))
+                    narrative_parts.append(
+                        f"**Email spoofing confirmed** — {len(_real_spoof_ctx)} email(s) identified "
+                        f"with Return-Path mismatch: apparent senders include "
+                        f"{', '.join(sorted(set(m.get('from_domain','?') for m in _real_spoof_ctx)))} "
+                        f"but Return-Path resolves to {', '.join(_spoof_domains[:3])} (T1566). "
+                        f"See Email & Phishing section for full evidence."
+                    )
+                else:
+                    narrative_parts.append(
+                        "**Phishing activity confirmed** — suspicious emails were identified "
+                        "through direct email extraction from disk images (T1566). See "
+                        "Email Findings section for details."
+                    )
             elif context.get("email_direct_findings"):
                 # Direct email extraction found phishing emails even if classification
                 # metadata didn't explicitly flag "phishing"
@@ -3361,8 +3422,11 @@ Write the following sections. ACCURACY RULES:
         critical_flags = [f for f in all_flags if f.get("severity") == "CRITICAL"]
         high_flags = [f for f in all_flags if f.get("severity") == "HIGH"]
         medium_flags = [f for f in all_flags if f.get("severity") == "MEDIUM"]
-        kill_phases = (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", [])
-        mitres = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
+        kill_phases = (report_json.get("attack_chain", {}) or {}).get("kill_chain_phases", []) or []
+        _ac_mitres = (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
+        _top_mitre_objs = report_json.get("mitre_techniques", [])
+        _top_mitre_ids = [t["technique_id"] for t in _top_mitre_objs if isinstance(t, dict) and "technique_id" in t]
+        mitres = _ac_mitres or _top_mitre_ids
         step_anchors = step_evidence_anchors or []
 
         # ── 1. Title & Case Identification ──
@@ -3578,6 +3642,33 @@ Write the following sections. ACCURACY RULES:
                 lines.append(f"- ... and {len(medium_flags) - 10} more medium-severity findings")
             lines.append("")
 
+        # ── 5d. Email Spoofing Findings ──
+        _report_email_iocs = report_json.get("email_iocs", {})
+        _rp_mismatch_list = _report_email_iocs.get("return_path_mismatches", []) if _report_email_iocs else []
+        _real_spoof_list = [
+            m for m in _rp_mismatch_list
+            if isinstance(m, dict)
+            and "bounces.google.com" not in m.get("return_path_domain", "")
+            and m.get("from_domain", "") != m.get("return_path_domain", "")
+        ]
+        if _real_spoof_list:
+            lines.append("### 4.4 Email Spoofing — Return-Path Mismatch")
+            lines.append("")
+            lines.append(
+                f"**{len(_real_spoof_list)} email(s)** were identified with a spoofed From "
+                f"header: the Return-Path domain does not match the claimed sender domain. "
+                f"This is a strong indicator of phishing / social engineering (T1566)."
+            )
+            lines.append("")
+            lines.append("| # | From | From Domain | Return-Path | Return-Path Domain |")
+            lines.append("|---|------|-------------|-------------|-------------------|")
+            for _si, _sm in enumerate(_real_spoof_list, 1):
+                lines.append(
+                    f"| {_si} | `{_sm.get('from', '?')}` | `{_sm.get('from_domain', '?')}` "
+                    f"| `{_sm.get('return_path', '?')}` | `{_sm.get('return_path_domain', '?')}` |"
+                )
+            lines.append("")
+
         # ── 6. Verified Evidence Anchors ──
         if step_anchors:
             lines.append("## 5. Verified Evidence Anchors")
@@ -3701,14 +3792,27 @@ Write the following sections. ACCURACY RULES:
             lines.append("")
 
         # ── 9. MITRE ATT&CK Mapping ──
+        # Build a lookup map from top-level mitre_techniques (richer than attack_chain list)
+        _mitre_obj_map = {t["technique_id"]: t for t in _top_mitre_objs if isinstance(t, dict) and "technique_id" in t}
         if mitres:
             lines.append("## 8. MITRE ATT&CK Technique Mapping")
             lines.append("")
-            lines.append("The following MITRE ATT&CK techniques were observed:")
+            lines.append(
+                f"The following {len(mitres)} MITRE ATT\u0026CK technique(s) were identified "
+                f"in the evidence:"
+            )
             lines.append("")
+            lines.append("| Technique | Name | Tactic | Confidence | Evidence |")
+            lines.append("|-----------|------|--------|------------|---------|")
             for tid in mitres[:20]:
                 phase = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
-                lines.append(f"- **{tid}** ({phase})")
+                obj = _mitre_obj_map.get(tid, {})
+                name = obj.get("technique_name", "")
+                conf = obj.get("confidence", None)
+                conf_str = f"{conf:.0%}" if isinstance(conf, float) else (str(conf) if conf else "—")
+                reasons = obj.get("matched_reasons", [])
+                evidence_str = "; ".join(reasons[:2]) if reasons else "—"
+                lines.append(f"| **{tid}** | {name} | {phase} | {conf_str} | {evidence_str} |")
             lines.append("")
 
         # ── 10. Conclusions & Opinions ──
@@ -3801,7 +3905,7 @@ Write the following sections. ACCURACY RULES:
             # Build classification from attack_chain
         ac = report_json.get("attack_chain", {})
         kill_phases = ac.get("kill_chain_phases", [])
-        mitres = ac.get("mitre_techniques_observed", [])
+        mitres = ac.get("mitre_techniques_observed", []) or [t["technique_id"] for t in report_json.get("mitre_techniques", []) if isinstance(t, dict) and "technique_id" in t]
         class_str = ", ".join(kp.replace("_", " ").title() for kp in kill_phases[:6]) if kill_phases else report_json.get("classification", "Unknown")
 
         md = f"""# {title}
