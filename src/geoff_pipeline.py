@@ -4884,8 +4884,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ewf_mnt = f"/tmp/geoff_mnt_{os.getpid()}_{_ewf_stem}"
             try:
                 os.makedirs(_ewf_dir, exist_ok=True)
+                # Run ewfmount as root so the FUSE ewf1 device is accessible
+                # by sudo mount for filesystem mounting (sansforensics FUSE
+                # perms block sudo mount from reading the block device)
                 _ewf_r = subprocess.run(
-                    ["ewfmount", _ewf_img, _ewf_dir],
+                    ["sudo", "ewfmount", _ewf_img, _ewf_dir],
                     capture_output=True, text=True, timeout=120,
                 )
                 if _ewf_r.returncode != 0 or not os.path.exists(f"{_ewf_dir}/ewf1"):
