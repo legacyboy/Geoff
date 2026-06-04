@@ -1886,14 +1886,20 @@ class NarrativeReportGenerator:
                 f"Kill chain phases: {', '.join(kill_phases)}\n"
                 f"MITRE techniques observed: {', '.join(mitres_observed[:15])}\n"
                 f"Classification: {classification}\n\n"
-                "Generate a Markdown table with columns: Timeframe | Event | MITRE Tactic | Log Source | Confidence\n"
+                "Generate an HTML table with columns: Timeframe, Event, MITRE Tactic, Log Source, Confidence.\n"
+                "Order rows by MITRE ATT&CK kill chain sequence: Initial Access first, then Execution, Persistence, Defense Evasion, Collection, Exfiltration last.\n"
+                "Use inline CSS. Dark DFIR theme: outer div background #161b22, border 1px solid #30363d, border-radius 8px. "
+                "Table header background #21262d, header text color #58a6ff. Row text #c9d1d9, row border-bottom 1px solid #30363d. "
+                "MITRE Tactic: render as a <span> badge with background #21262d, border 1px solid #30363d, color #58a6ff, border-radius 4px, padding 2px 6px. "
+                "Confidence: Observed=color #3fb950 bold, Inferred=color #d29922 bold, Assumed=color #f85149 bold. "
                 "- Derive timeframe from available timestamps (use 'Unknown' if unavailable)\n"
                 "- Map each event to a MITRE tactic (Initial Access, Execution, Persistence, Defense Evasion, "
                 "Credential Access, Discovery, Lateral Movement, Exfiltration, Command & Control)\n"
                 "- Assign confidence: 'Observed' (artifact-backed), 'Inferred' (correlated evidence), 'Assumed' (heuristic)\n"
                 "- Default log source to 'Forensic artifact' unless something more specific is available\n"
-                "- If no data is available, state 'Insufficient data to reconstruct timeline'\n\n"
-                "Output ONLY the Markdown table. No preamble, no commentary."
+                "- Add a footer note inside the div: 'Timeframes estimated from attack-chain phase ordering.'\n"
+                "- If no data is available, return a styled div saying 'Insufficient data to reconstruct timeline'\n\n"
+                "Output ONLY the HTML. No markdown fences, no preamble, no commentary."
             )
             try:
                 result = self._call_llm_with_retry(prompt, "", agent_type="manager")
@@ -2013,22 +2019,58 @@ class NarrativeReportGenerator:
                 })
 
         if not entries:
-            return "Insufficient data to reconstruct attack timeline. No kill-chain phases, behavioral flags, or suspicious timeline events were identified."
+            return (
+                '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;'
+                'font-family:system-ui,-apple-system,sans-serif;color:#8b949e;">'
+                'Insufficient data to reconstruct attack timeline. No kill-chain phases, behavioral flags, '
+                'or suspicious timeline events were identified.</div>'
+            )
 
-        lines = []
-        lines.append("| Timeframe | Event | MITRE Tactic | Log Source | Confidence |")
-        lines.append("|-----------|-------|-------------|------------|------------|")
+        # Sort by MITRE kill chain sequence (left-to-right)
+        _TACTIC_ORDER = {
+            "Initial Access": 0, "Execution": 1, "Persistence": 2,
+            "Defense Evasion": 3, "Credential Access": 4, "Discovery": 5,
+            "Lateral Movement": 6, "Collection": 7, "Exfiltration": 8,
+            "Command & Control": 9, "Other": 10,
+        }
+        entries.sort(key=lambda e: _TACTIC_ORDER.get(e.get("tactic", "Other"), 10))
+
+        _conf_colors = {"Observed": "#3fb950", "Inferred": "#d29922", "Assumed": "#f85149"}
+        rows = ""
         for e in entries[:25]:
-            lines.append(
-                f"| {e['timeframe']} | {e['event']} | {e['tactic']} | {e['source']} | {e['confidence']} |")
+            conf_color = _conf_colors.get(e['confidence'], "#c9d1d9")
+            rows += (
+                f'<tr>'
+                f'<td style="color:#c9d1d9;padding:8px 10px;border-bottom:1px solid #30363d;">{e["timeframe"]}</td>'
+                f'<td style="color:#c9d1d9;padding:8px 10px;border-bottom:1px solid #30363d;">{e["event"]}</td>'
+                f'<td style="padding:8px 10px;border-bottom:1px solid #30363d;">'
+                f'<span style="background:#21262d;border:1px solid #30363d;color:#58a6ff;border-radius:4px;padding:2px 6px;font-size:0.85em;">{e["tactic"]}</span>'
+                f'</td>'
+                f'<td style="color:#8b949e;padding:8px 10px;border-bottom:1px solid #30363d;">{e["source"]}</td>'
+                f'<td style="padding:8px 10px;border-bottom:1px solid #30363d;">'
+                f'<span style="color:{conf_color};font-weight:bold;">{e["confidence"]}</span>'
+                f'</td>'
+                f'</tr>'
+            )
 
-        lines.append("")
-        lines.append(
-            "> **Note:** Timeframes are estimated from attack-chain phase ordering. "
-            "Corroborate with network logs and EDR telemetry."
+        return (
+            '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden;'
+            'font-family:system-ui,-apple-system,sans-serif;margin:8px 0;">'
+            '<table style="width:100%;border-collapse:collapse;">'
+            '<thead><tr style="background:#21262d;">'
+            '<th style="color:#58a6ff;padding:10px;text-align:left;border-bottom:2px solid #30363d;">Timeframe</th>'
+            '<th style="color:#58a6ff;padding:10px;text-align:left;border-bottom:2px solid #30363d;">Event</th>'
+            '<th style="color:#58a6ff;padding:10px;text-align:left;border-bottom:2px solid #30363d;">MITRE Tactic</th>'
+            '<th style="color:#58a6ff;padding:10px;text-align:left;border-bottom:2px solid #30363d;">Log Source</th>'
+            '<th style="color:#58a6ff;padding:10px;text-align:left;border-bottom:2px solid #30363d;">Confidence</th>'
+            '</tr></thead>'
+            f'<tbody>{rows}</tbody>'
+            '</table>'
+            '<div style="padding:8px 12px;font-size:0.85em;color:#8b949e;border-top:1px solid #30363d;">'
+            '&#9888; Timeframes estimated from attack-chain phase ordering. Corroborate with network logs and EDR telemetry.'
+            '</div>'
+            '</div>'
         )
-
-        return "\n".join(lines)
 
     # ----------------------------------------------------------------
     # Blast Radius & Business Impact Mapping (Section 2)
@@ -2118,11 +2160,11 @@ class NarrativeReportGenerator:
         else:
             worst_case = "No compromise confirmed. Unresolved anomalies should be investigated to rule out nascent threats."
 
-        # Render as HTML
-        asset_parts = []
+        # Render as enhanced dark-theme HTML
+        asset_items = []
         if num_users > 0:
-            priv_str = f" ({privileged_count} privileged)" if privileged_count else ""
-            asset_parts.append(f"<strong>{num_users}</strong> user account(s){priv_str}")
+            priv_str = f" <span style='color:#d29922;'>({privileged_count} privileged)</span>" if privileged_count else ""
+            asset_items.append(f"&#128100; <strong style='color:#c9d1d9;'>{num_users}</strong> user account(s){priv_str}")
         if num_devices > 0:
             type_parts = []
             if servers: type_parts.append(f"{servers} server{'s' if servers != 1 else ''}")
@@ -2132,45 +2174,51 @@ class NarrativeReportGenerator:
             if network: type_parts.append(f"{network} network capture{'s' if network != 1 else ''}")
             if unknown: type_parts.append(f"{unknown} other/unknown")
             type_str = ", ".join(type_parts)
-            asset_parts.append(f"<strong>{num_devices}</strong> device(s) ({type_str})")
-
-        _cia_color = {"HIGH": "#c0392b", "MEDIUM": "#e67e22", "LOW": "#27ae60"}
-
-        html_parts = []
-        html_parts.append('<div class="blast-radius">')
-        html_parts.append('<h3>Affected Assets</h3>')
-        html_parts.append('<ul>')
-        if asset_parts:
-            for ap in asset_parts:
-                html_parts.append(f'  <li>{ap}</li>')
-        else:
-            html_parts.append('  <li>No assets identified in evidence scope</li>')
+            asset_items.append(f"&#128187; <strong style='color:#c9d1d9;'>{num_devices}</strong> device(s) ({type_str})")
         if data_categories:
-            html_parts.append(f'  <li><strong>Data at risk:</strong> {", ".join(data_categories)}</li>')
-        html_parts.append('</ul>')
+            asset_items.append(f"&#128196; <strong style='color:#c9d1d9;'>Data at risk:</strong> {', '.join(data_categories)}")
+        if not asset_items:
+            asset_items.append("No assets identified in evidence scope")
 
-        html_parts.append('<h3>CIA Impact Assessment</h3>')
-        html_parts.append('<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">')
-        html_parts.append('  <thead><tr><th>Dimension</th><th>Score</th><th>Rationale</th></tr></thead>')
-        html_parts.append('  <tbody>')
+        _cia_color = {"HIGH": "#f85149", "MEDIUM": "#d29922", "LOW": "#3fb950"}
+        _cia_bar_pct = {"HIGH": 90, "MEDIUM": 55, "LOW": 20}
+
+        cia_rows = ""
         for dim in ("Confidentiality", "Integrity", "Availability"):
             score = cia[dim]
-            color = _cia_color.get(score, "#555")
-            html_parts.append(
-                f'    <tr>'
-                f'<td>{dim}</td>'
-                f'<td style="color:{color};font-weight:bold">{score}</td>'
-                f'<td>{cia_rationale[dim]}</td>'
-                f'</tr>'
+            color = _cia_color.get(score, "#8b949e")
+            bar_pct = _cia_bar_pct.get(score, 20)
+            cia_rows += (
+                f'<div style="margin-bottom:12px;">'
+                f'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+                f'<span style="color:#c9d1d9;font-weight:bold;">{dim}</span>'
+                f'<span style="color:{color};font-weight:bold;background:#21262d;border:1px solid {color};'
+                f'border-radius:4px;padding:1px 8px;font-size:0.85em;">{score}</span>'
+                f'</div>'
+                f'<div style="background:#21262d;border-radius:4px;height:8px;overflow:hidden;">'
+                f'<div style="background:{color};width:{bar_pct}%;height:100%;border-radius:4px;"></div>'
+                f'</div>'
+                f'<div style="color:#8b949e;font-size:0.85em;margin-top:4px;">{cia_rationale[dim]}</div>'
+                f'</div>'
             )
-        html_parts.append('  </tbody>')
-        html_parts.append('</table>')
 
-        html_parts.append('<h3>Worst-Case Projection</h3>')
-        html_parts.append(f'<p>If not contained: {worst_case}</p>')
-        html_parts.append('</div>')
+        asset_html = "".join(
+            f'<li style="color:#c9d1d9;margin-bottom:6px;">{a}</li>' for a in asset_items
+        )
 
-        return "\n".join(html_parts)
+        return (
+            '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;'
+            'font-family:system-ui,-apple-system,sans-serif;margin:8px 0;">'
+            '<h3 style="color:#58a6ff;margin:0 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128315; Affected Assets</h3>'
+            f'<ul style="margin:0 0 20px 0;padding-left:20px;list-style:none;">{asset_html}</ul>'
+            '<h3 style="color:#58a6ff;margin:0 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128274; CIA Impact Assessment</h3>'
+            f'<div style="margin-bottom:20px;">{cia_rows}</div>'
+            '<div style="background:#1f2937;border:1px solid #f85149;border-radius:6px;padding:12px 16px;">'
+            '<div style="color:#f85149;font-weight:bold;margin-bottom:6px;">&#9888; Worst-Case Projection</div>'
+            f'<div style="color:#c9d1d9;">If not contained: {worst_case}</div>'
+            '</div>'
+            '</div>'
+        )
 
     # ----------------------------------------------------------------
     # Evidence Confidence & Gaps (Section 3)
@@ -2264,30 +2312,56 @@ class NarrativeReportGenerator:
         if not gaps:
             gaps.append("No significant evidence gaps identified in this investigation scope")
 
-        # Render
-        lines = []
-        lines.append("### Evidence Strength")
+        # Render as dark-theme HTML
+        _str_color = {"Strong": "#3fb950", "Moderate": "#d29922", "Weak": "#f85149"}
+
         if strength_entries:
-            lines.append("| Finding Category | Strength | Basis |")
-            lines.append("|-----------------|----------|-------|")
+            strength_rows = ""
             for e in strength_entries:
-                lines.append(f"| {e['category']} | {e['strength']} | {e['basis']} |")
+                color = _str_color.get(e['strength'], "#c9d1d9")
+                strength_rows += (
+                    f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">'
+                    f'<div style="min-width:160px;color:#c9d1d9;font-weight:bold;">{e["category"]}</div>'
+                    f'<span style="background:#21262d;border:1px solid {color};color:{color};border-radius:4px;'
+                    f'padding:2px 10px;font-size:0.85em;font-weight:bold;min-width:70px;text-align:center;">{e["strength"]}</span>'
+                    f'<div style="color:#8b949e;font-size:0.9em;">{e["basis"]}</div>'
+                    f'</div>'
+                )
+            strength_html = f'<div style="margin-bottom:4px;">{strength_rows}</div>'
         else:
-            lines.append("*No finding categories available for strength assessment.*")
+            strength_html = (
+                '<div style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:10px 16px;'
+                'color:#8b949e;">No finding categories available for strength assessment.</div>'
+            )
 
-        lines.append("")
-        lines.append("### Known Evidence Gaps")
+        gap_items = ""
         for gap in gaps:
-            lines.append(f"- {gap}")
+            is_warning = any(w in gap.lower() for w in ("no windows", "no syslog", "memory captured", "failed"))
+            icon = "&#9888;" if is_warning else "&#8226;"
+            color = "#d29922" if is_warning else "#8b949e"
+            border_color = "#d29922" if is_warning else "#30363d"
+            gap_items += (
+                f'<div style="background:#21262d;border:1px solid {border_color};border-radius:6px;'
+                f'padding:10px 14px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;">'
+                f'<span style="color:{color};flex-shrink:0;">{icon}</span>'
+                f'<span style="color:#c9d1d9;">{gap}</span>'
+                f'</div>'
+            )
 
-        lines.append("")
-        lines.append(
-            "> **Analyst Note:** Evidence confidence ratings reflect the automated analysis "
-            "pipeline only. Manual review may upgrade confidence levels. Gaps identified here "
-            "represent limitations of evidence scope, not analysis failures."
+        return (
+            '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;'
+            'font-family:system-ui,-apple-system,sans-serif;margin:8px 0;">'
+            '<h3 style="color:#58a6ff;margin:0 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128270; Evidence Strength</h3>'
+            f'{strength_html}'
+            '<h3 style="color:#58a6ff;margin:16px 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128683; Known Evidence Gaps</h3>'
+            f'<div>{gap_items}</div>'
+            '<div style="border-top:1px solid #30363d;margin-top:16px;padding-top:12px;color:#8b949e;font-size:0.85em;">'
+            '&#128203; Evidence confidence ratings reflect the automated analysis pipeline only. '
+            'Manual review may upgrade confidence levels. Gaps identified here represent limitations '
+            'of evidence scope, not analysis failures.'
+            '</div>'
+            '</div>'
         )
-
-        return "\n".join(lines)
 
     # ----------------------------------------------------------------
     # Dwell Time & Lateral Movement (Section 4)
@@ -2320,8 +2394,7 @@ class NarrativeReportGenerator:
             "discovery": "Discovery / Reconnaissance",
         }
 
-        lines = []
-        lines.append("### Dwell Time & Progression")
+        _S = 'style="font-family:system-ui,-apple-system,sans-serif;"'
 
         if not first_seen and not last_seen and dwell_days is None and not lateral_path:
             # Try to derive timestamps from timeline events
@@ -2352,13 +2425,14 @@ class NarrativeReportGenerator:
                 except Exception:
                     pass
             if not first_seen:
-                lines.append("")
-                lines.append("*No temporal or lateral movement data available for this investigation.*")
-                return "\n".join(lines)
+                return (
+                    '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;'
+                    'font-family:system-ui,-apple-system,sans-serif;color:#8b949e;">'
+                    'No temporal or lateral movement data available for this investigation.</div>'
+                )
 
-        lines.append("| Milestone | Estimated Timeframe |")
-        lines.append("|-----------|--------------------|")
-
+        # Build milestone entries
+        milestone_rows = ""
         if kill_phases:
             for i, phase in enumerate(kill_phases):
                 label = phase_labels.get(
@@ -2374,10 +2448,23 @@ class NarrativeReportGenerator:
                         timeframe = f"~{frac:.1f}h after initial"
                 else:
                     timeframe = f"+{i * 2}h (estimated)"
-                lines.append(f"| {label} | {timeframe} |")
+                milestone_rows += (
+                    f'<tr>'
+                    f'<td style="color:#c9d1d9;padding:8px 12px;border-bottom:1px solid #30363d;">'
+                    f'<span style="display:inline-block;width:10px;height:10px;background:#58a6ff;border-radius:50%;margin-right:8px;"></span>'
+                    f'{label}</td>'
+                    f'<td style="color:#8b949e;padding:8px 12px;border-bottom:1px solid #30363d;">{timeframe}</td>'
+                    f'</tr>'
+                )
         else:
-            lines.append("| Initial Access | Unknown |")
-            lines.append("| Attack Activity | Evidence detected — exact timing not available |")
+            milestone_rows = (
+                '<tr><td style="color:#c9d1d9;padding:8px 12px;border-bottom:1px solid #30363d;">'
+                '<span style="display:inline-block;width:10px;height:10px;background:#58a6ff;border-radius:50%;margin-right:8px;"></span>'
+                'Initial Access</td><td style="color:#8b949e;padding:8px 12px;border-bottom:1px solid #30363d;">Unknown</td></tr>'
+                '<tr><td style="color:#c9d1d9;padding:8px 12px;">'
+                '<span style="display:inline-block;width:10px;height:10px;background:#d29922;border-radius:50%;margin-right:8px;"></span>'
+                'Attack Activity</td><td style="color:#8b949e;padding:8px 12px;">Evidence detected — exact timing not available</td></tr>'
+            )
 
         if dwell_days is not None:
             if dwell_days < 1 / 24:
@@ -2388,35 +2475,69 @@ class NarrativeReportGenerator:
                 dwell_str = f"~{dwell_days:.1f} days"
             else:
                 dwell_str = f"~{dwell_days / 30:.1f} months"
-            lines.append(f"| **Total Dwell** | **{dwell_str}** |")
+            milestone_rows += (
+                f'<tr style="background:#21262d;">'
+                f'<td style="color:#58a6ff;padding:10px 12px;font-weight:bold;">&#9201; Total Dwell Time</td>'
+                f'<td style="color:#3fb950;padding:10px 12px;font-weight:bold;">{dwell_str}</td>'
+                f'</tr>'
+            )
 
+        # First/last seen metrics
+        ts_html = ""
         if first_seen or last_seen:
-            lines.append("")
-            lines.append(f"- **First Seen:** {first_seen or 'Unknown'}")
-            lines.append(f"- **Last Seen:** {last_seen or 'Unknown'}")
+            ts_html = (
+                '<div style="display:flex;gap:16px;margin-bottom:16px;">'
+                f'<div style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:10px 16px;flex:1;">'
+                f'<div style="color:#8b949e;font-size:0.8em;margin-bottom:4px;">FIRST SEEN</div>'
+                f'<div style="color:#3fb950;font-weight:bold;">{first_seen or "Unknown"}</div>'
+                f'</div>'
+                f'<div style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:10px 16px;flex:1;">'
+                f'<div style="color:#8b949e;font-size:0.8em;margin-bottom:4px;">LAST SEEN</div>'
+                f'<div style="color:#d29922;font-weight:bold;">{last_seen or "Unknown"}</div>'
+                f'</div>'
+                f'</div>'
+            )
 
-        lines.append("")
-        lines.append("### Lateral Movement Path")
+        # Lateral movement path
         if lateral_path:
-            seen = set()
+            seen_set = set()
             deduped = []
             for dev in lateral_path:
-                if dev not in seen:
-                    seen.add(dev)
+                if dev not in seen_set:
+                    seen_set.add(dev)
                     deduped.append(dev)
             if len(deduped) > 1:
-                lines.append(" → ".join(deduped))
-                lines.append("")
-                lines.append(
-                    f"> **{len(deduped)} devices** show evidence of lateral movement. "
-                    f"Path reconstructed from artifact relationships and credential usage patterns."
+                path_nodes = ' <span style="color:#58a6ff;padding:0 4px;">&#8594;</span> '.join(
+                    f'<span style="background:#21262d;border:1px solid #30363d;border-radius:4px;'
+                    f'padding:2px 8px;color:#c9d1d9;">{d}</span>' for d in deduped
+                )
+                lat_html = (
+                    f'<div style="margin-bottom:8px;">{path_nodes}</div>'
+                    f'<div style="color:#8b949e;font-size:0.85em;">'
+                    f'<strong style="color:#d29922;">{len(deduped)} devices</strong> show evidence of lateral movement. '
+                    f'Path reconstructed from artifact relationships and credential usage patterns.</div>'
                 )
             else:
-                lines.append(str(deduped[0]) if deduped else "No path detected")
+                node = str(deduped[0]) if deduped else "No path detected"
+                lat_html = f'<span style="background:#21262d;border:1px solid #30363d;border-radius:4px;padding:2px 8px;color:#c9d1d9;">{node}</span>'
         else:
-            lines.append("*No lateral movement path data available.*")
+            lat_html = (
+                '<div style="background:#21262d;border:1px solid #30363d;border-radius:6px;padding:10px 16px;'
+                'color:#8b949e;">No lateral movement detected within evidence scope.</div>'
+            )
 
-        return "\n".join(lines)
+        return (
+            '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;'
+            'font-family:system-ui,-apple-system,sans-serif;margin:8px 0;">'
+            f'{ts_html}'
+            '<h3 style="color:#58a6ff;margin:0 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128336; Attack Progression</h3>'
+            '<table style="width:100%;border-collapse:collapse;margin-bottom:20px;">'
+            f'<tbody>{milestone_rows}</tbody>'
+            '</table>'
+            '<h3 style="color:#58a6ff;margin:0 0 12px 0;font-size:1em;text-transform:uppercase;letter-spacing:0.05em;">&#128260; Lateral Movement Path</h3>'
+            f'<div>{lat_html}</div>'
+            '</div>'
+        )
 
     # ----------------------------------------------------------------
     # Conclusion
@@ -2449,6 +2570,32 @@ class NarrativeReportGenerator:
                 for flag in flags:
                     if flag.get("severity") in ("CRITICAL", "HIGH"):
                         prompt += f"- {_safe_prompt_str(flag.get('summary'))}\n"
+
+            # Add phishing/social engineering context if present
+            _email_iocs_conc = report_json.get("email_iocs", {}) or {}
+            _rp_conc = _email_iocs_conc.get("return_path_mismatches", [])
+            _real_spoof_conc = [
+                m for m in _rp_conc
+                if isinstance(m, dict)
+                and "bounces.google.com" not in m.get("return_path_domain", "")
+                and m.get("from_domain", "") != m.get("return_path_domain", "")
+            ]
+            if _real_spoof_conc:
+                _spoof_from = ", ".join(sorted(set(m.get("from_domain", "?") for m in _real_spoof_conc)))
+                _spoof_via = ", ".join(sorted(set(m.get("return_path_domain", "?") for m in _real_spoof_conc)))
+                prompt += (
+                    f"\n- Social engineering / phishing: {len(_real_spoof_conc)} spoofed email(s) "
+                    f"impersonating {_spoof_from}, actually sent via {_spoof_via}\n"
+                )
+                for _m in _real_spoof_conc[:3]:
+                    _body_conc = str(_m.get("body_snippet", _m.get("body_text", "")))[:200]
+                    if _body_conc:
+                        prompt += f"  - Subject: {_m.get('subject','')} | Body: {_body_conc}\n"
+                prompt += (
+                    "\nThis is a social engineering / phishing case. Focus the conclusion on "
+                    "the spoofed email campaign, what sensitive data was targeted (e.g. employee "
+                    "SSNs/salaries/PII), and steps to prevent future phishing attacks.\n"
+                )
 
             prompt += (
                 f"\nBe specific and actionable. Example: "
@@ -3197,6 +3344,97 @@ class NarrativeReportGenerator:
                     + "\n"
                 )
 
+            # Extract phishing email bodies for the narrative prompt
+            _email_iocs_synth = report_json.get("email_iocs", {}) or {}
+            _rp_synth = _email_iocs_synth.get("return_path_mismatches", [])
+            _real_spoof_synth = [
+                m for m in _rp_synth
+                if isinstance(m, dict)
+                and "bounces.google.com" not in m.get("return_path_domain", "")
+                and m.get("from_domain", "") != m.get("return_path_domain", "")
+            ]
+            _bounce_count_synth = len(_rp_synth) - len(_real_spoof_synth)
+            phishing_email_text = ""
+            for _pi, _pm in enumerate(_real_spoof_synth[:5], 1):
+                _body = str(_pm.get("body_snippet", _pm.get("body_text", "")))[:400]
+                phishing_email_text += (
+                    f"  Email {_pi}: From={_pm.get('from','?')} "
+                    f"(actually sent via {_pm.get('return_path_domain','?')})\n"
+                    f"    Subject: {_pm.get('subject','')}\n"
+                    f"    To: {_pm.get('to','')}\n"
+                )
+                if _body:
+                    phishing_email_text += f"    Body: {_body}\n"
+
+            # If phishing email bodies weren't in the mismatch data, try reading
+            # them from EML files on disk (if still in /tmp) or from the already-
+            # rendered email_phishing section stored in narrative_report.json
+            if not any(m.get("body_snippet") or m.get("body_text") for m in _real_spoof_synth):
+                _email_phishing_md = report_json.get("_email_phishing_rendered", "")
+                if not _email_phishing_md:
+                    # Try reading from narrative_report.json if it exists
+                    _nr_path = os.path.join(
+                        report_json.get("case_work_dir", ""),
+                        "reports", "narrative_report.json"
+                    )
+                    if _nr_path and os.path.exists(_nr_path):
+                        try:
+                            _nr_data = json.load(open(_nr_path))
+                            _email_phishing_md = _nr_data.get("email_phishing", "")
+                        except Exception:
+                            pass
+                if _email_phishing_md:
+                    # Extract email bodies from the rendered markdown
+                    import re as _re_synth
+                    _body_blocks = _re_synth.findall(
+                        r"\*\*Body:\*\*\n> (.*?)(?:\n\n|\n---)",
+                        _email_phishing_md, _re_synth.DOTALL
+                    )
+                    if _body_blocks:
+                        phishing_email_text = ""
+                        for _bi, _bb in enumerate(_body_blocks[:5], 1):
+                            _bb_clean = _bb.replace("> ", " ").replace("\n", " ").strip()[:500]
+                            # Try to match with the spoofing entry
+                            _spoof_entry = _real_spoof_synth[_bi - 1] if _bi <= len(_real_spoof_synth) else {}
+                            phishing_email_text += (
+                                f"  Email {_bi}: From={_spoof_entry.get('from','?')} "
+                                f"(actually sent via {_spoof_entry.get('return_path_domain','?')})\n"
+                                f"    Full body content: {_bb_clean}\n"
+                            )
+                    else:
+                        # Fallback: just include the whole email section truncated
+                        _trunc = _email_phishing_md[:3000]
+                        if _trunc and not phishing_email_text:
+                            phishing_email_text = f"  [Full email evidence section - see report for details]:\n{_trunc}\n"
+
+                # Also try reading EML files directly from /tmp if they still exist
+                if not _body_blocks:
+                    for _pm in _real_spoof_synth[:5]:
+                        _eml_p = _pm.get("eml_path", "")
+                        if _eml_p and os.path.exists(_eml_p):
+                            try:
+                                import email as _email_lib2
+                                from email import policy as _email_policy2
+                                with open(_eml_p, "rb") as _efh:
+                                    _emsg = _email_lib2.message_from_binary_file(
+                                        _efh, policy=_email_policy2.default
+                                    )
+                                _eb = ""
+                                if _emsg.is_multipart():
+                                    for _part in _emsg.walk():
+                                        if _part.get_content_type() == "text/plain":
+                                            _eb = _part.get_content()
+                                            break
+                                else:
+                                    _eb = _emsg.get_content() or ""
+                                if _eb:
+                                    _idx = _real_spoof_synth.index(_pm) + 1
+                                    phishing_email_text += (
+                                        f"    Full body content: {str(_eb)[:500]}\n"
+                                    )
+                            except Exception:
+                                pass
+
             prompt = f"""You are a senior DFIR analyst writing the interpretation section of a forensic report.
 
 INVESTIGATION VERDICT: {'COMPROMISE CONFIRMED' if evil else 'NO CONFIRMED COMPROMISE'}
@@ -3212,6 +3450,8 @@ LATERAL MOVEMENT:
 {lateral_text or '  None detected.'}
 VERIFIED EVIDENCE ANCHORS (tool → artifact → finding):
 {anchor_text or '  No high-significance anchors available.'}
+PHISHING / SPOOFED EMAILS ({len(_real_spoof_synth)} real spoofing email(s); {_bounce_count_synth} normal mailing-list bounce-path mismatches excluded):
+{phishing_email_text or '  None detected.'}
 
 Write the following sections. ACCURACY RULES:
 - Every factual claim in Attack Narrative and Key Evidence MUST cite a specific artifact from the VERIFIED EVIDENCE ANCHORS above (tool name + file name)
@@ -3221,10 +3461,14 @@ Write the following sections. ACCURACY RULES:
 - If evidence is insufficient for a section, write "Insufficient evidence to assess" rather than speculating
 
 ## Attack Narrative
-[3-5 paragraphs. Chronological account of what happened, citing specific evidence anchors. How did the attacker get in? What did they do? How was it detected?]
+[3-5 paragraphs. Tell the story of what happened FOLLOWING THE MITRE ATT&CK KILL CHAIN LEFT-TO-RIGHT: Initial Access → Execution → Collection → Exfiltration.
+FOCUS ON: What did the phishing emails SAY? What social engineering tactics were used? What PII or sensitive data was targeted? What happened after the victim responded?
+The real spoofing emails listed above ARE the Initial Access vector — quote their content and explain the social engineering approach.
+The {_bounce_count_synth} other Return-Path mismatches are normal mailing-list bounces — do NOT cite them as suspicious.
+Cite specific evidence anchors in format: "(source: <tool> on <file>)"]
 
 ## MITRE ATT\u0026CK Techniques Observed
-[Bullet list: Txxxx — Technique Name — specific supporting evidence anchor]
+[Bullet list ordered left-to-right by kill chain sequence (Initial Access first, Exfiltration last): Txxxx — Technique Name — specific supporting evidence anchor]
 
 ## Attribution Assessment
 [Insider threat, external attacker, or undetermined? Confidence level and reasoning. Cite specific evidence.]
@@ -3930,10 +4174,20 @@ Write the following sections. ACCURACY RULES:
                     f"{', '.join(sorted(all_iocs['to_addresses'])[:10])}"
                 )
             if all_iocs["return_path_mismatches"]:
-                lines.append(
-                    f"- **Return-Path Mismatches:** "
-                    f"{all_iocs['return_path_mismatches']} (spoofing indicator)"
-                )
+                _total_rp_cnt = all_iocs['return_path_mismatches']
+                _real_rp_cnt = len(_real_spoofing)
+                _bounce_rp_cnt = _total_rp_cnt - _real_rp_cnt
+                if _bounce_rp_cnt > 0:
+                    lines.append(
+                        f"- **Return-Path Mismatches:** "
+                        f"{_real_rp_cnt} spoofing email(s) detected"
+                        f" (plus {_bounce_rp_cnt} normal mailing-list bounce paths excluded)"
+                    )
+                else:
+                    lines.append(
+                        f"- **Return-Path Mismatches:** "
+                        f"{_total_rp_cnt} (spoofing indicator)"
+                    )
 
         return "\n".join(lines)
 
@@ -4407,9 +4661,17 @@ Write the following sections. ACCURACY RULES:
                 lines.append(f"Of these, **{len(critical_flags)}** were rated CRITICAL, "
                                "indicating confirmed malicious activity.")
             lines.append("")
-            lines.append("**Opinion:** The evidence is consistent with a deliberate, "
-                           "multi-stage intrusion. The following immediate actions are "
-                           "recommended:")
+            if _real_spoof_list:
+                lines.append(
+                    "**Opinion:** The evidence is consistent with a targeted social engineering "
+                    "campaign in which a threat actor impersonated a trusted internal user via "
+                    "spoofed email to solicit sensitive employee data (PII, SSNs, salary "
+                    "information). The following immediate actions are recommended:"
+                )
+            else:
+                lines.append("**Opinion:** The evidence is consistent with a deliberate, "
+                               "multi-stage intrusion. The following immediate actions are "
+                               "recommended:")
             lines.append("")
             lines.append("1. Isolate all affected device(s) from the network immediately")
             lines.append("2. Preserve all evidence in its current state — do not reboot, "
@@ -4573,8 +4835,6 @@ Write the following sections. ACCURACY RULES:
 
 {sections.get('supertimeline_link', '')}
 
-{sections.get('significant_events', 'No significant events.')}
-
 ---
 
 ## Findings
@@ -4604,12 +4864,6 @@ Write the following sections. ACCURACY RULES:
 ## Evidence Confidence & Gaps
 
 {sections.get('evidence_confidence', 'No confidence assessment available.')}
-
----
-
-## Indicators of Compromise
-
-{self._render_ioc_table(sections.get('iocs', {}))}
 
 ---
 
