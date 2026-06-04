@@ -1767,7 +1767,7 @@ def register_routes(app):
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
     app.add_url_rule('/static/<filename>', 'ui_static', ui_static)
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
-        app.add_url_rule('/reports/<case_dir>/supertimeline', 'serve_supertimeline', _require_auth(serve_supertimeline))
+    app.add_url_rule('/reports/<case_dir>/supertimeline', 'serve_supertimeline', _require_auth(serve_supertimeline))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
     app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
     app.add_url_rule('/tools', 'list_tools', _require_auth(list_tools))

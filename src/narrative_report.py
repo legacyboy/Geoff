@@ -2136,8 +2136,17 @@ class NarrativeReportGenerator:
                             for t in report_json.get("mitre_techniques", [])
                             if isinstance(t, dict)])
         _has_exfil_mitre = bool(_exfil_mitre_ids & set(_mitre_techs))
-
-        if evil_found:
+        # Also check report_json for explicit exfiltration indicators
+        _has_exfil_flag = any(
+            str(v).lower() in ("true", "yes", "1", "confirmed")
+            for k, v in report_json.items()
+            if "exfil" in k.lower()
+        )
+        # CONFIRMED EXFILTRATION ALWAYS → HIGH Confidentiality, no exceptions
+        if _has_exfil_mitre or _has_exfil_flag:
+            cia["Confidentiality"] = "HIGH"
+            cia_rationale["Confidentiality"] = "Confirmed data exfiltration — data left the organization"
+        elif evil_found:
             if any(w in all_text for w in ("exfiltration", "credential_theft", "credential")) or _has_exfil_mitre:
                 cia["Confidentiality"] = "HIGH"
                 cia_rationale["Confidentiality"] = "Credential theft and/or exfiltration detected"
@@ -2606,6 +2615,14 @@ class NarrativeReportGenerator:
                     "the spoofed email campaign, what sensitive data was targeted (e.g. employee "
                     "SSNs/salaries/PII), and steps to prevent future phishing attacks.\n"
                 )
+            prompt += (
+                "\nCRITICAL: Do NOT recommend actions the pipeline has already performed "
+                "(forensic disk analysis, memory analysis, file carving, timeline reconstruction, "
+                "IOC extraction). The forensic investigation is complete. Recommend only follow-up "
+                "actions: quarantine, legal escalation, network/host IOCs to block, user interviews, "
+                "domain/email takedown, or threat hunting. If you must recommend something already "
+                "done, rephrase it as completed work not a new recommendation."
+            )
 
             prompt += (
                 f"\nBe specific and actionable. Example: "
@@ -3488,7 +3505,10 @@ Cite specific evidence anchors in format: "(source: <tool> on <file>)"]
 
 ## Recommended Actions
 Do NOT recommend actions that the pipeline has already performed (forensic disk analysis, memory analysis, file carving, timeline creation, IOC extraction). The investigation is already complete — recommend what should be done NEXT (quarantine, legal escalation, network IOCs, user interviews, etc.).
-[5-7 specific, prioritised containment and remediation steps for THIS investigation based on the evidence above]"""
+[5-7 specific, prioritised containment and remediation steps for THIS investigation based on the evidence above]
+
+## CIA Impact Assessment Rule
+If evidence shows data exfiltration (data leaving the organization), then Confidentiality MUST be rated HIGH regardless of data type or sensitivity. Confirmed data leaving the organization is always a HIGH confidentiality impact."""
 
             try:
                 result = self._call_llm_with_retry(prompt, "", agent_type="manager")
