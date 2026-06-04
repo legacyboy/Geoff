@@ -60,6 +60,7 @@ from geoff_utils import *
 from geoff_models import *
 from geoff_self_heal import *
 from geoff_discovery import *
+import geoff_discovery
 from sift_specialists import SLEUTHKIT_Specialist
 from geoff_phase34 import (
     parse_windows_event_logs,
@@ -1908,7 +1909,7 @@ def _retry_unprocessed(
         if ef:
             processed_paths.add(str(ef))
 
-    all_paths = _all_inventory_paths(inventory)
+    all_paths = geoff_discovery._all_inventory_paths(inventory)
     unprocessed = _classify_unprocessed(
         all_paths, processed_paths, inventory, execution_plan
     )
@@ -2143,7 +2144,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             # Use AI-based classification if enabled
             if AI_EVIDENCE_CLASSIFICATION:
                 try:
-                    inventory = _inventory_evidence_with_ai(evidence_path, orchestrator, call_llm)
+                    inventory = geoff_discovery._inventory_evidence_with_ai(evidence_path, orchestrator, call_llm)
                     ai_count = len(inventory.get('ai_classified', []))
                     if ai_count > 0:
                         _fe_log(job_id, f"  AI classified {ai_count} ambiguous files")
@@ -2153,13 +2154,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         _fe_log(job_id, "  AI classification: no ambiguous files")
                 except Exception as e:
                     _fe_log(job_id, f"  AI classification failed: {e}, falling back")
-                    inventory = _inventory_evidence(evidence_path)
+                    inventory = geoff_discovery._inventory_evidence(evidence_path)
             else:
-                inventory = _inventory_evidence(evidence_path)
+                inventory = geoff_discovery._inventory_evidence(evidence_path)
 
             # Phase 0b: Validate classification - NEVER leave files unprocessed
             _update_job(2, "validation", "Re-checking file classifications")
-            inventory = _validate_inventory_classification(inventory, job_id)
+            inventory = geoff_discovery._validate_inventory_classification(inventory, job_id)
             _fe_log(job_id, f"  Validation: {len(inventory.get('other_files', []))} files remain in other_files for generic analysis")
 
             _atomic_write(ckpt_inventory_file, json.dumps(inventory, default=str))
@@ -2189,7 +2190,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         _cached_dir = Path(_cached["extracted_dir"])
                         if _cached_dir.exists() and any(_cached_dir.iterdir()):
                             _fe_log(job_id, f"  [CKPT] Already extracted: {Path(archive_path).name}")
-                            _cached_files = _list_extracted_files(str(_cached_dir))
+                            _cached_files = geoff_discovery._list_extracted_files(str(_cached_dir))
                             extracted_archives.append({
                                 "archive": archive_path,
                                 "extracted_dir": _cached["extracted_dir"],
@@ -2206,7 +2207,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 if _cached["extracted_dir"] not in inventory["other_files"]:
                                     inventory["other_files"].append(_cached["extracted_dir"])
                             continue
-                    result = _extract_archive(archive_path, job_id=job_id)
+                    result = geoff_discovery._extract_archive(archive_path, job_id=job_id)
                     if result.get("status") in ("extracted", "already_extracted"):
                         _ckpt_register_archive(ckpt, _ahash, archive_path,
                                                result.get("extracted_dir", ""),
@@ -2290,7 +2291,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Phase 1d: Re-validate after extraction
         if not _ckpt_phase_done(ckpt, "extraction"):
             _update_job(5, "revalidation", "Re-validating after extraction")
-            inventory = _validate_inventory_classification(inventory, job_id)
+            inventory = geoff_discovery._validate_inventory_classification(inventory, job_id)
             _fe_log(job_id, f"  Post-extraction: {len(inventory.get('other_files', []))} files remain in other_files")
             _atomic_write(ckpt_inventory_file, json.dumps(inventory, default=str))
             _ckpt_mark_phase(ckpt, "extraction", "complete")
@@ -2375,13 +2376,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     _fe_log(job_id, f"  📱 Device {dev_id} evidence_files updated with extracted {Path(extracted_dir).name}")
 
         # Capture all inventory paths for later unprocessed-file analysis
-        all_inventory_paths = _all_inventory_paths(inventory)
+        all_inventory_paths = geoff_discovery._all_inventory_paths(inventory)
 
         # Determine OS from dominant device type (for playbook selection)
         os_type = _detect_os_from_devices(device_map)
         # Triage indicators still useful for initial severity classification
         _update_job(5, "triage", "Preparing triage scan")
-        indicator_hits = _scan_triage_indicators(inventory)
+        indicator_hits = geoff_discovery._scan_triage_indicators(inventory)
 
         _update_job(5, "inventory", "Complete", log_msg="Evidence inventory complete")
 
@@ -2755,7 +2756,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         else:
             _ckpt_mark_phase(ckpt, "mount_discover", "running")
             _ckpt_save(case_work_dir, ckpt)
-            nuclear_result = _mount_and_discover(inventory, image_offsets, evidence_path.name, job_id)
+            nuclear_result = geoff_discovery._mount_and_discover(inventory, image_offsets, evidence_path.name, job_id)
             # Mark walked disks in checkpoint
             for img_path in inventory.get("disk_images", []):
                 _ckpt_mark_disk_walked(ckpt, str(img_path))

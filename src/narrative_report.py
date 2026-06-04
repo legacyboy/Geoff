@@ -2127,8 +2127,18 @@ class NarrativeReportGenerator:
             "Availability": "No impact on service availability",
         }
 
+        # If data exfiltration is confirmed (transfer of data outside the organization),
+        # Confidentiality MUST be rated HIGH. Confirmed data leaving the organization
+        # is a HIGH confidentiality impact regardless of data type or sensitivity.
+        _exfil_mitre_ids = {"T1048", "T1567", "T1052", "T1020", "T1011"}
+        _mitre_techs = (ac.get("mitre_techniques_observed", [])
+                        or [t.get("technique_id", "")
+                            for t in report_json.get("mitre_techniques", [])
+                            if isinstance(t, dict)])
+        _has_exfil_mitre = bool(_exfil_mitre_ids & set(_mitre_techs))
+
         if evil_found:
-            if any(w in all_text for w in ("exfiltration", "credential_theft", "credential")):
+            if any(w in all_text for w in ("exfiltration", "credential_theft", "credential")) or _has_exfil_mitre:
                 cia["Confidentiality"] = "HIGH"
                 cia_rationale["Confidentiality"] = "Credential theft and/or exfiltration detected"
             elif any(w in all_text for w in ("phishing", "lateral")):
@@ -3477,6 +3487,7 @@ Cite specific evidence anchors in format: "(source: <tool> on <file>)"]
 [5-8 bullet points: the most significant individual findings, each with: artifact path, tool used, and specific observation]
 
 ## Recommended Actions
+Do NOT recommend actions that the pipeline has already performed (forensic disk analysis, memory analysis, file carving, timeline creation, IOC extraction). The investigation is already complete — recommend what should be done NEXT (quarantine, legal escalation, network IOCs, user interviews, etc.).
 [5-7 specific, prioritised containment and remediation steps for THIS investigation based on the evidence above]"""
 
             try:
