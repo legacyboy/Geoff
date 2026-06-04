@@ -987,6 +987,22 @@ function extractTechniquesFromReport(data) {
         });
     }
 
+    // Strategy 5: Handle mitre_techniques directly (primary field from Geoff pipeline)
+    if (data.mitre_techniques && Array.isArray(data.mitre_techniques)) {
+        data.mitre_techniques.forEach(function(entry) {
+            var tid = entry.technique_id || entry.id || '';
+            if (tid) {
+                var evList = entry.evidence_paths || entry.evidence || entry.matched_reasons || [];
+                var name = entry.technique_name || entry.name || '';
+                if (Array.isArray(evList) && evList.length > 0) {
+                    evList.forEach(function(e) { addFinding(tid, 'file', String(e)); });
+                } else {
+                    addFinding(tid, 'finding', name || 'Detected in investigation');
+                }
+            }
+        });
+    }
+
     return findings;
 }
 

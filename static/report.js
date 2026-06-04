@@ -156,6 +156,7 @@
       { id: 'summary',  num: '01', title: 'Executive Summary',           render: (r) => renderSummary(r, data) },
       { id: 'timeline', num: '02', title: 'Super Timeline',              render: (r) => renderTimeline(r, data) },
       { id: 'findings', num: '03', title: 'Findings by Device',          render: (r) => renderFindings(r, data) },
+      { id: 'email-phishing', num: '03.5', title: 'Phishing & Email Threats', render: (r) => { r.innerHTML = renderMarkdown(data.email_phishing || ''); } },
       { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',      render: (r) => renderMitreLink(r, dir) },
       { id: 'iocs',     num: '05', title: 'Indicators of Compromise',   render: (r) => renderIocs(r, data) },
       // --- New narrative sections ---

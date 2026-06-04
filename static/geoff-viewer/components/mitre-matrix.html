@@ -378,7 +378,8 @@ const TACTIC_MAP = {
   "Credential Access":  ["T1003","T1110","T1555"],
   "Discovery":          ["T1046","T1083","T1082"],
   "Lateral Movement":   ["T1021","T1076"],
-  "Exfiltration":       ["T1041","T1048"],
+  "Collection":         ["T1074","T1114","T1560"],
+  "Exfiltration":       ["T1041","T1048","T1052","T1567"],
   "Command & Control":  ["T1071","T1105"],
 };
 
@@ -388,10 +389,10 @@ function loadMitreMatrix(techniquesObserved, killChainPhases) {
   const phaseSet = new Set((killChainPhases || []).map(p => p.toLowerCase()));
 
   // Build tactic-to-technique display order (same as TACTIC_MAP)
-  const tacticOrder = [
+    const tacticOrder = [
     "Initial Access", "Execution", "Persistence", "Defense Evasion",
     "Credential Access", "Discovery", "Lateral Movement",
-    "Exfiltration", "Command & Control"
+    "Collection", "Exfiltration", "Command & Control"
   ];
 
   // Determine which tactics have observed techniques
@@ -530,9 +531,14 @@ function _escAttr(s) {
     fetch('/reports/' + encodeURIComponent(caseId) + '/json')
       .then(r => r.ok ? r.json() : Promise.reject('not found'))
       .then(data => {
-        const chain = data.attack_chain || {};
-        const techs = chain.mitre_techniques_observed || [];
-        const phases = chain.kill_chain_phases || [];
+        const techs = (data.mitre_techniques || []).map(t => (t.technique_id || "").split(".")[0]).filter(Boolean);
+        // Derive kill chain phases from observed techniques using the built-in TACTIC_MAP
+        const phases = [...new Set(techs.map(tid => {
+          for (const [phase, techList] of Object.entries(TACTIC_MAP)) {
+            if (techList.includes(tid)) return phase;
+          }
+          return null;
+        }).filter(Boolean))];
         updateHeader(data);
         loadMitreMatrix(techs, phases);
       })
