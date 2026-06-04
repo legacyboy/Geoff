@@ -260,27 +260,32 @@
       root.innerHTML = '<div class="info-box"><p>No timeline entries were generated for this case. This can happen when the pipeline completed without producing timeline data.</p></div>';
       return;
     }
-    const rows = timeline.map(ev => {
-      const ts = ev.timestamp || '';
-      const devId = ev.device_id || ev.device || '';
-      const sev = (ev.severity || 'INFO').toUpperCase();
-      const devKind = inferKindFromMap(devId, data.device_map || {});
-      const isSuspicious = ev.suspicious;
-      return `<div class="tl-row${isSuspicious ? ' suspicious' : ''}">
-        <div class="when"><span class="d">${fmtDate(ts)}</span><br>${fmtClock(ts)} UTC</div>
-        <div class="tl-rail"><div class="tl-dot ${isSuspicious ? 's-HIGH' : 's-' + sev}"></div></div>
-        <div class="tl-card">
-          <div class="top"><span class="sev-pill ${isSuspicious ? 'HIGH' : sev}" style="font-size:9px;padding:2px 7px;">${isSuspicious ? 'SUSPICIOUS' : sev}</span></div>
-          <div class="sum">${esc(ev.summary || ev.event_type || '')}</div>
-          <div class="meta">
-            <span class="dv"><span class="edot ${devKind}"></span>${esc(devId)}</span>
-            ${ev.owner ? `<span>${esc(ev.owner)}</span>` : ''}
-            ${ev.suspicion_reason ? `<span style="color:var(--g-text-mute);font-size:10px;">${esc(ev.suspicion_reason.slice(0, 80))}</span>` : ''}
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    root.innerHTML = `<div style="margin-bottom:8px;font-size:12px;color:var(--g-text-mute);">${timeline.length} timeline events</div><div class="tl">${rows}</div>`;
+    const caseDir = new URLSearchParams(location.search).get('case');
+    root.innerHTML = '<div class="mitre-card" style="margin-bottom:16px;">' +
+      '<p>Full super-timeline with all ' + timeline.length + ' events available in a dedicated view.</p>' +
+      '<a class="btn primary" href="/reports/' + encodeURIComponent(caseDir) + '/supertimeline" target="_blank">Open Super Timeline &rarr;</a>' +
+    '</div>' +
+    '<div class="tl">' + timeline.slice(0, 10).map(function(ev) {
+      var ts = ev.timestamp || '';
+      var devId = ev.device_id || ev.device || '';
+      var sev = (ev.severity || 'INFO').toUpperCase();
+      var devKind = inferKindFromMap(devId, data.device_map || {});
+      var isSuspicious = ev.suspicious;
+      return '<div class="tl-row' + (isSuspicious ? ' suspicious' : '') + '">' +
+        '<div class="when"><span class="d">' + fmtDate(ts) + '</span><br>' + fmtClock(ts) + ' UTC</div>' +
+        '<div class="tl-rail"><div class="tl-dot ' + (isSuspicious ? 's-HIGH' : 's-' + sev) + '"></div></div>' +
+        '<div class="tl-card">' +
+          '<div class="top"><span class="sev-pill ' + (isSuspicious ? 'HIGH' : sev) + '" style="font-size:9px;padding:2px 7px;">' + (isSuspicious ? 'SUSPICIOUS' : sev) + '</span></div>' +
+          '<div class="sum">' + esc(ev.summary || ev.event_type || '') + '</div>' +
+          '<div class="meta">' +
+            '<span class="dv"><span class="edot ' + devKind + '"></span>' + esc(devId) + '</span>' +
+            (ev.owner ? '<span>' + esc(ev.owner) + '</span>' : '') +
+            (ev.suspicion_reason ? '<span style="color:var(--g-text-mute);font-size:10px;">' + esc(ev.suspicion_reason.slice(0, 80)) + '</span>' : '') +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>' +
+    (timeline.length > 10 ? '<p style="margin-top:8px;font-size:12px;color:var(--g-text-mute);">Showing 10 of ' + timeline.length + ' events. <a href="/reports/' + encodeURIComponent(caseDir) + '/supertimeline" target="_blank">Open full timeline &rarr;</a></p>' : '');
   }
 
   function renderFindings(root, data) {
@@ -353,8 +358,13 @@
 
     if (typeof iocs === 'object' && !Array.isArray(iocs)) {
       Object.entries(iocs).forEach(([k, v]) => {
-        if (Array.isArray(v) && v.length) normalised[k] = v.map(String);
-        else if (typeof v === 'object' && v !== null) {
+        if (Array.isArray(v) && v.length) {
+          if (k === 'file_hashes' && typeof v[0] === 'object' && v[0].hash) {
+            normalised[k] = v.map(function(item) { return item.hash + (item.algorithm ? ' (' + item.algorithm + ')' : '') + (item.filename ? ' - ' + item.filename : ''); });
+          } else {
+            normalised[k] = v.map(String);
+          }
+        } else if (typeof v === 'object' && v !== null) {
           // nested structure — flatten
           Object.entries(v).forEach(([k2, v2]) => {
             if (Array.isArray(v2) && v2.length) normalised[`${k} / ${k2}`] = v2.map(String);
@@ -402,6 +412,11 @@
   /* -------- new narrative section renderers -------- */
 
   function renderAttackChain(root, data) {
+    // If we have the narrative text version, use that instead
+    if (data.attack_chain_narrative && typeof data.attack_chain_narrative === 'string') {
+      root.innerHTML = renderMarkdown(data.attack_chain_narrative);
+      return;
+    }
     const ac = data.attack_chain;
     if (!ac) {
       root.innerHTML = '<p style="color:var(--g-text-mute)">No attack chain data available.</p>';
@@ -438,7 +453,11 @@
       root.innerHTML = '<p style="color:var(--g-text-mute)">No kill chain timeline data available.</p>';
       return;
     }
-    root.innerHTML = renderTextBlock(kct);
+    if (typeof kct === 'string' && kct.trim().startsWith('<')) {
+      root.innerHTML = kct;
+    } else {
+      root.innerHTML = renderTextBlock(kct);
+    }
   }
 
   function renderDevicesUsers(root, data) {
@@ -462,7 +481,11 @@
       root.innerHTML = '<p style="color:var(--g-text-mute)">No blast radius data available.</p>';
       return;
     }
-    root.innerHTML = renderTextBlock(br);
+    if (typeof br === 'string' && br.trim().startsWith('<')) {
+      root.innerHTML = br;
+    } else {
+      root.innerHTML = renderTextBlock(br);
+    }
   }
 
   function renderDwellTime(root, data) {
@@ -471,7 +494,11 @@
       root.innerHTML = '<p style="color:var(--g-text-mute)">No dwell time data available.</p>';
       return;
     }
-    root.innerHTML = renderTextBlock(dt);
+    if (typeof dt === 'string' && dt.trim().startsWith('<')) {
+      root.innerHTML = dt;
+    } else {
+      root.innerHTML = renderTextBlock(dt);
+    }
   }
 
   function renderEvidenceConfidence(root, data) {
@@ -480,7 +507,11 @@
       root.innerHTML = '<p style="color:var(--g-text-mute)">No evidence confidence data available.</p>';
       return;
     }
-    root.innerHTML = renderTextBlock(ec);
+    if (typeof ec === 'string' && ec.trim().startsWith('<')) {
+      root.innerHTML = ec;
+    } else {
+      root.innerHTML = renderTextBlock(ec);
+    }
   }
 
   function renderConclusion(root, data) {

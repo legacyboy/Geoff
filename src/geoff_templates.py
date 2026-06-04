@@ -618,7 +618,7 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   </div>
 
 </div>
-<script src="/static/report.js"></script>
+<script src="/static/report.js?v=2"></script>
 </body>
 </html>
 """

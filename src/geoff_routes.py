@@ -1024,6 +1024,18 @@ def narrative_report_page():
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
+def serve_supertimeline(case_dir):
+    """GET /reports/<case_dir>/supertimeline — Serve the supertimeline.html for a case."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    case_path = _find_case_dir(safe_dir)
+    if not case_path:
+        return "Case not found", 404
+    st_path = case_path / "reports" / "supertimeline.html"
+    if not st_path.exists():
+        return "Supertimeline not generated for this case", 404
+    return st_path.read_text(encoding='utf-8'), 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
 def mitre_matrix():
     """GET /reports/mitre-matrix — Serve the MITRE ATT&CK matrix viewer."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
@@ -1755,6 +1767,7 @@ def register_routes(app):
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
     app.add_url_rule('/static/<filename>', 'ui_static', ui_static)
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
+        app.add_url_rule('/reports/<case_dir>/supertimeline', 'serve_supertimeline', _require_auth(serve_supertimeline))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
     app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
     app.add_url_rule('/tools', 'list_tools', _require_auth(list_tools))
