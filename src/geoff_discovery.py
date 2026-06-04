@@ -603,8 +603,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                     )
                                     if mmls_r.returncode == 0:
                                         partitions = _parse_mmls_output(mmls_r.stdout)
-                                        offset = _find_first_partition_offset(partitions, img_name)
-                                        if offset is not None:
+                                        for offset in _find_all_partition_offsets(partitions, img_name):
                                             _add_image_offset(image_offsets, img, offset)
                                             _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls)")
                                         else:
@@ -620,8 +619,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                                 )
                                                 if mmls_t.returncode == 0:
                                                     partitions = _parse_mmls_output(mmls_t.stdout)
-                                                    offset = _find_first_partition_offset(partitions, img_name)
-                                                    if offset is not None:
+                                                    for offset in _find_all_partition_offsets(partitions, img_name):
                                                         _add_image_offset(image_offsets, img, offset)
                                                         _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls -t {pt_type})")
                                                         break
@@ -665,12 +663,11 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                         mmls_result = {"status": "error", "stderr": str(e)[:200]}
 
                     if mmls_result.get("status") == "success" and mmls_result.get("partitions"):
-                        offset = _find_first_partition_offset(
+                        for offset in _find_all_partition_offsets(
                             [(p.get("start_sector", 0), p.get("description", ""))
                              for p in mmls_result["partitions"]],
                             img_name,
-                        )
-                        if offset is not None:
+                        ):
                             _add_image_offset(image_offsets, img, offset)
                             _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (SLEUTHKIT_Specialist)")
 
@@ -687,8 +684,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                             )
                             if raw_mmls.returncode == 0:
                                 partitions = _parse_mmls_output(raw_mmls.stdout)
-                                offset = _find_first_partition_offset(partitions, img_name)
-                                if offset is not None:
+                                for offset in _find_all_partition_offsets(partitions, img_name):
                                     _add_image_offset(image_offsets, img, offset)
                                     _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (direct mmls on {mmls_label})")
                                     break
@@ -707,8 +703,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                 )
                                 if mmls_t.returncode == 0:
                                     partitions = _parse_mmls_output(mmls_t.stdout)
-                                    offset = _find_first_partition_offset(partitions, img_name)
-                                    if offset is not None:
+                                    for offset in _find_all_partition_offsets(partitions, img_name):
                                         _add_image_offset(image_offsets, img, offset)
                                         _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (mmls -t {pt_type})")
                                         break
@@ -1203,305 +1198,305 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                         _fe_log(job_id, f"  ⚠ apfs-fuse error: {_afuse_e}")
 
         for pidx, (part_byte_offset, part_desc) in enumerate(mount_offsets):
-            part_mount_point = f"{mount_base}/{img_stem}_p{part_byte_offset // 512}"
+            mount_point = f"{mount_base}/{img_stem}_p{part_byte_offset // 512}"
 
-        # Try common fallback if first mount attempt fails
-        offsets_to_try = [byte_offset]
-        if offset == 63:
-            offsets_to_try.append(2048 * 512)  # Try GPT offset as fallback
-        elif offset == 2048:
-            offsets_to_try.append(63 * 512)    # Try legacy MBR offset as fallback
+            # Try common fallback if partition mount fails
+            offsets_to_try = [part_byte_offset]
+            if part_byte_offset // 512 == 63:
+                offsets_to_try.append(2048 * 512)  # Try GPT offset as fallback
+            elif part_byte_offset // 512 == 2048:
+                offsets_to_try.append(63 * 512)    # Try legacy MBR offset as fallback
 
-        mounted = False
-        fls_image_processed = False  # Set when sleuthkit fallback found+classified items
-        _mount_err_msg = ""
-        for try_offset in offsets_to_try:
-            if mounted:
-                break
-            try:
-                os.makedirs(mount_point, exist_ok=True)
-                # For EWF (E01): ewfmount then mount partition
-                ewf_raw_dir = f"/tmp/geoff_ewf_{os.getpid()}"
-                os.makedirs(ewf_raw_dir, exist_ok=True)
-                ewf_result = subprocess.run(
-                    ["ewfmount", img_path, ewf_raw_dir],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if ewf_result.returncode == 0:
-                    ewf_device = f"{ewf_raw_dir}/ewf1"
-                    raw_mount = ["sudo", "mount", "-o", f"ro,loop,offset={try_offset}", ewf_device, mount_point]
-                    raw_r = subprocess.run(raw_mount, capture_output=True, text=True, timeout=30)
-                    chk = subprocess.run(["mount"], capture_output=True, text=True, timeout=10)
-                    if mount_point in chk.stdout:
-                        _active_mounts.append(mount_point)
-                        _fe_log(job_id, f"  📌 Mounted {Path(img_path).name} @ {mount_point} (ewf+offset={try_offset})")
-                        mounted = True
-                    elif try_offset == offsets_to_try[-1]:
-                        _mount_err_msg = raw_r.stderr.strip()[:300]
-                if not mounted:
-                    # Fallback: direct mount for raw DD images
-                    direct_cmd = [
-                        "sudo", "mount", "-o", f"ro,loop,offset={try_offset}",
-                        img_path, mount_point,
-                    ]
-                    direct_r = subprocess.run(direct_cmd, capture_output=True, text=True, timeout=30)
-                    if direct_r.returncode == 0:
-                        _active_mounts.append(mount_point)
-                        _fe_log(job_id, f"  📌 Mounted {Path(img_path).name} @ {mount_point} (direct, offset={try_offset})")
-                        mounted = True
-                    else:
-                        err = direct_r.stderr.strip()[:300]
-                        _mount_err_msg = err
-                        if try_offset == offsets_to_try[-1]:
-                            _fe_log(job_id, f"  ✗ Mount failed for {Path(img_path).name}: {err}")
-
-                        # Sleuthkit fallback for corrupted NTFS (e.g. 'Record 0 has no FILE magic').
-                        # Run fls on ewf1 raw device (not the E01 directly) — avoids redundant
-                        # EWF decompression and is significantly faster for large images.
-                        _fe_log(job_id, f"  🔍 Falling back to sleuthkit walk for {Path(img_path).name}")
-                        try:
-                            ewf1_path = f"{ewf_raw_dir}/ewf1"
-                            # Resolve E02/E03 segments to E01
-                            base_img = img_path
-                            for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
-                                if base_img.endswith(seg):
-                                    e01 = base_img[:-4] + ".E01"
-                                    if os.path.isfile(e01):
-                                        base_img = e01
-                                    break
-                            sk_device = ewf1_path if os.path.exists(ewf1_path) else base_img
-                            sk_label = "ewf1-raw" if sk_device == ewf1_path else "E01-direct"
-                            _fe_log(job_id, f"  🔍 Sleuthkit device: {sk_label}")
-
-                            # Use mmls on ewf1 to discover the actual partition start sector
-                            fls_offset = offset
-                            if sk_device == ewf1_path:
-                                mmls_r = subprocess.run(
-                                    ["mmls", sk_device],
-                                    capture_output=True, text=True, timeout=30,
-                                )
-                                if mmls_r.returncode == 0:
-                                    for mmls_line in mmls_r.stdout.splitlines():
-                                        parts = mmls_line.split()
-                                        if len(parts) >= 5 and parts[0].rstrip(":").isdigit():
+            mounted = False
+            fls_image_processed = False  # Set when sleuthkit fallback found+classified items
+            _mount_err_msg = ""
+            for try_offset in offsets_to_try:
+                if mounted:
+                    break
+                try:
+                    os.makedirs(mount_point, exist_ok=True)
+                    # For EWF (E01): ewfmount then mount partition
+                    ewf_raw_dir = f"/tmp/geoff_ewf_{os.getpid()}"
+                    os.makedirs(ewf_raw_dir, exist_ok=True)
+                    ewf_result = subprocess.run(
+                        ["ewfmount", img_path, ewf_raw_dir],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if ewf_result.returncode == 0:
+                        ewf_device = f"{ewf_raw_dir}/ewf1"
+                        raw_mount = ["sudo", "mount", "-o", f"ro,loop,offset={try_offset}", ewf_device, mount_point]
+                        raw_r = subprocess.run(raw_mount, capture_output=True, text=True, timeout=30)
+                        chk = subprocess.run(["mount"], capture_output=True, text=True, timeout=10)
+                        if mount_point in chk.stdout:
+                            _active_mounts.append(mount_point)
+                            _fe_log(job_id, f"  📌 Mounted {Path(img_path).name} @ {mount_point} (ewf+offset={try_offset})")
+                            mounted = True
+                        elif try_offset == offsets_to_try[-1]:
+                            _mount_err_msg = raw_r.stderr.strip()[:300]
+                    if not mounted:
+                        # Fallback: direct mount for raw DD images
+                        direct_cmd = [
+                            "sudo", "mount", "-o", f"ro,loop,offset={try_offset}",
+                            img_path, mount_point,
+                        ]
+                        direct_r = subprocess.run(direct_cmd, capture_output=True, text=True, timeout=30)
+                        if direct_r.returncode == 0:
+                            _active_mounts.append(mount_point)
+                            _fe_log(job_id, f"  📌 Mounted {Path(img_path).name} @ {mount_point} (direct, offset={try_offset})")
+                            mounted = True
+                        else:
+                            err = direct_r.stderr.strip()[:300]
+                            _mount_err_msg = err
+                            if try_offset == offsets_to_try[-1]:
+                                _fe_log(job_id, f"  ✗ Mount failed for {Path(img_path).name}: {err}")
+    
+                            # Sleuthkit fallback for corrupted NTFS (e.g. 'Record 0 has no FILE magic').
+                            # Run fls on ewf1 raw device (not the E01 directly) — avoids redundant
+                            # EWF decompression and is significantly faster for large images.
+                            _fe_log(job_id, f"  🔍 Falling back to sleuthkit walk for {Path(img_path).name}")
+                            try:
+                                ewf1_path = f"{ewf_raw_dir}/ewf1"
+                                # Resolve E02/E03 segments to E01
+                                base_img = img_path
+                                for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
+                                    if base_img.endswith(seg):
+                                        e01 = base_img[:-4] + ".E01"
+                                        if os.path.isfile(e01):
+                                            base_img = e01
+                                        break
+                                sk_device = ewf1_path if os.path.exists(ewf1_path) else base_img
+                                sk_label = "ewf1-raw" if sk_device == ewf1_path else "E01-direct"
+                                _fe_log(job_id, f"  🔍 Sleuthkit device: {sk_label}")
+    
+                                # Use mmls on ewf1 to discover the actual partition start sector
+                                fls_offset = offset
+                                if sk_device == ewf1_path:
+                                    mmls_r = subprocess.run(
+                                        ["mmls", sk_device],
+                                        capture_output=True, text=True, timeout=30,
+                                    )
+                                    if mmls_r.returncode == 0:
+                                        for mmls_line in mmls_r.stdout.splitlines():
+                                            parts = mmls_line.split()
+                                            if len(parts) >= 5 and parts[0].rstrip(":").isdigit():
+                                                try:
+                                                    start = int(parts[2])
+                                                    if start > 0:
+                                                        fls_offset = start
+                                                        _fe_log(job_id, f"  🔍 mmls partition offset: {fls_offset}")
+                                                        break
+                                                except (ValueError, IndexError):
+                                                    continue
+    
+                                # Case-specific extraction dir for icat output
+                                extract_dir = f"/tmp/geoff_extract_{case_name}_{img_stem}"
+                                os.makedirs(extract_dir, exist_ok=True)
+    
+                                # Resolve E02/E03 segments to E01 for fls (handles multi-part)
+                                fls_target = sk_device
+                                for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
+                                    if fls_target.endswith(seg):
+                                        base = fls_target[:-4]
+                                        e01 = base + ".E01"
+                                        if os.path.isfile(e01):
+                                            fls_target = e01
+                                        break
+                                # Try fls with the mmls-discovered offset; if it returns nothing,
+                                # retry with common legacy offsets before giving up.
+                                _fls_try_offsets = [fls_offset] + [
+                                    o for o in COMMON_LEGACY_OFFSETS if o != fls_offset
+                                ]
+                                fls_result = None
+                                for _fls_try_off in _fls_try_offsets:
+                                    _fr = subprocess.run(
+                                        ["fls", "-o", str(_fls_try_off), "-r", fls_target],
+                                        capture_output=True, text=True, timeout=600,
+                                    )
+                                    if _fr.returncode == 0 and _fr.stdout.strip():
+                                        fls_result = _fr
+                                        fls_offset = _fls_try_off
+                                        break
+                                    if _fr.returncode == 0 and fls_result is None:
+                                        fls_result = _fr  # empty but valid: keep as fallback
+                                if fls_result is None:
+                                    fls_result = subprocess.run(
+                                        ["fls", "-o", str(fls_offset), "-r", fls_target],
+                                        capture_output=True, text=True, timeout=600,
+                                    )
+                                if fls_result.returncode == 0:
+                                    found = 0
+                                    _reg_basenames = frozenset([
+                                        "software", "system", "sam", "security", "default",
+                                        "ntuser.dat", "usrclass.dat", "amcache.hve",
+                                        "srudb.dat", "syscache.hve",
+                                    ])
+                                    _doc_exts = frozenset([
+                                        ".doc", ".docx", ".xls", ".xlsx", ".xlsm",
+                                        ".ppt", ".pptx", ".pdf", ".rtf", ".odt", ".ods",
+                                        ".txt", ".csv", ".zip", ".rar", ".7z", ".tar", ".gz",
+                                    ])
+                                    for fls_line in fls_result.stdout.splitlines():
+                                        if not fls_line.strip() or fls_line.strip().startswith("|"):
+                                            continue
+                                        tab_idx = fls_line.find("\t")
+                                        if tab_idx < 0:
+                                            continue
+                                        meta_part = fls_line[:tab_idx].strip()
+                                        name = fls_line[tab_idx + 1:].strip().replace('"', '')
+                                        if not name:
+                                            continue
+                                        # inode addr like "25184-128-1" from "r/r 25184-128-1:"
+                                        inode = meta_part.split()[-1].rstrip(":") if " " in meta_part else ""
+                                        ext = Path(name).suffix.lower()
+                                        basename_lower = Path(name).name.lower()
+                                        internal_ref = f"{img_path}::{name}"
+    
+                                        ev_type = None
+                                        if ext == ".evtx":
+                                            ev_type = "evtx_logs"
+                                        elif ext == ".evt":
+                                            ev_type = "evt_logs"
+                                        elif basename_lower in _reg_basenames:
+                                            ev_type = "registry_hives"
+                                        elif ext == ".hve":
+                                            ev_type = "registry_hives"
+                                        elif ext in (".e01", ".dd", ".raw", ".vmdk", ".vhdx", ".qcow2"):
+                                            ev_type = "nested_disk_images"
+                                        elif ext in (".pst", ".ost", ".dbx", ".eml", ".mbox"):
+                                            ev_type = "email_files"
+                                        elif basename_lower in _browser_filenames:
+                                            ev_type = "browser_artifacts"
+                                        elif ext in (".sqlite", ".sqlite3", ".db", ".db3") and basename_lower not in _reg_basenames:
+                                            ev_type = "sqlite_dbs"
+                                        elif ext == ".pf":
+                                            ev_type = "documents"
+                                        elif ext == ".lnk":
+                                            ev_type = "documents"
+                                        elif ext in _doc_exts:
+                                            ev_type = "documents"
+    
+                                        if ev_type is None:
+                                            continue
+    
+                                        # Extract registry hives, event logs, and PST/OST via icat so downstream
+                                        # tools receive real files, not virtual image::path references
+                                        extracted_path = internal_ref
+                                        if ev_type in ("registry_hives", "evtx_logs") and inode:
+                                            inode_num = inode.split("-")[0]
+                                            safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
+                                            out_path = os.path.join(extract_dir, safe_name)
                                             try:
-                                                start = int(parts[2])
-                                                if start > 0:
-                                                    fls_offset = start
-                                                    _fe_log(job_id, f"  🔍 mmls partition offset: {fls_offset}")
-                                                    break
-                                            except (ValueError, IndexError):
-                                                continue
-
-                            # Case-specific extraction dir for icat output
-                            extract_dir = f"/tmp/geoff_extract_{case_name}_{img_stem}"
-                            os.makedirs(extract_dir, exist_ok=True)
-
-                            # Resolve E02/E03 segments to E01 for fls (handles multi-part)
-                            fls_target = sk_device
-                            for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
-                                if fls_target.endswith(seg):
-                                    base = fls_target[:-4]
-                                    e01 = base + ".E01"
-                                    if os.path.isfile(e01):
-                                        fls_target = e01
-                                    break
-                            # Try fls with the mmls-discovered offset; if it returns nothing,
-                            # retry with common legacy offsets before giving up.
-                            _fls_try_offsets = [fls_offset] + [
-                                o for o in COMMON_LEGACY_OFFSETS if o != fls_offset
-                            ]
-                            fls_result = None
-                            for _fls_try_off in _fls_try_offsets:
-                                _fr = subprocess.run(
-                                    ["fls", "-o", str(_fls_try_off), "-r", fls_target],
-                                    capture_output=True, text=True, timeout=600,
-                                )
-                                if _fr.returncode == 0 and _fr.stdout.strip():
-                                    fls_result = _fr
-                                    fls_offset = _fls_try_off
-                                    break
-                                if _fr.returncode == 0 and fls_result is None:
-                                    fls_result = _fr  # empty but valid: keep as fallback
-                            if fls_result is None:
-                                fls_result = subprocess.run(
-                                    ["fls", "-o", str(fls_offset), "-r", fls_target],
-                                    capture_output=True, text=True, timeout=600,
-                                )
-                            if fls_result.returncode == 0:
-                                found = 0
-                                _reg_basenames = frozenset([
-                                    "software", "system", "sam", "security", "default",
-                                    "ntuser.dat", "usrclass.dat", "amcache.hve",
-                                    "srudb.dat", "syscache.hve",
-                                ])
-                                _doc_exts = frozenset([
-                                    ".doc", ".docx", ".xls", ".xlsx", ".xlsm",
-                                    ".ppt", ".pptx", ".pdf", ".rtf", ".odt", ".ods",
-                                    ".txt", ".csv", ".zip", ".rar", ".7z", ".tar", ".gz",
-                                ])
-                                for fls_line in fls_result.stdout.splitlines():
-                                    if not fls_line.strip() or fls_line.strip().startswith("|"):
-                                        continue
-                                    tab_idx = fls_line.find("\t")
-                                    if tab_idx < 0:
-                                        continue
-                                    meta_part = fls_line[:tab_idx].strip()
-                                    name = fls_line[tab_idx + 1:].strip().replace('"', '')
-                                    if not name:
-                                        continue
-                                    # inode addr like "25184-128-1" from "r/r 25184-128-1:"
-                                    inode = meta_part.split()[-1].rstrip(":") if " " in meta_part else ""
-                                    ext = Path(name).suffix.lower()
-                                    basename_lower = Path(name).name.lower()
-                                    internal_ref = f"{img_path}::{name}"
-
-                                    ev_type = None
-                                    if ext == ".evtx":
-                                        ev_type = "evtx_logs"
-                                    elif ext == ".evt":
-                                        ev_type = "evt_logs"
-                                    elif basename_lower in _reg_basenames:
-                                        ev_type = "registry_hives"
-                                    elif ext == ".hve":
-                                        ev_type = "registry_hives"
-                                    elif ext in (".e01", ".dd", ".raw", ".vmdk", ".vhdx", ".qcow2"):
-                                        ev_type = "nested_disk_images"
-                                    elif ext in (".pst", ".ost", ".dbx", ".eml", ".mbox"):
-                                        ev_type = "email_files"
-                                    elif basename_lower in _browser_filenames:
-                                        ev_type = "browser_artifacts"
-                                    elif ext in (".sqlite", ".sqlite3", ".db", ".db3") and basename_lower not in _reg_basenames:
-                                        ev_type = "sqlite_dbs"
-                                    elif ext == ".pf":
-                                        ev_type = "documents"
-                                    elif ext == ".lnk":
-                                        ev_type = "documents"
-                                    elif ext in _doc_exts:
-                                        ev_type = "documents"
-
-                                    if ev_type is None:
-                                        continue
-
-                                    # Extract registry hives, event logs, and PST/OST via icat so downstream
-                                    # tools receive real files, not virtual image::path references
-                                    extracted_path = internal_ref
-                                    if ev_type in ("registry_hives", "evtx_logs") and inode:
-                                        inode_num = inode.split("-")[0]
-                                        safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
-                                        out_path = os.path.join(extract_dir, safe_name)
-                                        try:
-                                            icat_r = subprocess.run(
-                                                ["icat", "-o", str(fls_offset), sk_device, inode],
-                                                capture_output=True, timeout=60,
-                                            )
-                                            if icat_r.returncode == 0 and icat_r.stdout:
-                                                with open(out_path, "wb") as fout:
-                                                    fout.write(icat_r.stdout)
-                                                extracted_path = out_path
-                                                _fe_log(job_id, f"  📥 icat: {basename_lower} → {out_path}")
-                                        except Exception as icat_e:
-                                            _fe_log(job_id, f"  ⚠ icat failed for {basename_lower}: {icat_e}")
-                                    elif ext in (".pst", ".ost") and inode:
-                                        # Extract PST/OST for email analysis.
-                                        # Simple shell redirect (avoids OOM from capture_output).
-                                        # If icat fails on the sleuthkit device, retry on the raw E01
-                                        # path — sleuthkit handles EWF natively and this is often more
-                                        # reliable for multi-part images.
-                                        inode_num = inode.split("-")[0]
-                                        safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
-                                        out_path = os.path.join(extract_dir, safe_name)
-                                        _extracted_ok = False
-
-                                        # Method 1: icat via shell redirect on sleuthkit device
-                                        icat_cmd = f"icat -o {fls_offset} {shlex.quote(str(sk_device))} {shlex.quote(inode)} > {shlex.quote(out_path)}"
-                                        try:
-                                            icat_shell = subprocess.run(
-                                                ["bash", "-c", icat_cmd],
-                                                capture_output=True, text=True, timeout=600,
-                                            )
-                                            if (icat_shell.returncode == 0 and os.path.isfile(out_path)
-                                                    and os.path.getsize(out_path) > 0):
-                                                extracted_path = out_path
-                                                _extracted_ok = True
-                                                _fe_log(job_id, f"  📥 icat pst: {name} → {out_path} "
-                                                         f"({os.path.getsize(out_path)} bytes)")
-                                            elif icat_shell.returncode != 0 and icat_shell.stderr:
-                                                _fe_log(job_id, f"  ⚠ icat pst err: {icat_shell.stderr.strip()[:200]}")
-                                        except subprocess.TimeoutExpired:
-                                            _fe_log(job_id, f"  ⚠ icat pst timeout ({name})")
-                                        except Exception as icat_e:
-                                            _fe_log(job_id, f"  ⚠ icat pst failed ({name}): {icat_e}")
-
-                                        # Method 2: icat directly on the raw E01 image path
-                                        # (sleuthkit natively handles EWF, often more reliable)
-                                        if not _extracted_ok:
-                                            base_img_str = str(base_img)
-                                            icat_cmd2 = (
-                                                f"icat -o {fls_offset} {shlex.quote(base_img_str)} "
-                                                f"{shlex.quote(inode)} > {shlex.quote(out_path)}"
-                                            )
+                                                icat_r = subprocess.run(
+                                                    ["icat", "-o", str(fls_offset), sk_device, inode],
+                                                    capture_output=True, timeout=60,
+                                                )
+                                                if icat_r.returncode == 0 and icat_r.stdout:
+                                                    with open(out_path, "wb") as fout:
+                                                        fout.write(icat_r.stdout)
+                                                    extracted_path = out_path
+                                                    _fe_log(job_id, f"  📥 icat: {basename_lower} → {out_path}")
+                                            except Exception as icat_e:
+                                                _fe_log(job_id, f"  ⚠ icat failed for {basename_lower}: {icat_e}")
+                                        elif ext in (".pst", ".ost") and inode:
+                                            # Extract PST/OST for email analysis.
+                                            # Simple shell redirect (avoids OOM from capture_output).
+                                            # If icat fails on the sleuthkit device, retry on the raw E01
+                                            # path — sleuthkit handles EWF natively and this is often more
+                                            # reliable for multi-part images.
+                                            inode_num = inode.split("-")[0]
+                                            safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
+                                            out_path = os.path.join(extract_dir, safe_name)
+                                            _extracted_ok = False
+    
+                                            # Method 1: icat via shell redirect on sleuthkit device
+                                            icat_cmd = f"icat -o {fls_offset} {shlex.quote(str(sk_device))} {shlex.quote(inode)} > {shlex.quote(out_path)}"
                                             try:
-                                                icat_shell2 = subprocess.run(
-                                                    ["bash", "-c", icat_cmd2],
+                                                icat_shell = subprocess.run(
+                                                    ["bash", "-c", icat_cmd],
                                                     capture_output=True, text=True, timeout=600,
                                                 )
-                                                if (icat_shell2.returncode == 0 and os.path.isfile(out_path)
+                                                if (icat_shell.returncode == 0 and os.path.isfile(out_path)
                                                         and os.path.getsize(out_path) > 0):
                                                     extracted_path = out_path
                                                     _extracted_ok = True
-                                                    _fe_log(job_id, f"  📥 icat pst (E01-dir): {name} → {out_path} "
+                                                    _fe_log(job_id, f"  📥 icat pst: {name} → {out_path} "
                                                              f"({os.path.getsize(out_path)} bytes)")
-                                                elif icat_shell2.returncode != 0 and icat_shell2.stderr:
-                                                    _fe_log(job_id, f"  ⚠ icat pst E01 err: {icat_shell2.stderr.strip()[:200]}")
+                                                elif icat_shell.returncode != 0 and icat_shell.stderr:
+                                                    _fe_log(job_id, f"  ⚠ icat pst err: {icat_shell.stderr.strip()[:200]}")
                                             except subprocess.TimeoutExpired:
-                                                _fe_log(job_id, f"  ⚠ icat pst E01 timeout ({name})")
+                                                _fe_log(job_id, f"  ⚠ icat pst timeout ({name})")
                                             except Exception as icat_e:
-                                                _fe_log(job_id, f"  ⚠ icat pst E01 failed ({name}): {icat_e}")
-
-                                        if not _extracted_ok:
-                                            _fe_log(job_id, f"  ✗ icat pst FAILED for {name} — will try ewfmount fallback")
-                                    elif ev_type in ("browser_artifacts", "sqlite_dbs", "documents") and inode:
-                                        # Extract browser SQLite DBs, prefetch, lnk, and documents via icat
-                                        inode_num = inode.split("-")[0]
-                                        safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
-                                        out_path = os.path.join(extract_dir, safe_name)
-                                        try:
-                                            icat_r = subprocess.run(
-                                                ["icat", "-o", str(fls_offset), sk_device, inode],
-                                                capture_output=True, timeout=60,
-                                            )
-                                            if icat_r.returncode == 0 and icat_r.stdout:
-                                                with open(out_path, "wb") as fout:
-                                                    fout.write(icat_r.stdout)
-                                                extracted_path = out_path
-                                                _fe_log(job_id, f"  📥 icat artifact: {basename_lower} → {out_path}")
-                                        except Exception as icat_e:
-                                            _fe_log(job_id, f"  ⚠ icat failed for {basename_lower}: {icat_e}")
-
-                                    new_evidence[ev_type].append(extracted_path)
-                                    nuclear_findings.append({
-                                        "image": img_path,
-                                        "mount_point": None,
-                                        "internal_path": name,
-                                        "full_path": extracted_path,
-                                        "filename": Path(name).name,
-                                        "evidence_type": ev_type,
-                                        "via": f"sleuthkit_{sk_label}",
-                                    })
-                                    found += 1
-
-                                if found > 0:
-                                    fls_image_processed = True
-                                    _fe_log(job_id, f"  🔍 Sleuthkit found {found} items in "
-                                            f"{Path(img_path).name} via {sk_label}")
-                        except Exception as fls_e:
-                            _fe_log(job_id, f"  ✗ Sleuthkit walk also failed: {fls_e}")
-
-            except Exception as mount_exc:
-                _mount_err_msg = str(mount_exc)[:300]
-                _fe_log(job_id, f"  ✗ Mount error for {Path(img_path).name}: {mount_exc}")
-
+                                                _fe_log(job_id, f"  ⚠ icat pst failed ({name}): {icat_e}")
+    
+                                            # Method 2: icat directly on the raw E01 image path
+                                            # (sleuthkit natively handles EWF, often more reliable)
+                                            if not _extracted_ok:
+                                                base_img_str = str(base_img)
+                                                icat_cmd2 = (
+                                                    f"icat -o {fls_offset} {shlex.quote(base_img_str)} "
+                                                    f"{shlex.quote(inode)} > {shlex.quote(out_path)}"
+                                                )
+                                                try:
+                                                    icat_shell2 = subprocess.run(
+                                                        ["bash", "-c", icat_cmd2],
+                                                        capture_output=True, text=True, timeout=600,
+                                                    )
+                                                    if (icat_shell2.returncode == 0 and os.path.isfile(out_path)
+                                                            and os.path.getsize(out_path) > 0):
+                                                        extracted_path = out_path
+                                                        _extracted_ok = True
+                                                        _fe_log(job_id, f"  📥 icat pst (E01-dir): {name} → {out_path} "
+                                                                 f"({os.path.getsize(out_path)} bytes)")
+                                                    elif icat_shell2.returncode != 0 and icat_shell2.stderr:
+                                                        _fe_log(job_id, f"  ⚠ icat pst E01 err: {icat_shell2.stderr.strip()[:200]}")
+                                                except subprocess.TimeoutExpired:
+                                                    _fe_log(job_id, f"  ⚠ icat pst E01 timeout ({name})")
+                                                except Exception as icat_e:
+                                                    _fe_log(job_id, f"  ⚠ icat pst E01 failed ({name}): {icat_e}")
+    
+                                            if not _extracted_ok:
+                                                _fe_log(job_id, f"  ✗ icat pst FAILED for {name} — will try ewfmount fallback")
+                                        elif ev_type in ("browser_artifacts", "sqlite_dbs", "documents") and inode:
+                                            # Extract browser SQLite DBs, prefetch, lnk, and documents via icat
+                                            inode_num = inode.split("-")[0]
+                                            safe_name = f"{Path(name).stem.lower()}_{inode_num}{ext}"
+                                            out_path = os.path.join(extract_dir, safe_name)
+                                            try:
+                                                icat_r = subprocess.run(
+                                                    ["icat", "-o", str(fls_offset), sk_device, inode],
+                                                    capture_output=True, timeout=60,
+                                                )
+                                                if icat_r.returncode == 0 and icat_r.stdout:
+                                                    with open(out_path, "wb") as fout:
+                                                        fout.write(icat_r.stdout)
+                                                    extracted_path = out_path
+                                                    _fe_log(job_id, f"  📥 icat artifact: {basename_lower} → {out_path}")
+                                            except Exception as icat_e:
+                                                _fe_log(job_id, f"  ⚠ icat failed for {basename_lower}: {icat_e}")
+    
+                                        new_evidence[ev_type].append(extracted_path)
+                                        nuclear_findings.append({
+                                            "image": img_path,
+                                            "mount_point": None,
+                                            "internal_path": name,
+                                            "full_path": extracted_path,
+                                            "filename": Path(name).name,
+                                            "evidence_type": ev_type,
+                                            "via": f"sleuthkit_{sk_label}",
+                                        })
+                                        found += 1
+    
+                                    if found > 0:
+                                        fls_image_processed = True
+                                        _fe_log(job_id, f"  🔍 Sleuthkit found {found} items in "
+                                                f"{Path(img_path).name} via {sk_label}")
+                            except Exception as fls_e:
+                                _fe_log(job_id, f"  ✗ Sleuthkit walk also failed: {fls_e}")
+    
+                except Exception as mount_exc:
+                    _mount_err_msg = str(mount_exc)[:300]
+                    _fe_log(job_id, f"  ✗ Mount error for {Path(img_path).name}: {mount_exc}")
+    
         if not mounted and not fls_image_processed:
             # LLM-powered self-healing for pipeline infrastructure failures
             # (Skip self-heal when fls successfully found & classified items)
