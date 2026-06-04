@@ -5471,7 +5471,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             corrected = False
                                             if correction:
                                                 # Re-call forensicator with critic feedback
-                                                critic_feedback_summary = "; ".join(str(i) for i in issues[:3]) if issues else issue_str
+                                                critic_feedback_summary = "; ".join(str(i) for i in issues[:3]) if issues else "No critic issues"
                                                 forensicator_retry = None
                                                 try:
                                                     forensicator_retry = geoff_forensicator.interpret_step_result(
