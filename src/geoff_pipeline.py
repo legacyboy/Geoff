@@ -2689,9 +2689,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 break
                             # Store all candidates in metadata for possible auto-heal retry
                             auto_heal_candidates = image_offsets.get('_candidates', {})
+                            _img_offs = image_offsets.get(img, [])
+                            if isinstance(_img_offs, int):
+                                _img_offs = [_img_offs]
                             auto_heal_candidates[img] = [
                                 off for off in COMMON_LEGACY_OFFSETS
-                                if off != image_offsets.get(img)
+                                if off not in _img_offs
                             ]
                             if auto_heal_candidates:
                                 image_offsets['_candidates'] = auto_heal_candidates
@@ -2862,7 +2865,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "execution_hash": hashlib.md5(
                                 step_key.encode()
                             ).hexdigest()[:12],
-                            "module": "network_share_forensics",
+                            "module": "geoff_discovery",
                             "function": "analyze_network_shares",
                             "params": {"drive_letter": drive["letter"]},
                             "raw_command": "analyze_network_shares()",
@@ -2916,7 +2919,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "execution_hash": hashlib.md5(
                                 step_key.encode()
                             ).hexdigest()[:12],
-                            "module": "network_share_forensics",
+                            "module": "geoff_discovery",
                             "function": "analyze_network_shares",
                             "params": {"mru_path": conn_path},
                             "raw_command": "analyze_network_shares()",
@@ -2960,7 +2963,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "execution_hash": hashlib.md5(
                                 step_key.encode()
                             ).hexdigest()[:12],
-                            "module": "network_share_forensics",
+                            "module": "geoff_discovery",
                             "function": "analyze_network_shares",
                             "params": {"prefetch_file": net_cmd.get("prefetch_file", "")},
                             "raw_command": "analyze_network_shares()",
@@ -3004,7 +3007,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "execution_hash": hashlib.md5(
                                 step_key.encode()
                             ).hexdigest()[:12],
-                            "module": "network_share_forensics",
+                            "module": "geoff_discovery",
                             "function": "analyze_network_shares",
                             "params": {"history_file": ps_cmd.get("history_file", "")},
                             "raw_command": "analyze_network_shares()",
