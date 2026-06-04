@@ -742,7 +742,9 @@ const MITRE_DATA = {
             { id:"T1123", name:"Audio Capture" },
             { id:"T1113", name:"Screen Capture" },
             { id:"T1185", name:"Browser Session Hijacking" },
-            { id:"T1119", name:"Automated Collection" }
+            { id:"T1074", name:"Data Staged" },
+            { id:"T1119", name:"Automated Collection" },
+            { id:"T1560", name:"Archive Collected Data" }
         ]
     },
     "Command and Control": {
@@ -992,12 +994,22 @@ function extractTechniquesFromReport(data) {
         data.mitre_techniques.forEach(function(entry) {
             var tid = entry.technique_id || entry.id || '';
             if (tid) {
+                // Also register the parent technique ID (before . separator) for heatmap matching
+                var parentTid = tid.split('.')[0];
                 var evList = entry.evidence_paths || entry.evidence || entry.matched_reasons || [];
                 var name = entry.technique_name || entry.name || '';
                 if (Array.isArray(evList) && evList.length > 0) {
-                    evList.forEach(function(e) { addFinding(tid, 'file', String(e)); });
+                    evList.forEach(function(e) {
+                        addFinding(tid, 'file', String(e));
+                        if (parentTid !== tid) {
+                            addFinding(parentTid, 'file', String(e));
+                        }
+                    });
                 } else {
                     addFinding(tid, 'finding', name || 'Detected in investigation');
+                    if (parentTid !== tid) {
+                        addFinding(parentTid, 'finding', name || 'Detected in investigation');
+                    }
                 }
             }
         });
