@@ -1466,7 +1466,7 @@ def _execute_pass2(
                                 v = v.replace("{file}", item)
                                 v = v.replace("{output_dir}", output_dir)
                                 v = v.replace("{image_stem}", item_stem)
-                                v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                v = v.replace("{offset}", str(image_offsets.get(item, [2048])[0] if isinstance(image_offsets.get(item), list) else image_offsets.get(item, 2048)))
                                 # Time window params
                                 v = v.replace("{time_window_start}", str(time_window.get("start", "")))
                                 v = v.replace("{time_window_end}", str(time_window.get("end", "")))
@@ -1967,7 +1967,7 @@ def _retry_unprocessed(
                              .replace("{file}", path)
                              .replace("{output_dir}", output_dir)
                              .replace("{image_stem}", item_stem)
-                             .replace("{offset}", str(image_offsets.get(path, 2048)))
+                             .replace("{offset}", str(image_offsets.get(path, [2048])[0] if isinstance(image_offsets.get(path), list) else image_offsets.get(path, 2048)))
                         )
                     params[k] = v
 
@@ -2391,7 +2391,16 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # ------------------------------------------------------------------
         ckpt_offsets_file = case_work_dir / "checkpoint_offsets.json"
         if _ckpt_phase_done(ckpt, "partition_offsets"):
-            image_offsets = json.loads(ckpt_offsets_file.read_text())
+            _raw_offsets = json.loads(ckpt_offsets_file.read_text())
+            # Normalise: old checkpoints stored single int, new stores list per image
+            image_offsets = {}
+            for k, v in _raw_offsets.items():
+                if k == "_candidates":
+                    image_offsets[k] = v
+                elif isinstance(v, list):
+                    image_offsets[k] = v
+                else:
+                    image_offsets[k] = [v] if v is not None else []
             _fe_log(job_id, "  [CKPT] Skipping partition scan - loaded from checkpoint")
         else:
             _ckpt_mark_phase(ckpt, "partition_offsets", "running")
@@ -2463,9 +2472,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                         desc = m.group(4).lower()
                                                         if start > 0:
                                                             if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                image_offsets[img] = start
+                                                                image_offsets.setdefault(img, [])
+                                                                if start not in image_offsets[img]:
+                                                                    image_offsets[img].append(start)
                                                                 _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls)")
-                                                                break
                                                     if not m:
                                                         m = re.match(r'^\d+:\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)', line)
                                                         if m:
@@ -2473,9 +2483,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                             desc = m.group(4).lower()
                                                             if start > 0:
                                                                 if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                    image_offsets[img] = start
+                                                                    image_offsets.setdefault(img, [])
+                                                                    if start not in image_offsets[img]:
+                                                                        image_offsets[img].append(start)
                                                                     _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls)")
-                                                                    break
                                                 # If no FS partition found, try first non-zero
                                                 if img not in image_offsets:
                                                     for line in mmls_r.stdout.splitlines():
@@ -2486,14 +2497,16 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                         if m:
                                                             start = int(m.group(1))
                                                             if start > 0:
-                                                                image_offsets[img] = start
+                                                                image_offsets.setdefault(img, [])
+                                                                if start not in image_offsets[img]:
+                                                                    image_offsets[img].append(start)
                                                                 _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls, first partition)")
-                                                                break
                                             else:
                                                 _fe_log(job_id, f"  ⚠ mmls on ewf1 failed for {img_name}: {mmls_r.stderr.strip()[:200]}")
                                                 _pless_errs = ("Invalid sector address", "No partition table found", "Unable to determine partition type")
                                                 if any(s in mmls_r.stderr for s in _pless_errs) or (mmls_r.returncode == 0 and not mmls_r.stdout.strip()):
-                                                    image_offsets[img] = 0
+                                                    image_offsets.setdefault(img, [])
+                                                    if 0 not in image_offsets[img]: image_offsets[img].append(0)
                                                     _fe_log(job_id, f"  📂 Partitionless NTFS volume for {img_name}: no MBR/GPT, using offset 0")
                                                 else:
                                                     # Try mmls with explicit partition table types
@@ -2513,9 +2526,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                                         start = int(m.group(1))
                                                                         desc = m.group(4).lower() if m.lastindex >= 4 else ""
                                                                         if start > 0 and any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                                                            image_offsets[img] = start
+                                                                            image_offsets.setdefault(img, [])
+                                                                            if start not in image_offsets[img]:
+                                                                                image_offsets[img].append(start)
                                                                             _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (ewfmount+mmls -t {pt_type})")
-                                                                            break
                                                                 if img in image_offsets:
                                                                     break
                                                         except Exception:
@@ -2561,17 +2575,19 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     desc = part.get("description", "").lower()
                                     start = part.get("start_sector", 0)
                                     if any(fs in desc for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
-                                        image_offsets[img] = start
+                                        image_offsets.setdefault(img, [])
+                                        if start not in image_offsets[img]:
+                                            image_offsets[img].append(start)
                                         _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (SLEUTHKIT_Specialist)")
-                                        break
                                 if img not in image_offsets and mmls_result["partitions"]:
                                     # Use first non-meta partition
                                     for part in mmls_result["partitions"]:
                                         start = part.get("start_sector", 0)
                                         if start > 0:
-                                            image_offsets[img] = start
+                                            image_offsets.setdefault(img, [])
+                                            if start not in image_offsets[img]:
+                                                image_offsets[img].append(start)
                                             _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (SLEUTHKIT_Specialist, first partition)")
-                                            break
 
                         # ────────────────────────────────────────────────────────
                         # Strategy 3: Direct mmls with -t type fallbacks
@@ -2591,9 +2607,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             desc = m.group(4).lower()
                                             start = int(m.group(1))
                                             if any(fs in desc for fs in ['ntfs', 'ext', 'fat', 'hfs']) and start > 0:
-                                                image_offsets[img] = start
+                                                image_offsets.setdefault(img, [])
+                                                if start not in image_offsets[img]:
+                                                    image_offsets[img].append(start)
                                                 _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (direct mmls)")
-                                                break
                                 else:
                                     _pless_errs = ("Invalid sector address", "No partition table found", "Unable to determine partition type")
                                     if any(s in raw_mmls.stderr for s in _pless_errs):
@@ -2609,7 +2626,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
                             # Partitionless volume: skip all -t type retries
                             if _partitionless:
-                                image_offsets[img] = 0
+                                image_offsets.setdefault(img, [])
+                                if 0 not in image_offsets[img]: image_offsets[img].append(0)
                                 _fe_log(job_id, f"  📂 Partitionless NTFS volume for {img_name}: no MBR/GPT, using offset 0")
                             # If default mmls failed, try with explicit partition table types
                             elif img not in image_offsets:
@@ -2627,9 +2645,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                     start = int(m.group(1))
                                                     desc = m.group(4).lower()
                                                     if start > 0:
-                                                        image_offsets[img] = start
+                                                        image_offsets.setdefault(img, [])
+                                                        if start not in image_offsets[img]:
+                                                            image_offsets[img].append(start)
                                                         _fe_log(job_id, f"Partition offset for {img_name}: sector {start} (mmls -t {pt_type})")
-                                                        break
                                             if img in image_offsets:
                                                 break
                                     except Exception:
@@ -2661,7 +2680,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             # Priority: 2048 (GPT/4K) → 63 (legacy DOS) → 0 (whole-disk)
                             # ────────────────────────────────────────────────────
                             for fallback_offset in COMMON_LEGACY_OFFSETS:
-                                image_offsets[img] = fallback_offset
+                                image_offsets.setdefault(img, [])
+                                if fallback_offset not in image_offsets[img]:
+                                    image_offsets[img].append(fallback_offset)
                                 _fe_log(job_id, f"Partition detection failed for {img_name}, "
                                          f"using fallback offset {fallback_offset} "
                                          f"({'GPT/4K-aligned' if fallback_offset == 2048 else 'legacy DOS/MBR' if fallback_offset == 63 else 'whole-disk'})")
@@ -2692,7 +2713,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             continue
                         # Smart fallback on crash too
                         for fallback_offset in COMMON_LEGACY_OFFSETS:
-                            image_offsets[img] = fallback_offset
+                            image_offsets.setdefault(img, [])
+                            if fallback_offset not in image_offsets[img]:
+                                image_offsets[img].append(fallback_offset)
                             _fe_log(job_id, f"  ⚠ Using fallback offset {fallback_offset} for {img_name} after crash")
                             break
 
@@ -3836,7 +3859,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             v = v.replace("{evtx}", item).replace("{syslog}", item).replace("{hive}", item).replace("{evt}", item)
                             v = v.replace("{mobile}", str(Path(item).parent)).replace("{file}", item)
                             v = v.replace("{output_dir}", output_dir).replace("{image_stem}", item_stem)
-                            v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                            v = v.replace("{offset}", str(image_offsets.get(item, [2048])[0] if isinstance(image_offsets.get(item), list) else image_offsets.get(item, 2048)))
                         params[k] = v
                     for k, v in list(params.items()):
                         if isinstance(v, str) and v.isdigit():
@@ -4897,7 +4920,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     continue
                 _ewf1 = f"{_ewf_dir}/ewf1"
                 # Detect partition offset via mmls (if not already known)
-                _offset_sectors = image_offsets.get(_ewf_img)
+                _offset_sectors_raw = image_offsets.get(_ewf_img)
+                _offset_sectors = _offset_sectors_raw[0] if isinstance(_offset_sectors_raw, list) else _offset_sectors_raw
                 if _offset_sectors is None:
                     _offset_sectors = 63  # default DOS/MBR
                     try:
@@ -5014,7 +5038,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             v = v.replace("{file}", item)
                                             v = v.replace("{output_dir}", output_dir)
                                             v = v.replace("{image_stem}", item_stem)
-                                            v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                            v = v.replace("{offset}", str(image_offsets.get(item, [2048])[0] if isinstance(image_offsets.get(item), list) else image_offsets.get(item, 2048)))
                                         params[k] = v
                                     for k, v in list(params.items()):
                                         if isinstance(v, str) and v.isdigit():
@@ -5103,7 +5127,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                         v = v.replace("{file}", item)
                                         v = v.replace("{output_dir}", output_dir)
                                         v = v.replace("{image_stem}", item_stem)
-                                        v = v.replace("{offset}", str(image_offsets.get(item, 2048)))
+                                        v = v.replace("{offset}", str(image_offsets.get(item, [2048])[0] if isinstance(image_offsets.get(item), list) else image_offsets.get(item, 2048)))
                                     params[k] = v
                                 # Convert numeric string params to int
                                 for k, v in list(params.items()):

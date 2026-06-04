@@ -474,26 +474,60 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                     pass
         return partitions
 
-    def _find_first_partition_offset(partitions: list, img_name: str) -> int:
-        """Given parsed partitions, find the best partition offset.
+    def _find_all_partition_offsets(partitions: list, img_name: str) -> list:
+        """Given parsed partitions, find ALL data partition offsets.
 
-        Priority: NTFS/ext/HFS/FAT > first non-zero partition > None
+        Returns a list of sector offsets for partitions with recognized
+        filesystems (NTFS/ext/HFS/FAT/etc).  If none match, falls back
+        to the first non-meta partition.  This ensures multi-partition
+        disks (e.g. boot + OS) are both checked for SAM/Users.
+
+        Priority: All recognized filesystem partitions > first non-zero partition > []
         """
-        # First try recognized filesystem partitions
+        offsets = []
         for start, desc in partitions:
             desc_lower = desc.lower()
             if any(fs in desc_lower for fs in ["ntfs", "ext", "hfs", "fat", "linux", "windows"]):
                 if start > 0:
-                    return start
+                    offsets.append(start)
+        if offsets:
+            return offsets
         # Fall back to first non-meta partition
         for start, desc in partitions:
             if start > 0:
-                return start
-        return None
+                return [start]
+        return []
+
+    def _find_first_partition_offset(partitions: list, img_name: str) -> int:
+        """Backward-compatible wrapper: returns first offset from _find_all_partition_offsets."""
+        all_offs = _find_all_partition_offsets(partitions, img_name)
+        return all_offs[0] if all_offs else None
+
+    def _add_image_offset(image_offsets: dict, img: str, offset) -> None:
+        """Add a partition offset to the image_offsets map (list-aware).
+
+        image_offsets now stores lists of offsets per image to support
+        multi-partition disks.  This helper handles both the initial
+        assignment and subsequent appends.
+        """
+        if img not in image_offsets or not isinstance(image_offsets.get(img), list):
+            image_offsets[img] = [offset]
+        elif offset not in image_offsets[img]:
+            image_offsets[img].append(offset)
 
     if _ckpt_phase_done(ckpt, "partition_offsets"):
         try:
-            image_offsets = json.loads(ckpt_offsets_file.read_text())
+            _raw_offsets = json.loads(ckpt_offsets_file.read_text())
+            # Normalise checkpoint: old format stored single int per image,
+            # new format stores a list of offsets per image.
+            image_offsets = {}
+            for k, v in _raw_offsets.items():
+                if k == "_candidates":
+                    image_offsets[k] = v
+                elif isinstance(v, list):
+                    image_offsets[k] = v
+                else:
+                    image_offsets[k] = [v] if v is not None else []
         except (IOError, json.JSONDecodeError):
             image_offsets = {}
         _fe_log(job_id, "  [CKPT] Skipping partition scan — loaded from checkpoint")
@@ -571,7 +605,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                         partitions = _parse_mmls_output(mmls_r.stdout)
                                         offset = _find_first_partition_offset(partitions, img_name)
                                         if offset is not None:
-                                            image_offsets[img] = offset
+                                            _add_image_offset(image_offsets, img, offset)
                                             _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls)")
                                         else:
                                             _fe_log(job_id, f"  ⚠ mmls on ewf1 returned no valid partitions for {img_name}")
@@ -588,7 +622,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                                     partitions = _parse_mmls_output(mmls_t.stdout)
                                                     offset = _find_first_partition_offset(partitions, img_name)
                                                     if offset is not None:
-                                                        image_offsets[img] = offset
+                                                        _add_image_offset(image_offsets, img, offset)
                                                         _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (ewfmount+mmls -t {pt_type})")
                                                         break
                                             except Exception:
@@ -637,7 +671,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                             img_name,
                         )
                         if offset is not None:
-                            image_offsets[img] = offset
+                            _add_image_offset(image_offsets, img, offset)
                             _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (SLEUTHKIT_Specialist)")
 
                 # ────────────────────────────────────────────────────────────
@@ -655,7 +689,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                 partitions = _parse_mmls_output(raw_mmls.stdout)
                                 offset = _find_first_partition_offset(partitions, img_name)
                                 if offset is not None:
-                                    image_offsets[img] = offset
+                                    _add_image_offset(image_offsets, img, offset)
                                     _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (direct mmls on {mmls_label})")
                                     break
                         except subprocess.TimeoutExpired:
@@ -675,7 +709,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                                     partitions = _parse_mmls_output(mmls_t.stdout)
                                     offset = _find_first_partition_offset(partitions, img_name)
                                     if offset is not None:
-                                        image_offsets[img] = offset
+                                        _add_image_offset(image_offsets, img, offset)
                                         _fe_log(job_id, f"  ✅ Partition offset for {img_name}: sector {offset} (mmls -t {pt_type})")
                                         break
                             except Exception:
@@ -712,7 +746,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                     #            0 (whole-disk filesystem)
                     # ────────────────────────────────────────────────────────
                     for fallback_offset in COMMON_LEGACY_OFFSETS:
-                        image_offsets[img] = fallback_offset
+                        _add_image_offset(image_offsets, img, fallback_offset)
                         _fe_log(job_id, f"  ⚠ Partition detection failed for {img_name}, "
                                  f"using fallback offset {fallback_offset} "
                                  f"({'GPT/4K-aligned' if fallback_offset == 2048 else 'legacy DOS/MBR' if fallback_offset == 63 else 'whole-disk'})")
@@ -735,7 +769,7 @@ def _detect_partition_offsets(disk_images: list, device_map: dict,
                         continue
                 # Smart fallback on crash too
                 for fallback_offset in COMMON_LEGACY_OFFSETS:
-                    image_offsets[img] = fallback_offset
+                    _add_image_offset(image_offsets, img, fallback_offset)
                     _fe_log(job_id, f"  ⚠ Using fallback offset {fallback_offset} for {img_name} after crash")
                     break
 
@@ -900,15 +934,19 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
     _MAX_FILES_PER_IMAGE = 50000  # Safety cap
 
     for img_path in disk_images:
-        offset = image_offsets.get(img_path)
+        offsets = image_offsets.get(img_path, [])
+        if isinstance(offsets, int):  # backward compat
+            offsets = [offsets]
         resolved = _resolve_e01_path(img_path)
         if resolved != img_path:
             _fe_log(job_id, f"  SKIP Continuation segment " + Path(img_path).name + " - handled by " + Path(resolved).name + "")
             continue
-        if offset is None:
+        if not offsets:
             _fe_log(job_id, f"  ⚠ No partition offset for {Path(img_path).name} — skipping")
             continue
 
+        # Use first offset as the primary offset for this image
+        offset = offsets[0]
         # Compute byte offset: start_sector * 512
         byte_offset = offset * 512
         img_stem = Path(img_path).stem
@@ -2984,10 +3022,13 @@ def _mount_vss_snapshots(inventory: dict, image_offsets: dict,
     _MAX_FILES_PER_VSS = 20000  # Safety cap per snapshot
 
     for img_path in disk_images:
-        offset = image_offsets.get(img_path)
-        if offset is None:
+        offsets = image_offsets.get(img_path, [])
+        if isinstance(offsets, int):
+            offsets = [offsets]
+        if not offsets:
             _fe_log(job_id, f"  ⚠ No partition offset for {Path(img_path).name} — skipping VSS")
             continue
+        offset = offsets[0]  # Use primary offset for VSS operations
 
         img_stem = Path(img_path).stem
         _fe_log(job_id, f"  📸 VSS: Checking {Path(img_path).name} for shadow copies...")
@@ -3274,209 +3315,216 @@ def extract_local_users(inventory: dict, image_offsets: dict,
     profile_meta: dict = {}   # mount_point / "Users" / <dirname> → metadata
 
     for img_path in disk_images:
-        offset = image_offsets.get(img_path)
-        if offset is None:
+        offsets = image_offsets.get(img_path, [])
+        if isinstance(offsets, int):  # backward compat with old checkpoints
+            offsets = [offsets]
+        if not offsets:
             _fe_log(job_id, f"  [USERS] ⚠ No partition offset for {Path(img_path).name} — skipping mount walk")
             continue
 
         img_stem = Path(img_path).stem
-        mount_point = Path(f"{mount_base}/{img_stem}_p{offset}")
+        for offset in offsets:
+            mount_point = Path(f"{mount_base}/{img_stem}_p{offset}")
 
-        if not mount_point.exists():
-            _fe_log(job_id, f"  [USERS] Mount point not found: {mount_point}")
-            continue
-
-        # Try common Windows profile-root paths
-        user_roots = [
-            mount_point / "Users",
-            mount_point / "users",
-            mount_point / "Documents and Settings",
-            mount_point / "documents and settings",
-        ]
-        users_dir = None
-        for ur in user_roots:
-            if ur.is_dir():
-                users_dir = ur
-                break
-
-        if users_dir is None:
-            _fe_log(job_id, f"  [USERS] No Users/Profiles directory found at {mount_point}")
-            continue
-
-        _fe_log(job_id, f"  [USERS] Scanning {users_dir} …")
-        for entry in sorted(users_dir.iterdir(), key=lambda x: x.name):
-            if not entry.is_dir():
-                continue
-            dirname = entry.name
-            # Skip system folders
-            if dirname.startswith(".") or dirname.lower() in (
-                "all users", "default user", "default", "public",
-                "administrator", "guest", "defaultaccount",
-            ):
+            if not mount_point.exists():
+                _fe_log(job_id, f"  [USERS] Mount point not found: {mount_point}")
                 continue
 
-            # Collect directory-level metadata
-            try:
-                mtime = datetime.datetime.fromtimestamp(
-                    entry.stat().st_mtime
-                ).isoformat()
-            except (OSError, ValueError):
-                mtime = ""
-            try:
-                ctime = datetime.datetime.fromtimestamp(
-                    entry.stat().st_ctime
-                ).isoformat()
-            except (OSError, ValueError):
-                ctime = ""
+            # Try common Windows profile-root paths
+            user_roots = [
+                mount_point / "Users",
+                mount_point / "users",
+                mount_point / "Documents and Settings",
+                mount_point / "documents and settings",
+            ]
+            users_dir = None
+            for ur in user_roots:
+                if ur.is_dir():
+                    users_dir = ur
+                    break
 
-            profile_meta.setdefault(mount_point, {})[dirname] = {
-                "profile_path": str(entry),
-                "last_login": mtime,
-                "created": ctime,
-            }
+            if users_dir is None:
+                _fe_log(job_id, f"  [USERS] No Users/Profiles directory found at {mount_point}")
+                continue
+
+            _fe_log(job_id, f"  [USERS] Scanning {users_dir} …")
+            for entry in sorted(users_dir.iterdir(), key=lambda x: x.name):
+                if not entry.is_dir():
+                    continue
+                dirname = entry.name
+                # Skip system folders
+                if dirname.startswith(".") or dirname.lower() in (
+                    "all users", "default user", "default", "public",
+                    "administrator", "guest", "defaultaccount",
+                ):
+                    continue
+
+                # Collect directory-level metadata
+                try:
+                    mtime = datetime.datetime.fromtimestamp(
+                        entry.stat().st_mtime
+                    ).isoformat()
+                except (OSError, ValueError):
+                    mtime = ""
+                try:
+                    ctime = datetime.datetime.fromtimestamp(
+                        entry.stat().st_ctime
+                    ).isoformat()
+                except (OSError, ValueError):
+                    ctime = ""
+
+                profile_meta.setdefault(mount_point, {})[dirname] = {
+                    "profile_path": str(entry),
+                    "last_login": mtime,
+                    "created": ctime,
+                }
 
     _fe_log(job_id, f"  [USERS] Found {sum(len(v) for v in profile_meta.values())} profile dir(s) across {len(profile_meta)} mount(s)")
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Phase B: Extract SAM hive via icat and parse with regipy
     # ------------------------------------------------------------------
     for img_path in disk_images:
-        offset = image_offsets.get(img_path)
-        if offset is None:
+        offsets = image_offsets.get(img_path, [])
+        if isinstance(offsets, int):  # backward compat
+            offsets = [offsets]
+        if not offsets:
             continue
 
-        _fe_log(job_id, f"  [USERS] Looking for SAM in {Path(img_path).name} (offset {offset}) …")
+        for offset in offsets:
+            _fe_log(job_id, f"  [USERS] Looking for SAM in {Path(img_path).name} (offset {offset}) …")
 
-        try:
-            # Use fls to find the SAM hive inode in System32/config
-            fls_cmd = ["fls", "-o", str(offset), "-r", img_path]
-            fls_result = subprocess.run(
-                fls_cmd, capture_output=True, text=True, timeout=90,
-            )
-
-            sam_inode = None
-            if fls_result.returncode == 0:
-                for line in fls_result.stdout.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    # Skip fls metadata lines
-                    if line.startswith("|") or "class" in line or "Slot" in line:
-                        continue
-                    # fls format: r/r 1234-128-3:  filename
-                    # or: d/d 5678:  dirname
-                    m = re.match(r'[d\-]/[r\-]\s+(\d+)[-:\s]', line)
-                    if not m:
-                        continue
-                    # Extract filename from end of line (after last space)
-                    name = line.split()[-1].strip('"\'') if line.split() else ""
-                    path_lower = line.lower()
-                    if name.lower() == "sam" and "config" in path_lower:
-                        sam_inode = m.group(1)
-                        _fe_log(job_id, f"  [USERS] SAM inode {sam_inode} found in {Path(img_path).name}")
-                        break
-
-            if sam_inode is None:
-                _fe_log(job_id, f"  [USERS] SAM not found via fls in {Path(img_path).name}")
-                continue
-
-            # Extract SAM binary via icat
-            icat_result = subprocess.run(
-                ["icat", "-o", str(offset), img_path, sam_inode],
-                capture_output=True, timeout=30,
-            )
-            if icat_result.returncode != 0 or len(icat_result.stdout) == 0:
-                _fe_log(job_id, f"  [USERS] icat extraction of SAM failed for {Path(img_path).name}")
-                continue
-
-            sam_raw = icat_result.stdout
-            _fe_log(job_id, f"  [USERS] Extracted SAM ({len(sam_raw)} bytes) from {Path(img_path).name}")
-
-            # Write SAM to temp file for regipy parsing
-            tmp_sam = tempfile.NamedTemporaryFile(suffix=".sam", delete=False)
             try:
-                tmp_sam.write(sam_raw)
-                tmp_sam.close()
+                # Use fls to find the SAM hive inode in System32/config
+                fls_cmd = ["fls", "-o", str(offset), "-r", img_path]
+                fls_result = subprocess.run(
+                    fls_cmd, capture_output=True, text=True, timeout=90,
+                )
 
-                # regipy — parse SAM registry hive
-                username_rids: dict = {}  # username → hex RID string
-                domain_part = ""          # e.g., "3623811015-3361044348-30300820"
+                sam_inode = None
+                if fls_result.returncode == 0:
+                    for line in fls_result.stdout.splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Skip fls metadata lines
+                        if line.startswith("|") or "class" in line or "Slot" in line:
+                            continue
+                        # fls format: r/r 1234-128-3:  filename
+                        # or: d/d 5678:  dirname
+                        m = re.match(r'[d\-]/[r\-]\s+(\d+)[-:\s]', line)
+                        if not m:
+                            continue
+                        # Extract filename from end of line (after last space)
+                        name = line.split()[-1].strip('"\'') if line.split() else ""
+                        path_lower = line.lower()
+                        if name.lower() == "sam" and "config" in path_lower:
+                            sam_inode = m.group(1)
+                            _fe_log(job_id, f"  [USERS] SAM inode {sam_inode} found in {Path(img_path).name}")
+                            break
+
+                if sam_inode is None:
+                    _fe_log(job_id, f"  [USERS] SAM not found via fls in {Path(img_path).name} at offset {offset}")
+                    continue
+
+                # Extract SAM binary via icat
+                icat_result = subprocess.run(
+                    ["icat", "-o", str(offset), img_path, sam_inode],
+                    capture_output=True, timeout=30,
+                )
+                if icat_result.returncode != 0 or len(icat_result.stdout) == 0:
+                    _fe_log(job_id, f"  [USERS] icat extraction of SAM failed for {Path(img_path).name} at offset {offset}")
+                    continue
+
+                sam_raw = icat_result.stdout
+                _fe_log(job_id, f"  [USERS] Extracted SAM ({len(sam_raw)} bytes) from {Path(img_path).name} at offset {offset}")
+
+                # Write SAM to temp file for regipy parsing
+                tmp_sam = tempfile.NamedTemporaryFile(suffix=".sam", delete=False)
                 try:
-                    import regipy.registry
-                    sam_hive = regipy.registry.RegistryHive(tmp_sam.name)
+                    tmp_sam.write(sam_raw)
+                    tmp_sam.close()
 
-                    # Walk SAM\SAM\Domains\Account\Users\Names for usernames
+                    # regipy — parse SAM registry hive
+                    username_rids: dict = {}  # username → hex RID string
+                    domain_part = ""          # e.g., "3623811015-3361044348-30300820"
                     try:
-                        names_key = sam_hive.get_key(r"SAM\Domains\Account\Users\Names")
-                        for subkey in names_key.iter_subkeys():
-                            uname = subkey.name
-                            # Default value of the subkey contains the RID as a REG_NONE binary
-                            for val in subkey.iter_values():
+                        import regipy.registry
+                        sam_hive = regipy.registry.RegistryHive(tmp_sam.name)
+
+                        # Walk SAM\SAM\Domains\Account\Users\Names for usernames
+                        try:
+                            names_key = sam_hive.get_key(r"SAM\Domains\Account\Users\Names")
+                            for subkey in names_key.iter_subkeys():
+                                uname = subkey.name
+                                # Default value of the subkey contains the RID as a REG_NONE binary
+                                for val in subkey.iter_values():
+                                    if val.name == "" or val.name is None:
+                                        # val.value is the RID binary — 4 bytes little-endian
+                                        try:
+                                            if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 4:
+                                                rid_int = int.from_bytes(val.value[:4], 'little')
+                                                if rid_int > 0:
+                                                    username_rids[uname] = f"{rid_int:08x}"
+                                        except (ValueError, TypeError):
+                                            pass
+                        except Exception as e_names:
+                            _fe_log(job_id, f"  [USERS] regipy: could not read Names key: {e_names}")
+
+                        # Extract domain identifier from SAM\SAM\Domains\Account\F
+                        try:
+                            f_key = sam_hive.get_key(r"SAM\Domains\Account\F")
+                            for val in f_key.iter_values():
                                 if val.name == "" or val.name is None:
-                                    # val.value is the RID binary — 4 bytes little-endian
-                                    try:
-                                        if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 4:
-                                            rid_int = int.from_bytes(val.value[:4], 'little')
-                                            if rid_int > 0:
-                                                username_rids[uname] = f"{rid_int:08x}"
-                                    except (ValueError, TypeError):
-                                        pass
-                    except Exception as e_names:
-                        _fe_log(job_id, f"  [USERS] regipy: could not read Names key: {e_names}")
+                                    if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 0x3C:
+                                        sub1 = int.from_bytes(val.value[0x30:0x34], 'little')
+                                        sub2 = int.from_bytes(val.value[0x34:0x38], 'little')
+                                        sub3 = int.from_bytes(val.value[0x38:0x3C], 'little')
+                                        domain_part = f"{sub1}-{sub2}-{sub3}"
+                        except Exception:
+                            pass
 
-                    # Extract domain identifier from SAM\SAM\Domains\Account\F
+                    except ImportError:
+                        _fe_log(job_id, "  [USERS] regipy not available — skipping SAM parsing")
+                        continue
+                    except Exception as e_hive:
+                        _fe_log(job_id, f"  [USERS] regipy SAM parsing failed: {e_hive}")
+                        continue
+
+                    # Build user_map entries from SAM data
+                    img_stem = Path(img_path).stem
+                    mp = Path(f"{mount_base}/{img_stem}_p{offset}")
+                    mount_profiles = profile_meta.get(mp, {})
+
+                    for username, rid_hex in username_rids.items():
+                        # Skip built-in accounts
+                        if username.lower() in (
+                            "administrator", "guest", "defaultaccount",
+                            "defaultuser0", "homegroupuser",
+                        ):
+                            continue
+
+                        # Fetch profile metadata if available
+                        pmeta = mount_profiles.get(username, {})
+                        user_map[username] = {
+                            "sid": f"S-1-5-21-{domain_part}-{rid_hex}" if domain_part else f"S-1-5-21-{rid_hex}",
+                            "profile_path": pmeta.get("profile_path", ""),
+                            "last_login": pmeta.get("last_login", ""),
+                            "created": pmeta.get("created", ""),
+                        }
+
+                    _fe_log(job_id, f"  [USERS] Parsed {len(username_rids)} user(s) from SAM in {Path(img_path).name} at offset {offset}")
+
+                finally:
+                    # Always clean up temp SAM file
                     try:
-                        f_key = sam_hive.get_key(r"SAM\Domains\Account\F")
-                        for val in f_key.iter_values():
-                            if val.name == "" or val.name is None:
-                                if isinstance(val.value, (bytes, bytearray)) and len(val.value) >= 0x3C:
-                                    sub1 = int.from_bytes(val.value[0x30:0x34], 'little')
-                                    sub2 = int.from_bytes(val.value[0x34:0x38], 'little')
-                                    sub3 = int.from_bytes(val.value[0x38:0x3C], 'little')
-                                    domain_part = f"{sub1}-{sub2}-{sub3}"
-                    except Exception:
+                        os.unlink(tmp_sam.name)
+                    except OSError:
                         pass
 
-                except ImportError:
-                    _fe_log(job_id, "  [USERS] regipy not available — skipping SAM parsing")
-                    continue
-                except Exception as e_hive:
-                    _fe_log(job_id, f"  [USERS] regipy SAM parsing failed: {e_hive}")
-                    continue
-
-                # Build user_map entries from SAM data
-                img_stem = Path(img_path).stem
-                mp = Path(f"{mount_base}/{img_stem}_p{offset}")
-                mount_profiles = profile_meta.get(mp, {})
-
-                for username, rid_hex in username_rids.items():
-                    # Skip built-in accounts
-                    if username.lower() in (
-                        "administrator", "guest", "defaultaccount",
-                        "defaultuser0", "homegroupuser",
-                    ):
-                        continue
-
-                    # Fetch profile metadata if available
-                    pmeta = mount_profiles.get(username, {})
-                    user_map[username] = {
-                        "sid": f"S-1-5-21-{domain_part}-{rid_hex}" if domain_part else f"S-1-5-21-{rid_hex}",
-                        "profile_path": pmeta.get("profile_path", ""),
-                        "last_login": pmeta.get("last_login", ""),
-                        "created": pmeta.get("created", ""),
-                    }
-
-                _fe_log(job_id, f"  [USERS] Parsed {len(username_rids)} user(s) from SAM in {Path(img_path).name}")
-
-            finally:
-                # Always clean up temp SAM file
-                try:
-                    os.unlink(tmp_sam.name)
-                except OSError:
-                    pass
-
-        except Exception as e:
-            _fe_log(job_id, f"  [USERS] Error processing SAM in {Path(img_path).name}: {e}")
+            except Exception as e:
+                _fe_log(job_id, f"  [USERS] Error processing SAM in {Path(img_path).name} at offset {offset}: {e}")
 
     # Add any profile directories that didn't have SAM entries (orphaned profiles)
     for mp, profiles in profile_meta.items():
@@ -5363,8 +5411,12 @@ def recover_formatted_fat(
                     _fe_log(job_id, f"  [FAT-RECOV] fsstat failed at offset {offset}: {exc}")
 
             # Also check the device_map offset if we already have it
-            if not fs_type and img in image_offsets and image_offsets[img] > 0:
-                offset = image_offsets[img]
+            if not fs_type and img in image_offsets:
+                _img_offs = image_offsets[img]
+                if isinstance(_img_offs, list) and any(o > 0 for o in _img_offs):
+                    offset = [o for o in _img_offs if o > 0][0]
+                elif isinstance(_img_offs, int) and _img_offs > 0:
+                    offset = _img_offs
                 if _fsstat:
                     try:
                         fs_proc = subprocess.run(
