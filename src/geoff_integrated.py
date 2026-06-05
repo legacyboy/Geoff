@@ -176,6 +176,12 @@ _gr.remnux_orchestrator = remnux_orchestrator
 _gr.geoff_critic = geoff_critic
 _gr.geoff_forensicator = geoff_forensicator
 
+# Initialize SettingsManager, apply persisted settings, wire into routes
+from geoff_settings import SettingsManager as _SettingsManager
+_settings_manager = _SettingsManager()
+_settings_manager.apply_to_config()
+_gr.settings_manager = _settings_manager
+
 register_routes(app)
 
 

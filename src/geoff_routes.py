@@ -32,6 +32,7 @@ from markupsafe import escape as _html_escape
 # Direct imports from sibling modules (no circular deps with geoff_integrated.py)
 # ---------------------------------------------------------------------------
 import geoff_config
+import geoff_settings as _geoff_settings
 from geoff_config import (
     GEOFF_API_KEY, EVIDENCE_BASE_DIR, CASES_WORK_DIR,
     OLLAMA_API_KEY, AGENT_MODELS, PLAYBOOK_NAMES,
@@ -58,6 +59,7 @@ orchestrator = None        # ExtendedOrchestrator instance
 remnux_orchestrator = None  # REMNUX_Orchestrator instance
 geoff_critic = None         # GeoffCritic instance
 geoff_forensicator = None   # ForensicatorAgent instance
+settings_manager = None    # SettingsManager instance
 
 
 # ---------------------------------------------------------------------------
@@ -1744,6 +1746,48 @@ def _fallback_answer(question, report):
     return "LLM unavailable. Check the report JSON for details."
 
 
+
+# ---------------------------------------------------------------------------
+# Settings routes
+# ---------------------------------------------------------------------------
+
+def api_get_settings():
+    """GET /api/settings — Return current model selections and masked API keys."""
+    if settings_manager is None:
+        return jsonify({'error': 'Settings manager not initialized'}), 503
+    return jsonify(settings_manager.get_settings())
+
+
+def api_update_models():
+    """POST /api/settings/models — Update model selections at runtime."""
+    if settings_manager is None:
+        return jsonify({'error': 'Settings manager not initialized'}), 503
+    data = request.json or {}
+    manager = data.get('manager') or None
+    forensicator = data.get('forensicator') or None
+    critic = data.get('critic') or None
+    if not any([manager, forensicator, critic]):
+        return jsonify({'error': 'No model fields provided'}), 400
+    settings_manager.update_models(manager=manager, forensicator=forensicator, critic=critic)
+    settings_manager.apply_to_config()
+    return jsonify({'status': 'ok', 'models': settings_manager.models})
+
+
+def api_update_keys():
+    """POST /api/settings/keys — Save API keys server-side."""
+    if settings_manager is None:
+        return jsonify({'error': 'Settings manager not initialized'}), 503
+    data = request.json or {}
+    settings_manager.update_keys(
+        openai_key=data.get('openai_key'),
+        claude_key=data.get('claude_key'),
+        ollama_key=data.get('ollama_key'),
+        deepseek_key=data.get('deepseek_key'),
+    )
+    settings_manager.apply_to_config()
+    return jsonify({'status': 'ok'})
+
+
 def register_routes(app):
     """Register all route handlers with the Flask app.
 
@@ -1788,3 +1832,6 @@ def register_routes(app):
     app.add_url_rule('/reports/<case_dir>/chat', 'report_chat', _require_auth(report_chat), methods=['POST'])
     app.add_url_rule('/reports/<case_dir>/history', 'report_history', _require_auth(report_history))
     app.add_url_rule('/reports/execution/<case_id>', 'get_execution_log', _require_auth(get_execution_log))
+    app.add_url_rule('/api/settings', 'api_get_settings', _require_auth(api_get_settings))
+    app.add_url_rule('/api/settings/models', 'api_update_models', _require_auth(api_update_models), methods=['POST'])
+    app.add_url_rule('/api/settings/keys', 'api_update_keys', _require_auth(api_update_keys), methods=['POST'])

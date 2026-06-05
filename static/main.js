@@ -593,16 +593,19 @@
     const evidenceView = $("tab-evidence");
     const reportsView = $("tab-reports");
     const executionView = $("tab-execution");
+    const settingsView = $("tab-settings");
 
     if (consoleView) consoleView.style.display = (tab === 'console') ? 'flex' : 'none';
     if (evidenceView) { evidenceView.classList.toggle('active', tab === 'evidence'); }
     if (reportsView) { reportsView.classList.toggle('active', tab === 'reports'); }
     if (executionView) { executionView.classList.toggle('active', tab === 'execution'); }
+    if (settingsView) { settingsView.classList.toggle('active', tab === 'settings'); }
 
     // Load data on first view
     if (tab === 'evidence') loadEvidencePanel();
     if (tab === 'reports') loadReportsPanel();
     if (tab === 'execution') loadExecutionPanel();
+    if (tab === 'settings') loadSettingsPanel();
   }
 
   /* ============================================================
@@ -844,6 +847,8 @@
   if (navEvidence) navEvidence.onclick = (e) => { e.preventDefault(); switchTab('evidence'); };
   if (navReports) navReports.onclick = (e) => { e.preventDefault(); switchTab('reports'); };
   if (navExecution) navExecution.onclick = (e) => { e.preventDefault(); switchTab('execution'); };
+  const navSettings = $("nav-settings");
+  if (navSettings) navSettings.onclick = (e) => { e.preventDefault(); switchTab('settings'); };
 
   // Job banner resume button
   const jbResume = $("jb-resume");

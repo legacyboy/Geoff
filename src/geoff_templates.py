@@ -274,6 +274,26 @@ HTML_TEMPLATE = r"""
   .job-banner .liveflag .d { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); animation: pulse 1.1s infinite; }
   .job-banner .jb-info { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--g-text-dim); }
   .job-banner .jb-pct { font-family: var(--font-mono); font-size: 13px; color: var(--g-blue-soft); font-weight: 600; }
+  /* ---- settings panel ---- */
+  .settings-section { margin-bottom: 32px; }
+  .settings-section h3 { font-size: 13px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--g-text-mute); margin: 0 0 14px; border-bottom: 1px solid var(--g-border-soft); padding-bottom: 8px; }
+  .settings-row { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+  .settings-row label { width: 160px; font-size: 12.5px; color: var(--g-text-dim); flex-shrink: 0; }
+  .settings-select, .settings-input {
+    flex: 1; max-width: 360px; background: var(--g-surface-2); border: 1px solid var(--g-border);
+    border-radius: var(--radius-sm); color: var(--g-text); font-family: var(--font-mono); font-size: 12.5px;
+    padding: 8px 12px; outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .settings-select:focus, .settings-input:focus { border-color: var(--g-blue); box-shadow: var(--glow-blue); }
+  .settings-save-btn {
+    font-size: 11.5px; padding: 7px 16px; cursor: pointer;
+    background: rgba(76,141,255,.12); border: 1px solid rgba(76,141,255,.35);
+    border-radius: var(--radius-sm); color: var(--g-blue-soft); transition: all .14s;
+  }
+  .settings-save-btn:hover { background: rgba(76,141,255,.22); border-color: var(--g-blue); }
+  .settings-save-btn.saved { background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.45); color: #4ade80; }
+  .settings-hint { font-size: 11px; color: var(--g-text-faint); margin-top: 4px; }
+
 </style>
 </head>
 <body>
@@ -290,6 +310,7 @@ HTML_TEMPLATE = r"""
       <a class="navlink active" data-tab="console" id="nav-console">Find Evil</a>
       <a class="navlink" data-tab="evidence" id="nav-evidence">Evidence</a>
       <a class="navlink" data-tab="reports" id="nav-reports" href="/reports/narrative">Reports</a>
+      <a class="navlink" data-tab="settings" id="nav-settings">&#9881; Settings</a>
     </nav>
     <div class="spacer"></div>
     <div class="online"><span class="dot"></span>ENGINE ONLINE</div>
@@ -433,10 +454,160 @@ HTML_TEMPLATE = r"""
     </div>
   </div>
 
+  <!-- Tab: Settings -->
+  <div class="panel-view" id="tab-settings">
+    <div class="panel-head">
+      <h2>&#9881; Settings</h2>
+    </div>
+    <div class="panel-body">
+
+      <!-- Model Selection -->
+      <div class="settings-section">
+        <h3>Agent Models</h3>
+        <div class="settings-row">
+          <label>Manager Model</label>
+          <select class="settings-select" id="sel-manager"></select>
+        </div>
+        <div class="settings-row">
+          <label>Forensicator Model</label>
+          <select class="settings-select" id="sel-forensicator"></select>
+        </div>
+        <div class="settings-row">
+          <label>Critic Model</label>
+          <select class="settings-select" id="sel-critic"></select>
+        </div>
+        <div class="settings-row">
+          <label></label>
+          <button class="settings-save-btn" id="save-models-btn">Save Models</button>
+          <span class="settings-hint" id="models-feedback"></span>
+        </div>
+      </div>
+
+      <!-- API Keys -->
+      <div class="settings-section">
+        <h3>API Keys</h3>
+        <div class="settings-row">
+          <label>OpenAI API Key</label>
+          <input class="settings-input" type="password" id="key-openai" placeholder="sk-…" autocomplete="new-password">
+        </div>
+        <div class="settings-row">
+          <label>Anthropic / Claude Key</label>
+          <input class="settings-input" type="password" id="key-claude" placeholder="sk-ant-…" autocomplete="new-password">
+        </div>
+        <div class="settings-row">
+          <label>Ollama API Key</label>
+          <input class="settings-input" type="password" id="key-ollama" placeholder="ollama-…" autocomplete="new-password">
+        </div>
+        <div class="settings-row">
+          <label>DeepSeek API Key</label>
+          <input class="settings-input" type="password" id="key-deepseek" placeholder="sk-…" autocomplete="new-password">
+        </div>
+        <div class="settings-row">
+          <label></label>
+          <button class="settings-save-btn" id="save-keys-btn">Save All Keys</button>
+          <span class="settings-hint" id="keys-feedback"></span>
+        </div>
+        <p class="settings-hint" style="margin-top:8px;">Keys are stored server-side with 0600 permissions. Only the last 4 characters are shown after saving.</p>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
 <script>window.GEOFF_EVIDENCE_BASE_DIR = '<!-- GEOFF_EVIDENCE_BASE_DIR -->';</script>
 <script src="/static/main.js"></script>
+<script>
+(function() {
+  function $(id){return document.getElementById(id);}
+/* ============================================================
+     SETTINGS TAB
+     ============================================================ */
+  let _settingsLoaded = false;
+
+  function loadSettingsPanel() {
+    if (_settingsLoaded) return;
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        _settingsLoaded = true;
+        const opts = data.model_options || [];
+        const models = data.models || {};
+        const keys = data.keys || {};
+
+        ['manager', 'forensicator', 'critic'].forEach(role => {
+          const sel = document.getElementById('sel-' + role);
+          if (!sel) return;
+          sel.innerHTML = '';
+          opts.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o; opt.textContent = o;
+            if (o === models[role]) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          // If current value not in list, add it
+          if (models[role] && !opts.includes(models[role])) {
+            const opt = document.createElement('option');
+            opt.value = models[role]; opt.textContent = models[role]; opt.selected = true;
+            sel.insertBefore(opt, sel.firstChild);
+          }
+        });
+
+        // Show masked key values as placeholder
+        const keyMap = {openai: 'key-openai', claude: 'key-claude', ollama: 'key-ollama', deepseek: 'key-deepseek'};
+        Object.entries(keyMap).forEach(([k, id]) => {
+          const el = document.getElementById(id);
+          if (el && keys[k + '_key']) el.placeholder = keys[k + '_key'];
+        });
+      })
+      .catch(() => {});
+  }
+
+  function flashSaved(btnId, feedbackId, msg) {
+    const btn = document.getElementById(btnId);
+    const fb = document.getElementById(feedbackId);
+    if (btn) { btn.textContent = 'Saved ✓'; btn.classList.add('saved'); setTimeout(() => { btn.textContent = btnId === 'save-models-btn' ? 'Save Models' : 'Save All Keys'; btn.classList.remove('saved'); }, 2000); }
+    if (fb) { fb.textContent = msg || ''; }
+  }
+
+  const saveModelsBtn = $('save-models-btn');
+  if (saveModelsBtn) saveModelsBtn.onclick = () => {
+    const body = {
+      manager: document.getElementById('sel-manager')?.value,
+      forensicator: document.getElementById('sel-forensicator')?.value,
+      critic: document.getElementById('sel-critic')?.value,
+    };
+    fetch('/api/settings/models', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+      .then(r => r.json())
+      .then(d => { if (d.status === 'ok') flashSaved('save-models-btn', 'models-feedback', 'Models updated'); else document.getElementById('models-feedback').textContent = d.error || 'Error'; })
+      .catch(() => { document.getElementById('models-feedback').textContent = 'Network error'; });
+  };
+
+  const saveKeysBtn = $('save-keys-btn');
+  if (saveKeysBtn) saveKeysBtn.onclick = () => {
+    const body = {
+      openai_key: document.getElementById('key-openai')?.value || undefined,
+      claude_key: document.getElementById('key-claude')?.value || undefined,
+      ollama_key: document.getElementById('key-ollama')?.value || undefined,
+      deepseek_key: document.getElementById('key-deepseek')?.value || undefined,
+    };
+    // Only send non-empty values
+    Object.keys(body).forEach(k => { if (!body[k]) delete body[k]; });
+    if (Object.keys(body).length === 0) { document.getElementById('keys-feedback').textContent = 'Enter at least one key'; return; }
+    fetch('/api/settings/keys', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'ok') {
+          flashSaved('save-keys-btn', 'keys-feedback', 'Keys saved');
+          _settingsLoaded = false; // force reload to update placeholders
+          loadSettingsPanel();
+          ['key-openai','key-claude','key-ollama','key-deepseek'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        } else { document.getElementById('keys-feedback').textContent = d.error || 'Error'; }
+      })
+      .catch(() => { document.getElementById('keys-feedback').textContent = 'Network error'; });
+  };
+})();
+</script>
 </body>
 </html>
 """
