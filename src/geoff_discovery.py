@@ -1026,6 +1026,19 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                                     if fs_name in desc_lower:
                                         fs_type = fs_name
                                         break
+                                # GPT descriptions often don't contain fs names, so detect via fsstat
+                                if not fs_type and start_sector > 0:
+                                    try:
+                                        fs_r = subprocess.run(
+                                            ["fsstat", "-o", str(start_sector), _mmls_target],
+                                            capture_output=True, text=True, timeout=15
+                                        )
+                                        if fs_r.returncode == 0 and "File System Type:" in fs_r.stdout:
+                                            fs_match = re.search(r"File System Type:\s+(\S+)", fs_r.stdout)
+                                            if fs_match:
+                                                fs_type = fs_match.group(1).lower()
+                                    except Exception:
+                                        pass
                                 all_partitions.append((start_sector, desc, fs_type))
                     if all_partitions:
                         _fe_log(job_id, f"  📋 mmls ({_mmls_label}): {len(all_partitions)} partition(s) found for {Path(img_path).name}")
@@ -1056,8 +1069,10 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
         mount_offsets = []
         if all_partitions:
             for ps, pd, pf in all_partitions:
-                if pf:  # Only mount partitions with recognized filesystems
-                    mount_offsets.append((ps * 512, pd))
+                # Mount all data partitions (skip EFI systems that fail mount)
+                # GPT descriptions don't always contain filesystem names,
+                # so we try mounting and fall back to sleuthkit walk on failure
+                mount_offsets.append((ps * 512, pd))
         if not mount_offsets:
             # Fallback: just the original offset
             mount_offsets.append((byte_offset, "primary"))
@@ -1197,6 +1212,9 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                     except Exception as _afuse_e:
                         _fe_log(job_id, f"  ⚠ apfs-fuse error: {_afuse_e}")
 
+        _img_partition_ok = False
+        file_count = 0
+        classified_count = 0
         for pidx, (part_byte_offset, part_desc) in enumerate(mount_offsets):
             mount_point = f"{mount_base}/{img_stem}_p{part_byte_offset // 512}"
 
@@ -1497,218 +1515,218 @@ def _mount_and_discover(inventory: dict, image_offsets: dict,
                     _mount_err_msg = str(mount_exc)[:300]
                     _fe_log(job_id, f"  ✗ Mount error for {Path(img_path).name}: {mount_exc}")
     
-        if not mounted and not fls_image_processed:
-            # LLM-powered self-healing for pipeline infrastructure failures
-            # (Skip self-heal when fls successfully found & classified items)
-            if _attempt_heal is not None:
-                healed = _attempt_heal(
-                    module="system",
-                    function="mount_disk",
-                    params={
-                        "img_path": img_path,
-                        "offset": offset,
-                        "mount_point": mount_point,
-                    },
-                    error_result={"status": "error", "stderr": _mount_err_msg or "Unknown mount error"},
-                    job_id=job_id,
-                    evidence_file=img_path,
-                    evidence_type="disk_image",
-                )
-                if healed:
-                    if healed.get("status") in ("skipped",) or healed.get("_heal_skipped"):
-                        _fe_log(job_id, f"  ⎘ [HEAL] Skipped {Path(img_path).name}: {healed.get('_skip_reason', 'LLM skip')}")
-                    elif healed.get("status") == "success" and healed.get("_self_healed"):
-                        _fe_log(job_id, f"  ✓ [HEAL] {Path(img_path).name} mount healed: {healed.get('_heal_fix_type', 'unknown')}")
-            continue
+            if not mounted and not fls_image_processed:
+                # LLM-powered self-healing for pipeline infrastructure failures
+                # (Skip self-heal when fls successfully found & classified items)
+                if _attempt_heal is not None:
+                    healed = _attempt_heal(
+                        module="system",
+                        function="mount_disk",
+                        params={
+                            "img_path": img_path,
+                            "offset": offset,
+                            "mount_point": mount_point,
+                        },
+                        error_result={"status": "error", "stderr": _mount_err_msg or "Unknown mount error"},
+                        job_id=job_id,
+                        evidence_file=img_path,
+                        evidence_type="disk_image",
+                    )
+                    if healed:
+                        if healed.get("status") in ("skipped",) or healed.get("_heal_skipped"):
+                            _fe_log(job_id, f"  ⎘ [HEAL] Skipped {Path(img_path).name}: {healed.get('_skip_reason', 'LLM skip')}")
+                        elif healed.get("status") == "success" and healed.get("_self_healed"):
+                            _fe_log(job_id, f"  ✓ [HEAL] {Path(img_path).name} mount healed: {healed.get('_heal_fix_type', 'unknown')}")
+                continue
 
-        # When mount failed but fls found items, extract via icat instead of os.walk
-        if not mounted and fls_image_processed:
-            _fe_log(job_id, f"  \U0001f50d Fls found items - extracting via icat for {Path(img_path).name}")
-            ewf_raw_dir = f"/tmp/geoff_ewf_{os.getpid()}"
-            os.makedirs(ewf_raw_dir, exist_ok=True)
-            # E02/E03 segments need the base E01 file for ewfmount
-            mount_img = img_path
-            for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
-                if mount_img.endswith(seg):
-                    base = mount_img[:-4]
-                    e01_path = base + ".E01"
-                    if os.path.isfile(e01_path):
-                        mount_img = e01_path
-                    break
-            ewf_sub = subprocess.run(["ewfmount", mount_img, ewf_raw_dir], capture_output=True, text=True, timeout=60)
-            if ewf_sub.returncode == 0 and os.path.isfile(f"{ewf_raw_dir}/ewf1"):
-                sk_dev = f"{ewf_raw_dir}/ewf1"
-                extract_dir = Path(CASES_WORK_DIR) / "extractions" / f"geoff_extract_{case_name}_{Path(img_path).stem}"
-                os.makedirs(str(extract_dir), exist_ok=True)
-                for ev_type, paths in new_evidence.items():
-                    if not isinstance(paths, (list, set)):
-                        continue
-                    for ref in list(paths):
-                        if "::" not in str(ref):
+            # When mount failed but fls found items, extract via icat instead of os.walk
+            if not mounted and fls_image_processed:
+                _fe_log(job_id, f"  \U0001f50d Fls found items - extracting via icat for {Path(img_path).name}")
+                ewf_raw_dir = f"/tmp/geoff_ewf_{os.getpid()}"
+                os.makedirs(ewf_raw_dir, exist_ok=True)
+                # E02/E03 segments need the base E01 file for ewfmount
+                mount_img = img_path
+                for seg in [".E02", ".E03", ".E04", ".E05", ".e02", ".e03", ".e04", ".e05"]:
+                    if mount_img.endswith(seg):
+                        base = mount_img[:-4]
+                        e01_path = base + ".E01"
+                        if os.path.isfile(e01_path):
+                            mount_img = e01_path
+                        break
+                ewf_sub = subprocess.run(["ewfmount", mount_img, ewf_raw_dir], capture_output=True, text=True, timeout=60)
+                if ewf_sub.returncode == 0 and os.path.isfile(f"{ewf_raw_dir}/ewf1"):
+                    sk_dev = f"{ewf_raw_dir}/ewf1"
+                    extract_dir = Path(CASES_WORK_DIR) / "extractions" / f"geoff_extract_{case_name}_{Path(img_path).stem}"
+                    os.makedirs(str(extract_dir), exist_ok=True)
+                    for ev_type, paths in new_evidence.items():
+                        if not isinstance(paths, (list, set)):
                             continue
-                        fname = str(ref).rsplit("::", 1)[-1]
-                        ext = Path(fname).suffix.lower()
-                        if ext not in (".pst", ".ost", ".dbx", ".eml", ".mbox", ".msg", ".evtx", ".evt", ".sqlite", ".db"):
-                            if not any(x in fname.lower() for x in ["places", "cookies", "history", "bookmark", "favicon"]):
+                        for ref in list(paths):
+                            if "::" not in str(ref):
                                 continue
-                        fls_find = subprocess.run(["fls", "-o", str(offset), sk_dev, "/"], capture_output=True, text=True, timeout=60)
-                        for fl in fls_find.stdout.split("\n"):
-                            if Path(fname).name in fl:
-                                fl_parts = fl.split()
-                                if len(fl_parts) >= 2:
-                                    inode = fl_parts[0].strip("*+-$").split("-")[0]
-                                    if inode.lstrip("0123456789") == "":
-                                        out_name = Path(fname).name
-                                        # readpst outputs files without .eml extension - add it
-                                        if ext in (".pst", ".ost") and not out_name.lower().endswith(".eml"):
-                                            out_name = Path(fname).stem + ".eml"
-                                        out_path = os.path.join(str(extract_dir), out_name)
-                                        with open(out_path, "wb") as fh:
-                                            subprocess.run(["icat", "-o", str(offset), sk_dev, inode], stdout=fh, stderr=subprocess.DEVNULL, timeout=600)
-                                        if os.path.getsize(out_path) > 100:
-                                            _fe_log(job_id, f"  \U0001f4e5 Extracted {Path(fname).name} ({os.path.getsize(out_path)} bytes)")
-                                            if out_path not in inventory.get("other_files", []):
-                                                inventory.setdefault("other_files", []).append(out_path)
-                                        break
-            images_processed += 1
-            continue
+                            fname = str(ref).rsplit("::", 1)[-1]
+                            ext = Path(fname).suffix.lower()
+                            if ext not in (".pst", ".ost", ".dbx", ".eml", ".mbox", ".msg", ".evtx", ".evt", ".sqlite", ".db"):
+                                if not any(x in fname.lower() for x in ["places", "cookies", "history", "bookmark", "favicon"]):
+                                    continue
+                            fls_find = subprocess.run(["fls", "-o", str(offset), sk_dev, "/"], capture_output=True, text=True, timeout=60)
+                            for fl in fls_find.stdout.split("\n"):
+                                if Path(fname).name in fl:
+                                    fl_parts = fl.split()
+                                    if len(fl_parts) >= 2:
+                                        inode = fl_parts[0].strip("*+-$").split("-")[0]
+                                        if inode.lstrip("0123456789") == "":
+                                            out_name = Path(fname).name
+                                            # readpst outputs files without .eml extension - add it
+                                            if ext in (".pst", ".ost") and not out_name.lower().endswith(".eml"):
+                                                out_name = Path(fname).stem + ".eml"
+                                            out_path = os.path.join(str(extract_dir), out_name)
+                                            with open(out_path, "wb") as fh:
+                                                subprocess.run(["icat", "-o", str(offset), sk_dev, inode], stdout=fh, stderr=subprocess.DEVNULL, timeout=600)
+                                            if os.path.getsize(out_path) > 100:
+                                                _fe_log(job_id, f"  \U0001f4e5 Extracted {Path(fname).name} ({os.path.getsize(out_path)} bytes)")
+                                                if out_path not in inventory.get("other_files", []):
+                                                    inventory.setdefault("other_files", []).append(out_path)
+                                            break
+                _img_partition_ok = True  # track at image level
+                continue
 
-        # --- Walk the mounted filesystem ---
-        # --- Walk the mounted filesystem ---
-        file_count = 0
-        classified_count = 0
+            # --- Walk the mounted filesystem ---
+            # --- Walk the mounted filesystem ---
 
-        try:
-            for root, dirs, files in os.walk(mount_point):
-                # Skip very deep recursion
-                for f in files:
-                    full_path = os.path.join(root, f)
-                    if not os.path.isfile(full_path):
-                        continue
+            try:
+                for root, dirs, files in os.walk(mount_point):
+                    # Skip very deep recursion
+                    for f in files:
+                        full_path = os.path.join(root, f)
+                        if not os.path.isfile(full_path):
+                            continue
 
-                    file_count += 1
+                        file_count += 1
+                        if file_count > _MAX_FILES_PER_IMAGE:
+                            break
+
+                        # --- Classify this file ---
+                        name = os.path.basename(full_path)
+                        name_lower = name.lower()
+                        ext_lower = os.path.splitext(name_lower)[1]
+                        path_lower = full_path.lower()
+
+                        # Use content-type detection for known files
+                        header_type = _detect_file_type_from_header(full_path)
+
+                        matched_ev_type = None
+                        matched_filename = name
+
+                        # Primary: content-based detection
+                        if header_type == "ewf_disk_image" or header_type in ("vmdk_image", "vhd_image", "qcow2_image", "iso_image", "dmg_image"):
+                            matched_ev_type = "nested_disk_images"
+                        elif header_type == "registry_hive":
+                            matched_ev_type = "registry_hives"
+                        elif header_type == "pcap":
+                            matched_ev_type = "archives_inside"  # unexpected inside image, treat as archive
+                        elif header_type == "memory_dump":
+                            matched_ev_type = "memory_dumps_inside"
+
+                        # Secondary: extension-based
+                        if matched_ev_type is None:
+                            if ext_lower in disk_ext:
+                                matched_ev_type = "nested_disk_images"
+                            elif ext_lower in mem_ext:
+                                matched_ev_type = "memory_dumps_inside"
+                            elif ext_lower in email_ext:
+                                matched_ev_type = "email_files"
+                            elif ext_lower in archive_ext:
+                                matched_ev_type = "archives_inside"
+                            elif ext_lower in evtx_ext:
+                                matched_ev_type = "evtx_logs"
+                            elif ext_lower in evt_ext:
+                                matched_ev_type = "evt_logs"
+                            elif ext_lower in hive_ext:
+                                matched_ev_type = "registry_hives"
+                            elif ext_lower in doc_ext:
+                                matched_ev_type = "documents"
+
+                        # Tertiary: filename patterns
+                        if matched_ev_type is None:
+                            if name_lower in _memory_file_names:
+                                matched_ev_type = "memory_dumps_inside"
+                            elif name_lower in registry_names:
+                                matched_ev_type = "registry_hives"
+                            elif name_lower in _browser_filenames:
+                                matched_ev_type = "browser_artifacts"
+                            elif (ext_lower in ('.sqlite', '.sqlite3', '.db', '.db3')
+                                  and name_lower not in registry_names):
+                                matched_ev_type = "sqlite_dbs"
+
+                        # Quaternary: path-context patterns for browser artifacts,
+                        # registry hives, and event logs
+                        if matched_ev_type is None:
+                            if any(pat in path_lower for pat in (
+                                '/chrome/user data/', '/google/chrome/', '/chromium/',
+                                '/firefox/profiles/', '/mozilla/firefox/',
+                                '/microsoft/edge/', '/microsoftedge/',
+                                '/brave/', '/opera/', '/vivaldi/',
+                                '/safari/', '/library/safari/',
+                                '/appdata/local/google/chrome/',
+                                '/appdata/roaming/mozilla/firefox/',
+                                '/.config/google-chrome/', '/.config/chromium/',
+                                '/.mozilla/firefox/', '/.config/brave/',
+                            )):
+                                matched_ev_type = "browser_artifacts"
+                            elif any(pat in path_lower for pat in (
+                                '/system32/config/software',
+                                '/system32/config/system',
+                                '/system32/config/sam',
+                                '/system32/config/security',
+                                '/system32/config/default',
+                                '/system32/config/components',
+                                '/system32/config/bcd-template',
+                                '/system32/config/drivers',
+                                '/users/', '/documents and settings/',
+                            )) and name_lower in registry_names:
+                                matched_ev_type = "registry_hives"
+                            elif any(pat in path_lower for pat in (
+                                '/winevt/logs/', '/system32/config/appevent',
+                                '/system32/config/secevent', '/system32/config/sysevent',
+                            )):
+                                matched_ev_type = "evtx_logs" if '/winevt/logs/' in path_lower else "evt_logs"
+                            elif any(pat in path_lower for pat in (
+                                'outlook', 'thunderbird', 'evolution', 'kmail',
+                                'mutt', 'maildir', 'windows mail', 'outlook express',
+                                '/mail/', '/imapmail/', '/maildir/',
+                                '/appdata/local/microsoft/outlook/',
+                                '/appdata/roaming/thunderbird/',
+                                '/.thunderbird/', '/.local/share/evolution/',
+                                '/library/mail/',
+                            )):
+                                matched_ev_type = "email_files"
+
+                        if matched_ev_type and matched_ev_type in new_evidence:
+                            # Use real path: fill_path for inventory
+                            if full_path not in new_evidence[matched_ev_type]:
+                                new_evidence[matched_ev_type].append(full_path)
+                            nuclear_findings.append({
+                                "image": img_path,
+                                "mount_point": mount_point,
+                                "internal_path": os.path.relpath(full_path, mount_point),
+                                "full_path": full_path,
+                                "filename": matched_filename,
+                                "evidence_type": matched_ev_type,
+                            })
+                            classified_count += 1
+
                     if file_count > _MAX_FILES_PER_IMAGE:
+                        _fe_log(job_id, f"  ⚠ Capped at {_MAX_FILES_PER_IMAGE} files for {Path(img_path).name}")
                         break
 
-                    # --- Classify this file ---
-                    name = os.path.basename(full_path)
-                    name_lower = name.lower()
-                    ext_lower = os.path.splitext(name_lower)[1]
-                    path_lower = full_path.lower()
+            except Exception as walk_exc:
+                _fe_log(job_id, f"  ✗ Walk error for {mount_point}: {walk_exc}")
 
-                    # Use content-type detection for known files
-                    header_type = _detect_file_type_from_header(full_path)
-
-                    matched_ev_type = None
-                    matched_filename = name
-
-                    # Primary: content-based detection
-                    if header_type == "ewf_disk_image" or header_type in ("vmdk_image", "vhd_image", "qcow2_image", "iso_image", "dmg_image"):
-                        matched_ev_type = "nested_disk_images"
-                    elif header_type == "registry_hive":
-                        matched_ev_type = "registry_hives"
-                    elif header_type == "pcap":
-                        matched_ev_type = "archives_inside"  # unexpected inside image, treat as archive
-                    elif header_type == "memory_dump":
-                        matched_ev_type = "memory_dumps_inside"
-
-                    # Secondary: extension-based
-                    if matched_ev_type is None:
-                        if ext_lower in disk_ext:
-                            matched_ev_type = "nested_disk_images"
-                        elif ext_lower in mem_ext:
-                            matched_ev_type = "memory_dumps_inside"
-                        elif ext_lower in email_ext:
-                            matched_ev_type = "email_files"
-                        elif ext_lower in archive_ext:
-                            matched_ev_type = "archives_inside"
-                        elif ext_lower in evtx_ext:
-                            matched_ev_type = "evtx_logs"
-                        elif ext_lower in evt_ext:
-                            matched_ev_type = "evt_logs"
-                        elif ext_lower in hive_ext:
-                            matched_ev_type = "registry_hives"
-                        elif ext_lower in doc_ext:
-                            matched_ev_type = "documents"
-
-                    # Tertiary: filename patterns
-                    if matched_ev_type is None:
-                        if name_lower in _memory_file_names:
-                            matched_ev_type = "memory_dumps_inside"
-                        elif name_lower in registry_names:
-                            matched_ev_type = "registry_hives"
-                        elif name_lower in _browser_filenames:
-                            matched_ev_type = "browser_artifacts"
-                        elif (ext_lower in ('.sqlite', '.sqlite3', '.db', '.db3')
-                              and name_lower not in registry_names):
-                            matched_ev_type = "sqlite_dbs"
-
-                    # Quaternary: path-context patterns for browser artifacts,
-                    # registry hives, and event logs
-                    if matched_ev_type is None:
-                        if any(pat in path_lower for pat in (
-                            '/chrome/user data/', '/google/chrome/', '/chromium/',
-                            '/firefox/profiles/', '/mozilla/firefox/',
-                            '/microsoft/edge/', '/microsoftedge/',
-                            '/brave/', '/opera/', '/vivaldi/',
-                            '/safari/', '/library/safari/',
-                            '/appdata/local/google/chrome/',
-                            '/appdata/roaming/mozilla/firefox/',
-                            '/.config/google-chrome/', '/.config/chromium/',
-                            '/.mozilla/firefox/', '/.config/brave/',
-                        )):
-                            matched_ev_type = "browser_artifacts"
-                        elif any(pat in path_lower for pat in (
-                            '/system32/config/software',
-                            '/system32/config/system',
-                            '/system32/config/sam',
-                            '/system32/config/security',
-                            '/system32/config/default',
-                            '/system32/config/components',
-                            '/system32/config/bcd-template',
-                            '/system32/config/drivers',
-                            '/users/', '/documents and settings/',
-                        )) and name_lower in registry_names:
-                            matched_ev_type = "registry_hives"
-                        elif any(pat in path_lower for pat in (
-                            '/winevt/logs/', '/system32/config/appevent',
-                            '/system32/config/secevent', '/system32/config/sysevent',
-                        )):
-                            matched_ev_type = "evtx_logs" if '/winevt/logs/' in path_lower else "evt_logs"
-                        elif any(pat in path_lower for pat in (
-                            'outlook', 'thunderbird', 'evolution', 'kmail',
-                            'mutt', 'maildir', 'windows mail', 'outlook express',
-                            '/mail/', '/imapmail/', '/maildir/',
-                            '/appdata/local/microsoft/outlook/',
-                            '/appdata/roaming/thunderbird/',
-                            '/.thunderbird/', '/.local/share/evolution/',
-                            '/library/mail/',
-                        )):
-                            matched_ev_type = "email_files"
-
-                    if matched_ev_type and matched_ev_type in new_evidence:
-                        # Use real path: fill_path for inventory
-                        if full_path not in new_evidence[matched_ev_type]:
-                            new_evidence[matched_ev_type].append(full_path)
-                        nuclear_findings.append({
-                            "image": img_path,
-                            "mount_point": mount_point,
-                            "internal_path": os.path.relpath(full_path, mount_point),
-                            "full_path": full_path,
-                            "filename": matched_filename,
-                            "evidence_type": matched_ev_type,
-                        })
-                        classified_count += 1
-
-                if file_count > _MAX_FILES_PER_IMAGE:
-                    _fe_log(job_id, f"  ⚠ Capped at {_MAX_FILES_PER_IMAGE} files for {Path(img_path).name}")
-                    break
-
-        except Exception as walk_exc:
-            _fe_log(job_id, f"  ✗ Walk error for {mount_point}: {walk_exc}")
-
-        images_processed += 1
-        _fe_log(job_id, f"    Classified {classified_count} interesting files out of {file_count} entries")
+            _img_partition_ok = True  # partition walk succeeded
+        if _img_partition_ok:
+            images_processed += 1
+            _fe_log(job_id, f"    Classified {classified_count} interesting files out of {file_count} entries")
 
         # --- Ewfmount fallback: extract un-extracted email files (PST/OST) ---
         # When the fls walk found email files but icat failed (silently or with

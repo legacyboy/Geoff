@@ -100,7 +100,7 @@ CASES_WORK_DIR = os.environ.get(
     os.path.join(tempfile.gettempdir(), "geoff-cases")
 )
 _MAX_IN_MEMORY_FINDINGS = int(os.environ.get("GEOFF_MAX_FINDINGS", "50000"))
-GEOFF_JOB_TIMEOUT_SECONDS = int(os.environ.get("GEOFF_JOB_TIMEOUT_SECONDS", "7200"))
+GEOFF_JOB_TIMEOUT_SECONDS = int(os.environ.get("GEOFF_JOB_TIMEOUT_SECONDS", "0"))
 
 # ---------------------------------------------------------------------------
 # Shared state (threading locks, job tracker, mount registry)
@@ -278,7 +278,7 @@ def _auto_cancel_stale_jobs(max_elapsed: int = None):
 
     Args:
         max_elapsed: Maximum seconds a job can run before being cancelled.
-                    Defaults to GEOFF_JOB_TIMEOUT_SECONDS env var (default 7200).
+                    Defaults to GEOFF_JOB_TIMEOUT_SECONDS env var (default 86400 - 24h).
     """
     if max_elapsed is None:
         max_elapsed = GEOFF_JOB_TIMEOUT_SECONDS
@@ -292,7 +292,7 @@ def _auto_cancel_stale_jobs(max_elapsed: int = None):
                     try:
                         started_at = datetime.fromisoformat(started_at_str)
                         elapsed_seconds = current_time - started_at.timestamp()
-                        if elapsed_seconds > max_elapsed:
+                        if max_elapsed > 0 and elapsed_seconds > max_elapsed:
                             job["status"] = "cancelled"
                             job["error"] = f"Job timed out after {int(elapsed_seconds)} seconds"
                             cancelled_count += 1
