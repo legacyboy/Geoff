@@ -202,6 +202,8 @@ Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 
 **Device-Centric Processing:** Evidence is grouped by device, not by file type. Each device gets its own playbook execution, its own findings, and its own behavioral analysis. Cross-device correlation ties it all together.
 
+**Modular Specialist Architecture:** DNS forensics, YARA scanning, hash correlation, dual-critic validation, adaptive playbook generation, confidence calibration, provenance tracking, and adaptive Pass 2 are each implemented as dedicated modules (`geoff_dns_forensics.py`, `geoff_yara.py`, `geoff_hash_correlation.py`, `geoff_dual_critic.py`, `geoff_adaptive_playbook.py`, `geoff_confidence.py`, `geoff_provenance.py`, `geoff_adaptive_pass2.py`).
+
 **Behavioral Analysis:** Geoff uses 10 deterministic behavioral checks plus LLM-assisted assessment:
 - Process path/parent validation (svchost.exe from temp? → flag)
 - Suspicious spawn chains (Word → cmd.exe → flag)
@@ -217,26 +219,6 @@ Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 **Super Timeline:** Unified timeline across all devices and evidence types — Plaso events, EVTX logs, SleuthKit file timestamps, network connections — all normalized to a common schema, sorted, and tagged with device_id and behavioral flags.
 
 **Narrative Reports:** LLM-generated human-readable investigation reports with executive summary, per-user narratives, timeline of significant events, and recommendations. All claims in the Attack Chain Synthesis are required to cite a specific evidence anchor (tool + artifact + finding) from the find_evil pipeline. The narrative is prohibited from speculating beyond verified evidence.
-
----
-
-## New Features
-
-See [docs/NEW_FEATURES.md](docs/NEW_FEATURES.md) for a complete catalog of all recent additions. Highlights:
-
-- **Multi-Critic (GeoffCriticPool)** — dual parallel critics with confidence scoring (VERY_HIGH / HIGH / MEDIUM / LOW)
-- **Adaptive Playbook Generation** — dynamic specialist selection for unmatched findings
-- **Confidence Calibration** — critic agreement patterns → per-finding confidence scores
-- **Evidence Provenance DAG** — full derivation tracking from source evidence through every transform
-- **Intelligence-Driven Pass 2 (AdaptivePass2)** — adaptive follow-up playbook selection based on Pass 1 findings
-- **IP Map** — interactive VisJS visualization of network connections (GET `/reports/<case>/ip-map`)
-- **Replay Playbook** — per-playbook rerun with adjusted parameters (POST `/replay-playbook`)
-- **Memory Analysis** — 8 new Volatility3 plugins in PB-SIFT-027 (dll_list, handles, mutantscan, apihooks, modscan, vadinfo, procdump, memmap)
-- **DNS Forensics Specialist** — DGA detection via Shannon entropy, DNS tunneling detection (PB-SIFT-050)
-- **YARA Integration** — 5 built-in rule sets, scan disk images/memory dumps/directories (PB-SIFT-051)
-- **Hash Correlation + NSRL** — file hashing with NSRL known-file lookup (PB-SIFT-052)
-- **Modular Specialist Architecture** — DNS, YARA, Hash, Dual-Critic, Adaptive Playbook, Confidence, Provenance, and Adaptive Pass 2 split into dedicated modules (`geoff_dns_forensics.py`, `geoff_yara.py`, `geoff_hash_correlation.py`, `geoff_dual_critic.py`, `geoff_adaptive_playbook.py`, `geoff_confidence.py`, `geoff_provenance.py`, `geoff_adaptive_pass2.py`)
-- **MITRE ATT&CK Matrix** — interactive matrix and heatmap visualizations (GET `/reports/mitre-matrix`, `/reports/mitre-heatmap`)
 
 ---
 
@@ -312,13 +294,14 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 6. **Dual Critic Validation** — GeoffCriticPool runs two critics in parallel for each finding; confidence levels (VERY_HIGH / HIGH / MEDIUM / LOW) drive review decisions
 7. **Batch Critic Review** — after all playbooks complete, Critic reviews all findings in one pass, grouped by significance; finds cross-step correlations and flags hallucinations or replay candidates
 8. **Manager Decision** — Manager reviews Critic assessment and chooses `approve`, `flag`, or `replay`; saves `manager_decision.json`
-9. **Incremental Replay** (if requested) — only affected steps re-run with Manager-patched params; new outputs committed with custody metadata
+9. **Incremental Replay** (if requested) — only affected steps re-run with Manager-patched params; new outputs committed with custody metadata. Replay can also be triggered manually via `POST /replay-playbook` with adjusted parameters.
 10. **Adaptive Pass 2** — scores remaining playbooks against Pass 1 findings; selects follow-up playbooks when Pass 1 uncovered leads worth chasing
 11. **Super Timeline** — unified timeline across all devices and evidence types
 12. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
 13. **Host Correlation** — cross-device user activity, lateral movement detection
-14. **Provenance DAG** — full evidence derivation tracking from source artifacts through every transform
-15. **Narrative Report** — gated on Manager approval; LLM-written investigative narrative with explicit artifact citations
+14. **IP Map** — interactive VisJS network graph of all IP connections (GET `/reports/<case>/ip-map`)
+15. **Provenance DAG** — full evidence derivation tracking from source artifacts through every transform
+16. **Narrative Report** — gated on Manager approval; LLM-written investigative narrative with explicit artifact citations
 
 ### Configuration Reference
 
@@ -447,6 +430,10 @@ No copy-pasting paths. No switching tabs manually.
 
 Conversational interface. Talk to Geoff directly or say things like `"start processing IR-016-CloudJack"` and it will route to Find Evil automatically.
 
+### 📊 MITRE ATT&CK Visualizations
+
+Interactive matrix and heatmap views mapping all investigation findings to the MITRE ATT&CK framework. Accessible via `GET /reports/mitre-matrix` and `GET /reports/mitre-heatmap`.
+
 ---
 
 ## Tool Coverage
@@ -465,6 +452,9 @@ Conversational interface. Talk to Geoff directly or say things like `"start proc
 | **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
 | **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
 | **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
+| **DNS** | dns | DNS_Specialist | DGA detection (Shannon entropy), DNS tunneling detection, PCAP DNS extraction |
+| **YARA** | yara | YARA_Specialist | 5 built-in rule sets (PE overlay, encoded PowerShell, ransomware, credential dumping, webshell), file/directory/memory/disk scanning |
+| **Hash** | hash | HASH_Specialist | SHA-256/MD5/SHA1 file hashing, directory hashing, NSRL lookup |
 | **DNS** | dns | DNS_Specialist | DGA detection (Shannon entropy), DNS tunneling detection, PCAP DNS extraction |
 | **YARA** | yara | YARA_Specialist | 5 built-in rule sets (PE overlay, encoded PowerShell, ransomware, credential dumping, webshell), file/directory/memory/disk scanning |
 | **Hash** | hash | HASH_Specialist | SHA-256/MD5/SHA1 file hashing, directory hashing, NSRL lookup |
