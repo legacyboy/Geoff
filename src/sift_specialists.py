@@ -1354,6 +1354,120 @@ class VOLATILITY_Specialist:
         }
 
 
+    def dll_list(self, memory_dump: str) -> Dict[str, Any]:
+        """List loaded DLLs per process (windows.dlllist.DllList)"""
+        raw = self.run('windows.dlllist.DllList', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        entries = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'dlllist', 'status': 'success',
+            'dll_count': len(entries), 'entries': entries,
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def handles(self, memory_dump: str) -> Dict[str, Any]:
+        """List open handles per process (windows.handles.Handles)"""
+        raw = self.run('windows.handles.Handles', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        entries = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'handles', 'status': 'success',
+            'handle_count': len(entries), 'entries': entries,
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def mutantscan(self, memory_dump: str) -> Dict[str, Any]:
+        """Scan for mutex objects (windows.mutantscan.MutantScan)"""
+        raw = self.run('windows.mutantscan.MutantScan', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        mutants = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'mutantscan', 'status': 'success',
+            'mutant_count': len(mutants), 'mutants': mutants,
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def apihooks(self, memory_dump: str) -> Dict[str, Any]:
+        """Detect API hooks — falls back to malfind scan if plugin unavailable"""
+        raw = self.run('windows.apihooks.ApiHooks', memory_dump)
+        if raw.get('status') != 'success':
+            # ApiHooks is Volatility2-only; run malfind as fallback
+            raw = self.run('windows.malfind.Malfind', memory_dump)
+            if raw.get('status') != 'success':
+                return raw
+        hooks = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'apihooks', 'status': 'success',
+            'hook_count': len(hooks), 'hooks': hooks,
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def modscan(self, memory_dump: str) -> Dict[str, Any]:
+        """Scan for kernel modules (windows.modscan.ModScan)"""
+        raw = self.run('windows.modscan.ModScan', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        modules = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'modscan', 'status': 'success',
+            'module_count': len(modules), 'modules': modules,
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def vadinfo(self, memory_dump: str) -> Dict[str, Any]:
+        """VAD (Virtual Address Descriptor) info per process (windows.vadinfo.VadInfo)"""
+        raw = self.run('windows.vadinfo.VadInfo', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        entries = self._parse_table_output(raw['stdout'])
+        executable = [e for e in entries if 'EXECUTE' in str(e.get('Protection', '')) or 'EXEC' in str(e.get('Protection', ''))]
+        return {
+            'tool': 'volatility', 'plugin': 'vadinfo', 'status': 'success',
+            'vad_count': len(entries), 'entries': entries,
+            'executable_regions': executable,
+            'executable_count': len(executable),
+            'raw_output': raw['stdout'], 'timestamp': datetime.now().isoformat()
+        }
+
+    def procdump(self, memory_dump: str, output_dir: str = '/tmp/geoff_procdump') -> Dict[str, Any]:
+        """Dump process executables from memory (windows.dumpfiles.DumpFiles)"""
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        if not self.volatility_path:
+            return {'tool': 'volatility', 'plugin': 'dumpfiles', 'status': 'error',
+                    'error': 'Volatility not found', 'timestamp': datetime.now().isoformat()}
+        cmd = [self.volatility_path, '-f', memory_dump, '-q',
+               'windows.dumpfiles.DumpFiles', '--dump-dir', output_dir]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            dumped_files = list(Path(output_dir).glob('*.exe')) + list(Path(output_dir).glob('*.dll'))
+            return {
+                'tool': 'volatility', 'plugin': 'dumpfiles', 'status': 'success',
+                'output_dir': output_dir, 'files_dumped': len(dumped_files),
+                'dumped_files': [str(f) for f in dumped_files[:50]],
+                'returncode': result.returncode, 'raw_output': result.stdout[:2000],
+                'timestamp': datetime.now().isoformat()
+            }
+        except Exception as e:
+            return {'tool': 'volatility', 'plugin': 'dumpfiles', 'status': 'error',
+                    'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def memmap(self, memory_dump: str, pid: int = None) -> Dict[str, Any]:
+        """Memory map info — wraps dump_process for single PID or summary scan"""
+        if pid is not None:
+            return self.dump_process(memory_dump, pid=pid)
+        raw = self.run('windows.memmap.Memmap', memory_dump)
+        if raw['status'] != 'success':
+            return raw
+        entries = self._parse_table_output(raw['stdout'])
+        return {
+            'tool': 'volatility', 'plugin': 'memmap', 'status': 'success',
+            'region_count': len(entries), 'entries': entries[:200],
+            'raw_output': raw['stdout'][:4000], 'timestamp': datetime.now().isoformat()
+        }
+
 
 # Keywords that indicate forensic acquisition metadata bleed-through.
 # When found inside a purported file path, the "path" is spurious.

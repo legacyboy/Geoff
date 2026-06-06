@@ -252,7 +252,12 @@ class GeoffCritic:
                         continue
                     return result_text
                 elif response.status_code in (401, 403):
-                    print(f"[CRITIC] LLM HTTP {response.status_code} — bad auth, giving up immediately")
+                    # Auth errors: retry once after a short delay (transient token issues)
+                    if attempt < 1:
+                        print(f"[CRITIC] LLM HTTP {response.status_code} — auth error, retry {attempt+1} after 10s")
+                        time.sleep(10)
+                        continue
+                    print(f"[CRITIC] LLM HTTP {response.status_code} — bad auth, giving up after retry")
                     return ""
                 elif 500 <= response.status_code < 600:
                     # Server errors: brief retry (3 attempts with 10s backoff)
@@ -1119,6 +1124,17 @@ class ValidationPipeline:
             ]
         }
 
+
+
+
+# ---------------------------------------------------------------------------
+# Dual-critic pool wiring (Novel 1)
+# ---------------------------------------------------------------------------
+
+def make_critic_pool(critic_a=None, critic_b=None):
+    """Factory: create a GeoffCriticPool with two independent critics."""
+    from geoff_dual_critic import GeoffCriticPool
+    return GeoffCriticPool(critic_a=critic_a, critic_b=critic_b)
 
 # For direct testing
 if __name__ == "__main__":

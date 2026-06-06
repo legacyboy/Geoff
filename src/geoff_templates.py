@@ -772,6 +772,7 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
     <div class="hero-top">
       <div><h1 id="h-title">Reports</h1></div>
       <div class="hero-actions">
+        <button class="btn" id="btn-ip-map" onclick="openIPMap()" style="cursor:pointer;">&#9671; IP Map</button>
         <a class="btn" id="dl-md" href="#">↓ Markdown</a>
         <a class="btn" id="dl-json" href="#">↓ JSON</a>
       </div>
@@ -789,6 +790,197 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   </div>
 
 </div>
+
+<!-- IP Map Modal -->
+<div id="ip-map-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:2000;background:rgba(5,10,20,.88);backdrop-filter:blur(6px);align-items:center;justify-content:center;">
+  <div style="width:92vw;height:90vh;max-width:1400px;background:var(--g-surface);border:1px solid var(--g-border);border-radius:var(--radius);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5);">
+    <div style="display:flex;align-items:center;gap:16px;padding:14px 20px;border-bottom:1px solid var(--g-border-soft);flex-shrink:0;">
+      <span style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--g-text);">&#9671; IP Connection Map</span>
+      <span id="ip-map-stats" style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute);"></span>
+      <label style="display:flex;align-items:center;gap:7px;margin-left:auto;font-size:12px;color:var(--g-text-dim);cursor:pointer;">
+        <input type="checkbox" id="ipm-toggle-ext" checked style="accent-color:var(--sev-crit);"> Show external IPs
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--g-text-dim);cursor:pointer;">
+        <input type="checkbox" id="ipm-toggle-int" checked style="accent-color:#22c55e;"> Show internal IPs
+      </label>
+      <button onclick="closeIPMap()" style="background:none;border:none;color:var(--g-text-mute);font-size:18px;cursor:pointer;padding:0 4px;line-height:1;" title="Close">&times;</button>
+    </div>
+    <div style="display:flex;flex:1;min-height:0;">
+      <div id="ip-network" style="flex:1;min-width:0;background:var(--g-bg);"></div>
+      <div id="ip-node-info" style="display:none;width:260px;flex-shrink:0;border-left:1px solid var(--g-border-soft);padding:16px;overflow-y:auto;font-size:13px;">
+        <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--g-text-mute);margin-bottom:12px;">Selected Node</div>
+        <div id="ip-node-info-body"></div>
+      </div>
+    </div>
+    <div style="padding:8px 20px;border-top:1px solid var(--g-border-soft);font-family:var(--font-mono);font-size:10px;color:var(--g-text-faint);flex-shrink:0;">
+      Click a node to inspect · Scroll to zoom · Drag to pan · Internal (green) left · External (red) right
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script>
+(function() {
+  var _ipNetwork = null;
+  var _ipAllNodes = null;
+  var _ipAllEdges = null;
+  var _ipRawData = null;
+
+  window.openIPMap = function() {
+    var modal = document.getElementById('ip-map-modal');
+    modal.style.display = 'flex';
+    if (!_ipRawData) {
+      var caseDir = new URLSearchParams(location.search).get('case');
+      if (!caseDir) {
+        document.getElementById('ip-network').innerHTML =
+          '<div style="color:var(--g-text-mute);text-align:center;padding:60px;font-family:var(--font-mono);font-size:13px;">No case selected.</div>';
+        return;
+      }
+      loadIPMap(caseDir);
+    }
+  };
+
+  window.closeIPMap = function() {
+    document.getElementById('ip-map-modal').style.display = 'none';
+  };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeIPMap();
+  });
+
+  function apiKey() {
+    var m = document.querySelector('meta[name="geoff-api-key"]');
+    return m ? m.content : '';
+  }
+
+  async function loadIPMap(caseDir) {
+    var net = document.getElementById('ip-network');
+    net.innerHTML = '<div style="color:var(--g-text-mute);text-align:center;padding:60px;font-family:var(--font-mono);font-size:13px;">Loading IP map...</div>';
+    try {
+      var key = apiKey();
+      var resp = await fetch('/reports/' + encodeURIComponent(caseDir) + '/ip-map',
+        key ? {headers: {'X-API-Key': key}} : {});
+      var data = await resp.json();
+      _ipRawData = data;
+      renderIPMap();
+    } catch(e) {
+      document.getElementById('ip-network').innerHTML =
+        '<div style="color:var(--sev-crit);text-align:center;padding:60px;font-family:var(--font-mono);font-size:13px;">Error loading IP map: ' + e.message + '</div>';
+    }
+  }
+
+  function renderIPMap() {
+    var data = _ipRawData;
+    if (!data || !data.nodes) return;
+
+    var showExt = document.getElementById('ipm-toggle-ext').checked;
+    var showInt = document.getElementById('ipm-toggle-int').checked;
+
+    var filtered = data.nodes.filter(function(n) {
+      return (n.group === 'external' && showExt) || (n.group === 'internal' && showInt);
+    });
+
+    if (filtered.length === 0) {
+      document.getElementById('ip-network').innerHTML =
+        '<div style="color:var(--g-text-mute);text-align:center;padding:60px;font-family:var(--font-mono);font-size:13px;">No IP data available for this case.</div>';
+      document.getElementById('ip-map-stats').textContent = '';
+      return;
+    }
+
+    var nodeSet = new Set(filtered.map(function(n) { return n.id; }));
+    var maxConns = Math.max.apply(null, filtered.map(function(n) { return n.connections || 1; }));
+
+    var visNodes = new vis.DataSet(filtered.map(function(n) {
+      var isInt = n.group === 'internal';
+      var size = 12 + Math.round((n.connections || 0) / Math.max(maxConns, 1) * 26);
+      return {
+        id: n.id,
+        label: n.label || n.id,
+        title: (n.hostname ? 'Host: ' + n.hostname + '\n' : '') +
+          'IP: ' + n.id + '\nGroup: ' + n.group +
+          '\nConnections: ' + n.connections +
+          '\nFindings: ' + n.findings_count,
+        group: n.group,
+        size: size,
+        x: isInt ? -350 + (Math.random() - 0.5) * 80 : 350 + (Math.random() - 0.5) * 80,
+        color: {
+          background: isInt ? '#166534' : '#7f1d1d',
+          border: isInt ? '#22c55e' : '#ef4444',
+          highlight: {background: isInt ? '#22c55e' : '#ef4444', border: isInt ? '#86efac' : '#fca5a5'}
+        },
+        font: {color: '#e2e8f0', size: 11, face: 'monospace'},
+        shape: isInt ? 'dot' : 'diamond',
+      };
+    }));
+
+    var visEdges = new vis.DataSet(
+      (data.edges || []).filter(function(e) { return nodeSet.has(e.source) && nodeSet.has(e.target); })
+      .map(function(e) {
+        var lbl = e.port ? (e.protocol || 'TCP') + ':' + e.port : (e.protocol || '');
+        return {
+          from: e.source, to: e.target,
+          label: lbl,
+          arrows: {to: {enabled: true, scaleFactor: 0.6}},
+          color: {color: '#334155', highlight: '#64748b', hover: '#64748b'},
+          font: {color: '#64748b', size: 9, face: 'monospace', align: 'middle'},
+          smooth: {type: 'curvedCW', roundness: 0.1},
+        };
+      })
+    );
+
+    document.getElementById('ip-map-stats').textContent =
+      filtered.length + ' nodes · ' + visEdges.length + ' edges';
+
+    var container = document.getElementById('ip-network');
+    container.innerHTML = '';
+
+    var network = new vis.Network(container, {nodes: visNodes, edges: visEdges}, {
+      physics: {
+        enabled: true,
+        barnesHut: {
+          gravitationalConstant: -4000,
+          centralGravity: 0.15,
+          springLength: 180,
+          springConstant: 0.04,
+          damping: 0.15,
+        },
+        stabilization: {iterations: 120},
+      },
+      interaction: {hover: true, tooltipDelay: 120, navigationButtons: true, keyboard: false},
+      layout: {improvedLayout: false, randomSeed: 42},
+    });
+
+    _ipNetwork = network;
+
+    network.on('click', function(params) {
+      if (params.nodes.length === 0) return;
+      var nodeId = params.nodes[0];
+      var node = data.nodes.find(function(n) { return n.id === nodeId; });
+      if (!node) return;
+      var isInt = node.group === 'internal';
+      var body = document.getElementById('ip-node-info-body');
+      body.innerHTML =
+        '<div style="font-family:var(--font-mono);font-size:13px;color:var(--g-text);margin-bottom:10px;">' + node.id + '</div>' +
+        (node.hostname ? '<div style="font-size:12px;color:var(--g-text-dim);margin-bottom:6px;">&#8594; ' + node.hostname + '</div>' : '') +
+        '<div style="display:inline-block;padding:3px 8px;border-radius:4px;font-size:10px;font-family:var(--font-mono);background:' +
+          (isInt ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)') + ';color:' +
+          (isInt ? '#22c55e' : '#ef4444') + ';margin-bottom:12px;">' +
+          node.group.toUpperCase() + '</div>' +
+        '<div style="font-size:11px;color:var(--g-text-mute);">Connections: <span style="color:var(--g-text);">' + node.connections + '</span></div>' +
+        '<div style="font-size:11px;color:var(--g-text-mute);margin-top:4px;">Findings: <span style="color:var(--g-text);">' + node.findings_count + '</span></div>';
+      document.getElementById('ip-node-info').style.display = 'block';
+    });
+
+    network.on('stabilized', function() {
+      network.fit({animation: {duration: 800, easingFunction: 'easeInOutQuad'}});
+    });
+  }
+
+  document.getElementById('ipm-toggle-ext').addEventListener('change', renderIPMap);
+  document.getElementById('ipm-toggle-int').addEventListener('change', renderIPMap);
+})();
+</script>
+
 <script src="/static/report.js?v=2"></script>
 </body>
 </html>

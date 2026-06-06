@@ -9,7 +9,7 @@ from pathlib import Path
 SETTINGS_FILE = Path.home() / '.geoff_settings.json'
 
 _MODEL_OPTIONS = [
-    "deepseek-v3.2:cloud",
+    "deepseek-v4-flash:cloud",
     "deepseek-v4-pro",
     "gpt-4o",
     "claude-sonnet-4",
@@ -26,7 +26,7 @@ class SettingsManager:
         self._path = settings_file
         self._data = {
             "models": {
-                "manager": "deepseek-v3.2:cloud",
+                "manager": "deepseek-v4-flash:cloud",
                 "forensicator": "qwen3-coder-next:cloud",
                 "critic": "qwen3.5:cloud",
             },

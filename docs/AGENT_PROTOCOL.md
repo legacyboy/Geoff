@@ -1,6 +1,6 @@
 # Geoff Triad — Agent Protocol Specification
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Status:** Authoritative — describes the live implementation in `src/`
 
 ---
@@ -16,6 +16,8 @@ The three principal agents are:
 - **Critic** — validator and error recoverer. Validates every step output for hallucinations and inconsistency; diagnoses failed tool runs and emits structured `HealDecision`s; performs a holistic batch review after all playbooks complete.
 
 A fourth operational mode — **Healer** — is the Critic running in error-recovery mode (`_attempt_heal` → `_execute_heal`). It is the same model with a different prompt; it is surfaced separately in the agent trace because it has its own audit class (`SELF_HEAL`) and own idempotency path.
+
+A fifth component — **GeoffCriticPool** — runs two independent Critic instances in parallel for dual-critic validation with confidence scoring. The pool is not a separate agent; it orchestrates two Critic instances and merges their verdicts.
 
 All agent communication is via structured JSON. There is no natural-language hand-off between agents. Every decision is committed to disk immediately upon emission.
 
@@ -40,14 +42,21 @@ User invocation
   │   src/geoff_forensicator.py:82   │                                   │
   │         │                        │                                   │
   │         ▼  ForensicatorObservation                                   │
-  │   [CRITIC] step_verdict          │                                   │
-  │   geoff_critic.py (whole file)   │◄── on tool failure:              │
-  │         │                        │    [HEALER] _attempt_heal()       │
-  │         │  CriticVerdict         │    src/geoff_self_heal.py:354     │
+  │   [CRITIC POOL] dual_validate    │                                   │
+  │   GeoffCriticPool.dual_validate() │                                   │
+  │   src/geoff_gaps_novel.py:457     │                                   │
+  │         │                        │                                   │
+  │         │  CriticVerdict + confidence                              │
+  │         ▼                        │                                   │
+  │   [CRITIC] step_verdict          │◄── on tool failure:              │
+  │   geoff_critic.py (whole file)   │    [HEALER] _attempt_heal()       │
+  │         │                        │    src/geoff_self_heal.py:354     │
+  │         │  CriticVerdict         │                                   │
   │         ▼                        │                                   │
   │   commit to git repo             │                                   │
   │   _commit_step_with_custody()    │                                   │
-  │   src/geoff_pipeline.py:457      │                                   │
+  │   ProvenanceDAG.add_derived()   │                                   │
+  │   src/geoff_pipeline.py:457     │                                   │
   └──────────────────────────────────┘                                   │
       │                                                                  │
       ▼  all playbooks complete                                          │
@@ -56,6 +65,11 @@ User invocation
   src/geoff_pipeline.py:1382                                             │
       │                                                                  │
       ▼  BatchCriticAssessment                                           │
+  [CONFIDENCE CALIBRATOR]                                               │
+  ConfidenceCalibrator.annotate_findings()                              │
+  src/geoff_gaps_novel.py:696                                           │
+      │                                                                  │
+      ▼  annotated findings + confidence scores                         │
   [MANAGER] post_critic_decision                                         │
   _manager_post_critic_decision()                                        │
   src/geoff_pipeline.py:1503                                             │
@@ -63,6 +77,15 @@ User invocation
       ├── "approve" ──► narrate (NarrativeReportGenerator.generate())    │
       ├── "flag"    ──► narrate with caveats                             │
       └── "replay"  ──► re-run affected steps with patched params ───────┘
+                      │
+                      ▼ (after replay or approval)
+              [ADAPTIVE PASS 2]
+              AdaptivePass2.select_pass2_playbooks()
+              src/geoff_gaps_novel.py:860
+                      │
+                      ▼  additional playbooks selected
+              [FORENSICATOR] runs Pass 2 playbooks
+              ... (same loop as above)
 ```
 
 Each transition is owned by the agent named at that node. No transition is implicit; each produces a JSON artifact written to `case_work_dir/`.
@@ -77,6 +100,8 @@ Each transition is owned by the agent named at that node. No transition is impli
 - Pre-analysis: reviews the triage-generated execution plan; may reorder, add, or remove playbooks.
 - Post-analysis: receives the Critic's batch assessment; decides `approve | flag | replay`.
 - On replay: supplies adjusted params for each replay candidate.
+
+**Model:** `deepseek-v4-flash:cloud` (cloud profile), `deepseek-r1:32b` (local profile)
 
 **System prompt** (from `src/geoff_self_heal.py:GEOFF_PROMPT`, line 466):
 
@@ -216,6 +241,8 @@ The Forensicator receives a prompt containing: the playbook name and step, the t
 - Batch holistic review: after all playbooks complete, reviews all findings in one pass for cross-step inconsistencies.
 - Error diagnosis: in Healer mode, diagnoses failed tool runs and emits `HealDecision`s with prescribed fix types.
 
+**Model:** `qwen3.5:cloud` (cloud profile), `qwen2.5:14b` (local profile)
+
 **Per-step validation prompt** (from `src/geoff_critic.py:392`):
 
 ```
@@ -286,7 +313,42 @@ has failed. Your task: diagnose the error and prescribe a fix.
 
 ---
 
-### 3.4 Healer
+### 3.4 GeoffCriticPool (Dual-Critic Validation)
+
+**Role:** runs two independent Critic instances in parallel on each finding and merges their verdicts with a confidence score.
+
+**Implementation:** `src/geoff_gaps_novel.py:437` (`GeoffCriticPool`)
+
+**Confidence mapping:**
+
+| Critic A | Critic B | Pool Verdict | Confidence |
+|----------|----------|-------------|------------|
+| APPROVED | APPROVED | APPROVED | VERY_HIGH |
+| APPROVED | other | APPROVED | HIGH |
+| other | APPROVED | APPROVED | HIGH |
+| REQUIRES_REVIEW | any | REQUIRES_REVIEW | MEDIUM |
+| any | REQUIRES_REVIEW | REQUIRES_REVIEW | MEDIUM |
+| other | other | REJECTED | LOW |
+
+When critics disagree (one APPROVED, one not), confidence drops to MEDIUM and `needs_review: true` is set. This ensures that divergent opinions are always surfaced for human review.
+
+**Second critic model:** configured via `GEOFF_CRITIC2_MODEL` environment variable (defaults to `GEOFF_CRITIC_MODEL`). Using a different model for the second critic increases the chance of catching different types of errors.
+
+**Agreement statistics:** `GeoffCriticPool.get_agreement_stats()` returns total validations, agreement count, disagreement count, and per-verdict breakdowns. These stats are persisted to the case directory for post-investigation review.
+
+---
+
+### 3.5 ConfidenceCalibrator
+
+**Role:** tracks critic agreement patterns across an investigation and produces per-finding confidence scores. Records whether each finding was validated, challenged, or unverified by each critic.
+
+**Implementation:** `src/geoff_gaps_novel.py:635` (`ConfidenceCalibrator`)
+
+**Output:** `confidence_scores.json` in the case directory, mapping `finding_id → {confidence, critic_a_verdict, critic_b_verdict, pool_confidence}`.
+
+---
+
+### 3.6 Healer
 
 **Role:** the Critic operating in error-recovery mode. Invoked by `_attempt_heal` (`src/geoff_self_heal.py:354`) when a tool step returns a failure status. The Healer is not a separate agent; it is `GeoffCritic.analyze_execution_error_v2()` (`src/geoff_critic.py:849`) with an error-diagnosis prompt.
 
@@ -313,6 +375,45 @@ class HealDecision:
 ```
 
 **Failure mode:** if the Healer LLM is unavailable, `_attempt_heal` returns `None` and the step is marked failed. The caller records the failed step in `audit_trail.jsonl` with `event: SELF_HEAL, outcome: failed`.
+
+---
+
+### 3.7 ProvenanceDAG
+
+**Role:** tracks the full evidence derivation graph from source evidence through every transform. Every node records its source, transform type, and output path.
+
+**Implementation:** `src/geoff_gaps_novel.py:725` (`ProvenanceDAG`)
+
+**Key methods:**
+- `add_source(source_id, source_type, path, metadata)` — register original evidence
+- `add_derived(derived_id, derived_type, path, source_ids, transform)` — register a derived artifact
+- `get_provenance_chain(node_id)` — walk from any node back to source evidence
+- `finding_provenance(finding, specialist, ...)` — attach provenance to a finding record
+
+**Output:** `provenance_dag.json` in the case directory.
+
+---
+
+### 3.8 AdaptivePlaybook
+
+**Role:** composes custom investigation playbooks for findings that don't match any existing playbook. Dynamically selects relevant specialist functions based on finding type and evidence characteristics.
+
+**Implementation:** `src/geoff_gaps_novel.py:546` (`AdaptivePlaybook`)
+
+**Key method:** `compose_for_finding(finding, available_modules, case_context)` → returns a list of (module, function, params) steps.
+
+---
+
+### 3.9 AdaptivePass2
+
+**Role:** after Pass 1 completes, scores remaining playbooks against Pass 1 findings and selects follow-up playbooks when Pass 1 uncovered leads worth chasing.
+
+**Implementation:** `src/geoff_gaps_novel.py:817` (`AdaptivePass2`)
+
+**Key methods:**
+- `score_pass2_playbooks(pass1_findings)` → dict of playbook_id → score
+- `select_pass2_playbooks(pass1_findings, threshold)` → list of playbook_ids to run
+- `should_run_pass2(pass1_findings, threshold)` → bool
 
 ---
 
@@ -356,12 +457,30 @@ Per-step verdict. Written to `case_work_dir/validations/<step_key>.json`.
 }
 ```
 
+### DualCriticPoolResult
+
+Per-step dual-critic result. Merged verdict with confidence.
+
+```json
+{
+    "tool":              "critic_pool",
+    "pool_verdict":      "APPROVED | REQUIRES_REVIEW | REJECTED",
+    "confidence":        "VERY_HIGH | HIGH | MEDIUM | LOW",
+    "critic_a_verdict":  "APPROVED | REQUIRES_REVIEW | REJECTED",
+    "critic_b_verdict":  "APPROVED | REQUIRES_REVIEW | REJECTED",
+    "critic_a_result":   {},
+    "critic_b_result":   {},
+    "critics_agree":     true,
+    "needs_review":      false,
+    "timestamp":         "ISO8601"
+}
+```
+
 ### HealDecision
 
 Emitted by the Healer. Logged to `audit_trail.jsonl` on every heal attempt.
 
 ```python
-# Defined as dataclass in src/geoff_critic.py:91
 HealDecision(
     fixable=True,
     fix_type="retry_with_offset",
@@ -421,6 +540,8 @@ Every artifact written by the loop is append-only or written atomically. The cas
 | `case_work_dir/execution_plan.json` | `_manager_review_execution_plan` | JSON | Manager's approved playbook order with reasoning |
 | `case_work_dir/findings.jsonl` | `FindingsWriter` (`src/geoff_utils.py:313`) | JSONL | One record per step: status, forensicator observation, critic verdict, params, evidence chain |
 | `case_work_dir/custody/<step_key>.json` | `_commit_step_with_custody` (`src/geoff_pipeline.py:457`) | JSON | SHA-256 of evidence file + SHA-256 of params + tool_version + timestamp — chain of custody sidecar |
+| `case_work_dir/provenance_dag.json` | `ProvenanceDAG` (`src/geoff_gaps_novel.py:725`) | JSON | Evidence derivation graph: source nodes → derived nodes → transforms |
+| `case_work_dir/confidence_scores.json` | `ConfidenceCalibrator` (`src/geoff_gaps_novel.py:635`) | JSON | Per-finding confidence levels from dual-critic agreement |
 | `case_work_dir/validations/<step_key>.json` | `GeoffCritic` | JSON | Per-step CriticVerdict |
 | `case_work_dir/commands/<timestamp>_<cmd>.json` | `src/command_logger.py` | JSON | Every shell invocation with argv, cwd, stdout/stderr truncated digests |
 | `case_work_dir/batch_critic_assessment.json` | `_batch_critic_review_all_playbooks` (`src/geoff_pipeline.py:1382`) | JSON | Holistic Critic review of all findings |
@@ -481,20 +602,52 @@ When `_manager_post_critic_decision` (`src/geoff_pipeline.py:1503`) returns `act
 5. The replay produces a second `manager_decision.json` (overwriting the first) once the Critic reviews the replayed findings.
 6. `audit_trail.jsonl` records a `REPLAY` event for each replayed step with the original and patched params.
 
+### Per-Playbook Replay (API)
+
+The `/replay-playbook` endpoint allows replaying a specific playbook without re-running the entire investigation:
+
+```bash
+curl -X POST http://localhost:8080/replay-playbook \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "case_name": "my-case",
+    "playbook_id": "PB-SIFT-001",
+    "adjustments": {"offset": 2048}
+  }'
+```
+
+This uses the same idempotency guards and custody commit path as the internal replay.
+
 ---
 
 ## 8. Model backend
 
-**Current backend:** Ollama (cloud or local). All three agents use the Ollama `/generate` API. Authentication via `OLLAMA_API_KEY` env var; remote endpoint via `OLLAMA_URL`.
+**Current backend:** Ollama (cloud or local). All three agents use the Ollama `/generate` API. When using the cloud profile, Ollama runs locally as a systemd service signed into Ollama Cloud (`ollama signin`); no separate `OLLAMA_API_KEY` environment variable is needed. When using a remote Ollama endpoint, set `OLLAMA_URL` and `OLLAMA_API_KEY` as needed.
 
 **Per-agent model selection:**
 
 | Agent | Env var override | Default (cloud profile) | Default (local profile) |
 |-------|-----------------|------------------------|------------------------|
-| Manager | `GEOFF_MANAGER_MODEL` | `deepseek-v3.2:cloud` | `deepseek-r1:32b` |
+| Manager | `GEOFF_MANAGER_MODEL` | `deepseek-v4-flash:cloud` | `deepseek-r1:32b` |
 | Forensicator | `GEOFF_FORENSICATOR_MODEL` | `qwen3-coder-next:cloud` | `qwen2.5-coder:14b` |
 | Critic | `GEOFF_CRITIC_MODEL` | `qwen3.5:cloud` | `qwen2.5:14b` |
+| Critic 2 | `GEOFF_CRITIC2_MODEL` | _(same as Critic)_ | _(same as Critic)_ |
 
 Profile switch: `GEOFF_PROFILE=cloud|local` (reads `profiles.json` at startup).
 
 **Backend-agnostic protocol:** the agent protocol itself — the JSON message schemas in §4, the state machine in §2, the persistence model in §5 — is backend-agnostic. Any API that accepts a prompt string and returns a completion (OpenAI-compatible, Anthropic, Ollama) can implement it by adapting the `call_llm` / `call_forensicator_llm` / `_call_critic_llm` shims in `src/geoff_self_heal.py`, `src/geoff_forensicator.py`, and `src/geoff_critic.py` respectively.
+
+---
+
+## 9. Visualization endpoints
+
+The following HTTP endpoints serve interactive visualizations:
+
+| Endpoint | Visualization | Technology |
+|----------|--------------|------------|
+| `GET /reports/<case>/ip-map` | IP connection network graph | VisJS |
+| `GET /reports/mitre-matrix` | MITRE ATT&CK technique matrix | HTML/JS |
+| `GET /reports/mitre-heatmap` | MITRE ATT&CK heatmap | HTML/JS |
+| `GET /reports/<case>/supertimeline` | Unified timeline | JSON |
+
+These are accessible via the web UI or direct API calls.

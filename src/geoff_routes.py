@@ -36,6 +36,7 @@ import geoff_settings as _geoff_settings
 from geoff_config import (
     GEOFF_API_KEY, EVIDENCE_BASE_DIR, CASES_WORK_DIR,
     OLLAMA_API_KEY, AGENT_MODELS, PLAYBOOK_NAMES,
+    NON_REPLAYABLE_PLAYBOOKS,
     ollama_base_url,
     _UNSAFE_PATH_CHARS, _validate_evidence_path,
 )
@@ -46,7 +47,7 @@ from geoff_utils import (
 )
 from geoff_models import action_logger, get_all_cases, get_available_tools_status
 from geoff_self_heal import call_llm, _self_check_chat_response
-from geoff_pipeline import find_evil, run_full_investigation
+from geoff_pipeline import find_evil, run_full_investigation, replay_playbook
 from geoff_templates import HTML_TEMPLATE, NARRATIVE_REPORT_HTML
 
 # Wire geoff_utils module reference for _save_jobs
@@ -1038,6 +1039,25 @@ def serve_supertimeline(case_dir):
     return st_path.read_text(encoding='utf-8'), 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
+
+def get_ip_map(case_dir):
+    """GET /reports/<case_dir>/ip-map — Return IP connection map JSON for a case."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+    try:
+        from geoff_ip_map import IPConnectionExtractor
+        extractor = IPConnectionExtractor(case_path)
+        data = extractor.extract()
+        return jsonify(data)
+    except Exception as e:
+        _log_error("Failed to extract IP map", e)
+        return jsonify({'nodes': [], 'edges': [], 'error': str(e)}), 200
+
+
 def mitre_matrix():
     """GET /reports/mitre-matrix — Serve the MITRE ATT&CK matrix viewer."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
@@ -1788,6 +1808,66 @@ def api_update_keys():
     return jsonify({'status': 'ok'})
 
 
+
+
+def replay_playbook_route():
+    """POST /replay-playbook — Re-run a single playbook against existing case evidence.
+
+    Request body (JSON):
+        {
+            "case":        "<case_name or job_id>",
+            "playbook_id": "PB-SIFT-012",
+            "force":       false        // optional: re-run even if already replayed
+        }
+
+    Returns:
+        {
+            "status": "complete",
+            "case": "...",
+            "playbook_id": "PB-SIFT-012",
+            "new_findings": 12,
+            "critic_approved": 10,
+            "critic_rejected": 2,
+            "duration_seconds": 47.3,
+            "force": false
+        }
+
+    Pass-2 cross-device playbooks (PB-SIFT-100 through PB-SIFT-104) are rejected
+    with a 400 error — replay is only supported for single-device playbooks.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"status": "error", "error": "Request body must be a JSON object"}), 400
+
+        case = (data.get("case") or "").strip()
+        playbook_id = (data.get("playbook_id") or "").strip()
+        force = bool(data.get("force", False))
+
+        if not case:
+            return jsonify({"status": "error", "error": "Missing required field: case"}), 400
+        if not playbook_id:
+            return jsonify({"status": "error", "error": "Missing required field: playbook_id"}), 400
+
+        if playbook_id in NON_REPLAYABLE_PLAYBOOKS:
+            return jsonify({
+                "status": "error",
+                "error": (
+                    f"{playbook_id} is a cross-device/Pass-2 playbook and cannot be "
+                    "individually replayed. Re-run the full investigation instead."
+                ),
+            }), 400
+
+        result = replay_playbook(case=case, playbook_id=playbook_id, force=force)
+
+        if result.get("status") == "error":
+            return jsonify(result), 404 if "not found" in result.get("error", "").lower() else 400
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 def register_routes(app):
     """Register all route handlers with the Flask app.
 
@@ -1812,6 +1892,7 @@ def register_routes(app):
     app.add_url_rule('/static/<filename>', 'ui_static', ui_static)
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
     app.add_url_rule('/reports/<case_dir>/supertimeline', 'serve_supertimeline', _require_auth(serve_supertimeline))
+    app.add_url_rule('/reports/<case_dir>/ip-map', 'get_ip_map', _require_auth(get_ip_map))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
     app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
     app.add_url_rule('/tools', 'list_tools', _require_auth(list_tools))
@@ -1835,3 +1916,4 @@ def register_routes(app):
     app.add_url_rule('/api/settings', 'api_get_settings', _require_auth(api_get_settings))
     app.add_url_rule('/api/settings/models', 'api_update_models', _require_auth(api_update_models), methods=['POST'])
     app.add_url_rule('/api/settings/keys', 'api_update_keys', _require_auth(api_update_keys), methods=['POST'])
+    app.add_url_rule('/replay-playbook', 'replay_playbook_route', _require_auth(replay_playbook_route), methods=['POST'])
