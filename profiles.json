@@ -1,6 +1,6 @@
 {
   "cloud": {
-    "manager": "deepseek-v3.2:cloud",
+    "manager": "deepseek-v4-flash:cloud",
     "forensicator": "qwen3-coder-next:cloud",
     "critic": "qwen3.5:cloud"
   },

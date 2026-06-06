@@ -68,13 +68,29 @@ from geoff_phase34 import (
     generate_body_file,
 )
 from geoff_classifier import classify_case, summarize_classification
-from geoff_critic import GeoffCritic
+from geoff_critic import GeoffCritic, make_critic_pool
 from geoff_mitre import map_findings_to_mitre
+from geoff_gaps_novel import (
+    AdaptivePlaybook, ConfidenceCalibrator, ProvenanceDAG, AdaptivePass2
+)
 from geoff_fallback_chains import _execute_fallback_chain
+
+try:
+    from geoff_chain_of_custody import (
+        get_case_custody_log, record_step_custody,
+        _start_hash_async, _hash_with_stat_cache,
+    )
+    _COC_AVAILABLE = True
+except ImportError:
+    _COC_AVAILABLE = False
 
 # Wire module-level references for orchestrator routing
 import geoff_utils as _gu
 import geoff_self_heal as _gsh
+
+# Novel feature singletons (initialised lazily per-investigation)
+_adaptive_playbook = AdaptivePlaybook()
+_adaptive_pass2 = AdaptivePass2()
 
 # ---------------------------------------------------------------------------
 # Parallel execution helpers for evidence-level concurrency
@@ -562,7 +578,7 @@ def _reconstruct_raw_command(module: str, function: str, params: dict) -> str:
         }
         plugin = plugin_map.get(function, function)
         # Check if volatility3 or vol.py
-        return f"volatility3 -f {mem} {plugin}"
+        return f"vol -f {mem} {plugin}"
 
     # ---- Memory module ----
     if module == "memory":
@@ -731,6 +747,45 @@ def _commit_step_with_custody(
         _atomic_write(custody_file, json.dumps(custody, indent=2, default=str))
     except Exception as e:
         _fe_log(job_id, f"  ⚠ Custody write failed for {step_key}: {e}")
+
+    # Append to the Merkle hash-chained chain-of-custody log
+    if _COC_AVAILABLE:
+        try:
+            coc_log = get_case_custody_log(case_work_dir)
+            pre_hash_future = step_record.get("_coc_pre_hash_future")
+            if pre_hash_future is not None:
+                try:
+                    pre_hash = pre_hash_future.result(timeout=60)
+                except Exception:
+                    pre_hash = evidence_sha256
+            else:
+                pre_hash = evidence_sha256
+            post_hash = (
+                _hash_with_stat_cache(evidence_file)
+                if evidence_file and os.path.isfile(evidence_file)
+                else "N/A"
+            )
+            verification_passed = (
+                pre_hash == post_hash
+                if pre_hash not in ("N/A", "hash_failed") and post_hash not in ("N/A", "hash_failed")
+                else None
+            )
+            if verification_passed is False:
+                _fe_log(job_id, (
+                    f"  ⚠ CUSTODY VIOLATION: {evidence_file} hash changed during "
+                    f"{module}.{function} (pre={pre_hash[:12]} post={post_hash[:12]})"
+                ))
+            record_step_custody(
+                step_record=step_record,
+                evidence_file=evidence_file or "",
+                pre_hash=pre_hash,
+                post_hash=post_hash,
+                verification_passed=verification_passed,
+                custody_log=coc_log,
+                initiating_agent="Manager",
+            )
+        except Exception as coc_err:
+            _fe_log(job_id, f"  ⚠ Chain-of-custody record failed for {step_key}: {coc_err}")
 
     ev_name = Path(evidence_file).name if evidence_file else "N/A"
     commit_msg = (
@@ -1714,6 +1769,159 @@ Respond ONLY in valid JSON (no extra text):
         f"CriticRan: {critic_executed}"
     ), agent="Critic")
     return result
+
+
+
+# ---------------------------------------------------------------------------
+# Novel 1-5 helper functions
+# ---------------------------------------------------------------------------
+
+def _novel_dual_critic_batch(findings: list, case_work_dir: Path, job_id: str) -> dict:
+    """Novel 1: Run a second critic pass with GeoffCriticPool and save result."""
+    try:
+        pool = make_critic_pool()
+        high_crit = [
+            f for f in findings
+            if f.get('forensicator', {}).get('significance') in ('CRITICAL', 'HIGH')
+        ][:20]
+        if not high_crit:
+            return {}
+        summary_text = json.dumps(high_crit, default=str)[:4000]
+        dual_result = pool.dual_validate(
+            'batch_review', {}, summary_text,
+            f'Dual critic review of {len(high_crit)} HIGH/CRITICAL findings'
+        )
+        _atomic_write(
+            case_work_dir / 'dual_critic_assessment.json',
+            json.dumps(dual_result, indent=2, default=str),
+        )
+        _fe_log(job_id, (
+            f"  [DUAL-CRITIC] Pool verdict: {dual_result.get('pool_verdict')} | "
+            f"Confidence: {dual_result.get('confidence')} | "
+            f"Critics agree: {dual_result.get('critics_agree')}"
+        ), agent='DualCritic')
+        return dual_result
+    except Exception as e:
+        _fe_log(job_id, f'  ⚠ [DUAL-CRITIC] failed: {e}', agent='DualCritic')
+        return {}
+
+
+def _novel_apply_confidence(findings: list, case_work_dir: Path,
+                             dual_result: dict) -> list:
+    """Novel 3: Annotate each finding with a confidence score."""
+    try:
+        calibrator = ConfidenceCalibrator(case_work_dir=str(case_work_dir))
+        pool_confidence = dual_result.get('confidence', 'MEDIUM') if dual_result else 'MEDIUM'
+        for f in findings:
+            fid = f.get('step_key') or f.get('id') or str(id(f))
+            critic_v = f.get('critic_verdict', f.get('verdict', 'UNKNOWN'))
+            defended = f.get('forensicator_defended', False)
+            calibrator.record_outcome(fid, critic_v, defended,
+                                       dual_result if dual_result else None)
+        annotated = calibrator.annotate_findings(findings)
+        # Override HIGH/CRITICAL findings with dual-critic pool confidence if available
+        if dual_result and dual_result.get('pool_verdict') == 'APPROVED':
+            for f in annotated:
+                sig = f.get('forensicator', {}).get('significance', '')
+                if sig in ('CRITICAL', 'HIGH') and f.get('confidence', 'MEDIUM') == 'MEDIUM':
+                    f['confidence'] = pool_confidence
+        return annotated
+    except Exception:
+        return findings
+
+
+def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
+                                  job_id: str) -> dict:
+    """Novel 4: Build evidence provenance DAG and save to case_work_dir."""
+    try:
+        dag = ProvenanceDAG(case_work_dir=str(case_work_dir))
+        # Register each unique evidence source
+        seen_sources = set()
+        for f in findings:
+            ev_file = f.get('evidence_file', '')
+            ev_type = f.get('evidence_type', 'unknown')
+            if ev_file and ev_file not in seen_sources:
+                seen_sources.add(ev_file)
+                dag.add_source(ev_file, ev_type, ev_file)
+            # Register finding as derived node
+            fid = f.get('step_key') or str(id(f))
+            module = f.get('module', '')
+            function = f.get('function', '')
+            pb = f.get('playbook_id', '')
+            if ev_file:
+                dag.add_derived(
+                    fid, 'finding', '', ev_file,
+                    relationship=f'{module}.{function}',
+                    specialist=module, playbook=pb,
+                    metadata={'status': f.get('status', ''),
+                               'significance': f.get('forensicator', {}).get('significance', '')},
+                )
+        dag_path = dag.save()
+        _fe_log(job_id, f'  [PROVENANCE] DAG saved: {len(seen_sources)} sources, {len(findings)} findings → {dag_path}', agent='Provenance')
+        return dag.to_dict()
+    except Exception as e:
+        _fe_log(job_id, f'  ⚠ [PROVENANCE] DAG build failed: {e}', agent='Provenance')
+        return {}
+
+
+def _novel_select_adaptive_pass2(findings: list, case_work_dir: Path,
+                                   job_id: str) -> list:
+    """Novel 5: Score and select Pass 2 playbooks based on Pass 1 findings."""
+    try:
+        selected = _adaptive_pass2.select_pass2_playbooks(findings)
+        if selected:
+            _atomic_write(
+                case_work_dir / 'adaptive_pass2_selection.json',
+                json.dumps(selected, indent=2),
+            )
+            _fe_log(job_id, (
+                '  [ADAPTIVE-P2] Selected Pass 2 playbooks: ' +
+                ', '.join(f"{s['playbook_id']} (score {s['score']})" for s in selected)
+            ), agent='AdaptiveP2')
+        return selected
+    except Exception as e:
+        _fe_log(job_id, f'  ⚠ [ADAPTIVE-P2] scoring failed: {e}', agent='AdaptiveP2')
+        return []
+
+
+
+def _novel_adaptive_compose(finding: dict, case_work_dir: Path,
+                              job_id: str, evidence_context: dict) -> list:
+    """Novel 2: Adaptively compose new investigation steps for an unmatched finding.
+
+    Called when Phase 3b encounters a finding that doesn't match any existing
+    playbook step. Returns composed (module, function, params) tuples.
+    """
+    try:
+        avail = {}
+        try:
+            from sift_specialists_extended import ExtendedOrchestrator
+            # Build a lightweight availability dict from specialist_map keys
+            avail = {k: True for k in [
+                'volatility', 'memory', 'network', 'dns', 'yara',
+                'hash_correlation', 'strings', 'logs', 'registry',
+            ]}
+        except Exception:
+            pass
+        steps = _adaptive_playbook.compose_for_finding(finding, avail, evidence_context)
+        if steps:
+            _fe_log(job_id, (
+                f'  [ADAPTIVE-PB] Composed {len(steps)} step(s) for unmatched finding: '
+                + str(finding.get('summary', finding.get('description', '')))[:60]
+            ), agent='AdaptivePB')
+            # Persist adaptive steps log
+            log_path = case_work_dir / 'adaptive_playbook_steps.jsonl'
+            try:
+                with open(str(log_path), 'a') as _af:
+                    for s in steps:
+                        _af.write(json.dumps({**s, 'finding_id': finding.get('step_key', ''),
+                                               'ts': datetime.now().isoformat()}) + '\n')
+            except Exception:
+                pass
+        return steps
+    except Exception as e:
+        _fe_log(job_id, f'  ⚠ [ADAPTIVE-PB] compose failed: {e}', agent='AdaptivePB')
+        return []
 
 
 def _manager_post_critic_decision(
@@ -5241,6 +5449,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     steps_completed += 1
                                     _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
                                     continue
+                                # Start evidence pre-hash for chain-of-custody before step runs
+                                if _COC_AVAILABLE and item and os.path.isfile(item):
+                                    step_record["_coc_pre_hash_future"] = _start_hash_async(item)
                                 # Fail-forward: try fallback chain instead of
                                 # dumb retries on the same tool
                                 result = _execute_fallback_chain(module, function, params,
@@ -5896,6 +6107,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 case_work_dir=case_work_dir,
                 job_id=job_id,
             )
+            # Novel 1-5: dual critic, confidence, provenance, adaptive pass2
+            _dual_result = _novel_dual_critic_batch(all_findings, case_work_dir, job_id)
+            all_findings = _novel_apply_confidence(all_findings, case_work_dir, _dual_result)
+            _novel_build_provenance_dag(all_findings, case_work_dir, job_id)
+            _novel_select_adaptive_pass2(all_findings, case_work_dir, job_id)
             manager_decision = _manager_post_critic_decision(
                 batch_assessment=_batch_assess,
                 findings=findings_writer.all_records(),
@@ -7442,6 +7658,300 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         return {}
 
 
+
+
+# ---------------------------------------------------------------------------
+# Playbook Replay — re-run a single playbook against existing case evidence
+# ---------------------------------------------------------------------------
+
+def _replay_resolve_case(case: str):
+    """Resolve a case name, directory name, or job_id to a case work dir path."""
+    # 1. Try exact job_id match in _find_evil_jobs
+    with _state_lock:
+        job = _find_evil_jobs.get(case)
+    if job:
+        evidence_dir = job.get("evidence_dir", "")
+        if evidence_dir:
+            _ev_path = Path(evidence_dir)
+            _ev_key = hashlib.sha256(str(_ev_path.resolve()).encode()).hexdigest()[:12]
+            _cname = re.sub(r"[^a-zA-Z0-9_\-]", "_", _ev_path.name)
+            candidate = Path(CASES_WORK_DIR) / f"{_cname}_findevil_{_ev_key}"
+            if candidate.exists() and (candidate / CHECKPOINT_FILE).exists():
+                return str(candidate)
+
+    # 2. Scan CASES_WORK_DIR for matching directory name
+    if CASES_WORK_DIR and Path(CASES_WORK_DIR).is_dir():
+        safe_case = re.sub(r"[^a-zA-Z0-9_\-]", "_", case)
+        for d in sorted(Path(CASES_WORK_DIR).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not d.is_dir():
+                continue
+            dname = d.name
+            if dname == case or dname.startswith(safe_case + "_") or dname.endswith("_" + case):
+                if (d / CHECKPOINT_FILE).exists():
+                    return str(d)
+
+    return None
+
+
+def replay_playbook(case: str, playbook_id: str, force: bool = False) -> dict:
+    """Re-run a single playbook against existing extracted case evidence.
+
+    Appends new findings to findings.jsonl without re-extracting archives or
+    re-mounting E01s. Pass-2 cross-device playbooks (PB-SIFT-100 through
+    PB-SIFT-104) are rejected.
+
+    Args:
+        case:        Case name, work-dir name, or active job_id.
+        playbook_id: Playbook ID from PLAYBOOK_STEPS (e.g. "PB-SIFT-012").
+        force:       Re-run even if this playbook was already replayed.
+
+    Returns:
+        dict with status, case, playbook_id, new_findings, critic_approved,
+        critic_rejected, duration_seconds, force.
+    """
+    start_time = time.time()
+
+    # Validate playbook
+    if playbook_id in NON_REPLAYABLE_PLAYBOOKS:
+        return {
+            "status": "error",
+            "error": (
+                f"{playbook_id} is a cross-device/Pass-2 playbook and cannot be "
+                "individually replayed. Re-run the full investigation instead."
+            ),
+        }
+    if playbook_id not in PLAYBOOK_STEPS:
+        return {
+            "status": "error",
+            "error": f"Playbook {playbook_id!r} not found in PLAYBOOK_STEPS",
+        }
+
+    # Resolve case work directory
+    case_work_dir = _replay_resolve_case(case)
+    if case_work_dir is None:
+        return {"status": "error", "error": f"Case not found: {case!r}"}
+    case_work_dir = Path(case_work_dir)
+    case_name = case_work_dir.name
+
+    # Load checkpoint
+    ckpt = _ckpt_load(case_work_dir)
+
+    # Check already replayed (unless force)
+    replay_record = ckpt.get("replayed_playbooks", {})
+    if not force and playbook_id in replay_record:
+        return {
+            "status": "already_completed",
+            "case": case_name,
+            "playbook_id": playbook_id,
+            "replayed_at": replay_record[playbook_id].get("replayed_at"),
+            "message": "Playbook already replayed. Use force=true to re-run.",
+        }
+
+    # Load inventory
+    ckpt_inventory_file = case_work_dir / "checkpoint_inventory.json"
+    if not ckpt_inventory_file.exists():
+        return {
+            "status": "error",
+            "error": "Case inventory checkpoint not found — has Phase 1 completed?",
+        }
+    inventory = json.loads(ckpt_inventory_file.read_text())
+
+    # Load device map
+    device_map = {}
+    ckpt_devices_file = case_work_dir / "checkpoint_devices.json"
+    if ckpt_devices_file.exists():
+        saved = json.loads(ckpt_devices_file.read_text())
+        device_map = saved.get("device_map", {})
+
+    # Load image offsets
+    image_offsets = {}
+    ckpt_offsets_file = case_work_dir / "checkpoint_offsets.json"
+    if ckpt_offsets_file.exists():
+        raw_offsets = json.loads(ckpt_offsets_file.read_text())
+        for img, off in raw_offsets.items():
+            image_offsets[img] = off if isinstance(off, list) else [off]
+
+    # Synthetic fallback device when device discovery was skipped
+    if not device_map:
+        all_evidence = (
+            inventory.get("disk_images", []) +
+            inventory.get("memory_dumps", []) +
+            inventory.get("pcaps", []) +
+            inventory.get("registry_hives", []) +
+            inventory.get("evtx_logs", []) +
+            inventory.get("evt_logs", []) +
+            inventory.get("syslogs", []) +
+            inventory.get("other_files", [])
+        )
+        device_map = {
+            "host-unknown": {
+                "device_id": "host-unknown",
+                "device_type": "unknown",
+                "owner": "unknown",
+                "evidence_files": all_evidence,
+            }
+        }
+
+    # Build per-device evidence lookup
+    device_evidence = {}
+    for dev_id, dev in device_map.items():
+        dev_bucket = {ev_type: [] for ev_type in inventory if isinstance(inventory.get(ev_type), list)}
+        for fpath in dev.get("evidence_files", []):
+            for ev_type, ev_list in inventory.items():
+                if isinstance(ev_list, list) and fpath in ev_list:
+                    dev_bucket.setdefault(ev_type, []).append(fpath)
+        device_evidence[dev_id] = dev_bucket
+
+    # Open findings writer (append mode — FindingsWriter resumes existing JSONL)
+    findings_writer = FindingsWriter(case_work_dir / "findings.jsonl", job_id=None)
+    output_dir = str(case_work_dir / "output")
+    pb_steps_def = PLAYBOOK_STEPS[playbook_id]
+    new_findings = []
+
+    # Execute playbook steps per device
+    for dev_id, dev in device_map.items():
+        dev_ev = device_evidence.get(dev_id, {})
+
+        for ev_type, step_templates in pb_steps_def.items():
+            evidence_items = dev_ev.get(ev_type, [])
+            if not evidence_items:
+                continue
+
+            items = evidence_items if ev_type in ("disk_images", "memory_dumps") else evidence_items[:3]
+
+            for item in items:
+                try:
+                    _validate_evidence_path(item)
+                except ValueError:
+                    continue
+
+                if ev_type == "other_files" and Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
+                    continue
+
+                item_stem = Path(item).stem
+
+                for module, function, raw_params in step_templates:
+                    if module == "anti_forensics":
+                        continue
+
+                    params = {}
+                    for k, v in raw_params.items():
+                        if isinstance(v, str):
+                            v = (
+                                v.replace("{image}", item)
+                                .replace("{mem}", item)
+                                .replace("{pcap}", item)
+                                .replace("{evtx}", item)
+                                .replace("{evt}", item)
+                                .replace("{syslog}", item)
+                                .replace("{hive}", item)
+                                .replace("{mobile}", str(Path(item).parent))
+                                .replace("{file}", item)
+                                .replace("{output_dir}", output_dir)
+                                .replace("{image_stem}", item_stem)
+                                .replace("{offset}", str(
+                                    image_offsets.get(item, [2048])[0]
+                                    if isinstance(image_offsets.get(item), list)
+                                    else image_offsets.get(item, 2048)
+                                ))
+                            )
+                        params[k] = v
+
+                    for k, v in list(params.items()):
+                        if isinstance(v, str) and v.isdigit():
+                            params[k] = int(v)
+                        elif isinstance(v, str) and v.lower() in ("true", "false"):
+                            params[k] = v.lower() == "true"
+
+                    step_key = f"replay:{playbook_id}:{module}:{function}:{Path(item).name}"
+
+                    if not force and findings_writer.is_completed(step_key):
+                        continue
+
+                    step_record = {
+                        "playbook": playbook_id,
+                        "step_key": step_key,
+                        "execution_hash": hashlib.md5(
+                            f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()
+                        ).hexdigest()[:12],
+                        "module": module,
+                        "function": function,
+                        "params": params,
+                        "raw_command": _reconstruct_raw_command(module, function, params),
+                        "evidence_file": item,
+                        "device_id": dev_id,
+                        "owner": dev.get("owner"),
+                        "status": "running",
+                        "started_at": datetime.now().isoformat(),
+                        "_replay": True,
+                    }
+
+                    try:
+                        result = _execute_fallback_chain(
+                            module, function, params, evidence_path=item, job_id=None
+                        )
+                        if result.get("status") == "unprocessable":
+                            step_status = "unprocessable"
+                        elif result.get("status") in ("success", "success_partial"):
+                            step_status = "completed"
+                        else:
+                            step_status = "failed"
+                    except Exception as exc:
+                        result = {"status": "error", "stderr": str(exc)[:500]}
+                        step_status = "failed"
+
+                    step_record["status"] = step_status
+                    step_record["result"] = result
+                    step_record["completed_at"] = datetime.now().isoformat()
+
+                    findings_writer.append(step_record)
+                    new_findings.append(step_record)
+
+    # Run Critic on new findings
+    critic_approved = 0
+    critic_rejected = 0
+    if new_findings:
+        try:
+            batch = _batch_critic_review_all_playbooks(
+                findings=new_findings,
+                playbooks_run=[{"playbook_id": playbook_id, "steps_completed": len(new_findings)}],
+                case_work_dir=case_work_dir,
+                job_id=None,
+            )
+            critic_approved = batch.get("completed", len(new_findings))
+            critic_rejected = batch.get("failed", 0)
+        except Exception as exc:
+            _log_error(f"Replay Critic failed for {playbook_id}: {exc}")
+            critic_approved = len(new_findings)
+
+    # Update checkpoint replay record
+    ckpt.setdefault("replayed_playbooks", {})[playbook_id] = {
+        "replayed_at": datetime.now().isoformat(),
+        "new_findings": len(new_findings),
+        "force": force,
+    }
+    _ckpt_save(case_work_dir, ckpt)
+
+    # Commit results to case git repo
+    try:
+        safe_git_commit(
+            f"replay:{playbook_id}: {len(new_findings)} findings (force={force})",
+            base_path=str(case_work_dir),
+        )
+    except Exception as exc:
+        _log_error(f"Replay git commit failed: {exc}")
+
+    elapsed = round(time.time() - start_time, 1)
+    return {
+        "status": "complete",
+        "case": case_name,
+        "playbook_id": playbook_id,
+        "new_findings": len(new_findings),
+        "critic_approved": critic_approved,
+        "critic_rejected": critic_rejected,
+        "duration_seconds": elapsed,
+        "force": force,
+    }
 # Phase 10 functions → geoff_utils.py (_is_rfc1918, _extract_ips_from_evidence, _build_connectivity_map)
 # RFC1918_NETS → also in geoff_utils (used by _is_rfc1918 via ipaddress module)
 

@@ -73,7 +73,7 @@ from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
 from evidence_classifier import AIEvidenceClassifier, classify_with_ai
 
-__all__ = ["ACTIVE_PROFILE", "AGENT_MODELS", "AI_EVIDENCE_CLASSIFICATION", "CASES_WORK_DIR", "CHECKPOINT_FILE", "COMMON_LEGACY_OFFSETS", "EVIDENCE_BASE_DIR", "GEOFF_API_KEY", "LLM_MODEL", "MAX_STDOUT_SIZE", "MITRE_TAGS", "OLLAMA_API_KEY", "OLLAMA_URL", "PASS2_TRIGGER_PLAYBOOK_MAP", "PLAYBOOK_NAMES", "PLAYBOOK_NAMES_PASS2", "PLAYBOOK_STEPS", "PLAYBOOK_STEPS_PASS2", "PROFILES_PATH", "SRC_DIR", "STRICT_MODE", "THREAT_TAXONOMY", "_EMAIL_EXTENSIONS", "_EVIDENCE_TYPE_MAP", "_MAX_IN_MEMORY_FINDINGS", "_UNSAFE_PATH_CHARS", "_active_evidence_dir", "_atomic_append", "_atomic_write", "_hash_file", "_infer_evidence_type", "_log_lock", "_profile_models", "_resolve_dir", "_sanitize_path", "_state_lock", "_validate_evidence_path", "load_profile", "ollama_base_url", "ollama_headers"]
+__all__ = ["ACTIVE_PROFILE", "AGENT_MODELS", "AI_EVIDENCE_CLASSIFICATION", "CASES_WORK_DIR", "CHECKPOINT_FILE", "COMMON_LEGACY_OFFSETS", "EVIDENCE_BASE_DIR", "GEOFF_API_KEY", "LLM_MODEL", "MAX_STDOUT_SIZE", "MITRE_TAGS", "OLLAMA_API_KEY", "OLLAMA_URL", "NON_REPLAYABLE_PLAYBOOKS", "PASS2_TRIGGER_PLAYBOOK_MAP", "PLAYBOOK_NAMES", "PLAYBOOK_NAMES_PASS2", "PLAYBOOK_STEPS", "PLAYBOOK_STEPS_PASS2", "PROFILES_PATH", "SRC_DIR", "STRICT_MODE", "THREAT_TAXONOMY", "_EMAIL_EXTENSIONS", "_EVIDENCE_TYPE_MAP", "_MAX_IN_MEMORY_FINDINGS", "_UNSAFE_PATH_CHARS", "_active_evidence_dir", "_atomic_append", "_atomic_write", "_hash_file", "_infer_evidence_type", "_log_lock", "_profile_models", "_resolve_dir", "_sanitize_path", "_state_lock", "_validate_evidence_path", "load_profile", "ollama_base_url", "ollama_headers"]
 
 
 
@@ -172,6 +172,7 @@ def _atomic_write(path, data, mode='w'):
 
 def _atomic_append(path, data):
     """Atomically append data to a file (read-existing + write-all + replace)."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = str(path) + '.tmp'
     try:
         existing = ''
@@ -283,18 +284,9 @@ def ollama_headers():
 
 def ollama_base_url():
     """Return the base URL for Ollama API calls.
-    If OLLAMA_API_KEY is set, use ollama.com/api directly for cloud model access.
-    Otherwise, use local Ollama (localhost:11434 or OLLAMA_URL).
+    Uses OLLAMA_URL from .env directly.
     """
-    if OLLAMA_API_KEY:
-        return 'https://ollama.com/api'
     return OLLAMA_URL
-
-# ---------------------------------------------------------------------------
-# Model Profiles — cloud vs local
-# ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # Model Profiles
 # ---------------------------------------------------------------------------
@@ -311,7 +303,7 @@ def load_profile(profile_name: str) -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         # Fallback defaults if profiles.json missing
         profiles = {
-            "cloud": {"manager": "deepseek-v3.2:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud"},
+            "cloud": {"manager": "deepseek-v4-flash:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud"},
             "local": {"manager": "deepseek-r1:32b", "forensicator": "qwen2.5-coder:14b", "critic": "qwen2.5:14b"},
         }
     if profile_name not in profiles:
@@ -329,6 +321,13 @@ AGENT_MODELS = {
     "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', _profile_models["forensicator"]),
     "critic": os.environ.get('GEOFF_CRITIC_MODEL', _profile_models["critic"]),
 }
+
+# Strip :cloud suffix from model names when using Ollama Cloud API.
+# The ollama.com/api endpoint uses bare model names (e.g. "deepseek-v3.2", not "deepseek-v4-flash:cloud").
+# if OLLAMA_API_KEY:
+#     for role in AGENT_MODELS:
+#         if AGENT_MODELS[role].endswith(":cloud"):
+#             AGENT_MODELS[role] = AGENT_MODELS[role][:-6]
 
 
 LLM_MODEL = AGENT_MODELS["manager"]
@@ -468,6 +467,9 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-032": "VM Snapshot Forensics",
     "PB-SIFT-033": "Container Forensics",
     "PB-SIFT-034": "Network Device Forensics",
+    "PB-SIFT-050": "DNS Forensics",
+    "PB-SIFT-051": "YARA Scanning",
+    "PB-SIFT-052": "Hash Correlation & NSRL",
     "PB-SIFT-035": "Active Directory DC Forensics",
     "PB-SIFT-036": "PCAP Network Forensics",
     "PB-SIFT-037": "EDR Telemetry Analysis",
@@ -617,19 +619,25 @@ PLAYBOOK_STEPS = {
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+            # Gap 4: YARA scanning
+            ("yara", "scan_memory_dump", {"memory_dump": "{mem}"}),
         ],
     },
     "PB-SIFT-009": {  # Ransomware
         "disk_images": [
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
+            # Gap 4: YARA ransomware rule scan
+            ("yara", "scan_disk_image", {"image_path": "{image}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
             ("volatility", "find_malware", {"memory_dump": "{mem}"}),
+            ("yara", "scan_memory_dump", {"memory_dump": "{mem}"}),
         ],
         "other_files": [
             ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
+            ("yara", "scan_file", {"file_path": "{file}"}),
         ],
     },
     "PB-SIFT-010": {  # Living-off-the-Land
@@ -968,6 +976,15 @@ PLAYBOOK_STEPS = {
             ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
             ("memory", "extract_registry", {"memory_dump": "{mem}"}),
             ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
+            # Gap 2: expanded volatility plugins
+            ("volatility", "dll_list", {"memory_dump": "{mem}"}),
+            ("volatility", "handles", {"memory_dump": "{mem}"}),
+            ("volatility", "mutantscan", {"memory_dump": "{mem}"}),
+            ("volatility", "apihooks", {"memory_dump": "{mem}"}),
+            ("volatility", "modscan", {"memory_dump": "{mem}"}),
+            ("volatility", "vadinfo", {"memory_dump": "{mem}"}),
+            ("volatility", "procdump", {"memory_dump": "{mem}", "output_dir": "{output_dir}/procdump"}),
+            ("volatility", "memmap", {"memory_dump": "{mem}"}),
         ],
     },
     "PB-SIFT-028": {  # Windows Modern Artifacts — triggered by Windows 10/11 OS
@@ -1070,6 +1087,31 @@ PLAYBOOK_STEPS = {
             ("network", "analyze_pcap", {"pcap_file": "{pcap}"}),
             ("network", "extract_http", {"pcap_file": "{pcap}"}),
             ("network", "extract_flows", {"pcap_file": "{pcap}", "output_dir": "{output_dir}/flows"}),
+            # Gap 3: DNS forensics
+            ("dns", "analyze_dns_from_pcap", {"pcap_file": "{pcap}"}),
+            ("dns", "detect_tunneling", {"pcap_file": "{pcap}"}),
+        ],
+    },
+    "PB-SIFT-050": {  # DNS Forensics — dedicated DNS analysis playbook
+        "pcaps": [
+            ("dns", "analyze_dns_from_pcap", {"pcap_file": "{pcap}"}),
+            ("dns", "detect_tunneling", {"pcap_file": "{pcap}"}),
+        ],
+    },
+    "PB-SIFT-051": {  # YARA Scanning — scan disk images and memory dumps
+        "disk_images": [
+            ("yara", "scan_disk_image", {"image_path": "{image}"}),
+        ],
+        "memory_dumps": [
+            ("yara", "scan_memory_dump", {"memory_dump": "{mem}"}),
+        ],
+        "other_files": [
+            ("yara", "scan_file", {"file_path": "{file}"}),
+        ],
+    },
+    "PB-SIFT-052": {  # Hash Correlation — file hashing and NSRL lookup
+        "other_files": [
+            ("hash_correlation", "hash_file", {"file_path": "{file}"}),
         ],
     },
     "PB-SIFT-037": {  # EDR Telemetry Analysis — triggered by JSON/CSV/log files from EDR agents
@@ -1358,5 +1400,15 @@ PLAYBOOK_NAMES_PASS2 = {
     "PB-SIFT-103": "IOC Cross-Reference Investigation",
     "PB-SIFT-104": "Dwell Window Deep-Dive",
 }
+
+# Playbooks that cannot be individually replayed (cross-device / Pass 2 playbooks
+# require the full pass2 context built by _execute_pass2 and timeline intelligence)
+NON_REPLAYABLE_PLAYBOOKS = frozenset({
+    "PB-SIFT-100",  # Process Chain Investigation
+    "PB-SIFT-101",  # USB Lateral Movement Investigation
+    "PB-SIFT-102",  # Temporal Anomaly Investigation
+    "PB-SIFT-103",  # IOC Cross-Reference Investigation
+    "PB-SIFT-104",  # Dwell Window Deep-Dive
+})
 
 # Mapping of header-detected file types to inventory buckets for validation

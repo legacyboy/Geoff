@@ -550,7 +550,7 @@ def call_llm(user_message, context="", agent_type="manager"):
         "Check OLLAMA_URL",
         "[ERROR] Ollama returned",
     )
-    _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
+    _MAX_RETRY_TIME = 300  # 5 minutes total retry window
     _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
     _max_retries = 99  # effectively unlimited within time window
     _start = time.time()
@@ -576,7 +576,7 @@ def call_llm(user_message, context="", agent_type="manager"):
                     "stream": False,
                     "options": {"temperature": 0.3}
                 },
-                timeout=600  # 5 min — cloud models can be slow
+                timeout=120  # 2 min — cloud models respond in seconds or are failing
             )
             if response.status_code == 200:
                 result_text = response.json().get('response', 'Hmm, let me check that again.')
@@ -671,7 +671,7 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
         "Check OLLAMA_URL",
         "[ERROR] Ollama returned",
     )
-    _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
+    _MAX_RETRY_TIME = 300  # 5 minutes total retry window
     _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
     _max_retries = 99  # effectively unlimited within time window
     _start = time.time()

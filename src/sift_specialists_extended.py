@@ -28,6 +28,9 @@ from xml.etree import ElementTree as ET
 import sys
 import inspect
 from file_scanner import FileScanner
+from geoff_dns_forensics import DNS_Specialist
+from geoff_yara import YARA_Specialist
+from geoff_hash_correlation import HASH_Specialist
 import time
 import threading
 
@@ -11392,6 +11395,14 @@ class ExtendedOrchestrator:
         # FAT recovery specialist (delegates to geoff_discovery.recover_formatted_fat)
         self.fat_recovery = FAT_RECOVERY_Specialist(evidence_base)
 
+        # Gap 3-5 specialists
+        from geoff_dns_forensics import DNS_Specialist
+        from geoff_yara import YARA_Specialist
+        from geoff_hash_correlation import HASH_Specialist
+        self.dns = DNS_Specialist()
+        self.yara = YARA_Specialist()
+        self.hash_correlation = HASH_Specialist()
+
         # File scanner specialist (file identification / signature mismatch)
         self.file_scanner = FileScanner(evidence_base)
 
@@ -11435,6 +11446,9 @@ class ExtendedOrchestrator:
             'zeek':           self.zeek,
             'file_scanner':   self.file_scanner,
             'fat_recovery':   self.fat_recovery,
+            'dns':            self.dns,
+            'yara':           self.yara,
+            'hash_correlation': self.hash_correlation,
         }
 
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:

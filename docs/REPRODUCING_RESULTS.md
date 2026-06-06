@@ -10,7 +10,7 @@ Expected outputs are shown for each dataset so you can verify your run matches.
 
 1. **SIFT Workstation** — Ubuntu 22.04 (SIFT 2026.x). Download from https://www.sans.org/tools/sift-workstation/
 2. **Git** — `sudo apt-get install -y git`
-3. **Python 3.10+** — included in SIFT
+3. **Python 3.12+** — included in SIFT
 4. **Internet access** (first run only — self-heal will install missing tools on demand)
 5. **Ollama** — see Step 2 below for installation
 
@@ -44,10 +44,20 @@ geoff-find-evil --help
 **Cloud profile (recommended for first run):**
 
 ```bash
-# Install Ollama
+# Install Ollama (systemd service)
 curl -fsSL https://ollama.ai/install.sh | sh
-# No models to pull — cloud profile uses hosted endpoint
+sudo systemctl enable --now ollama
+
+# Sign into Ollama Cloud (one-time)
+ollama signin
+# Enter your Ollama Cloud credentials when prompted.
+# No API key needed in .env — the signin handles auth automatically.
 ```
+
+**Cloud profile models:**
+- Manager: `deepseek-v4-flash:cloud`
+- Forensicator: `qwen3-coder-next:cloud`
+- Critic: `qwen3.5:cloud`
 
 **Local profile (no internet required during investigation, ~40 GB models):**
 
@@ -69,20 +79,23 @@ cp .env.example .env
 Edit `.env` to set your values:
 
 ```bash
-# Cloud profile
-OLLAMA_URL=https://ollama.com/api
-OLLAMA_API_KEY=<your-ollama-api-key>
-GEOFF_MODEL_PROFILE=cloud
-
-# Or local profile
+# Cloud profile (Ollama Cloud via local service)
 OLLAMA_URL=http://localhost:11434
-OLLAMA_API_KEY=
-GEOFF_MODEL_PROFILE=local
-
-# Evidence and case paths (adjust to your NAS mount or local path)
+GEOFF_PROFILE=cloud
 GEOFF_EVIDENCE_PATH=/mnt/evidence
-GEOFF_WORK_DIR=/tmp/geoff-cases
-GEOFF_LOG_LEVEL=INFO
+GEOFF_CASES_PATH=/mnt/cases
+# No OLLAMA_API_KEY needed — use `ollama signin` to authenticate
+
+# Optional: require API key on HTTP endpoints
+# GEOFF_API_KEY=your-secret-key
+
+# Or local profile (GPU models)
+# OLLAMA_URL=http://localhost:11434
+# GEOFF_PROFILE=local
+# GEOFF_EVIDENCE_PATH=/mnt/evidence
+# GEOFF_CASES_PATH=/mnt/cases
+# GEOFF_WORK_DIR=/tmp/geoff-cases
+# GEOFF_LOG_LEVEL=INFO
 ```
 
 ---
@@ -149,7 +162,9 @@ geoff-find-evil /mnt/evidence/jeanm57 \
 [Manager] Reviewing triage output...
 [Manager] approved_execution_plan: ["PB-SIFT-001", "PB-SIFT-002", ...]
 [Forensicator] PB-SIFT-001: sleuthkit.list_files — nps-2008-jean.E01
-[Critic] step verdict: ACCEPTABLE
+[Critic A] step verdict: ACCEPTABLE
+[Critic B] step verdict: ACCEPTABLE
+[Pool] Confidence: VERY_HIGH
 [Forensicator] PB-SIFT-001: sleuthkit.list_files — nps-2008-jean.E02
 ...
 [Healer] self_correction on PB-SIFT-010: fls_auto fails → fls_offset0 retry
@@ -170,6 +185,8 @@ ls $CASE_DIR
 #   findings.jsonl     (~25 lines)
 #   batch_critic_assessment.json
 #   manager_decision.json
+#   provenance_dag.json  (evidence derivation graph)
+#   confidence_scores.json  (dual-critic agreement scores)
 #   custody/           (~24 JSON sidecars)
 #   reports/narrative_report.md
 wc -l $CASE_DIR/findings.jsonl
@@ -239,7 +256,8 @@ print(f"Case directory: {path}")
 
 # Required artifacts
 required = ['findings.jsonl', 'audit_trail.jsonl', 'agent_trace.jsonl',
-            'batch_critic_assessment.json', 'manager_decision.json']
+            'batch_critic_assessment.json', 'manager_decision.json',
+            'provenance_dag.json', 'confidence_scores.json']
 for f in required:
     fpath = f'{path}/{f}'
     if os.path.exists(fpath):
@@ -295,15 +313,73 @@ grep "resume\|checkpoint\|already completed" /tmp/geoff-cases/jeanm57*/audit_tra
 
 ---
 
+## Step 8 — Verify new features
+
+### Provenance DAG
+
+After any run, check the evidence derivation graph:
+
+```bash
+jq . /tmp/geoff-cases/*/provenance_dag.json | less
+# Should contain nodes for source evidence + derived artifacts
+```
+
+### Confidence Scores
+
+```bash
+jq . /tmp/geoff-cases/*/confidence_scores.json
+# Should show per-finding confidence levels (VERY_HIGH, HIGH, MEDIUM, LOW)
+```
+
+### IP Map
+
+```bash
+# Start the web server and navigate to the IP map:
+python src/geoff_integrated.py
+# Open: http://localhost:8080/reports/<case-dir>/ip-map
+# Or fetch the JSON:
+curl http://localhost:8080/reports/<case-dir>/ip-map | jq '.nodes | length'
+```
+
+### YARA Scanning
+
+If the evidence set contains disk images, PB-SIFT-051 (YARA Scanning) runs automatically.
+Check for YARA matches in the findings:
+
+```bash
+jq 'select(.step_key | contains("yara"))' /tmp/geoff-cases/*/findings.jsonl
+```
+
+### Hash Correlation + NSRL
+
+PB-SIFT-052 hashes files and looks up SHA-1 in the NSRL database.
+Check hash findings:
+
+```bash
+jq 'select(.step_key | contains("hash"))' /tmp/geoff-cases/*/findings.jsonl
+```
+
+### MITRE Matrix
+
+```bash
+# After running the web server:
+curl http://localhost:8080/reports/mitre-matrix
+# Interactive HTML matrix mapping all findings to ATT&CK techniques
+```
+
+---
+
 ## Known Issues and Expected Failures
 
 | Issue | Dataset | Resolution |
 |-------|---------|-----------|
 | `fls_auto` fails on EWF partition offset | M57-Jean-Real, Data Leakage | Expected — Healer falls back to `fls_offset0`, then `mmls_probe`. Investigation continues. |
 | NTFS-specific steps fail on FAT16 image | Hacking Case | Expected — Windows 98 image does not have MFT/Registry paths modern playbooks expect. Marked `not_applicable`. |
-| Tool not installed: `iLEAPP`, `foremost`, etc. | All | Expected on first run — Healer installs via apt-get and retries. Requires internet. |
+| Tool not installed: `iLEAPP`, `foremost`, `yara`, etc. | All | Expected on first run — Healer installs via apt-get and retries. Requires internet. |
 | `playbook_run` count appears lower than expected | All | Playbooks with zero applicable steps are counted as "run" with 0 steps. This is correct. |
 | Anti-forensics cascade downgrades findings | M57-Jean-Real, Hacking Case | Expected and correct — PB-SIFT-012 detected anti-forensics indicators; all findings retroactively marked POSSIBLE. |
+| YARA reports `yara binary not found` | All (first run) | Self-heal installs `yara` via `apt-get install -y yara` and retries. |
+| NSRL lookup returns no results | All | Expected if no NSRL database is configured. The HASH_Specialist logs the lookup attempt but continues. |
 
 ---
 
@@ -333,6 +409,12 @@ cat $CASE_DIR/manager_decision.json | python3 -m json.tool
 
 # Critic assessment
 cat $CASE_DIR/batch_critic_assessment.json | python3 -m json.tool
+
+# Provenance DAG (evidence derivation)
+cat $CASE_DIR/provenance_dag.json | python3 -m json.tool
+
+# Confidence scores
+cat $CASE_DIR/confidence_scores.json | python3 -m json.tool
 
 # Agent trace (requires --agent-trace flag)
 head -5 $CASE_DIR/agent_trace.jsonl | python3 -c "
