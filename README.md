@@ -40,9 +40,10 @@ A fourth role — **Healer** — is the Critic operating in error-recovery mode 
 
 | Agent | Role | Cloud Model | Local Model |
 |-------|------|-------------|-------------|
-| **Manager** | Orchestrates investigations, strategic decisions | deepseek-v4-flash:cloud | deepseek-r1:32b |
+| **Manager** | Orchestrates investigations, strategic decisions | deepseek-v4-pro:cloud | deepseek-r1:32b |
 | **Forensicator** | Executes forensic tools, extracts artifacts | qwen3-coder-next:cloud | qwen2.5-coder:14b |
 | **Critic** | Validates output for hallucinations and accuracy | qwen3.5:cloud | qwen2.5:14b |
+| **Critic 2** | Independent parallel validation (different architecture) | gemma4:31b-cloud | gemma4:31b-cloud |
 
 **Workflow:**
 ```
@@ -51,8 +52,9 @@ User → Manager → Preflight Validation
                Forensicator runs ALL steps autonomously
                (per-step custody commits to git)
                       ↓
-               Dual Critic validates ALL findings
-               (Multi-Critic pool with confidence scoring)
+               Dual Critic (GeoffCriticPool) validates ALL findings
+               — Critic 1 (qwen3.5:cloud) + Critic 2 (gemma4:31b-cloud)
+               — Confidence: VERY_HIGH / HIGH / MEDIUM / LOW
                       ↓
                Batch Critic reviews ALL findings at once
                (holistic cross-step correlation)
@@ -106,7 +108,8 @@ User → Manager → Preflight Validation
                (per-step custody commits to git)
                       ↓
                Dual Critic (GeoffCriticPool) validates in parallel
-               (confidence: VERY_HIGH / HIGH / MEDIUM / LOW)
+               — Critic 1 (qwen3.5:cloud) + Critic 2 (gemma4:31b-cloud)
+               — Confidence: VERY_HIGH / HIGH / MEDIUM / LOW
                       ↓
                Batch Critic reviews ALL findings at once
                (holistic cross-step correlation)
@@ -187,13 +190,13 @@ User → Manager → Preflight Validation
   │      └──────────────┘            └──────────────┘
   │               │
   ▼               ▼
-┌──────────┐ ┌──────────────┐
-│ Proven-  │ │ Critic Pool  │
-│ ance DAG │ │ + Validation │
-└──────────┘ └──────────────┘
+┌──────────┐ ┌──────────────────┐
+│ Proven-  │ │ Dual Critic Pool │
+│ ance DAG │ │ (Qwen + Gemma)   │
+└──────────┘ └──────────────────┘
           │
-   ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
-   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼
+   ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼
 Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
   DNS  YARA  Hash  Cloud  EDR  AD  IoT  VM  Container
 ```
