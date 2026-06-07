@@ -314,26 +314,38 @@ DIE_EOF
     info "Setting up Zimmerman forensic tools..."
     ZIMMERMAN_DIR="/opt/zimmerman_tools"
     sudo mkdir -p "$ZIMMERMAN_DIR"
+    sudo chown "$(whoami):$(id -gn)" "$ZIMMERMAN_DIR"
     if ! command -v dotnet >/dev/null 2>&1; then
         info "Installing .NET 9 runtime for Zimmerman tools..."
         curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 9.0 --runtime-only 2>/dev/null || \
             sudo apt-get install -y -qq dotnet-runtime-9.0 2>/dev/null || \
             warn "dotnet install failed — Zimmerman tools will be unavailable"
         # Add dotnet to PATH if installed via script
-        export PATH="$HOME/.dotnet:$PATH" 2>/dev/null || true
+        export PATH="$HOME/.dotnet:$PATH"
     fi
     if command -v dotnet >/dev/null 2>&1 || [[ -f "$HOME/.dotnet/dotnet" ]]; then
         for tool in EvtxECmd MFTECmd bstrings ShellBagsExplorer AmcacheParser SrumECmd PECmd JLECmd LECmd AppCompatCacheParser WxTCmd RecentFileCacheParser RBCmd SQLECmd; do
-            if [[ ! -f "${ZIMMERMAN_DIR}/${tool}.dll" ]]; then
+            if [[ ! -f "${ZIMMERMAN_DIR}/${tool}/${tool}.dll" ]]; then
                 info "  Downloading ${tool}..."
                 # Download from Zimmerman's distribution (net9 builds)
-                curl -sL "https://download.ericzimmermanstools.com/net9/${tool}.zip" -o "/tmp/${tool}.zip" 2>/dev/null && \
-                    unzip -q -o "/tmp/${tool}.zip" -d "$ZIMMERMAN_DIR" 2>/dev/null && \
-                    # Flatten subdirectories (some zips extract into subdirs)
-                    find "$ZIMMERMAN_DIR" -mindepth 2 -type f -exec mv -n {} "$ZIMMERMAN_DIR/" \; 2>/dev/null && \
-                    find "$ZIMMERMAN_DIR" -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null && \
-                    rm -f "/tmp/${tool}.zip" || \
+                # Extract into per-tool subdir, then flatten files from nested dirs
+                ZIM_TOOL_DIR="${ZIMMERMAN_DIR}/${tool}"
+                mkdir -p "$ZIM_TOOL_DIR"
+                if curl -sL "https://download.ericzimmermanstools.com/net9/${tool}.zip" -o "/tmp/${tool}.zip"; then
+                    if unzip -q -o "/tmp/${tool}.zip" -d "$ZIM_TOOL_DIR" 2>/dev/null; then
+                        # Flatten: move files from nested subdirs into tool dir
+                        find "$ZIM_TOOL_DIR" -mindepth 2 -type f -exec mv -n {} "$ZIM_TOOL_DIR/" \; 2>/dev/null || true
+                        # Clean up empty subdirectories
+                        find "$ZIM_TOOL_DIR" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+                        # Remove non-empty subdirs that only contain maps/data (keep them as subdirs)
+                        ok "  ${tool} downloaded and extracted"
+                    else
+                        warn "Failed to extract ${tool}"
+                    fi
+                else
                     warn "Failed to download ${tool}"
+                fi
+                rm -f "/tmp/${tool}.zip"
             else
                 info "  ${tool} already present"
             fi
@@ -427,7 +439,9 @@ DIE_EOF
 
     # Verify mobile tools
     for mobile_tool in ileapp aleapp; do
-        if [ -d "/opt/${mobile_tool^^}" ] && [ -f "/opt/${mobile_tool^^}/${mobile_tool}.py" ]; then
+        tool_dir="/opt/${mobile_tool^^}"
+        tool_script="${mobile_tool}.py"
+        if [ -d "$tool_dir" ] && [ -f "$tool_dir/$tool_script" ]; then
             info "${mobile_tool} available for mobile forensics"
         else
             warn "$mobile_tool not found — mobile analysis (PB-021) may be limited"
