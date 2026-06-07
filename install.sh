@@ -487,22 +487,26 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
             MANAGER_MODEL=$(jq -r ".${PROFILE}.manager" "${INSTALL_DIR}/profiles.json")
             FORENSICATOR_MODEL=$(jq -r ".${PROFILE}.forensicator" "${INSTALL_DIR}/profiles.json")
             CRITIC_MODEL=$(jq -r ".${PROFILE}.critic" "${INSTALL_DIR}/profiles.json")
+            CRITIC2_MODEL=$(jq -r ".${PROFILE}.critic2" "${INSTALL_DIR}/profiles.json")
         else
             # Fallback if profiles.json missing
             if [[ "$PROFILE" == "cloud" ]]; then
                 MANAGER_MODEL="deepseek-v3.2:cloud"
                 FORENSICATOR_MODEL="qwen3-coder-next:cloud"
                 CRITIC_MODEL="qwen3.5:cloud"
+                CRITIC2_MODEL="gemma4:31b-cloud"
             else
                 MANAGER_MODEL="deepseek-r1:32b"
                 FORENSICATOR_MODEL="qwen2.5-coder:14b"
                 CRITIC_MODEL="qwen2.5:14b"
+                CRITIC2_MODEL="gemma4:31b"
             fi
         fi
 
         info "  Manager:      ${MANAGER_MODEL}"
         info "  Forensicator: ${FORENSICATOR_MODEL}"
         info "  Critic:       ${CRITIC_MODEL}"
+        info "  Critic 2:     ${CRITIC2_MODEL}"
 
         if [[ "$PROFILE" == "cloud" ]]; then
             # ── Cloud: pull from ollama.com registry ──
@@ -513,7 +517,7 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
                 ollama signin || warn "ollama signin failed — cloud models may not work"
             fi
 
-            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
+            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL" "$CRITIC2_MODEL"; do
                 info "Pulling ${MODEL_NAME}..."
                 ollama pull "$MODEL_NAME" || { warn "Failed to pull ${MODEL_NAME}"; continue; }
             done
@@ -543,7 +547,7 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
                 if [[ -n "$CURRENT_MODEL" ]]; then
                     # Check if this model is one we need
                     case "$CURRENT_MODEL" in
-                        "$MANAGER_MODEL"|"$FORENSICATOR_MODEL"|"$CRITIC_MODEL")
+                        "$MANAGER_MODEL"|"$FORENSICATOR_MODEL"|"$CRITIC_MODEL"|"$CRITIC2_MODEL")
                             # Parse fields
                             if [[ "$line" =~ ^gguf_url ]]; then
                                 GGUF_URL=$(echo "$line" | sed 's/gguf_url *= *"\(.*\)"/\1/' | tr -d '"')
@@ -562,7 +566,7 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
             done < "${MODELS_DIR}/manifest.toml"
 
             # Download and verify each local model
-            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL"; do
+            for MODEL_NAME in "$MANAGER_MODEL" "$FORENSICATOR_MODEL" "$CRITIC_MODEL" "$CRITIC2_MODEL"; do
                 # Re-parse just this model from manifest
                 GGUF_URL=""
                 EXPECTED_SHA256=""

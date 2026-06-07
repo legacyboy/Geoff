@@ -75,7 +75,7 @@ User → Manager → Preflight Validation
 | Capability | Claude Code | OpenClaw | **Geoff Triad** |
 |------------|-------------|----------|------------------|
 | Goal-directed planning | ✅ single agent | ✅ single agent | ✅ **dedicated planner agent (Manager)** |
-| Tool selection at runtime | ✅ | ✅ | ✅ Forensicator chooses per-step from 49 playbooks |
+| Tool selection at runtime | ✅ | ✅ | ✅ Forensicator chooses per-step from 53 playbooks |
 | Observation → reasoning loop | ✅ | ✅ | ✅ Forensicator analyst note → Critic validation |
 | Self-critique | ⚠ via prompt | ⚠ via prompt | ✅ **dual parallel critics + batch holistic review** |
 | Autonomous error recovery | ⚠ retry only | ⚠ retry only | ✅ **`_attempt_heal` with fast-path + LLM diagnosis** |
@@ -205,7 +205,7 @@ Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
 
 **Device-Centric Processing:** Evidence is grouped by device, not by file type. Each device gets its own playbook execution, its own findings, and its own behavioral analysis. Cross-device correlation ties it all together.
 
-**Modular Specialist Architecture:** DNS forensics, YARA scanning, hash correlation, dual-critic validation, adaptive playbook generation, confidence calibration, provenance tracking, and adaptive Pass 2 are each implemented as dedicated modules (`geoff_dns_forensics.py`, `geoff_yara.py`, `geoff_hash_correlation.py`, `geoff_dual_critic.py`, `geoff_adaptive_playbook.py`, `geoff_confidence.py`, `geoff_provenance.py`, `geoff_adaptive_pass2.py`).
+**Modular Specialist Architecture:** DNS forensics, YARA scanning, hash correlation, dual-critic validation, adaptive playbook generation, confidence calibration, provenance tracking, communications analysis, and adaptive Pass 2 are each implemented as dedicated modules (`geoff_dns_forensics.py`, `geoff_yara.py`, `geoff_hash_correlation.py`, `geoff_dual_critic.py`, `geoff_adaptive_playbook.py`, `geoff_confidence.py`, `geoff_provenance.py`, `geoff_communications.py`, `geoff_adaptive_pass2.py`). Steganography, keylogger/spyware detection, and chat aggregation are handled by specialist modules (`geoff_stego.py`, `geoff_keylogger.py`, `geoff_chat_aggregator.py`) invoked by PB-SIFT-061, PB-SIFT-062, and PB-SIFT-063 respectively.
 
 **Behavioral Analysis:** Geoff uses 10 deterministic behavioral checks plus LLM-assisted assessment:
 - Process path/parent validation (svchost.exe from temp? → flag)
@@ -298,7 +298,7 @@ Or via chat: `"Geoff, start processing /path/to/evidence"`
 7. **Batch Critic Review** — after all playbooks complete, Critic reviews all findings in one pass, grouped by significance; finds cross-step correlations and flags hallucinations or replay candidates
 8. **Manager Decision** — Manager reviews Critic assessment and chooses `approve`, `flag`, or `replay`; saves `manager_decision.json`
 9. **Incremental Replay** (if requested) — only affected steps re-run with Manager-patched params; new outputs committed with custody metadata. Replay can also be triggered manually via `POST /replay-playbook` with adjusted parameters.
-10. **Adaptive Pass 2** — scores remaining playbooks against Pass 1 findings; selects follow-up playbooks when Pass 1 uncovered leads worth chasing
+10. **Adaptive Pass 2** — scores remaining playbooks against Pass 1 findings; selects follow-up playbooks when Pass 1 uncovered leads worth chasing (including steganography, keylogger, and chat analysis if indicators detected)
 11. **Super Timeline** — unified timeline across all devices and evidence types
 12. **Behavioral Analysis** — per-device anomaly detection (process, file, network, persistence, timeline)
 13. **Host Correlation** — cross-device user activity, lateral movement detection
@@ -360,6 +360,9 @@ GEOFF_CASES_PATH=/mnt/cases
 | EDR telemetry logs | PB-SIFT-037 | HIGH |
 | Active Directory artifacts | PB-SIFT-035 | HIGH |
 | PCAP captures | PB-SIFT-036 | HIGH |
+| High-entropy images/audio (steganography suspects) | PB-SIFT-061 | MEDIUM |
+| Keylogger/surveillanceware indicators | PB-SIFT-062 | HIGH |
+| Chat artifacts (IM apps, social media) | PB-SIFT-060, PB-SIFT-063 | MEDIUM |
 
 ### MITRE ATT&CK Tagging
 
@@ -470,6 +473,9 @@ Interactive matrix and heatmap views mapping all investigation findings to the M
 | **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
 | **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
 | **Antivirus** | remnux | ClamAV | Signature-based malware detection |
+| **Steganography** | stego | Stegoveritas, steghide, zsteg, binwalk, Stegexpose | Steganography detection and extraction (image, audio, file-in-file) |
+| **Keylogger/Spyware** | keylogger | Registry analysis, process inspection, strings extraction | Keylogger/surveillanceware detection (hooked APIs, log files, suspicious processes) |
+| **Chat Aggregation** | chat_aggregator | SQLite3, plistlib, strings | IM chat recovery across WhatsApp, Telegram, Discord, Slack, Teams |
 
 ### SANS SIFT Workstation Compatibility
 
@@ -557,7 +563,7 @@ Every completed step record carries an `evidence_chain` dict linking the finding
 **5. Device-centric investigation architecture**
 Evidence is grouped by device (not by file type), with each device getting its own playbook execution, behavioral analysis, and correlated findings. Cross-device lateral movement detection and a unified super-timeline are built from the per-device outputs. This device-centric model is not present in SIFT.
 
-**6. 49-playbook MITRE ATT&CK-aligned execution engine**
+**6. 53-playbook MITRE ATT&CK-aligned execution engine**
 PB-SIFT-000 through PB-SIFT-104 cover the full kill chain (initial access → execution → persistence → privilege escalation → credential access → lateral movement → exfiltration → impact) plus specialized playbooks for cloud, memory forensics, DNS, YARA, hash correlation, EDR, Active Directory, IoT, containers, and VM snapshots. PB-SIFT-000 is a mandatory triage meta-playbook that generates the execution plan dynamically based on evidence type, OS detection, and indicator hits. The Manager LLM reviews and approves the plan before execution begins. Adaptive Pass 2 can dynamically add follow-up playbooks when Pass 1 findings suggest additional investigation paths.
 
 **7. Adaptive Playbook Generation**
@@ -733,7 +739,7 @@ Steps against different evidence items run concurrently via a thread pool. Set `
 
 ## Playbook Library
 
-49 PB-SIFT playbooks organized by MITRE ATT&CK kill chain plus specialized analysis:
+53 PB-SIFT playbooks organized by MITRE ATT&CK kill chain plus specialized analysis:
 
 | ID | Playbook | Phase | Auto-triggered when |
 |----|----------|-------|---------------------|
@@ -781,6 +787,10 @@ Steps against different evidence items run concurrently via a thread pool. Set `
 | PB-SIFT-050 | DNS Forensics | Collection | PCAPs with DNS queries |
 | PB-SIFT-051 | YARA Scanning | Detection | Any evidence (disk images, memory dumps, directories) |
 | PB-SIFT-052 | Hash Correlation & NSRL | Collection | Any evidence (file hashing + NSRL lookup) |
+| PB-SIFT-060 | Communications Analysis | Collection | Email/chat artifacts from PB-SIFT-023 and related playbooks |
+| PB-SIFT-061 | Steganography | Collection | High-entropy images, audio, or encoded payloads detected |
+| PB-SIFT-062 | Keylogger/Spyware | Collection | Keylogger/surveillanceware indicators (hooked APIs, log files, suspicious processes) |
+| PB-SIFT-063 | Chat Aggregation | Collection | Chat artifacts from IM apps (WhatsApp, Telegram, Discord, Slack, Teams) |
 | PB-SIFT-100 | Process Chain Investigation | Investigation | Process chain indicators from triage |
 | PB-SIFT-101 | USB Lateral Movement Investigation | Investigation | USB device indicators |
 | PB-SIFT-102 | Temporal Anomaly Investigation | Investigation | Timeline anomalies detected |
@@ -788,6 +798,16 @@ Steps against different evidence items run concurrently via a thread pool. Set `
 | PB-SIFT-104 | Dwell Window Deep-Dive | Investigation | Extended dwell time indicators |
 
 **PB-SIFT-000 is mandatory** — it runs first, performs triage, and emits the execution plan. Only playbooks in the execution plan are run. **Adaptive Pass 2** may add follow-up playbooks after Pass 1 completes.
+
+### Scenario Coverage
+
+The expanded playbook library improves investigative coverage across competition scenarios:
+
+| Scenario | Relevant Playbooks | Key Capabilities |
+|----------|-------------------|-----------------|
+| **NGDC** (National GDCC) | PB-SIFT-060, PB-SIFT-062, PB-SIFT-063 | Communications analysis ties email and IM threads together; keylogger/spyware detection surfaces surveillance tools; chat aggregation recovers IM conversations across Discord, Slack, and Teams |
+| **Narcos** (drug trafficking) | PB-SIFT-061, PB-SIFT-063 | Steganography detection reveals data hidden in images/audio; chat aggregation recovers WhatsApp and Telegram conversations used for coordination |
+| **Owl** (APT/espionage) | PB-SIFT-061, PB-SIFT-062 | Steganography detection identifies covert exfiltration channels; keylogger/spyware detection uncovers surveillance implants and hooked APIs |
 
 ---
 
@@ -851,7 +871,7 @@ http://localhost:9999/mcp
 | `list_evidence` | List evidence files (optionally scoped to a case) |
 | `get_case_report` | Fetch the Markdown narrative report for a completed case |
 | `get_findings` | Fetch the structured JSON findings for a completed case |
-| `list_playbooks` | List all 49 SIFT playbooks with IDs and names |
+| `list_playbooks` | List all 53 SIFT playbooks with IDs and names |
 | `chat` | Send a reasoning question to Geoff's LLM layer |
 | `disk_analyze` | Call a SleuthKit specialist function directly |
 | `memory_analyze` | Call a Volatility memory analysis function directly |

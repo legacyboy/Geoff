@@ -49,6 +49,10 @@ from host_correlator import HostCorrelator
 from super_timeline import SuperTimeline
 from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
+from geoff_communications import CommunicationsAnalyzer
+from geoff_stego import StegoAnalyzer
+from geoff_keylogger import KeyloggerAnalyzer
+from geoff_chat_aggregator import ChatAggregator
 from evidence_classifier import AIEvidenceClassifier, classify_with_ai
 import command_logger
 
@@ -314,6 +318,16 @@ geoff_forensicator = None
 # Pipeline functions
 # ---------------------------------------------------------------------------
 
+
+
+def _advance_queue(job_id: str = None) -> None:
+    """Auto-advance queue after job completion. Post-completion hook for run_full_investigation."""
+    try:
+        import queue_manager as _qm
+        _qm._maybe_start_next()
+    except Exception:
+        pass
+
 def run_full_investigation(case_name: str, evidence_path: str = None):
     """Spawn background investigation worker for case with stable directory.
 
@@ -384,6 +398,11 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
     def _run_find_evil_bg():
         try:
             find_evil(evidence_path, job_id=fe_job_id, case_work_dir=str(case_work_path))
+            with _state_lock:
+                if fe_job_id in _find_evil_jobs:
+                    _find_evil_jobs[fe_job_id]["status"] = "complete"
+            _gu._save_jobs()
+            _advance_queue(fe_job_id)
         except Exception as e:
             with _state_lock:
                 _find_evil_jobs[fe_job_id]["status"] = "error"
@@ -6418,6 +6437,99 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             }]
 
         # ------------------------------------------------------------------
+        # Phase 3c-new: PB-SIFT-060 Communications Analysis
+        # ------------------------------------------------------------------
+        communications_result = {}
+        _update_job(94, "communications", "Analyzing communications and relationships")
+        _all_findings_for_comms = findings_writer.all_records() if 'findings_writer' in dir() else []
+        _has_comms_artifacts = any(
+            str(f.get('module', '')).lower() == 'email'
+            or any(kw in str(f.get('function', '')).lower() for kw in ('pst', 'mbox', 'eml', 'msg'))
+            for f in _all_findings_for_comms
+        )
+        if _has_comms_artifacts or True:  # always run — stego/encryption scan is always useful
+            try:
+                _comm_analyzer = CommunicationsAnalyzer()
+                communications_result = _comm_analyzer.analyze(
+                    case_dir=str(case_work_dir),
+                    evidence_dir=str(evidence_path),
+                    findings=_all_findings_for_comms,
+                    call_llm_func=call_llm,
+                )
+                _fe_log(
+                    job_id,
+                    f"  PB-SIFT-060: {communications_result.get('message_count', 0)} messages, "
+                    f"{communications_result.get('person_count', 0)} people, "
+                    f"{len(communications_result.get('steganography_suspects', []))} stego suspects, "
+                    f"{len(communications_result.get('encrypted_files', []))} encrypted files"
+                )
+            except Exception as _comm_err:
+                _fe_log(job_id, f"  PB-SIFT-060 failed: {_comm_err}")
+                communications_result = {}
+
+        # ------------------------------------------------------------------
+        # Phase 3c1: PB-SIFT-061 Steganography Detection
+        # ------------------------------------------------------------------
+        stego_result = {}
+        try:
+            _stego_analyzer = StegoAnalyzer()
+            stego_result = _stego_analyzer.analyze(
+                case_dir=str(case_work_dir),
+                evidence_dir=str(evidence_path),
+                findings=_all_findings_for_comms,
+                call_llm_func=call_llm,
+            )
+            _fe_log(
+                job_id,
+                f"  PB-SIFT-061: {stego_result.get('suspect_count', 0)} stego suspects, "
+                f"{stego_result.get('artifact_count', 0)} tool artifacts"
+            )
+        except Exception as _stego_err:
+            _fe_log(job_id, f"  PB-SIFT-061 failed: {_stego_err}")
+            stego_result = {}
+
+        # ------------------------------------------------------------------
+        # Phase 3c2: PB-SIFT-062 Keylogger/Spyware Detection
+        # ------------------------------------------------------------------
+        keylogger_result = {}
+        try:
+            _kl_analyzer = KeyloggerAnalyzer()
+            keylogger_result = _kl_analyzer.analyze(
+                case_dir=str(case_work_dir),
+                findings=_all_findings_for_comms,
+                call_llm_func=call_llm,
+            )
+            _fe_log(
+                job_id,
+                f"  PB-SIFT-062: {keylogger_result.get('total_hits', 0)} keylogger hits, "
+                f"{keylogger_result.get('high_confidence_hits', 0)} high confidence"
+            )
+        except Exception as _kl_err:
+            _fe_log(job_id, f"  PB-SIFT-062 failed: {_kl_err}")
+            keylogger_result = {}
+
+        # ------------------------------------------------------------------
+        # Phase 3c3: PB-SIFT-063 Chat & Messaging Aggregation
+        # ------------------------------------------------------------------
+        chat_agg_result = {}
+        try:
+            _chat_aggregator = ChatAggregator()
+            chat_agg_result = _chat_aggregator.analyze(
+                case_dir=str(case_work_dir),
+                findings=_all_findings_for_comms,
+                comm_result=communications_result if communications_result else None,
+                call_llm_func=call_llm,
+            )
+            _fe_log(
+                job_id,
+                f"  PB-SIFT-063: {chat_agg_result.get('total_messages', 0)} chat messages, "
+                f"{len(chat_agg_result.get('cross_platform_pairs', []))} cross-platform pairs"
+            )
+        except Exception as _ca_err:
+            _fe_log(job_id, f"  PB-SIFT-063 failed: {_ca_err}")
+            chat_agg_result = {}
+
+        # ------------------------------------------------------------------
         # Phase 3d-new: Cross-Host Correlation
         # ------------------------------------------------------------------
         _update_job(95, "correlation", "Correlating activity across hosts")
@@ -6859,6 +6971,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "device_map": device_map if device_map is not None else {},
             "user_map": user_map if user_map is not None else {},
             "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if all_behavioral_flags is not None else {},
+            "communications_analysis": communications_result if communications_result else {},
             "behavioral_flags": {
                 dev_id: [
                     {k: v for k, v in flag.items() if k != "flag_id"}
@@ -7184,11 +7297,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _cleanup_mounts()
         raise
     except BaseException as e:
-        with open('/tmp/geoff_crash.log', 'a') as f:
-            f.write(f"FIND_EVIL_CRASH | {datetime.now().isoformat()} | {type(e).__name__}: {e}\n")
-            traceback.print_exc(file=f)
-            f.write("---\n")
-        traceback.print_exc(file=sys.stderr)
+        from geoff_logger import get_logger as _get_logger
+        _get_logger('geoff.find_evil').crash(
+            f"FIND_EVIL CRASHED: {type(e).__name__}: {e}",
+            job_id=job_id if 'job_id' in dir() else None,
+            evidence_dir=evidence_dir,
+            exc_info=True,
+        )
         _fe_log(job_id if 'job_id' in dir() else None, f"  💀 FIND_EVIL CRASHED: {type(e).__name__}: {e}")
         _cleanup_ewf_early_mounts(_ewf_mounts)
         _cleanup_mounts()

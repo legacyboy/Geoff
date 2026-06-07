@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geoff — IP Connection Map</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <style>
+    html, body { height: 100%; overflow: hidden; }
+    .app { display: flex; flex-direction: column; height: 100vh; position: relative; z-index: 1; }
+
+    .toolbar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 22px; border-bottom: 1px solid var(--g-border-soft);
+      background: rgba(12,19,34,.55); flex-shrink: 0;
+    }
+    .toolbar select {
+      background: var(--g-surface-2); border: 1px solid var(--g-border);
+      border-radius: var(--radius-sm); padding: 6px 10px;
+      font-family: var(--font-mono); font-size: 12px; color: var(--g-text);
+      outline: none; cursor: pointer; min-width: 280px;
+    }
+    .toolbar select:focus { border-color: var(--g-blue); box-shadow: var(--glow-blue); }
+    .toolbar .stat-grp { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; }
+    .toolbar .stat-grp .n { color: var(--g-blue-soft); font-weight: 600; }
+    .toolbar .stat-grp .l { color: var(--g-text-faint); }
+
+    #graph-area { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+    #graph-svg { width: 100%; height: 100%; display: block; }
+
+    .div-overlay {
+      position: absolute; top: 0; bottom: 0; left: 50%;
+      width: 1px; background: rgba(42,57,87,.35); pointer-events: none;
+    }
+    .div-label {
+      position: absolute; top: 14px;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.8px;
+      text-transform: uppercase; color: rgba(94,112,143,.45); pointer-events: none;
+    }
+    .div-label.int { left: 22px; }
+    .div-label.ext { right: 22px; }
+
+    .tooltip {
+      position: absolute; pointer-events: none;
+      background: var(--g-surface); border: 1px solid var(--g-border);
+      border-radius: var(--radius-sm); padding: 9px 13px;
+      box-shadow: var(--shadow-2); font-family: var(--font-mono); font-size: 11.5px;
+      max-width: 240px; z-index: 100; display: none;
+    }
+    .tooltip .tip-ip { color: var(--g-text); font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+    .tooltip .tip-row { color: var(--g-text-dim); margin-top: 2px; }
+    .tooltip .tip-row span { color: var(--g-text-mute); margin-right: 6px; }
+
+    .legend {
+      position: absolute; bottom: 20px; left: 22px;
+      background: rgba(12,19,34,.82); border: 1px solid var(--g-border-soft);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      backdrop-filter: blur(6px); z-index: 5;
+    }
+    .legend .leg-title { font-size: 9px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--g-text-mute); margin-bottom: 8px; display: block; }
+    .legend .leg-row { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--g-text-dim); margin-bottom: 5px; }
+    .legend .leg-row:last-child { margin-bottom: 0; }
+    .leg-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    .leg-dot.int { background: #4C8DFF; box-shadow: 0 0 5px rgba(76,141,255,.45); }
+    .leg-dot.ext { background: #FF4D5E; box-shadow: 0 0 5px rgba(255,77,94,.45); }
+
+    #overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px; z-index: 10;
+      font-family: var(--font-mono); font-size: 12.5px; color: var(--g-text-mute);
+    }
+    .spinner {
+      width: 22px; height: 22px; border: 2px solid var(--g-border);
+      border-top-color: var(--g-blue); border-radius: 50%;
+      animation: spin .75s linear infinite; display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="grid-tex"></div>
+<div class="app">
+
+  <header class="brandbar">
+    <div class="brand">
+      <div class="mark">G</div>
+      <div class="wordmark"><b>GEOFF</b><span>Forensic Framework</span></div>
+    </div>
+    <nav style="display:flex;gap:4px;">
+      <a class="navlink" href="/">Find Evil</a>
+      <a class="navlink active" href="/ip-map">IP Map</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="online"><span class="dot"></span>ENGINE ONLINE</div>
+  </header>
+
+  <div class="toolbar">
+    <span class="eyebrow">IP Connection Map</span>
+    <select id="case-select"><option value="">— select case —</option></select>
+    <div style="flex:1;"></div>
+    <div class="stat-grp"><span class="n" id="stat-nodes">—</span><span class="l">nodes</span></div>
+    <div class="stat-grp"><span class="n" id="stat-edges">—</span><span class="l">edges</span></div>
+  </div>
+
+  <div id="graph-area">
+    <svg id="graph-svg"></svg>
+    <div class="div-overlay"></div>
+    <div class="div-label int">Internal</div>
+    <div class="div-label ext">External</div>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="legend">
+      <span class="leg-title">Legend</span>
+      <div class="leg-row"><div class="leg-dot int"></div>Internal node</div>
+      <div class="leg-row"><div class="leg-dot ext"></div>External node</div>
+    </div>
+    <div id="overlay">
+      <div class="spinner" id="spinner"></div>
+      <span id="overlay-msg">Select a case above</span>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+'use strict';
+
+const API_KEY = document.querySelector('meta[name="geoff-api-key"]')?.content || '';
+const apiFetch = (url, opts = {}) => {
+  if (API_KEY) opts.headers = { ...(opts.headers || {}), 'X-API-Key': API_KEY };
+  return fetch(url, opts);
+};
+
+let simulation = null;
+let currentHL  = null;
+
+const svgEl      = d3.select('#graph-svg');
+const tooltip    = document.getElementById('tooltip');
+const overlay    = document.getElementById('overlay');
+const spinner    = document.getElementById('spinner');
+const overlayMsg = document.getElementById('overlay-msg');
+const statNodes  = document.getElementById('stat-nodes');
+const statEdges  = document.getElementById('stat-edges');
+const caseSelect = document.getElementById('case-select');
+
+const zoomBehavior = d3.zoom()
+  .scaleExtent([0.05, 10])
+  .on('zoom', ev => svgEl.select('.graph-root').attr('transform', ev.transform));
+svgEl.call(zoomBehavior);
+
+async function loadCases() {
+  try {
+    const res = await apiFetch('/reports');
+    if (!res.ok) return;
+    const data = await res.json();
+    const reports = Array.isArray(data.reports) ? data.reports : [];
+    reports.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.case_dir;
+      opt.textContent = r.case_dir;
+      caseSelect.appendChild(opt);
+    });
+    if (reports.length) {
+      caseSelect.value = reports[0].case_dir;
+      loadMap(reports[0].case_dir);
+    }
+  } catch (e) {
+    console.error('Failed to load cases', e);
+  }
+}
+
+caseSelect.addEventListener('change', () => {
+  if (caseSelect.value) loadMap(caseSelect.value);
+});
+
+async function loadMap(caseDir) {
+  setOverlay('loading');
+  svgEl.selectAll('.graph-root').remove();
+  if (simulation) { simulation.stop(); simulation = null; }
+  currentHL = null;
+  svgEl.transition().duration(0).call(zoomBehavior.transform, d3.zoomIdentity);
+
+  try {
+    const res = await apiFetch('/reports/' + encodeURIComponent(caseDir) + '/ip-map');
+    const data = await res.json();
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+
+    statNodes.textContent = nodes.length;
+    statEdges.textContent = edges.length;
+
+    if (nodes.length === 0) { setOverlay('empty'); return; }
+    setOverlay('none');
+    render(nodes, edges);
+  } catch (e) {
+    console.error('Failed to load IP map', e);
+    setOverlay('error');
+  }
+}
+
+function setOverlay(state) {
+  overlay.style.display   = state === 'none' ? 'none' : 'flex';
+  spinner.style.display   = state === 'loading' ? 'block' : 'none';
+  overlayMsg.textContent  = { loading: 'Loading…', empty: 'No IP connection data for this case.',
+    error: 'Failed to load IP map.', idle: 'Select a case above' }[state] || '';
+}
+
+function render(rawNodes, rawEdges) {
+  const area = document.getElementById('graph-area');
+  const W = area.clientWidth;
+  const H = area.clientHeight;
+
+  const nodeR = d => Math.max(5, Math.min(26, 4 + Math.sqrt(d.connections || 0) * 2.6));
+  const edgeW = d => Math.max(0.6, Math.min(7,  0.4 + (d.findings_count || 0) * 1.4));
+
+  const C = {
+    int: '#4C8DFF', intFill: 'rgba(76,141,255,.14)',
+    ext: '#FF4D5E', extFill: 'rgba(255,77,94,.14)',
+    edge: 'rgba(76,141,255,.22)', edgeHL: 'rgba(76,141,255,.72)',
+    label: 'rgba(157,176,204,.5)',
+  };
+  const nodeStroke = d => d.group === 'internal' ? C.int     : C.ext;
+  const nodeFill   = d => d.group === 'internal' ? C.intFill : C.extFill;
+
+  const nodes = rawNodes.map(n => ({ ...n }));
+  const byId  = new Map(nodes.map(n => [n.id, n]));
+  const links = rawEdges
+    .filter(e => byId.has(e.source) && byId.has(e.target))
+    .map(e => ({ ...e }));
+
+  const root = svgEl.append('g').attr('class', 'graph-root');
+
+  const link = root.append('g').selectAll('line')
+    .data(links).join('line')
+    .attr('stroke', C.edge)
+    .attr('stroke-width', edgeW)
+    .attr('stroke-linecap', 'round')
+    .attr('stroke-opacity', 0.85);
+
+  const nodeG = root.append('g').selectAll('g')
+    .data(nodes).join('g').style('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (ev, d) => { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+      .on('end',   (ev, d) => { if (!ev.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  nodeG.append('circle')
+    .attr('r', nodeR)
+    .attr('fill', nodeFill)
+    .attr('stroke', nodeStroke)
+    .attr('stroke-width', 1.5);
+
+  nodeG.append('text')
+    .attr('dy', d => nodeR(d) + 10)
+    .attr('text-anchor', 'middle')
+    .attr('font-family', 'IBM Plex Mono, monospace')
+    .attr('font-size', 8.5)
+    .attr('fill', C.label)
+    .attr('pointer-events', 'none')
+    .text(d => { const lbl = d.label || d.id; return lbl.length > 18 ? lbl.slice(0, 16) + '…' : lbl; });
+
+  nodeG
+    .on('mousemove', showTip)
+    .on('mouseleave', hideTip)
+    .on('click', (ev, d) => {
+      ev.stopPropagation();
+      if (currentHL === d.id) { clearHL(nodeG, link); currentHL = null; }
+      else { applyHL(d.id, nodeG, link, links); currentHL = d.id; }
+    });
+
+  svgEl.on('click.clear', () => { clearHL(nodeG, link); currentHL = null; });
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link',      d3.forceLink(links).id(d => d.id).distance(65).strength(0.35))
+    .force('charge',    d3.forceManyBody().strength(-110).distanceMax(280))
+    .force('x',         d3.forceX(d => d.group === 'internal' ? W * 0.27 : W * 0.73).strength(0.06))
+    .force('y',         d3.forceY(H / 2).strength(0.035))
+    .force('collision', d3.forceCollide().radius(d => nodeR(d) + 5))
+    .on('tick', () => {
+      link
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      nodeG.attr('transform', d => 'translate(' + d.x + ',' + d.y + ')');
+    });
+}
+
+function showTip(ev, d) {
+  tooltip.innerHTML =
+    '<div class="tip-ip">' + d.id + '</div>' +
+    (d.hostname ? '<div class="tip-row"><span>hostname</span>' + d.hostname + '</div>' : '') +
+    '<div class="tip-row"><span>type</span>' + d.group + '</div>' +
+    '<div class="tip-row"><span>connections</span>' + (d.connections || 0) + '</div>' +
+    '<div class="tip-row"><span>findings</span>' + (d.findings_count || 0) + '</div>';
+  tooltip.style.display = 'block';
+  const area = document.getElementById('graph-area');
+  const rect = area.getBoundingClientRect();
+  let x = ev.clientX - rect.left + 15;
+  let y = ev.clientY - rect.top  + 15;
+  const tw = tooltip.offsetWidth  || 220;
+  const th = tooltip.offsetHeight || 120;
+  if (x + tw > rect.width  - 8) x = ev.clientX - rect.left - tw - 5;
+  if (y + th > rect.height - 8) y = ev.clientY - rect.top  - th - 5;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
+}
+
+function hideTip() { tooltip.style.display = 'none'; }
+
+function applyHL(id, nodeG, link, links) {
+  const nb = new Set([id]);
+  links.forEach(l => {
+    const s = l.source?.id ?? l.source;
+    const t = l.target?.id ?? l.target;
+    if (s === id) nb.add(t);
+    if (t === id) nb.add(s);
+  });
+  nodeG.select('circle').attr('opacity', d => nb.has(d.id) ? 1 : 0.1);
+  nodeG.select('text').attr('opacity', d => nb.has(d.id) ? 1 : 0.05);
+  link
+    .attr('opacity', l => { const s = l.source?.id ?? l.source; const t = l.target?.id ?? l.target; return (s === id || t === id) ? 1 : 0.04; })
+    .attr('stroke',  l => { const s = l.source?.id ?? l.source; const t = l.target?.id ?? l.target; return (s === id || t === id) ? 'rgba(76,141,255,.75)' : 'rgba(76,141,255,.22)'; });
+}
+
+function clearHL(nodeG, link) {
+  nodeG.select('circle').attr('opacity', 1);
+  nodeG.select('text').attr('opacity', 1);
+  link.attr('opacity', 0.85).attr('stroke', 'rgba(76,141,255,.22)');
+}
+
+loadCases();
+</script>
+</body>
+</html>
