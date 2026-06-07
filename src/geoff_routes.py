@@ -735,7 +735,7 @@ def list_reports():
                     'case_name': case_display,
                     'timestamp': timestamp_str,
                     'evil_found': data.get('evil_found', False),
-                    'severity': data.get('severity', 'INFO'),
+                    'severity': data.get('severity') or 'INFO',
                     'classification': data.get('classification', ''),
                     'elapsed_seconds': data.get('elapsed_seconds', 0),
                     'evidence_dir': data.get('evidence_dir', ''),
@@ -840,10 +840,10 @@ def get_report_json(case_dir):
                             # Merge narrative attack_chain fields into pipeline attack_chain
                             pipeline_ac = data.get('attack_chain', {})
                             narrative_ac = nr_data['attack_chain']
-                            if isinstance(pipeline_ac, dict) and isinstance(narrative_ac, str):
-                                # Pipeline has structured dict, narrative has text -- store narrative separately
+                            if isinstance(narrative_ac, str):
+                                # Always store the narrative interpretation text separately so JS can render it
                                 data['attack_chain_narrative'] = narrative_ac
-                            elif isinstance(pipeline_ac, dict) and isinstance(narrative_ac, dict):
+                            if isinstance(pipeline_ac, dict) and isinstance(narrative_ac, dict):
                                 for k, v in narrative_ac.items():
                                     if k not in pipeline_ac or pipeline_ac[k] is None:
                                         pipeline_ac[k] = v

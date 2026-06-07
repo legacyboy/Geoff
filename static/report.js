@@ -264,28 +264,7 @@
     root.innerHTML = '<div class="mitre-card" style="margin-bottom:16px;">' +
       '<p>Full super-timeline with all ' + timeline.length + ' events available in a dedicated view.</p>' +
       '<a class="btn primary" href="/reports/' + encodeURIComponent(caseDir) + '/supertimeline" target="_blank">Open Super Timeline &rarr;</a>' +
-    '</div>' +
-    '<div class="tl">' + timeline.slice(0, 10).map(function(ev) {
-      var ts = ev.timestamp || '';
-      var devId = ev.device_id || ev.device || '';
-      var sev = (ev.severity || 'INFO').toUpperCase();
-      var devKind = inferKindFromMap(devId, data.device_map || {});
-      var isSuspicious = ev.suspicious;
-      return '<div class="tl-row' + (isSuspicious ? ' suspicious' : '') + '">' +
-        '<div class="when"><span class="d">' + fmtDate(ts) + '</span><br>' + fmtClock(ts) + ' UTC</div>' +
-        '<div class="tl-rail"><div class="tl-dot ' + (isSuspicious ? 's-HIGH' : 's-' + sev) + '"></div></div>' +
-        '<div class="tl-card">' +
-          '<div class="top"><span class="sev-pill ' + (isSuspicious ? 'HIGH' : sev) + '" style="font-size:9px;padding:2px 7px;">' + (isSuspicious ? 'SUSPICIOUS' : sev) + '</span></div>' +
-          '<div class="sum">' + esc(ev.summary || ev.event_type || '') + '</div>' +
-          '<div class="meta">' +
-            '<span class="dv"><span class="edot ' + devKind + '"></span>' + esc(devId) + '</span>' +
-            (ev.owner ? '<span>' + esc(ev.owner) + '</span>' : '') +
-            (ev.suspicion_reason ? '<span style="color:var(--g-text-mute);font-size:10px;">' + esc(ev.suspicion_reason.slice(0, 80)) + '</span>' : '') +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('') + '</div>' +
-    (timeline.length > 10 ? '<p style="margin-top:8px;font-size:12px;color:var(--g-text-mute);">Showing 10 of ' + timeline.length + ' events. <a href="/reports/' + encodeURIComponent(caseDir) + '/supertimeline" target="_blank">Open full timeline &rarr;</a></p>' : '');
+    '</div>';
   }
 
   function renderFindings(root, data) {
@@ -481,11 +460,57 @@
       root.innerHTML = '<p style="color:var(--g-text-mute)">No blast radius data available.</p>';
       return;
     }
+    // If backend already returned rendered HTML, use it directly
     if (typeof br === 'string' && br.trim().startsWith('<')) {
       root.innerHTML = br;
-    } else {
-      root.innerHTML = renderTextBlock(br);
+      return;
     }
+    // Parse markdown/text blast radius into structured CIA cards
+    const text = typeof br === 'string' ? br : JSON.stringify(br, null, 2);
+    const ciaLevels = { HIGH: '#f85149', MEDIUM: '#d29922', LOW: '#3fb950' };
+    const ciaBar = { HIGH: 90, MEDIUM: 55, LOW: 20 };
+    // Extract CIA dimensions
+    const ciaRows = ['Confidentiality', 'Integrity', 'Availability'].map(dim => {
+      const rx = new RegExp(dim + '[\\s\\S]*?(?:HIGH|MEDIUM|LOW)', 'i');
+      const m = text.match(rx);
+      let level = 'MEDIUM';
+      if (m) {
+        const lvlM = m[0].match(/HIGH|MEDIUM|LOW/i);
+        if (lvlM) level = lvlM[0].toUpperCase();
+      }
+      const color = ciaLevels[level] || '#8b949e';
+      const pct = ciaBar[level] || 20;
+      const rationaleRx = new RegExp(dim + '[^\\n]*?(HIGH|MEDIUM|LOW)[\\s\\S]*?[—:\\-]\\s*([^\\n]+)', 'i');
+      const rm = text.match(rationaleRx);
+      const rationale = rm ? rm[2].trim().slice(0, 100) : '';
+      return `<div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span style="color:var(--g-text);font-weight:bold;">${dim}</span>
+          <span style="color:${color};font-weight:bold;background:var(--g-surface-2);border:1px solid ${color};border-radius:4px;padding:1px 8px;font-size:0.85em;">${level}</span>
+        </div>
+        <div style="background:var(--g-surface-2);border-radius:4px;height:8px;overflow:hidden;">
+          <div style="background:${color};width:${pct}%;height:100%;border-radius:4px;"></div>
+        </div>
+        ${rationale ? `<div style="color:var(--g-text-mute);font-size:0.85em;margin-top:4px;">${esc(rationale)}</div>` : ''}
+      </div>`;
+    }).join('');
+    // Extract assets/data lines from text
+    const assetLines = text.split('\n').filter(l => /device|user|data|asset|scope/i.test(l) && l.trim().length > 4)
+      .slice(0, 5).map(l => `<li style="color:var(--g-text-dim);margin-bottom:4px;">${esc(l.replace(/^[-*#\s]+/, '').trim())}</li>`).join('');
+    // Extract worst-case line
+    const wcMatch = text.match(/worst[- ]case[^:\n]*[:]\s*([^\n]+)/i);
+    const worstCase = wcMatch ? wcMatch[1].trim() : '';
+    root.innerHTML = `
+      <div style="background:var(--g-surface-2);border:1px solid var(--g-border-soft);border-radius:8px;padding:20px;">
+        ${assetLines ? `<h4 style="color:var(--g-blue-soft);margin:0 0 10px;font-size:0.85em;text-transform:uppercase;letter-spacing:0.05em;">Affected Assets</h4>
+        <ul style="margin:0 0 20px;padding-left:20px;list-style:none;">${assetLines}</ul>` : ''}
+        <h4 style="color:var(--g-blue-soft);margin:0 0 12px;font-size:0.85em;text-transform:uppercase;letter-spacing:0.05em;">CIA Impact Assessment</h4>
+        ${ciaRows}
+        ${worstCase ? `<div style="background:var(--g-surface);border:1px solid var(--sev-crit);border-radius:6px;padding:12px 16px;margin-top:12px;">
+          <div style="color:var(--sev-crit);font-weight:bold;margin-bottom:4px;">Worst-Case Projection</div>
+          <div style="color:var(--g-text-dim);">${esc(worstCase)}</div>
+        </div>` : ''}
+      </div>`;
   }
 
   function renderDwellTime(root, data) {
@@ -597,6 +622,62 @@
     const m = Math.floor(s / 60);
     return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m ${Math.round(s % 60)}s`;
   }
+
+  /* -------- report chat dock -------- */
+  window.toggleReportChat = function() {
+    const dock = document.getElementById('report-chat');
+    const tog = document.getElementById('rc-toggle');
+    if (!dock) return;
+    dock.classList.toggle('collapsed');
+    if (tog) tog.textContent = dock.classList.contains('collapsed') ? '▲' : '▼';
+  };
+
+  function pushReportChat(who, html) {
+    const s = document.getElementById('report-chat-scroll');
+    if (!s) return;
+    const m = document.createElement('div');
+    m.className = 'rc-msg ' + who;
+    m.innerHTML = html;
+    s.appendChild(m);
+    s.scrollTop = s.scrollHeight;
+  }
+
+  async function sendReportChat() {
+    const input = document.getElementById('report-chat-input');
+    const txt = input && input.value.trim();
+    if (!txt) return;
+    pushReportChat('user', esc(txt));
+    if (input) input.value = '';
+    pushReportChat('geoff', '<b>GEOFF</b><span class="rc-thinking" style="color:var(--g-text-faint)">thinking…</span>');
+    try {
+      const body = { message: txt };
+      if (caseDir) body.evidence_dir = caseDir;
+      const resp = await fetch('/chat', {
+        method: 'POST',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, API_KEY ? { 'X-API-Key': API_KEY } : {}),
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      const reply = data.response || data.message || 'No response.';
+      const scroll = document.getElementById('report-chat-scroll');
+      if (scroll) {
+        const thinking = scroll.querySelector('.rc-thinking');
+        if (thinking && thinking.parentElement) thinking.parentElement.remove();
+      }
+      pushReportChat('geoff', `<b>GEOFF</b>${esc(reply)}`);
+    } catch (e) {
+      pushReportChat('geoff', `<b>GEOFF</b>Error: ${esc(e.message)}`);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const sendBtn = document.getElementById('report-chat-send');
+    const chatInput = document.getElementById('report-chat-input');
+    if (sendBtn) sendBtn.addEventListener('click', sendReportChat);
+    if (chatInput) chatInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReportChat(); }
+    });
+  });
 
   /* -------- entry -------- */
   if (caseDir) showReport(caseDir);

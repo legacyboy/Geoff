@@ -2107,9 +2107,27 @@ class NarrativeReportGenerator:
                       or "pcap" in str(d.get("device_type", "")).lower())
         unknown = num_devices - servers - dcs - workstations - mobile - network
 
+        # Build broad text corpus for CIA impact checks, including phishing/email artifacts
+        _email_iocs = report_json.get("email_iocs", {}) or {}
+        _rp_mismatches = _email_iocs.get("return_path_mismatches", []) or []
+        _phishing_detected = (
+            bool(_rp_mismatches)
+            or bool(_email_iocs.get("spoofed_domains"))
+            or bool(_email_iocs.get("phishing_links"))
+            or any("phishing" in str(h.get("category", "")).lower()
+                   for h in report_json.get("indicator_hits", []))
+            or "phishing" in classification.lower()
+            or "phishing" in " ".join(ac.get("kill_chain_phases", [])).lower()
+        )
+
         # Data categories at risk
         data_categories = []
-        all_text = (classification + " " + " ".join(ac.get("kill_chain_phases", []))).lower()
+        all_text = (
+            classification + " "
+            + " ".join(ac.get("kill_chain_phases", [])) + " "
+            + " ".join(str(h.get("category", "")) for h in report_json.get("indicator_hits", []))
+            + (" phishing email credential" if _phishing_detected else "")
+        ).lower()
         if any(w in all_text for w in ("phishing", "email", "credential")):
             data_categories.append("PII (credentials, email)")
         if any(w in all_text for w in ("exfiltration", "exfil")):
@@ -2150,9 +2168,9 @@ class NarrativeReportGenerator:
             if any(w in all_text for w in ("exfiltration", "credential_theft", "credential")) or _has_exfil_mitre:
                 cia["Confidentiality"] = "HIGH"
                 cia_rationale["Confidentiality"] = "Credential theft and/or exfiltration detected"
-            elif any(w in all_text for w in ("phishing", "lateral")):
+            elif any(w in all_text for w in ("phishing", "lateral")) or _phishing_detected:
                 cia["Confidentiality"] = "HIGH"
-                cia_rationale["Confidentiality"] = "Potential unauthorized access to sensitive data"
+                cia_rationale["Confidentiality"] = "Phishing/email-based attack with potential unauthorized access to sensitive data"
             else:
                 cia_rationale["Confidentiality"] = "Compromise confirmed — scope of data exposure unclear"
 

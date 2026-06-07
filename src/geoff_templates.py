@@ -750,6 +750,36 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
     .toc { display: none; }
     .hero, .content { padding-left: 24px; padding-right: 24px; }
   }
+
+  /* report chat dock */
+  .report-chat { position: fixed; bottom: 0; right: 24px; width: 380px; z-index: 100;
+    background: var(--g-surface); border: 1px solid var(--g-border-soft); border-bottom: none;
+    border-radius: 12px 12px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.35); }
+  .report-chat-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--g-border-soft); cursor: pointer; }
+  .report-chat-head .rc-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    color: var(--g-text-dim); letter-spacing: .4px; flex: 1; }
+  .report-chat-head .rc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); }
+  .report-chat-body { display: flex; flex-direction: column; }
+  .report-chat-scroll { height: 180px; overflow-y: auto; padding: 12px 14px; display: flex;
+    flex-direction: column; gap: 8px; }
+  .rc-msg { font-size: 12.5px; line-height: 1.5; max-width: 94%; }
+  .rc-msg.user { align-self: flex-end; background: rgba(76,141,255,.14);
+    border: 1px solid rgba(76,141,255,.3); color: var(--g-text); padding: 7px 11px;
+    border-radius: 12px 12px 3px 12px; }
+  .rc-msg.geoff { align-self: flex-start; color: var(--g-text-dim); }
+  .rc-msg.geoff b { color: var(--g-blue-soft); font-family: var(--font-mono); font-weight: 600;
+    font-size: 11px; letter-spacing: .5px; display: block; margin-bottom: 2px; }
+  .report-chat-in { display: flex; gap: 7px; padding: 8px 12px 12px;
+    border-top: 1px solid var(--g-line); }
+  .report-chat-in input { flex: 1; background: var(--g-surface-2); border: 1px solid var(--g-border);
+    border-radius: 999px; padding: 8px 13px; font-size: 12px; outline: none;
+    color: var(--g-text); transition: border-color .15s; }
+  .report-chat-in input:focus { border-color: var(--g-blue); }
+  .report-chat-in button { width: 34px; height: 34px; border-radius: 50%; background: var(--g-blue);
+    color: #fff; display: grid; place-items: center; flex-shrink: 0; font-size: 14px; }
+  .report-chat-in button:hover { filter: brightness(1.1); }
+  .report-chat.collapsed .report-chat-body { display: none; }
 </style>
 </head>
 <body>
@@ -980,6 +1010,24 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   document.getElementById('ipm-toggle-int').addEventListener('change', renderIPMap);
 })();
 </script>
+
+<!-- Report Chat Dock -->
+<div class="report-chat" id="report-chat">
+  <div class="report-chat-head" onclick="toggleReportChat()">
+    <span class="rc-dot"></span>
+    <span class="rc-label">GEOFF &mdash; Ask about this case</span>
+    <span id="rc-toggle" style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute);">&#9660;</span>
+  </div>
+  <div class="report-chat-body">
+    <div class="report-chat-scroll" id="report-chat-scroll">
+      <div class="rc-msg geoff"><b>GEOFF</b>Ask me anything about this investigation.</div>
+    </div>
+    <div class="report-chat-in">
+      <input id="report-chat-input" placeholder="Ask about this case…" autocomplete="off">
+      <button id="report-chat-send" aria-label="Send">&#10148;</button>
+    </div>
+  </div>
+</div>
 
 <script src="/static/report.js?v=2"></script>
 </body>

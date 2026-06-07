@@ -740,7 +740,7 @@
           <div class="rt-top">
             <span class="rt-name">${escHtml(rpt.case_name || rpt.dir)}</span>
             <span class="sev-pill ${sev}">${sev}</span>
-            ${isEvil ? '<span class="sev-pill CRITICAL" style="font-size:9px;">EVIL</span>' : '<span class="sev-pill" style="font-size:9px;background:var(--g-green);color:var(--g-bg);">CLEAN</span>'}
+            ${isEvil ? '<span class="sev-pill CRITICAL" style="font-size:9px;color:#FF4D5E;background:rgba(255,77,94,.13);border-color:rgba(255,77,94,.4);">EVIL</span>' : '<span class="sev-pill" style="font-size:9px;background:var(--g-green);color:var(--g-bg);">CLEAN</span>'}
           </div>
           <div class="rt-meta">
             <span>${dateStr}</span>
