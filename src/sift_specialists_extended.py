@@ -6757,7 +6757,7 @@ class EMAIL_Specialist:
                 _time.sleep(10)
             try:
                 resp = requests.post(
-                    f"{ollama_base_url()}/generate",
+                    f"{ollama_base_url()}/api/generate",
                     headers=ollama_headers(),
                     json={"model": model, "prompt": prompt, "stream": False,
                           "options": {"temperature": 0.1}},

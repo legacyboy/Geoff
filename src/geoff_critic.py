@@ -228,7 +228,7 @@ class GeoffCritic:
 
             try:
                 response = requests.post(
-                    f"{self._base_url()}/generate",
+                    f"{self._base_url()}/api/generate",
                     headers=self._ollama_headers(),
                     json={
                         "model": self.model,

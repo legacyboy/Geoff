@@ -568,7 +568,7 @@ def call_llm(user_message, context="", agent_type="manager"):
 
             full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
             response = requests.post(
-                f"{ollama_base_url()}/generate",
+                f"{ollama_base_url()}/api/generate",
                 headers=ollama_headers(),
                 json={
                     "model": model,
@@ -687,7 +687,7 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
         try:
             model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
             response = requests.post(
-                f"{ollama_base_url()}/generate",
+                f"{ollama_base_url()}/api/generate",
                 headers=ollama_headers(),
                 json={"model": model, "prompt": prompt, "stream": False,
                       "options": {"temperature": 0.1}},

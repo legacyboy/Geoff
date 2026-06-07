@@ -142,7 +142,7 @@ def _call_ollama_with_retry(url, prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_r
 
         try:
             response = requests.post(
-                f"{url}/generate",
+                f"{url}/api/generate",
                 headers=_ollama_headers(),
                 json={
                     "model": FORENSICATOR_MODEL,
