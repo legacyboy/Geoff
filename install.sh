@@ -438,13 +438,12 @@ DIE_EOF
     sudo apt-get install -y -qq yara 2>/dev/null || true
 
     # Verify mobile tools
-    for mobile_tool in ileapp aleapp; do
-        tool_dir="/opt/${mobile_tool^^}"
-        tool_script="${mobile_tool}.py"
-        if [ -d "$tool_dir" ] && [ -f "$tool_dir/$tool_script" ]; then
-            info "${mobile_tool} available for mobile forensics"
+    for mobile_tool_dir in iLEAPP ALEAPP; do
+        mobile_tool_lower="$(echo "$mobile_tool_dir" | tr '[:upper:]' '[:lower:]')"
+        if [ -d "/opt/$mobile_tool_dir" ] && [ -f "/opt/$mobile_tool_dir/${mobile_tool_lower}.py" ]; then
+            info "$mobile_tool_dir available for mobile forensics"
         else
-            warn "$mobile_tool not found — mobile analysis (PB-021) may be limited"
+            warn "$mobile_tool_dir not found — mobile analysis (PB-021) may be limited"
         fi
     done
 
