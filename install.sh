@@ -300,7 +300,7 @@ DIE_EOF
 
     # Zimmerman Tools (Eric Zimmerman forensic tools — .NET 9)
     info "Setting up Zimmerman forensic tools..."
-    ZIMMERMAN_DIR="${INSTALL_DIR}/zimmerman_tools"
+    ZIMMERMAN_DIR="/opt/zimmerman_tools"
     sudo mkdir -p "$ZIMMERMAN_DIR"
     if ! command -v dotnet >/dev/null 2>&1; then
         info "Installing .NET 9 runtime for Zimmerman tools..."
@@ -429,6 +429,12 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
     cd "$INSTALL_DIR"
     git pull origin main || warn "Git pull failed — continuing with existing code"
 else
+    # If the directory exists but is not a git repo (e.g., created by dependency installs),
+    # remove it so git clone can proceed cleanly.
+    if [[ -d "${INSTALL_DIR}" ]]; then
+        info "Removing pre-existing directory ${INSTALL_DIR} for clean clone..."
+        sudo rm -rf "${INSTALL_DIR}"
+    fi
     info "Cloning GEOFF repository..."
     sudo mkdir -p "$INSTALL_DIR"
     sudo chown "$(whoami):$(id -gn)" "$INSTALL_DIR"
