@@ -392,7 +392,7 @@ DIE_EOF
             warn "apktool download failed — APK analysis may be limited"
         chmod +x /usr/local/bin/apktool 2>/dev/null || true
     fi
-    install_packages "yara"
+    sudo apt-get install -y -qq yara
 
     # Verify mobile tools
     for mobile_tool in ileapp aleapp; do
