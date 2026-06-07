@@ -25,6 +25,7 @@ PROFILE="cloud"
 OLLAMA_KEY=""
 OLLAMA_SIGNIN=false
 SKIP_OLLAMA=false
+SKIP_REMNUX=false
 SKIP_DEPS=false
 
 # ── Colors ──────────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --ollama-signin) OLLAMA_SIGNIN=true; shift;;
         --dir)         INSTALL_DIR="$2"; shift 2;;
         --skip-ollama) SKIP_OLLAMA=true; shift;;
+        --skip-remnux) SKIP_REMNUX=true; shift;;
         --skip-deps)   SKIP_DEPS=true; shift;;
         -h|--help)
             head -14 "$0" | tail -10 | sed 's/^# //'
@@ -242,15 +244,30 @@ if [[ "$SKIP_DEPS" == false ]]; then
             fi
         fi
         # Install REMnux distro for malware analysis tools
-        if ! command -v remnux &>/dev/null; then
-            info "Installing REMnux distro (addon mode)..."
-            curl -O https://REMnux.org/remnux 2>/dev/null && \
-                chmod +x remnux && sudo mv remnux /usr/local/bin/ && \
-                sudo remnux install --mode=addon 2>/dev/null || \
-                warn "REMnux installation failed — some malware analysis tools may be unavailable"
+        # REMnux addon install can take 20+ minutes on first run.
+        # We background it and wait at the end so the rest of the install continues.
+        REMNUX_BG_PID=""
+        if [[ "$SKIP_REMNUX" == true ]]; then
+            info "Skipping REMnux install (--skip-remnux)"
+        elif ! command -v remnux &>/dev/null; then
+            info "Installing REMnux distro (addon mode) — running in background..."
+            (
+                set +e
+                cd /tmp
+                curl -sSL -O https://REMnux.org/remnux 2>/dev/null && \
+                    chmod +x /tmp/remnux && sudo mv /tmp/remnux /usr/local/bin/ && \
+                    sudo remnux install --mode=addon 2>&1 | tail -1 || \
+                    echo "REMNUX_BG_FAIL"
+                rm -f /tmp/remnux 2>/dev/null
+            ) & REMNUX_BG_PID=$!
+            info "REMnux install running in background (PID: ${REMNUX_BG_PID})"
         else
             info "REMnux already installed, updating..."
-            sudo remnux update 2>/dev/null || true
+            (
+                set +e
+                sudo remnux update 2>&1 | tail -1 || echo "REMNUX_BG_FAIL"
+            ) & REMNUX_BG_PID=$!
+            info "REMnux update running in background (PID: ${REMNUX_BG_PID})"
         fi
     elif command -v dnf >/dev/null; then
         sudo dnf install -y python3-pip git curl jq 2>/dev/null || true
@@ -705,6 +722,34 @@ for _jtr_tool in john johnny; do
         warn "$_jtr_tool not found — install john/johnny manually for password cracking support"
     fi
 done
+
+# ── Wait for background REMnux install ──────────────────────────────────────
+if [[ -n "$REMNUX_BG_PID" ]]; then
+    info "Waiting for REMnux background install to finish (PID: ${REMNUX_BG_PID})..."
+    # Temporarily disable exit-on-error for the wait loop
+    set +e
+    REMNUX_WAIT=0
+    while kill -0 "$REMNUX_BG_PID" 2>/dev/null && [ $REMNUX_WAIT -lt 1800 ]; do
+        sleep 5
+        REMNUX_WAIT=$((REMNUX_WAIT + 5))
+        # Print progress every 30 seconds
+        if [ $((REMNUX_WAIT % 30)) -eq 0 ]; then
+            info "  REMnux still running... (${REMNUX_WAIT}s elapsed)"
+        fi
+    done
+    if kill -0 "$REMNUX_BG_PID" 2>/dev/null; then
+        warn "REMnux install is still running after 30 minutes — continuing anyway"
+    else
+        wait "$REMNUX_BG_PID" 2>/dev/null
+        REMNUX_EXIT=$?
+        if [ $REMNUX_EXIT -eq 0 ]; then
+            ok "REMnux install completed successfully"
+        else
+            warn "REMnux install exited with code $REMNUX_EXIT — some malware tools may be unavailable"
+        fi
+    fi
+    set -e
+fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
