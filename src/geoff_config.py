@@ -476,6 +476,10 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-038": "Web Shell Indicators",
     "PB-SIFT-039": "Insider Threat Behavioral Analysis",
     "PB-SIFT-040": "IoT Device Forensics",
+    "PB-SIFT-060": "Communications Analysis",
+    "PB-SIFT-061": "Steganography Detection",
+    "PB-SIFT-062": "Keylogger/Spyware Analysis",
+    "PB-SIFT-063": "Chat & Messaging Aggregation",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for
@@ -1188,6 +1192,23 @@ PLAYBOOK_STEPS = {
             # Scan standalone artifacts (exports, archives, docs) for PII/sensitive patterns
             ("strings", "extract_strings", {"file_path": "{file}", "min_length": 8}),
         ],
+    },
+    "PB-SIFT-060": {  # Communications Analysis — reads from existing email/chat findings
+        # No direct tool steps: the CommunicationsAnalyzer reads from findings produced
+        # by PB-SIFT-023 and other playbooks. Registered here so the pipeline recognises
+        # it as a valid playbook ID and includes it in reports.
+    },
+    "PB-SIFT-061": {  # Steganography Detection — StegoAnalyzer reads evidence_dir + findings
+        # No direct tool steps: reads from evidence files and existing findings.
+        # Runs after file carving (PB-SIFT-026) so raw files are available.
+    },
+    "PB-SIFT-062": {  # Keylogger/Spyware Analysis — KeyloggerAnalyzer reads findings
+        # No direct tool steps: reads from memory/process/file findings.
+        # Runs after memory analysis (PB-SIFT-027) and process playbooks.
+    },
+    "PB-SIFT-063": {  # Chat & Messaging Aggregation — ChatAggregator reads findings
+        # No direct tool steps: reads from PB-SIFT-021 (Mobile) and PB-SIFT-031 (Collaboration).
+        # Runs after mobile and collaboration analysis.
     },
 }
 

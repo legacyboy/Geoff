@@ -333,7 +333,7 @@
   function pollStatus() {
     pollTimer = setTimeout(async () => {
       try {
-        const resp = await apiFetch('/find-evil/status/');
+        const resp = await apiFetch('/find-evil/active');
         const data = await resp.json();
         handleStatus(data);
       } catch (e) {
@@ -344,6 +344,53 @@
   }
 
   function handleStatus(data) {
+    // New format from /find-evil/active: {active_jobs: [...], count: N}
+    if (data.active_jobs !== undefined) {
+      if (data.count === 0) {
+        // No active jobs — fall back to /find-evil/status/ for latest completed
+        apiFetch('/find-evil/status/').then(r => r.json()).then(d => handleStatus(d)).catch(() => {});
+        return;
+      }
+      const jobs = data.active_jobs;
+      const lead = jobs.reduce((a, b) => (b.progress_pct > a.progress_pct ? b : a), jobs[0]);
+      if (lead.job_id) currentJobId = lead.job_id;
+      const pct = Math.round(lead.progress_pct || 0);
+
+      if (pct > lastPct) {
+        lastPct = pct;
+        const pf = $("pbar-fill"); if (pf) pf.style.width = pct + "%";
+        const pp = $("pbar-pct"); if (pp) pp.textContent = pct + "%";
+        const ps = $("pbar-steps"); if (ps) ps.textContent = (`${lead.current_playbook || ''} · ${lead.current_step || ''}`).replace(/^ · | · $/, '') || (pct + "%");
+      }
+
+      const phaseIdx = pct >= 100 ? PHASES.length - 1 : playbookToPhase(lead.current_playbook, pct);
+      setPhase(phaseIdx, "active");
+
+      const log = lead.log || [];
+      for (const entry of log) {
+        const ts = typeof entry === 'string' ? '' : (entry.time || '');
+        if (ts > lastLogTs || !lastLogTs) addLog(entry.msg || entry);
+      }
+      if (log.length > 0) {
+        const last = log[log.length - 1];
+        lastLogTs = typeof last === 'string' ? '' : (last.time || '');
+      }
+
+      updateJobBanner(jobs);
+
+      const vbadgeEl = $("vbadge");
+      const vsEl = $("v-sevpill");
+      if (vbadgeEl) {
+        const pb = lead.current_playbook || '';
+        vbadgeEl.textContent = pb ? pb.toUpperCase() : (pct >= 50 ? 'ANALYZING' : 'SCANNING');
+      }
+      if (vsEl) { vsEl.textContent = 'SCANNING'; vsEl.className = 'sev-pill'; vsEl.style.opacity = '1'; }
+      updateThreat();
+      pollStatus();
+      return;
+    }
+
+    // Old format: single job object (from /find-evil/status/ fallback for completed jobs)
     if (data.job_id) currentJobId = data.job_id;
     const pct = Math.round(data.progress_pct || 0);
     const status = data.status;
@@ -352,7 +399,7 @@
       lastPct = pct;
       const pf = $("pbar-fill"); if (pf) pf.style.width = pct + "%";
       const pp = $("pbar-pct"); if (pp) pp.textContent = pct + "%";
-      const ps = $("pbar-steps"); if (ps) ps.textContent = `${data.current_playbook || ''} · ${data.current_step || ''}`.replace(/^ · | · $/, '') || (pct + "%");
+      const ps = $("pbar-steps"); if (ps) ps.textContent = (`${data.current_playbook || ''} · ${data.current_step || ''}`).replace(/^ · | · $/, '') || (pct + "%");
     }
 
     const phaseIdx = pct >= 100 ? PHASES.length - 1 : playbookToPhase(data.current_playbook, pct);
@@ -361,17 +408,14 @@
     const log = data.log || [];
     for (const entry of log) {
       const ts = typeof entry === 'string' ? '' : (entry.time || '');
-      if (ts > lastLogTs || !lastLogTs) {
-        addLog(entry.msg || entry);
-      }
+      if (ts > lastLogTs || !lastLogTs) addLog(entry.msg || entry);
     }
     if (log.length > 0) {
       const last = log[log.length - 1];
       lastLogTs = typeof last === 'string' ? '' : (last.time || '');
     }
 
-    // Update job banner
-    updateJobBanner(pct, data.current_playbook, data.current_step);
+    updateJobBanner([data]);
 
     if (status === 'complete') {
       const titleEl = $("op-title");
@@ -402,16 +446,50 @@
     currentJobId = jobId;
     const banner = $("job-banner"); if (!banner) return;
     banner.classList.add("active");
-    updateJobBanner(pct, playbook, step);
-    const info = $("jb-info");
-    if (info) info.textContent = evidenceDir || 'unknown';
+    updateJobBanner([{job_id: jobId, evidence_dir: evidenceDir, progress_pct: pct, current_playbook: playbook, current_step: step}]);
   }
 
-  function updateJobBanner(pct, playbook, step) {
-    const jbPct = $("jb-pct");
-    if (jbPct) jbPct.textContent = pct + "%";
-    const jbInfo = $("jb-info");
-    if (jbInfo && playbook) jbInfo.textContent = (playbook + (step ? ' · ' + step : '')).replace(/^ · | · $/, '');
+  function updateJobBanner(jobs) {
+    if (!jobs || jobs.length === 0) return;
+    const banner = $("job-banner"); if (!banner) return;
+    banner.classList.add("active");
+    if (jobs.length === 1) {
+      const job = jobs[0];
+      const pct = Math.round(job.progress_pct || 0);
+      const jbPct = $("jb-pct"); if (jbPct) jbPct.textContent = pct + "%";
+      const jbInfo = $("jb-info");
+      const playbook = job.current_playbook || '';
+      const step = job.current_step || '';
+      if (jbInfo) jbInfo.textContent = (playbook + (step ? ' · ' + step : '')).replace(/^ · | · $/, '') || (job.evidence_dir || '');
+      const cards = $("jb-cards"); if (cards) cards.remove();
+    } else {
+      const jbPct = $("jb-pct"); if (jbPct) jbPct.textContent = jobs.length + " jobs";
+      const jbInfo = $("jb-info"); if (jbInfo) jbInfo.textContent = "";
+      let cards = $("jb-cards");
+      if (!cards) {
+        cards = document.createElement("div");
+        cards.id = "jb-cards";
+        cards.className = "jb-cards";
+        const resume = $("jb-resume");
+        if (resume) banner.insertBefore(cards, resume);
+        else banner.appendChild(cards);
+      }
+      cards.innerHTML = "";
+      for (const job of jobs) {
+        const pct = Math.round(job.progress_pct || 0);
+        const evName = (job.evidence_dir || 'unknown').split('/').filter(Boolean).pop() || 'unknown';
+        const playbook = job.current_playbook || '';
+        const step = job.current_step || '';
+        const label = (playbook + (step ? ' · ' + step : '')).replace(/^ · | · $/, '');
+        const elapsed = job.elapsed_seconds ? fmtElapsed(job.elapsed_seconds * 1000) : '—';
+        const card = document.createElement("div");
+        card.className = "jb-card";
+        card.innerHTML = `<div class="jbc-head"><span class="jbc-name">${escHtml(evName)}</span><span class="jbc-pct">${pct}%</span></div>` +
+          `<div class="jbc-bar"><i style="width:${pct}%"></i></div>` +
+          `<div class="jbc-meta">${escHtml(label) || '—'}<span class="jbc-elapsed">${elapsed}</span></div>`;
+        cards.appendChild(card);
+      }
+    }
   }
 
   function hideJobBanner() {
@@ -774,24 +852,21 @@
       const jobs = data.active_jobs || [];
 
       if (jobs.length === 0) {
-      const titleEl = $("op-title"); if (titleEl) titleEl.textContent = "Find Evil";
-      return;
-    }
+        const titleEl = $("op-title"); if (titleEl) titleEl.textContent = "Find Evil";
+        return;
+      }
 
-      // Found a running job — show banner and start polling
-      const job = jobs[0]; // take the most recent
-      currentJobId = job.job_id;
-      showJobBanner(job.job_id, job.evidence_dir || 'unknown', job.progress_pct, job.current_playbook, job.current_step);
+      // Found running jobs — show banner for all, use most advanced as lead
+      const lead = jobs.reduce((a, b) => (b.progress_pct > a.progress_pct ? b : a), jobs[0]);
+      currentJobId = lead.job_id;
+      updateJobBanner(jobs);
+      const banner = $("job-banner"); if (banner) banner.classList.add("active");
 
-      // Set up the console — do NOT overwrite evdir input or op-title on page load;
-      // the job banner already shows the path context.
-      const evdir = job.evidence_dir || '';
       const live = $("op-live"); if (live) live.style.display = "inline-flex";
 
-      // Estimate elapsed from started_at
-      if (job.started_at) {
-        const startedMs = new Date(job.started_at).getTime();
-        t0 = Date.now() - (Date.now() - startedMs); // adjust t0
+      if (lead.started_at) {
+        const startedMs = new Date(lead.started_at).getTime();
+        t0 = Date.now() - (Date.now() - startedMs);
       } else {
         t0 = Date.now();
       }
@@ -800,8 +875,8 @@
       }, 1000);
 
       const runbtn = $("runbtn"); if (runbtn) { runbtn.textContent = "■ Running…"; runbtn.style.opacity = ".7"; }
-      addLog("Detected running job — " + job.job_id);
-      addLog("Evidence: " + (job.evidence_dir || 'unknown'));
+      addLog(`Detected ${jobs.length} running job${jobs.length > 1 ? 's' : ''} — ${jobs.map(j => j.job_id).join(', ')}`);
+      jobs.forEach(j => addLog("Evidence: " + (j.evidence_dir || 'unknown')));
       pollStatus();
     } catch (e) {
       // Silent — no active jobs is normal
@@ -849,6 +924,8 @@
   if (navExecution) navExecution.onclick = (e) => { e.preventDefault(); switchTab('execution'); };
   const navSettings = $("nav-settings");
   if (navSettings) navSettings.onclick = (e) => { e.preventDefault(); switchTab('settings'); };
+  const navQueue = $("nav-queue");
+  if (navQueue) navQueue.onclick = (e) => { e.preventDefault(); switchTab('queue'); };
 
   // Job banner resume button
   const jbResume = $("jb-resume");
@@ -1229,5 +1306,298 @@
     });
     return wrap;
   }
+
+
+  // =====================================================================
+  // Queue Tab
+  // =====================================================================
+  (function () {
+    const $ = (id) => document.getElementById(id);
+    const el = (tag, cls, html) => {
+      const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n;
+    };
+
+    let _pollTimer = null;
+    let _dragSrcId = null;
+
+    function fmtElapsed(secs) {
+      if (!secs) return '0m';
+      secs = Math.round(secs);
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+      catch { return iso.slice(11, 16); }
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        const today = new Date();
+        if (d.toDateString() === today.toDateString()) return fmtTime(iso);
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + fmtTime(iso);
+      } catch { return iso.slice(0, 16); }
+    }
+
+    function statusIcon(status) {
+      return { queued: '⏳', running: '🔄', completed: '✅', failed: '❌', cancelled: '⊘' }[status] || '·';
+    }
+
+    // ----- Drag reorder helpers -----
+    function attachDrag(card, item, items) {
+      card.draggable = true;
+      card.addEventListener('dragstart', e => {
+        _dragSrcId = item.id;
+        card.style.opacity = '0.5';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragend', () => { card.style.opacity = ''; });
+      card.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; card.style.outline = '1px solid var(--g-blue)'; });
+      card.addEventListener('dragleave', () => { card.style.outline = ''; });
+      card.addEventListener('drop', e => {
+        e.preventDefault(); card.style.outline = '';
+        if (_dragSrcId && _dragSrcId !== item.id) {
+          reorderItems(_dragSrcId, item.id, items);
+        }
+        _dragSrcId = null;
+      });
+    }
+
+    function reorderItems(srcId, dstId, items) {
+      const queued = items.filter(i => i.status === 'queued');
+      const srcIdx = queued.findIndex(i => i.id === srcId);
+      const dstIdx = queued.findIndex(i => i.id === dstId);
+      if (srcIdx < 0 || dstIdx < 0) return;
+      // Reassign priorities: give moved item the dst priority
+      apiFetch(`/queue/${srcId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority: queued[dstIdx].priority }),
+      }).then(() => apiFetch(`/queue/${dstId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority: queued[srcIdx].priority }),
+      })).then(() => loadQueue()).catch(() => loadQueue());
+    }
+
+    // ----- Render sections -----
+    function renderRunning(item) {
+      const wrap = $('queue-running-section'); if (!wrap) return;
+      wrap.innerHTML = '';
+      if (!item) return;
+      const card = el('div', 'queue-card queue-running');
+      const pct = Math.round(item.progress_pct || 0);
+      const pb = item.current_playbook || '';
+      const step = item.current_step || '';
+      card.innerHTML = `
+        <div class="qc-head">
+          <span class="qc-icon">🔄</span>
+          <span class="qc-name">${escHtml(item.display_name)}</span>
+          <span class="qc-pct">${pct}%</span>
+          <button class="btn" style="font-size:11px;padding:4px 10px;color:var(--sev-crit);border-color:rgba(255,77,94,.3);" data-action="cancel" data-id="${escHtml(item.id)}">Cancel</button>
+        </div>
+        <div class="qc-progress">
+          <div class="qc-pbar"><i style="width:${pct}%"></i></div>
+        </div>
+        <div class="qc-meta">
+          ${pb ? `<span class="qc-badge">${escHtml(pb)}</span>` : ''}
+          ${step ? `<span style="color:var(--g-text-mute);font-size:11px;">${escHtml(step.slice(0, 80))}</span>` : ''}
+        </div>
+        <div class="qc-footer">
+          <span>Started ${fmtTime(item.started_at)}</span>
+          <span>Elapsed ${fmtElapsed(item.elapsed_seconds)}</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--g-text-faint);">${escHtml(item.job_id || '')}</span>
+        </div>`;
+      card.querySelector('[data-action="cancel"]').onclick = () => cancelItem(item.id);
+      const sect = el('div', '');
+      sect.innerHTML = '<div class="queue-section-head"><span class="eyebrow" style="color:var(--g-blue-soft);">Running</span></div>';
+      sect.appendChild(card);
+      wrap.appendChild(sect);
+    }
+
+    function renderQueued(items, allItems) {
+      const wrap = $('queue-queued-section'); if (!wrap) return;
+      wrap.innerHTML = '';
+      const queued = items.filter(i => i.status === 'queued').sort((a, b) => a.priority - b.priority);
+      if (!queued.length) return;
+      const sect = el('div', '');
+      sect.innerHTML = `<div class="queue-section-head"><span class="eyebrow">Queued (drag to reorder)</span><span class="cnt">${queued.length}</span></div>`;
+      queued.forEach((item, idx) => {
+        const card = el('div', 'queue-card queue-queued');
+        card.innerHTML = `
+          <div class="qc-head">
+            <span class="qc-drag" title="Drag to reorder">⠿⠿</span>
+            <span class="qc-pos">#${idx + 1}</span>
+            <span class="qc-name">${escHtml(item.display_name)}</span>
+            <span style="flex:1;"></span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--g-text-faint);">${escHtml(item.evidence_path)}</span>
+            <button class="btn ghost" style="font-size:11px;padding:4px 10px;" data-action="remove" data-id="${escHtml(item.id)}">Remove</button>
+          </div>
+          <div class="qc-footer">
+            <span>Queued ${fmtDate(item.queued_at)}</span>
+            <span>Priority ${item.priority}</span>
+          </div>`;
+        card.querySelector('[data-action="remove"]').onclick = () => removeItem(item.id);
+        attachDrag(card, item, allItems);
+        sect.appendChild(card);
+      });
+      wrap.appendChild(sect);
+    }
+
+    function renderCompleted(items) {
+      const wrap = $('queue-done-section'); if (!wrap) return;
+      wrap.innerHTML = '';
+      const done = items.filter(i => i.status === 'completed');
+      if (!done.length) return;
+      const sect = el('div', '');
+      sect.innerHTML = `<div class="queue-section-head"><span class="eyebrow" style="color:var(--g-green);">Completed</span><span class="cnt">${done.length}</span></div>`;
+      done.forEach(item => {
+        const card = el('div', 'queue-card queue-done');
+        const summary = item.result_summary || '';
+        card.innerHTML = `
+          <div class="qc-head">
+            <span class="qc-icon">✅</span>
+            <span class="qc-name">${escHtml(item.display_name)}</span>
+            <span style="flex:1;"></span>
+            ${summary ? `<span class="qc-badge" style="background:rgba(37,211,150,.12);color:var(--g-green);border-color:rgba(37,211,150,.3);">${escHtml(summary)}</span>` : ''}
+          </div>
+          <div class="qc-footer">
+            <span>Finished ${fmtDate(item.completed_at)}</span>
+            <span>Elapsed ${fmtElapsed(item.elapsed_seconds)}</span>
+          </div>`;
+        sect.appendChild(card);
+      });
+      wrap.appendChild(sect);
+    }
+
+    function renderFailed(items) {
+      const wrap = $('queue-failed-section'); if (!wrap) return;
+      wrap.innerHTML = '';
+      const failed = items.filter(i => i.status === 'failed' || i.status === 'cancelled');
+      if (!failed.length) return;
+      const sect = el('div', '');
+      sect.innerHTML = `<div class="queue-section-head"><span class="eyebrow" style="color:var(--sev-crit);">Failed / Cancelled</span><span class="cnt">${failed.length}</span></div>`;
+      failed.forEach(item => {
+        const card = el('div', 'queue-card queue-failed');
+        card.innerHTML = `
+          <div class="qc-head">
+            <span class="qc-icon">${item.status === 'cancelled' ? '⊘' : '❌'}</span>
+            <span class="qc-name">${escHtml(item.display_name)}</span>
+            <span style="flex:1;"></span>
+            <button class="btn" style="font-size:11px;padding:4px 10px;" data-action="retry" data-path="${escHtml(item.evidence_path)}">Retry</button>
+          </div>
+          ${item.error ? `<div style="font-family:var(--font-mono);font-size:11px;color:var(--sev-crit);margin-top:4px;">${escHtml(item.error.slice(0, 200))}</div>` : ''}
+          <div class="qc-footer"><span>${fmtDate(item.completed_at || item.queued_at)}</span></div>`;
+        card.querySelector('[data-action="retry"]').onclick = () => enqueueEvidence(item.evidence_path);
+        sect.appendChild(card);
+      });
+      wrap.appendChild(sect);
+    }
+
+    function renderQueue(data) {
+      const items = data.items || [];
+      const running = data.running || null;
+      const cntEl = $('queue-cnt');
+      if (cntEl) {
+        const q = items.filter(i => i.status === 'queued').length;
+        cntEl.textContent = running ? `1 running · ${q} queued` : `${q} queued`;
+      }
+      renderRunning(running);
+      renderQueued(items, items);
+      renderCompleted(items);
+      renderFailed(items);
+    }
+
+    // ----- API calls -----
+    function loadQueue() {
+      apiFetch('/queue').then(r => r.json()).then(data => {
+        if (data.status === 'ok') renderQueue(data);
+        schedulePoll(data);
+      }).catch(() => {});
+    }
+
+    function schedulePoll(data) {
+      clearTimeout(_pollTimer);
+      const items = data.items || [];
+      const hasRunning = items.some(i => i.status === 'running');
+      if (hasRunning) {
+        _pollTimer = setTimeout(loadQueue, 5000);
+      }
+    }
+
+    function cancelItem(id) {
+      if (!confirm('Cancel this job and clean up its resources?')) return;
+      apiFetch(`/queue/${id}/cancel`, { method: 'POST' })
+        .then(() => loadQueue()).catch(e => alert('Cancel failed: ' + e));
+    }
+
+    function removeItem(id) {
+      apiFetch(`/queue/${id}`, { method: 'DELETE' })
+        .then(() => loadQueue()).catch(e => alert('Remove failed: ' + e));
+    }
+
+    function enqueueEvidence(path) {
+      if (!path) return;
+      const msgEl = $('queue-enqueue-msg');
+      apiFetch('/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ evidence_dir: path }),
+      }).then(r => r.json()).then(data => {
+        if (data.status === 'queued') {
+          if (msgEl) msgEl.textContent = '✓ Enqueued: ' + (data.item && data.item.display_name);
+          const inp = $('queue-path-input'); if (inp) inp.value = '';
+          loadQueue();
+        } else {
+          if (msgEl) msgEl.textContent = '✗ ' + (data.error || 'Failed');
+        }
+      }).catch(e => { if (msgEl) msgEl.textContent = '✗ ' + e; });
+    }
+
+    // ----- Init -----
+    function initQueue() {
+      // Enqueue button
+      const btn = $('queue-enqueue-btn');
+      if (btn) btn.onclick = () => {
+        const inp = $('queue-path-input');
+        enqueueEvidence(inp ? inp.value.trim() : '');
+      };
+      const inp = $('queue-path-input');
+      if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') btn && btn.click(); });
+
+      // Force advance button
+      const advBtn = $('queue-advance-btn');
+      if (advBtn) advBtn.onclick = () => {
+        if (!confirm('Force advance: cancel the running job and start the next queued item?')) return;
+        apiFetch('/queue/advance', { method: 'POST' })
+          .then(() => loadQueue()).catch(e => alert('Advance failed: ' + e));
+      };
+    }
+
+    // Hook into tab switching
+    function onQueueTabActivated() {
+      loadQueue();
+    }
+
+    // Patch tab switch to trigger queue load
+    const origNavSetup = window._geoffNavSetup;
+    document.addEventListener('click', e => {
+      const link = e.target.closest('[data-tab="queue"]');
+      if (link) setTimeout(onQueueTabActivated, 50);
+    });
+
+    // Also expose for nav handler
+    window._queueTabActivated = onQueueTabActivated;
+
+    initQueue();
+  })();
 
 })();

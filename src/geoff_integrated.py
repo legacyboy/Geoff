@@ -93,7 +93,8 @@ import geoff_utils as _gu
 
 # _global_exception_handler, _ckpt_*, FindingsWriter → geoff_utils.py
 # sys.excepthook wiring kept here
-sys.excepthook = _global_exception_handler
+from geoff_logger import geoff_excepthook
+sys.excepthook = geoff_excepthook
 
 # safe_run, safe_git_commit, _fe_log, _fe_log_with_exception, _log_error, _log_info → geoff_utils.py
 # _re_evaluate_playbooks → geoff_models.py
@@ -217,5 +218,15 @@ if __name__ == '__main__':
         )
     except Exception as _sc_err:
         print(f'[Geoff] Self-check unavailable: {_sc_err}', file=sys.stderr)
+
+    from geoff_logger import get_logger as _get_geoff_logger
+    _srv_log = _get_geoff_logger("geoff.server")
+    _srv_log.info("Server starting", pid=os.getpid(), port=PORT)
+
+    import signal as _signal
+    def _sigterm_handler(signum, frame):
+        _srv_log.info("Server shutting down", signal="SIGTERM")
+        import sys as _sys; _sys.exit(0)
+    _signal.signal(_signal.SIGTERM, _sigterm_handler)
 
     app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)

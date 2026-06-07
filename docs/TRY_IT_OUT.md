@@ -75,6 +75,7 @@ curl -fsSL https://ollama.ai/install.sh | sh
 ollama pull deepseek-r1:32b       # Manager
 ollama pull qwen2.5-coder:14b     # Forensicator
 ollama pull qwen2.5:14b           # Critic
+ollama pull gemma4:31b             # Critic 2
 ```
 
 ---

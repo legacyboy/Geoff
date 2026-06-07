@@ -214,3 +214,70 @@ a { color: inherit; text-decoration: none; }
   background: rgba(76, 141, 255, 0.08);
   border-color: rgba(76, 141, 255, 0.2);
 }
+
+/* ===================== Queue Tab ===================== */
+.queue-section-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 0 8px; border-bottom: 1px solid var(--g-border-soft);
+  margin-bottom: 10px;
+}
+.queue-section-head .cnt {
+  font-family: var(--font-mono); font-size: 11px; color: var(--g-text-mute);
+}
+
+.queue-card {
+  border: 1px solid var(--g-border-soft); border-radius: var(--radius);
+  background: var(--g-surface); padding: 14px 16px; margin-bottom: 8px;
+  transition: border-color .14s, box-shadow .14s;
+}
+.queue-card:hover { border-color: var(--g-border); box-shadow: var(--shadow-1); }
+.queue-running { border-left: 3px solid var(--g-blue); }
+.queue-done    { border-left: 3px solid var(--g-green); opacity: .85; }
+.queue-failed  { border-left: 3px solid var(--sev-crit); opacity: .85; }
+.queue-queued  { cursor: grab; }
+.queue-queued:active { cursor: grabbing; }
+
+.qc-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.qc-icon { font-size: 16px; flex-shrink: 0; }
+.qc-drag {
+  font-size: 14px; color: var(--g-text-faint); cursor: grab;
+  flex-shrink: 0; letter-spacing: -2px; user-select: none;
+}
+.qc-pos {
+  font-family: var(--font-mono); font-size: 11px; color: var(--g-text-faint);
+  flex-shrink: 0; min-width: 22px;
+}
+.qc-name {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+  color: var(--g-text); flex-shrink: 0;
+}
+.qc-pct {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+  color: var(--g-blue-soft);
+}
+.qc-badge {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .3px;
+  padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+  color: var(--g-text-dim); background: var(--g-surface-3); border: 1px solid var(--g-border-soft);
+}
+.qc-progress {
+  margin: 10px 0 6px;
+}
+.qc-pbar {
+  height: 5px; border-radius: 4px; background: var(--g-line); overflow: hidden;
+}
+.qc-pbar i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--g-blue), var(--g-cyan));
+  border-radius: 4px; transition: width .5s ease;
+}
+.qc-meta {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.qc-footer {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--g-text-mute);
+  margin-top: 6px;
+}

@@ -47,11 +47,21 @@ from geoff_utils import (
 )
 from geoff_models import action_logger, get_all_cases, get_available_tools_status
 from geoff_self_heal import call_llm, _self_check_chat_response
+import queue_manager as _queue_manager
 from geoff_pipeline import find_evil, run_full_investigation, replay_playbook
+from geoff_communications import CommunicationsAnalyzer
+from geoff_stego import StegoAnalyzer
+from geoff_keylogger import KeyloggerAnalyzer
+from geoff_chat_aggregator import ChatAggregator
+from geoff_rag import CaseRAG
 from geoff_templates import HTML_TEMPLATE, NARRATIVE_REPORT_HTML
 
 # Wire geoff_utils module reference for _save_jobs
 import geoff_utils as _gu
+from geoff_logger import get_logger as _get_logger
+_fe_logger = _get_logger('geoff.find_evil')
+_srv_logger = _get_logger('geoff.server')
+_queue_logger = _get_logger('geoff.queue')
 
 # ---------------------------------------------------------------------------
 # Module-level singleton references (set by geoff_integrated.py after init)
@@ -1058,6 +1068,16 @@ def get_ip_map(case_dir):
         return jsonify({'nodes': [], 'edges': [], 'error': str(e)}), 200
 
 
+def ip_map_page():
+    """GET /ip-map — Serve the IP connection map visualization page."""
+    html_path = Path(__file__).parent.parent / 'static' / 'ip-map.html'
+    html = html_path.read_text(encoding='utf-8')
+    if GEOFF_API_KEY:
+        key_meta = f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+        html = html.replace('<head>', '<head>\n  ' + key_meta, 1)
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
 def mitre_matrix():
     """GET /reports/mitre-matrix — Serve the MITRE ATT&CK matrix viewer."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer' / 'components'
@@ -1307,17 +1327,29 @@ def find_evil_route():
         # Spawn the find_evil run in a background thread
         def _run():
             try:
+                _fe_logger.info('Find Evil started', job_id=job_id, evidence=evidence_dir)
                 report = find_evil(evidence_dir, job_id=job_id)
                 with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "complete"
                     _find_evil_jobs[job_id]["result"] = report
                     _gu._save_jobs()  # persist complete state
+                _fe_logger.info("Find Evil complete", job_id=job_id,
+                                findings_count=len((report or {}).get("findings", [])))
+                try:
+                    _queue_manager.on_job_complete(job_id, report)
+                except Exception:
+                    pass
             except Exception as e:
                 _fe_log_with_exception(job_id, "Find Evil job failed", e)
+                _fe_logger.error('Find Evil failed', job_id=job_id, error=str(e), exc_info=True)
                 with _state_lock:
                     _find_evil_jobs[job_id]["status"] = "error"
                     _find_evil_jobs[job_id]["error"] = str(e)
                     _gu._save_jobs()  # persist error state
+                try:
+                    _queue_manager.on_job_failed(job_id, str(e))
+                except Exception:
+                    pass
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
@@ -1345,17 +1377,17 @@ def find_evil_route():
 def find_evil_status_latest():
     """
     GET /find-evil/status/
-    Returns the most recent/active Find Evil job — running jobs take priority,
-    otherwise the most recently started job by started_at timestamp.
+    Returns all running/initializing jobs in an active_jobs array.
+    If none running, falls back to the most recently started job (backward compat).
     """
-    with _state_lock:
-        jobs_snapshot = list(_find_evil_jobs.items())
-    
     # Auto-cancel stale jobs before processing
     _auto_cancel_stale_jobs()
 
+    with _state_lock:
+        jobs_snapshot = list(_find_evil_jobs.items())
+
     if not jobs_snapshot:
-        return jsonify({"status": "not_found", "error": "No Find Evil jobs found"}), 404
+        return jsonify({"active_jobs": [], "count": 0})
 
     def _sort_key(item):
         _, job = item
@@ -1367,10 +1399,24 @@ def find_evil_status_latest():
 
     running = [(jid, job) for jid, job in jobs_snapshot if job.get("status") in ("running", "initializing")]
     if running:
-        job_id, job = max(running, key=_sort_key)
-    else:
-        job_id, job = max(jobs_snapshot, key=_sort_key)
+        active_jobs = [
+            {
+                "job_id": jid,
+                "status": job["status"],
+                "progress_pct": job["progress_pct"],
+                "current_playbook": job["current_playbook"],
+                "current_step": job["current_step"],
+                "elapsed_seconds": job["elapsed_seconds"],
+                "last_heartbeat": job.get("last_heartbeat"),
+                "evidence_dir": job.get("evidence_dir", "unknown"),
+                "log": job.get("log", [])[-50:],
+            }
+            for jid, job in running
+        ]
+        return jsonify({"active_jobs": active_jobs, "count": len(active_jobs)})
 
+    # No running jobs — return most recent job in old format (backward compat)
+    job_id, job = max(jobs_snapshot, key=_sort_key)
     resp = {
         "job_id": job_id,
         "status": job["status"],
@@ -1868,6 +1914,400 @@ def replay_playbook_route():
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
 
+
+
+def get_communications(case_dir):
+    """GET /reports/<case_dir>/communications — Communication graph + narrative from PB-SIFT-060."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    # Try cached result first
+    cached = case_path / "output" / "PB-SIFT-060_communications.json"
+    if cached.exists():
+        try:
+            return jsonify(json.loads(cached.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as e:
+            _log_error("Failed to read cached communications", e)
+
+    # Build on-the-fly from existing findings
+    try:
+        findings_file = case_path / "findings.jsonl"
+        findings = []
+        if findings_file.exists():
+            for line in findings_file.read_text(encoding='utf-8', errors='replace').splitlines():
+                if line.strip():
+                    try:
+                        findings.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+        report_file = case_path / "reports" / "find_evil_report.json"
+        evidence_dir = ""
+        if report_file.exists():
+            try:
+                rdata = json.loads(report_file.read_text())
+                evidence_dir = rdata.get("evidence_dir", "")
+            except Exception:
+                pass
+
+        analyzer = CommunicationsAnalyzer()
+        result = analyzer.analyze(
+            case_dir=str(case_path),
+            evidence_dir=evidence_dir,
+            findings=findings,
+            call_llm_func=call_llm,
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log_error("Communications analysis failed", e)
+        return jsonify({'error': str(e)}), 500
+
+
+
+def get_stego(case_dir):
+    """GET /reports/<case_dir>/stego — Steganography report from PB-SIFT-061."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    cached = case_path / "output" / "PB-SIFT-061_stego.json"
+    if cached.exists():
+        try:
+            return jsonify(json.loads(cached.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as e:
+            _log_error("Failed to read cached stego report", e)
+
+    try:
+        findings_file = case_path / "findings.jsonl"
+        findings = []
+        if findings_file.exists():
+            for line in findings_file.read_text(encoding='utf-8', errors='replace').splitlines():
+                if line.strip():
+                    try:
+                        findings.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+        report_file = case_path / "reports" / "find_evil_report.json"
+        evidence_dir = ""
+        if report_file.exists():
+            try:
+                rdata = json.loads(report_file.read_text())
+                evidence_dir = rdata.get("evidence_dir", "")
+            except Exception:
+                pass
+
+        analyzer = StegoAnalyzer()
+        result = analyzer.analyze(
+            case_dir=str(case_path),
+            evidence_dir=evidence_dir,
+            findings=findings,
+            call_llm_func=call_llm,
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log_error("Stego analysis failed", e)
+        return jsonify({'error': str(e)}), 500
+
+
+def get_keylogger(case_dir):
+    """GET /reports/<case_dir>/keylogger — Keylogger report from PB-SIFT-062."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    cached = case_path / "output" / "PB-SIFT-062_keylogger.json"
+    if cached.exists():
+        try:
+            return jsonify(json.loads(cached.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as e:
+            _log_error("Failed to read cached keylogger report", e)
+
+    try:
+        findings_file = case_path / "findings.jsonl"
+        findings = []
+        if findings_file.exists():
+            for line in findings_file.read_text(encoding='utf-8', errors='replace').splitlines():
+                if line.strip():
+                    try:
+                        findings.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+        analyzer = KeyloggerAnalyzer()
+        result = analyzer.analyze(
+            case_dir=str(case_path),
+            findings=findings,
+            call_llm_func=call_llm,
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log_error("Keylogger analysis failed", e)
+        return jsonify({'error': str(e)}), 500
+
+
+def get_chat_aggregator(case_dir):
+    """GET /reports/<case_dir>/chat-aggregator — Aggregated chat report from PB-SIFT-063."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    cached = case_path / "output" / "PB-SIFT-063_chat_aggregator.json"
+    if cached.exists():
+        try:
+            return jsonify(json.loads(cached.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as e:
+            _log_error("Failed to read cached chat aggregator report", e)
+
+    try:
+        findings_file = case_path / "findings.jsonl"
+        findings = []
+        if findings_file.exists():
+            for line in findings_file.read_text(encoding='utf-8', errors='replace').splitlines():
+                if line.strip():
+                    try:
+                        findings.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+
+        # Try to load PB-SIFT-060 result for email enrichment
+        comm_cached = case_path / "output" / "PB-SIFT-060_communications.json"
+        comm_result = None
+        if comm_cached.exists():
+            try:
+                comm_result = json.loads(comm_cached.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+        analyzer = ChatAggregator()
+        result = analyzer.analyze(
+            case_dir=str(case_path),
+            findings=findings,
+            comm_result=comm_result,
+            call_llm_func=call_llm,
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log_error("Chat aggregator analysis failed", e)
+        return jsonify({'error': str(e)}), 500
+
+
+def ask_case(case_dir):
+    """POST /reports/<case_dir>/ask — RAG Q&A over case findings.
+
+    JSON body: {"question": "What were the suspects planning?"}
+    """
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+    question = str(body.get("question", "")).strip()
+    if not question:
+        return jsonify({'error': 'Missing "question" in request body'}), 400
+    if len(question) > 2000:
+        return jsonify({'error': 'Question too long (max 2000 chars)'}), 400
+
+    rebuild = bool(body.get("rebuild_index", False))
+
+    try:
+        rag = CaseRAG()
+        result = rag.query(
+            question=question,
+            case_dir=str(case_path),
+            call_llm_func=call_llm,
+            rebuild=rebuild,
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log_error("RAG query failed", e)
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ---------------------------------------------------------------------------
+# Queue API Routes
+# ---------------------------------------------------------------------------
+
+def queue_list():
+    """GET /queue — List all queue items sorted by priority."""
+    try:
+        items = _queue_manager.get_all_items()
+        running = next((i for i in items if i["status"] == "running"), None)
+        # Sync running item progress from _find_evil_jobs
+        if running and running.get("job_id"):
+            job = _find_evil_jobs.get(running["job_id"])
+            if job:
+                try:
+                    _queue_manager.sync_progress(
+                        running["job_id"],
+                        job.get("progress_pct", 0.0),
+                        job.get("current_playbook", ""),
+                        job.get("current_step", ""),
+                        job.get("elapsed_seconds", 0.0),
+                    )
+                    items = _queue_manager.get_all_items()
+                    running = next((i for i in items if i["status"] == "running"), None)
+                except Exception:
+                    pass
+        next_item = next((i for i in items if i["status"] == "queued"), None)
+        return jsonify({"status": "ok", "items": items, "running": running, "next": next_item})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def queue_add():
+    """POST /queue — Enqueue evidence directory."""
+    try:
+        data = request.get_json(silent=True) or {}
+        evidence_dir = (data.get("evidence_dir") or data.get("evidence_path") or "").strip()
+        if not evidence_dir:
+            return jsonify({"status": "error", "error": "evidence_dir is required"}), 400
+        if _UNSAFE_PATH_CHARS.search(evidence_dir):
+            return jsonify({"status": "error", "error": "Path contains unsafe characters"}), 400
+        if not Path(evidence_dir).is_absolute():
+            evidence_dir = os.path.join(EVIDENCE_BASE_DIR, evidence_dir)
+        try:
+            _validate_evidence_path(evidence_dir)
+        except ValueError as e:
+            return jsonify({"status": "error", "error": str(e)}), 400
+        if not Path(evidence_dir).is_dir():
+            return jsonify({"status": "error", "error": f"Not a directory: {evidence_dir}"}), 404
+        try:
+            item = _queue_manager.enqueue(evidence_dir, created_by="user")
+        except ValueError as e:
+            return jsonify({"status": "error", "error": str(e)}), 409
+        _queue_logger.info("Evidence enqueued", item_id=item.id, evidence=evidence_dir)
+        from dataclasses import asdict
+        return jsonify({"status": "queued", "item": asdict(item)}), 201
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def queue_remove_item(item_id):
+    """DELETE /queue/<item_id> — Remove a queued (not running) item."""
+    try:
+        removed = _queue_manager.remove(item_id)
+        return jsonify({"status": "removed", "item_id": item_id, "item": removed})
+    except KeyError:
+        return jsonify({"status": "error", "error": "Item not found"}), 404
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def queue_cancel_item(item_id):
+    """POST /queue/<item_id>/cancel — Cancel a running or queued item."""
+    try:
+        result = _queue_manager.cancel(item_id)
+        _queue_logger.info("Job cancelled", item_id=item_id)
+        return jsonify({"status": "cancelled", **result})
+    except KeyError:
+        return jsonify({"status": "error", "error": "Item not found"}), 404
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 409
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def queue_update_item(item_id):
+    """PATCH /queue/<item_id> — Update priority of a queued item."""
+    try:
+        data = request.get_json(silent=True) or {}
+        if "priority" not in data:
+            return jsonify({"status": "error", "error": "priority field required"}), 400
+        priority = int(data["priority"])
+        item = _queue_manager.update_priority(item_id, priority)
+        return jsonify({"status": "updated", "item": item})
+    except KeyError:
+        return jsonify({"status": "error", "error": "Item not found"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def queue_advance():
+    """POST /queue/advance — Force-advance queue (cancel current, start next)."""
+    try:
+        result = _queue_manager.force_advance()
+        _queue_logger.info("Queue advanced", next_item=result.get("next_item"))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+
+
+def _queue_start_find_evil_job(evidence_dir, job_id, created_by="auto"):
+    """Start a find_evil job for the queue manager. Called by queue_manager._maybe_start_next."""
+    try:
+        _log_info(f"Queue auto-starting find_evil for {evidence_dir} (job {job_id})")
+
+        with _state_lock:
+            if job_id in _find_evil_jobs:
+                _log_info(f"Job {job_id} already registered, skipping")
+                return job_id
+
+        from geoff_pipeline import find_evil as _find_evil
+        from datetime import datetime
+
+        with _state_lock:
+            _find_evil_jobs[job_id] = {
+                "status": "running",
+                "progress_pct": 0.0,
+                "current_playbook": "initializing",
+                "current_step": "",
+                "elapsed_seconds": 0.0,
+                "started_at": datetime.now().isoformat(),
+                "result": None,
+                "error": None,
+                "evidence_dir": evidence_dir,
+                "log": [{"time": datetime.now().strftime("%H:%M:%S"), "msg": f"Auto-started from queue ({created_by})"}],
+            }
+
+        def _run():
+            try:
+                report = _find_evil(evidence_dir, job_id=job_id)
+                with _state_lock:
+                    _find_evil_jobs[job_id]["status"] = "complete"
+                    _find_evil_jobs[job_id]["result"] = report
+                _queue_manager.on_job_complete(job_id, report if report else {})
+            except Exception as e:
+                _fe_log_with_exception(job_id, f"find_evil failed: {e}", e)
+                with _state_lock:
+                    _find_evil_jobs[job_id]["status"] = "failed"
+                    _find_evil_jobs[job_id]["error"] = str(e)
+                _queue_manager.on_job_failed(job_id, str(e))
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        _log_info(f"Queue started thread for find_evil job {job_id}")
+        return job_id
+    except Exception as e:
+        _log_error(f"Failed to start queued find_evil job {job_id}: {e}")
+        return None
+
 def register_routes(app):
     """Register all route handlers with the Flask app.
 
@@ -1877,6 +2317,13 @@ def register_routes(app):
     # Load persisted job state on startup
     from geoff_utils import _load_jobs
     _load_jobs()
+    # Initialize queue manager after _load_jobs so stale job detection works
+    try:
+        _queue_manager.set_start_job_fn(_queue_start_find_evil_job)
+        _queue_manager.initialize()
+        _srv_logger.info("Queue state loaded")
+    except Exception as _qm_err:
+        _log_error(f"queue_manager init failed: {_qm_err}")
     app.add_url_rule('/', 'index', index)
     app.add_url_rule('/chat', 'chat', _require_auth(chat), methods=['POST'])
     app.add_url_rule('/cases', 'list_cases', _require_auth(list_cases))
@@ -1893,6 +2340,7 @@ def register_routes(app):
     app.add_url_rule('/static/geoff-viewer/<path:filename>', 'viewer_static', _require_auth(viewer_static))
     app.add_url_rule('/reports/<case_dir>/supertimeline', 'serve_supertimeline', _require_auth(serve_supertimeline))
     app.add_url_rule('/reports/<case_dir>/ip-map', 'get_ip_map', _require_auth(get_ip_map))
+    app.add_url_rule('/ip-map', 'ip_map_page', _require_auth(ip_map_page))
     app.add_url_rule('/reports/mitre-matrix', 'mitre_matrix', _require_auth(mitre_matrix))
     app.add_url_rule('/reports/mitre-heatmap', 'mitre_heatmap', _require_auth(mitre_heatmap))
     app.add_url_rule('/tools', 'list_tools', _require_auth(list_tools))
@@ -1917,3 +2365,15 @@ def register_routes(app):
     app.add_url_rule('/api/settings/models', 'api_update_models', _require_auth(api_update_models), methods=['POST'])
     app.add_url_rule('/api/settings/keys', 'api_update_keys', _require_auth(api_update_keys), methods=['POST'])
     app.add_url_rule('/replay-playbook', 'replay_playbook_route', _require_auth(replay_playbook_route), methods=['POST'])
+    app.add_url_rule('/reports/<case_dir>/communications', 'get_communications', _require_auth(get_communications))
+    app.add_url_rule('/reports/<case_dir>/stego', 'get_stego', _require_auth(get_stego))
+    app.add_url_rule('/reports/<case_dir>/keylogger', 'get_keylogger', _require_auth(get_keylogger))
+    app.add_url_rule('/reports/<case_dir>/chat-aggregator', 'get_chat_aggregator', _require_auth(get_chat_aggregator))
+    app.add_url_rule('/reports/<case_dir>/ask', 'ask_case', _require_auth(ask_case), methods=['POST'])
+    # Queue routes
+    app.add_url_rule('/queue', 'queue_list', _require_auth(queue_list), methods=['GET'])
+    app.add_url_rule('/queue', 'queue_add', _require_auth(queue_add), methods=['POST'])
+    app.add_url_rule('/queue/advance', 'queue_advance', _require_auth(queue_advance), methods=['POST'])
+    app.add_url_rule('/queue/<item_id>', 'queue_remove_item', _require_auth(queue_remove_item), methods=['DELETE'])
+    app.add_url_rule('/queue/<item_id>', 'queue_update_item', _require_auth(queue_update_item), methods=['PATCH'])
+    app.add_url_rule('/queue/<item_id>/cancel', 'queue_cancel_item', _require_auth(queue_cancel_item), methods=['POST'])
