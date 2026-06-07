@@ -51,7 +51,19 @@ while [[ $# -gt 0 ]]; do
         --skip-remnux) SKIP_REMNUX=true; shift;;
         --skip-deps)   SKIP_DEPS=true; shift;;
         -h|--help)
-            head -14 "$0" | tail -10 | sed 's/^# //'
+            echo "GEOFF Installer — Git-backed Evidence Operations Forensic Framework"
+            echo ""
+            echo "Usage: curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- [options]"
+            echo ""
+            echo "Options:"
+            echo "  --profile cloud|local   Model profile (default: cloud)"
+            echo "  --ollama-key <key>      Ollama API key for cloud models"
+            echo "  --ollama-signin         Interactive ollama signin"
+            echo "  --dir <path>            Install directory (default: /opt/geoff)"
+            echo "  --skip-ollama           Skip Ollama model pulls"
+            echo "  --skip-remnux           Skip REMnux install"
+            echo "  --skip-deps             Skip apt dependency installs"
+            echo "  -h, --help              Show this help"
             exit 0
             ;;
         *) fail "Unknown option: $1";;
@@ -337,11 +349,12 @@ DIE_EOF
         sudo apt-get install -y -qq fuse libfuse-dev cmake libattr1-dev zlib1g-dev bzip2 libbz2-dev \
             libz-dev liblzfse-dev 2>/dev/null || true
         if ! command -v apfs-fuse &>/dev/null; then
-            git clone --depth=1 https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse 2>/dev/null && \
+            ( cd /tmp && \
+                git clone --depth=1 https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse 2>/dev/null && \
                 cd /tmp/apfs-fuse && git submodule update --init && \
                 mkdir -p build && cd build && cmake .. && make -j2 && \
-                sudo make install && cd / && rm -rf /tmp/apfs-fuse 2>/dev/null || \
-                warn "apfs-fuse build failed — APFS volumes will need manual mounting"
+                sudo make install && rm -rf /tmp/apfs-fuse 2>/dev/null
+            ) || warn "apfs-fuse build failed — APFS volumes will need manual mounting"
         fi
     else
         info "apfs-fuse already installed"
@@ -351,11 +364,12 @@ DIE_EOF
     if ! command -v pycdc &>/dev/null; then
         info "Building pycdc (Python bytecode decompiler) from source..."
         sudo apt-get install -y -qq cmake 2>/dev/null || true
-        git clone --depth=1 https://github.com/zrax/pycdc.git /tmp/pycdc 2>/dev/null && \
+        ( cd /tmp && \
+            git clone --depth=1 https://github.com/zrax/pycdc.git /tmp/pycdc 2>/dev/null && \
             cd /tmp/pycdc && cmake . -DCMAKE_BUILD_TYPE=Release 2>/dev/null && make -j2 2>/dev/null && \
             sudo cp pycdc pycdas /usr/local/bin/ 2>/dev/null && \
-            cd / && rm -rf /tmp/pycdc || \
-            warn "pycdc build failed — Python bytecode decompilation (PB-009) will fall back to uncompyle6"
+            rm -rf /tmp/pycdc
+        ) || warn "pycdc build failed — Python bytecode decompilation (PB-009) will fall back to uncompyle6"
     else
         info "pycdc already installed"
     fi
@@ -409,7 +423,7 @@ DIE_EOF
             warn "apktool download failed — APK analysis may be limited"
         chmod +x /usr/local/bin/apktool 2>/dev/null || true
     fi
-    sudo apt-get install -y -qq yara
+    sudo apt-get install -y -qq yara 2>/dev/null || true
 
     # Verify mobile tools
     for mobile_tool in ileapp aleapp; do
@@ -459,7 +473,7 @@ python3 -m venv "${INSTALL_DIR}/venv" 2>/dev/null || sudo python3 -m venv "${INS
     curl -sSL https://bootstrap.pypa.io/get-pip.py | "${INSTALL_DIR}/venv/bin/python3"
 }
 source "${INSTALL_DIR}/venv/bin/activate" || fail "Failed to activate virtual environment"
-pip install --quiet -r requirements.txt 2>/dev/null || pip install --quiet flask requests jsonschema
+pip install --quiet -r requirements.txt || { warn "Full requirements install failed, trying core packages..."; pip install --quiet flask requests jsonschema python-dotenv markupsafe gitpython mcp; }
 ok "Python environment ready"
 
 # ── Configure profile ──────────────────────────────────────────────────────
