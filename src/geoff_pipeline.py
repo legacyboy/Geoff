@@ -51,6 +51,7 @@ from narrative_report import NarrativeReportGenerator
 from behavioral_analyzer import BehavioralAnalyzer
 from geoff_communications import CommunicationsAnalyzer
 from geoff_stego import StegoAnalyzer
+from geoff_discord_extractor import DiscordExtractor, extract_discord_from_evidence
 from geoff_keylogger import KeyloggerAnalyzer
 from geoff_chat_aggregator import ChatAggregator
 from evidence_classifier import AIEvidenceClassifier, classify_with_ai
@@ -4505,6 +4506,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         if collab_detected:
             execution_plan.append("PB-SIFT-031")
             _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued")
+        elif has_disk_images and os_type == "windows":
+            # Windows disk images almost always have collaboration apps (Teams, Discord, Skype)
+            execution_plan.append("PB-SIFT-031")
+            _fe_log(job_id, "  PB-SIFT-031: Enterprise Collaboration analysis queued (Windows disk image)")
 
         # VM Snapshot Forensics - detect VM snapshot/memory files
         vm_exts = {".vmss", ".vmsn", ".vmem", ".vhdx", ".vmdk", ".qcow2", ".vmx"}
@@ -6541,12 +6546,36 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         if _has_comms_artifacts or True:  # always run — stego/encryption scan is always useful
             try:
                 _comm_analyzer = CommunicationsAnalyzer()
+
+                # Extract messages from findings (includes structured messages from specialists)
                 communications_result = _comm_analyzer.analyze(
                     case_dir=str(case_work_dir),
                     evidence_dir=str(evidence_path),
                     findings=_all_findings_for_comms,
                     call_llm_func=call_llm,
                 )
+
+                # Supplement with direct extraction from chat databases in evidence
+                # (WhatsApp, Signal, Slack, Teams, Skype — scans evidence directory)
+                _chat_direct_msgs = _comm_analyzer.extract_chat_from_evidence(str(evidence_path))
+                if _chat_direct_msgs:
+                    _fe_log(job_id, f"  PB-SIFT-060: Extracted {len(_chat_direct_msgs)} messages directly from chat databases")
+                    _existing_keys = {
+                        f"{m.get('from','')}|{','.join(m.get('to',[]))}|{m.get('subject','')}|{m.get('platform','')}"
+                        for m in communications_result.get('messages', [])
+                    }
+                    for msg in _chat_direct_msgs:
+                        key = f"{msg.get('from','')}|{','.join(msg.get('to',[]))}|{msg.get('subject','')}|{msg.get('platform','')}"
+                        if key not in _existing_keys:
+                            _existing_keys.add(key)
+                            communications_result['messages'].append(msg)
+                    # Rebuild graph and relationships with merged messages
+                    _all_comms_msgs = communications_result.get('messages', [])
+                    communications_result['message_count'] = len(_all_comms_msgs)
+                    communications_result['communication_graph'] = _comm_analyzer.build_communication_graph(_all_comms_msgs)
+                    communications_result['relationships'] = _comm_analyzer.identify_relationships(_all_comms_msgs)
+                    communications_result['person_count'] = len(communications_result['communication_graph'])
+
                 _fe_log(
                     job_id,
                     f"  PB-SIFT-060: {communications_result.get('message_count', 0)} messages, "
@@ -6619,6 +6648,64 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         except Exception as _ca_err:
             _fe_log(job_id, f"  PB-SIFT-063 failed: {_ca_err}")
             chat_agg_result = {}
+
+        # ------------------------------------------------------------------
+        # Phase 3c4: PB-SIFT-064 Discord Chat Extraction
+        # ------------------------------------------------------------------
+        _update_job(94, "discord", "Extracting Discord communications")
+        discord_result = {}
+        _has_windows_disk = bool(inventory.get("disk_images")) and os_type == "windows"
+        _has_discord_files = any(
+            "discord" in str(f).lower()
+            for f in inventory.get("other_files", []) + inventory.get("mobile_backups", [])
+        )
+        if _has_windows_disk or _has_discord_files:
+            try:
+                _discord_extractor = DiscordExtractor()
+                # Collect memory strings outputs from any completed memory analysis steps
+                _mem_strings = []
+                for rec in _all_findings_for_comms:
+                    if rec.get("module") == "memory" and "strings" in rec.get("function", "").lower():
+                        result = rec.get("result", {})
+                        if isinstance(result, dict):
+                            _mem_strings.append(result.get("stdout", ""))
+                    elif rec.get("module") == "comms" and rec.get("function") == "extract_discord":
+                        pass  # already extracted
+
+                # Also check if we have disk_walk output from PB-SIFT-001
+                _disk_walk_output = ""
+                for rec in _all_findings_for_comms:
+                    if rec.get("module") == "sleuthkit" and rec.get("function") in ("list_files", "analyze_filesystem"):
+                        result = rec.get("result", {})
+                        if isinstance(result, dict):
+                            _disk_walk_output += str(result.get("stdout", "")) + "\n"
+
+                discord_result = _discord_extractor.analyze(
+                    evidence_dir=str(evidence_path),
+                    findings=_all_findings_for_comms,
+                    disk_walk_output=_disk_walk_output,
+                    memory_strings_output="\n".join(_mem_strings) if _mem_strings else "",
+                )
+                _fe_log(
+                    job_id,
+                    f"  PB-SIFT-064: {len(discord_result.get('users', []))} Discord users, "
+                    f"{len(discord_result.get('messages', []))} messages, "
+                    f"{len(discord_result.get('channels', []))} channels, "
+                    f"sources: {', '.join(discord_result.get('extraction_sources', []))}"
+                )
+            except Exception as _de_err:
+                _fe_log(job_id, f"  PB-SIFT-064 Discord extraction failed: {_de_err}")
+                discord_result = {}
+
+        # Enrich communications_result with stego extractions and Discord data
+        if communications_result and stego_result:
+            communications_result["stego_extractions"] = stego_result.get("extractions", [])
+            communications_result["zsteg_hits"] = stego_result.get("zsteg_results", [])
+            communications_result["stegdetect_hits"] = stego_result.get("stegdetect_results", [])
+        if communications_result and discord_result:
+            communications_result["discord_users"] = discord_result.get("users", [])
+            communications_result["discord_messages"] = discord_result.get("messages", [])
+            communications_result["discord_channels"] = discord_result.get("channels", [])
 
         # ------------------------------------------------------------------
         # Phase 3d-new: Cross-Host Correlation
@@ -7063,6 +7150,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "user_map": user_map if user_map is not None else {},
             "behavioral_flags_summary": {dev_id: len(flags) for dev_id, flags in all_behavioral_flags.items()} if all_behavioral_flags is not None else {},
             "communications_analysis": communications_result if communications_result else {},
+            "discord_analysis": discord_result if discord_result else {},
             "behavioral_flags": {
                 dev_id: [
                     {k: v for k, v in flag.items() if k != "flag_id"}

@@ -3969,7 +3969,13 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
         top_email_iocs = report_json.get("email_iocs", {})
         email_direct = report_json.get("email_direct_findings", False)
 
-        if not email_findings and not top_email_iocs:
+        _comm_analysis = report_json.get("communications_analysis", {})
+        _pcap_messages = [
+            m for m in _comm_analysis.get("messages", [])
+            if m.get("protocol") in ("smtp", "irc", "imap", "ftp", "http_webmail")
+        ]
+
+        if not email_findings and not top_email_iocs and not _pcap_messages:
             return "No email/phishing data."
 
         # Synthesize email_findings from top-level email_iocs when direct extraction
@@ -4253,6 +4259,96 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                         f"- **Return-Path Mismatches:** "
                         f"{_total_rp_cnt} (spoofing indicator)"
                     )
+
+        # Network communications extracted directly from PCAP files
+        if _pcap_messages:
+            _smtp_msgs = [m for m in _pcap_messages if m.get("protocol") == "smtp"]
+            _irc_msgs = [m for m in _pcap_messages if m.get("protocol") == "irc"]
+            _imap_msgs = [m for m in _pcap_messages if m.get("protocol") == "imap"]
+            _ftp_msgs = [m for m in _pcap_messages if m.get("protocol") == "ftp"]
+            _webmail_msgs = [m for m in _pcap_messages if m.get("protocol") == "http_webmail"]
+
+            lines.append("\n## Network Communications (PCAP Extraction)\n")
+
+            if _smtp_msgs:
+                lines.append(f"### SMTP Email Messages — {len(_smtp_msgs)} extracted\n")
+                for _i, _m in enumerate(_smtp_msgs[:25], 1):
+                    _frm = _m.get("from", "?")
+                    _to_str = ", ".join(f"`{t}`" for t in _m.get("to", []))
+                    _subj = _m.get("subject", "(no subject)")
+                    _date = _m.get("date", "")
+                    _body = (_m.get("body", "") or "").replace("\n", " ")[:300]
+                    lines.append(f"{_i}. **From:** `{_frm}` → **To:** {_to_str or '?'}")
+                    lines.append(f"   **Subject:** {_subj}")
+                    if _date:
+                        lines.append(f"   **Date:** {_date}")
+                    if _body:
+                        lines.append(f"   **Body:** {_body}")
+                    lines.append("")
+
+            if _imap_msgs:
+                lines.append(f"### IMAP Email Sessions — {len(_imap_msgs)} session(s)\n")
+                for _m in _imap_msgs[:10]:
+                    lines.append(f"- {(_m.get('body', '') or '').replace(chr(10), ' ')[:300]}")
+                lines.append("")
+
+            if _ftp_msgs:
+                lines.append(f"### FTP File Transfers — {len(_ftp_msgs)} session(s)\n")
+                for _m in _ftp_msgs[:20]:
+                    _body = (_m.get("body", "") or "").replace("\n", " ")[:400]
+                    lines.append(f"- {_body}")
+                    # Call out suspicious filenames
+                    _ff = _m.get("ftp_files", [])
+                    _suspicious = [f for f in _ff if any(
+                        kw in f.lower() for kw in
+                        ('contraband', 'rhino', 'ivory', 'horn', 'illegal', 'stolen')
+                    )]
+                    if _suspicious:
+                        lines.append(f"  **SUSPICIOUS FILES:** {', '.join(_suspicious)}")
+                lines.append("")
+
+            if _webmail_msgs:
+                lines.append(f"### Webmail Accounts Identified — {len(_webmail_msgs)}\n")
+                _seen_wm: set = set()
+                for _m in _webmail_msgs:
+                    _acc = _m.get("from", "")
+                    if _acc and _acc not in _seen_wm:
+                        _seen_wm.add(_acc)
+                        lines.append(f"- `{_acc}` ({_m.get('body', '')})")
+                lines.append("")
+
+            if _irc_msgs:
+                _channels: dict = {}
+                for _m in _irc_msgs:
+                    _chan = (_m.get("to") or ["#unknown"])[0]
+                    _channels.setdefault(_chan, []).append(_m)
+                lines.append(
+                    f"### IRC Chat Messages — {len(_irc_msgs)} messages "
+                    f"across {len(_channels)} channel(s)\n"
+                )
+                for _chan, _msgs in sorted(_channels.items()):
+                    lines.append(f"**{_chan}** ({len(_msgs)} messages):")
+                    for _m in _msgs[:50]:
+                        _nick = _m.get("from", "?")
+                        _body = _m.get("body", "")
+                        lines.append(f"  `{_nick}`: {_body[:200]}")
+                    lines.append("")
+
+            _pcap_rels = _comm_analysis.get("relationships", [])
+            if _pcap_rels:
+                lines.append("**Key Communication Pairs:**")
+                for _rel in _pcap_rels[:10]:
+                    lines.append(
+                        f"- `{_rel['person_a']}` ↔ `{_rel['person_b']}`: "
+                        f"{_rel['message_count']} message(s)"
+                    )
+                lines.append("")
+
+            _narrative = _comm_analysis.get("narrative", "")
+            if _narrative:
+                lines.append("**Communications Analyst Summary:**\n")
+                lines.append(_narrative)
+                lines.append("")
 
         return "\n".join(lines)
 

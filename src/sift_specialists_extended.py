@@ -9728,9 +9728,14 @@ class CLOUD_Specialist:
 # COLLABORATION_Specialist
 # ---------------------------------------------------------------------------
 class COLLABORATION_Specialist:
-    """Specialist for enterprise collaboration app forensics."""
+    """Specialist for enterprise collaboration app forensics.
+
+    Uses dedicated extractors from geoff_chat_extractor for structured
+    message extraction from WhatsApp, Signal, Slack, Teams, and Skype databases.
+    """
 
     def _parse_leveldb(self, db_path: str) -> Dict[str, Any]:
+        """Fallback: extract strings from a LevelDB directory/file."""
         try:
             import subprocess
             result = subprocess.run(
@@ -9743,7 +9748,26 @@ class COLLABORATION_Specialist:
             return {'lines': [], 'total': 0}
 
     def analyze_teams(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages from Microsoft Teams local storage."""
         try:
+            from geoff_chat_extractor import TeamsExtractor
+            extractor = TeamsExtractor()
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
+            return {
+                'tool': 'teams',
+                'status': 'success',
+                'message_count': msg_count,
+                'sample': sample,
+                'structured_messages': result.get('messages', [])[:100],
+                'raw_result': result,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except ImportError:
+            # Fallback to strings extraction
             parsed = self._parse_leveldb(db_path)
             return {
                 'tool': 'teams',
@@ -9756,7 +9780,27 @@ class COLLABORATION_Specialist:
             return {'tool': 'teams', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def analyze_slack(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages from Slack LevelDB stores."""
         try:
+            from geoff_chat_extractor import SlackExtractor
+            extractor = SlackExtractor()
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
+            return {
+                'tool': 'slack',
+                'status': 'success',
+                'message_count': msg_count,
+                'sample': sample,
+                'workspaces': result.get('workspaces', []),
+                'channels': result.get('channels', [])[:30],
+                'structured_messages': result.get('messages', [])[:100],
+                'raw_result': result,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except ImportError:
             parsed = self._parse_leveldb(db_path)
             return {
                 'tool': 'slack',
@@ -9769,7 +9813,30 @@ class COLLABORATION_Specialist:
             return {'tool': 'slack', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def analyze_discord(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages from Discord LevelDB stores.
+
+        Discord uses LevelDB for local storage (similar to Slack).
+        We treat it like Slack and extract JSON strings.
+        """
         try:
+            from geoff_chat_extractor import SlackExtractor
+            extractor = SlackExtractor()
+            extractor.PLATFORM = 'discord'
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
+            return {
+                'tool': 'discord',
+                'status': 'success',
+                'message_count': msg_count,
+                'sample': sample,
+                'structured_messages': result.get('messages', [])[:100],
+                'raw_result': result,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except ImportError:
             parsed = self._parse_leveldb(db_path)
             return {
                 'tool': 'discord',
@@ -9782,25 +9849,52 @@ class COLLABORATION_Specialist:
             return {'tool': 'discord', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def analyze_skype(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages, contacts, calls from Skype main.db."""
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.execute("SELECT COUNT(*) FROM Messages")
-            msg_count = cursor.fetchone()[0]
-            cursor = conn.execute("SELECT COUNT(*) FROM Contacts")
-            contact_count = cursor.fetchone()[0]
-            conn.close()
+            from geoff_chat_extractor import SkypeExtractor
+            extractor = SkypeExtractor()
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            contact_count = result.get('contact_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
             return {
                 'tool': 'skype',
                 'status': 'success',
                 'message_count': msg_count,
                 'contact_count': contact_count,
+                'sample': sample,
+                'structured_messages': result.get('messages', [])[:100],
+                'contacts': result.get('contacts', [])[:50],
+                'calls': result.get('calls', [])[:20],
+                'raw_result': result,
                 'timestamp': datetime.now().isoformat(),
             }
+        except ImportError:
+            # Fallback to raw sqlite3 counts
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(db_path))
+                cursor = conn.execute("SELECT COUNT(*) FROM Messages")
+                msg_count = cursor.fetchone()[0]
+                cursor = conn.execute("SELECT COUNT(*) FROM Contacts")
+                contact_count = cursor.fetchone()[0]
+                conn.close()
+                return {
+                    'tool': 'skype',
+                    'status': 'success',
+                    'message_count': msg_count,
+                    'contact_count': contact_count,
+                    'timestamp': datetime.now().isoformat(),
+                }
+            except Exception as e:
+                return {'tool': 'skype', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
         except Exception as e:
             return {'tool': 'skype', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
     def analyze_zoom(self, log_path: str) -> Dict[str, Any]:
+        """Extract Zoom meeting entries from log files."""
         try:
             base = Path(log_path)
             meetings = []
@@ -9819,6 +9913,60 @@ class COLLABORATION_Specialist:
             }
         except Exception as e:
             return {'tool': 'zoom', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    # ------------------------------------------------------------------
+    # Additional extraction methods for WhatsApp / Signal (mobile artifacts
+    # that may appear in collaboration contexts or be called directly)
+    # ------------------------------------------------------------------
+
+    def analyze_whatsapp(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages from WhatsApp databases."""
+        try:
+            from geoff_chat_extractor import WhatsAppExtractor
+            extractor = WhatsAppExtractor()
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
+            return {
+                'tool': 'whatsapp',
+                'status': 'success',
+                'message_count': msg_count,
+                'sample': sample,
+                'structured_messages': result.get('messages', [])[:100],
+                'raw_result': result,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except ImportError:
+            return {'tool': 'whatsapp', 'status': 'error', 'error': 'geoff_chat_extractor not available', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'whatsapp', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
+
+    def analyze_signal(self, db_path: str) -> Dict[str, Any]:
+        """Extract messages from Signal databases."""
+        try:
+            from geoff_chat_extractor import SignalExtractor
+            extractor = SignalExtractor()
+            result = extractor.extract(db_path)
+            msg_count = result.get('message_count', 0)
+            sample = []
+            for m in result.get('messages', [])[:5]:
+                sample.append(f"{m.get('from','?')}: {m.get('body','')[:100]}")
+            return {
+                'tool': 'signal',
+                'status': 'success',
+                'message_count': msg_count,
+                'sample': sample,
+                'encrypted': result.get('encrypted', False),
+                'structured_messages': result.get('messages', [])[:100],
+                'raw_result': result,
+                'timestamp': datetime.now().isoformat(),
+            }
+        except ImportError:
+            return {'tool': 'signal', 'status': 'error', 'error': 'geoff_chat_extractor not available', 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            return {'tool': 'signal', 'status': 'error', 'error': str(e), 'timestamp': datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------
