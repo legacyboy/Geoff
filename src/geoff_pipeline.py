@@ -97,6 +97,38 @@ _adaptive_playbook = AdaptivePlaybook()
 _adaptive_pass2 = AdaptivePass2()
 
 # ---------------------------------------------------------------------------
+# Evidence-type guards: prevent modules running against incompatible evidence
+# ---------------------------------------------------------------------------
+
+_MODULE_EVIDENCE_GUARDS: dict = {
+    "volatility": {"memory_dumps"},
+    "memory":     {"memory_dumps"},
+    "registry":   {"disk_images", "registry_hives"},
+    "windows":    {"disk_images", "registry_hives", "memory_dumps"},
+    "sleuthkit":  {"disk_images", "memory_dumps"},
+    "network":    {"pcaps"},
+    "dns":        {"pcaps"},
+    "remnux":     {"pcaps", "memory_dumps", "disk_images"},
+    "linux_user": {"disk_images", "memory_dumps", "other_files"},
+    "yara":       {"memory_dumps", "disk_images"},
+    "scheduled":  {"memory_dumps", "disk_images"},
+    "strings":    {"memory_dumps", "disk_images"},
+}
+
+
+def _evidence_type_mismatch(module: str, ev_type: str, dev: dict) -> tuple:
+    """Return (should_skip, reason). Skip when module is incompatible with ev_type or device OS."""
+    allowed = _MODULE_EVIDENCE_GUARDS.get(module)
+    if allowed is not None and ev_type not in allowed:
+        return True, f"module {module} requires evidence in {sorted(allowed)}, got {ev_type}"
+    dev_os = (dev.get("os_type") or "").lower()
+    if module in ("registry", "windows") and dev_os == "linux":
+        return True, f"module {module} requires Windows; device os_type={dev_os}"
+    if module == "linux_user" and dev_os not in ("", "unknown", "linux"):
+        return True, f"module {module} requires Linux; device os_type={dev_os}"
+    return False, ""
+
+# ---------------------------------------------------------------------------
 # Parallel execution helpers for evidence-level concurrency
 # ---------------------------------------------------------------------------
 
@@ -5282,6 +5314,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         # Bug 1 fix: parallel execution for disk images and memory dumps
                         if ev_type in ("disk_images", "memory_dumps"):
                             for module, function, raw_params in step_templates:
+                                _skip, _skip_reason = _evidence_type_mismatch(module, ev_type, dev)
+                                if _skip:
+                                    steps_skipped += 1
+                                    _fe_log(job_id, f"  ⎘ {module}.{function} skipped — incompatible evidence type: {_skip_reason}")
+                                    continue
                                 if module == "anti_forensics":
                                     continue
                                 if _abort or _is_job_cancelled(job_id):
@@ -5361,6 +5398,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
                     item_stem = Path(item).stem
                     for module, function, raw_params in step_templates:
+                                _skip, _skip_reason = _evidence_type_mismatch(module, ev_type, dev)
+                                if _skip:
+                                    steps_skipped += 1
+                                    _fe_log(job_id, f"  ⎘ {module}.{function} skipped — incompatible evidence type: {_skip_reason}")
+                                    continue
                                 # A009 - Anti-forensics steps handled by dedicated checkpoint phase; skip here
                                 if module == "anti_forensics":
                                     continue
@@ -6004,7 +6046,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 _fe_log(job_id, f"  Unattributed {ev_type}: {len(files)} files")
                 # Run relevant playbooks against unattributed evidence
                 completed_pb_dev = _scan_completed_playbooks(str(case_work_dir / "audit_trail.jsonl"))
-        for pb_idx, playbook_id in enumerate(execution_plan):
+                for pb_idx, playbook_id in enumerate(execution_plan):
                     pb_steps_def = PLAYBOOK_STEPS.get(playbook_id, {})
                     for ev_t, step_templates in pb_steps_def.items():
                         if ev_t == ev_type:
@@ -6012,6 +6054,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             for item in items:
                                 # Run steps with device_id="unattributed"
                                 for module, function, params in step_templates:
+                                    _skip, _skip_reason = _evidence_type_mismatch(
+                                        module, ev_type, {}
+                                    )
+                                    if _skip:
+                                        _fe_log(job_id, f"  ⎘ {module}.{function} skipped (unattributed) — {_skip_reason}")
+                                        continue
                                     try:
                                         step_key = f"{playbook_id}_unattributed_{module}_{function}"
                                         params_resolved = _resolve_params(params, item, image_offsets, case_work_dir, output_dir, os_type, inventory)
@@ -7051,7 +7099,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             "classification": classification if 'classification' in dir() else "Unknown",
             "evidence_inventory": {k: v for k, v in inventory.items() if isinstance(v, list)},
             "attack_chain": attack_chain,
-            "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), None),
+            "llm_analysis": next((f["result"] for f in findings_writer.all_records() if f.get("playbook") == "ANALYSIS" and f.get("status") == "completed"), "") or "",
             # Pass 2 timeline-driven investigation results
             "timeline_intelligence": {
                 "cross_device_process_chains": timeline_intelligence.get("cross_device_process_chains", []),
@@ -7272,9 +7320,9 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 _fe_log(job_id, f"Narrative report: {narrative_path}")
             except Exception as e:
                 _fe_log(job_id, f"Narrative report generation failed: {e}")
-                report["narrative_report_path"] = None
+                report["narrative_report_path"] = ""
         else:
-            report["narrative_report_path"] = None
+            report["narrative_report_path"] = ""
 
         # ------------------------------------------------------------------
         # Phase 5d: MITRE ATT&CK Binding

@@ -137,13 +137,19 @@ class DeviceDiscovery:
                         break
                 if not matched:
                     dev_id = f"memdump_{Path(mem).stem}"
+                    _mem_os = "unknown"
+                    _mem_name_lower = Path(mem).name.lower()
+                    if any(kw in _mem_name_lower for kw in ("linux", "ubuntu", "debian", "rhel", "centos", "fedora")):
+                        _mem_os = "linux"
+                    elif any(kw in _mem_name_lower for kw in ("win", "windows", "ntfs")):
+                        _mem_os = "windows"
                     device_map[dev_id] = {
                         "device_id": dev_id,
-                        "device_type": "unknown",
+                        "device_type": "memory_dump",
                         "hostname": None,
                         "owner": None,
                         "owner_confidence": "NONE",
-                        "os_type": "unknown",
+                        "os_type": _mem_os,
                         "evidence_files": [mem],
                         "evidence_types": ["memory_dumps"],
                         "discovery_method": "memory_dump_filename",
@@ -1202,8 +1208,14 @@ class DeviceDiscovery:
         Looks for: computer name, users from hashdump/lsadump.
         """
         try:
-            # Volatility would be called here - for now, use filename hints
-            # and mark for Volatility analysis
+            dev["device_type"] = "memory_dump"
+            # Infer OS from filename when not already known
+            if dev.get("os_type", "unknown") == "unknown":
+                _name = Path(mem_path).name.lower()
+                if any(kw in _name for kw in ("linux", "ubuntu", "debian", "rhel", "centos", "fedora")):
+                    dev["os_type"] = "linux"
+                elif any(kw in _name for kw in ("win", "windows", "ntfs")):
+                    dev["os_type"] = "windows"
             dev["metadata"]["memory_dump_path"] = mem_path
             dev["metadata"]["requires_volatility"] = True
             
