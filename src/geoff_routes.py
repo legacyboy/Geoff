@@ -1762,22 +1762,20 @@ def report_chat(case_dir):
             quick_facts.append(f"Finding: {h[:120]}")
     facts_block = '\n'.join(quick_facts[:20])
 
-    system_context = (
-        "You are Geoff, a forensic analyst helping an investigator with quick answers. "
-        "Answer in plain conversational English, single paragraph, no formatting.\n\n"
-        "CASE FACTS:\n"
-        f"{facts_block}\n\n"
+    # Chat-specific system prompt (replaces GEOFF_PROMPT for conversational use)
+    chat_system_prompt = (
+        "You are Geoff, a forensic analyst embedded in a report viewer. "
+        "An investigator is asking you questions about this case. "
+        "Answer in plain conversational English. Single paragraph. No formatting.\n\n"
         "RULES:\n"
-        "1. 'Who' questions: The device OWNER is your answer. Say their name. "
-        "Example Q: 'who got phished?' → 'Kim, the device owner, was the likely phishing target. "
-        "The device is classified as data exfiltration which is consistent with a phishing-based compromise.'\n"
-        "2. ALWAYS state the name of the relevant person when asked 'who.' "
-        "Even if specific artifacts are missing, the owner IS who was affected.\n"
-        "3. Do not use words like 'cannot determine' or 'insufficient evidence' — "
-        "just tell the investigator what you know and what you don't know.\n"
-        "4. Single paragraph only. No bullet points, no markdown.\n\n"
-        f"FULL DATA:\n{summary}\n{extra}\n\n"
+        "- 'Who' questions: The device OWNER is your answer. Say their name. Do not hedge.\n"
+        "- 'What' questions: State the classification and key findings.\n"
+        "- Never say 'cannot determine' or 'insufficient evidence.' "
+        "Tell the investigator what you know, then what you don't know.\n"
+        "- No bullet points, no markdown, no Hypothesis/Evidence/Assessment format.\n"
     )
+    # Case data (facts + full report) passed as context
+    case_context = f"CASE FACTS:\n{facts_block}\n\nFULL REPORT DATA:\n{summary}\n{extra}"
 
     # Build user prompt with conversation history (last 6 turns)
     history_lines = []
@@ -1792,7 +1790,7 @@ def report_chat(case_dir):
 
     # Try LLM, fall back to data lookup
     try:
-        answer = call_llm(user_prompt, system_context, agent_type="manager")
+        answer = call_llm(user_prompt, case_context, agent_type="manager", system_prompt=chat_system_prompt)
         if not answer:
             raise ValueError("empty response")
     except Exception:

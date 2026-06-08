@@ -537,10 +537,11 @@ Do not provide a raw data dump. Every claim must be traceable to a named artifac
 # call_llm
 # ---------------------------------------------------------------------------
 
-def call_llm(user_message, context="", agent_type="manager"):
+def call_llm(user_message, context="", agent_type="manager", system_prompt=None):
     """Call LLM via Ollama (local or remote)
 
     agent_type: "manager", "forensicator", or "critic" - determines which model to use
+    system_prompt: if set, replaces GEOFF_PROMPT (use for chat/conversational contexts)
 
     HTTP 401/403 = immediate fail (bad auth). HTTP 5xx = brief retry (3x with 10s backoff).
     Connection/network errors = full retry window (30 min with exponential backoff).
@@ -566,7 +567,8 @@ def call_llm(user_message, context="", agent_type="manager"):
         try:
             model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
 
-            full_prompt = f"{GEOFF_PROMPT}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+            lead_prompt = system_prompt if system_prompt else GEOFF_PROMPT
+            full_prompt = f"{lead_prompt}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
             response = requests.post(
                 f"{ollama_base_url()}/api/generate",
                 headers=ollama_headers(),
