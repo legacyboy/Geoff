@@ -59,7 +59,7 @@ A fourth role — **Healer** — is the Critic operating in error-recovery mode 
 | **Manager** | Orchestrates investigations, strategic decisions | deepseek-v4-pro:cloud | deepseek-r1:32b |
 | **Forensicator** | Executes forensic tools, extracts artifacts | qwen3-coder-next:cloud | qwen2.5-coder:14b |
 | **Critic** | Validates output for hallucinations and accuracy | glm-5.1:cloud | qwen2.5:14b |
-| **Critic 2** | Independent parallel validation (different architecture) | gemma4:31b-cloud | gemma4:31b-cloud |
+| **Critic 2** | Independent parallel validation (different architecture) | gemma4:31b-cloud | gemma4:31b |
 
 **Workflow:**
 ```
