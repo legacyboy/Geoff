@@ -1800,9 +1800,10 @@ def report_chat(case_dir):
         "State what you found, then what's missing.\n"
         "- No bullet points, no markdown, no Hypothesis/Evidence/Assessment format.\n"
     )
-    # Case data (narrative first, then facts, then raw JSON as fallback)
-    narrative_block = f"NARRATIVE REPORT:\n{narrative_text}\n\n" if narrative_text else ""
-    case_context = f"{narrative_block}CASE FACTS:\n{facts_block}\n\nFULL REPORT DATA:\n{summary}\n{extra}"
+    # Case data — narrative is the primary source when available, raw JSON only as fallback
+    narrative_block = f"NARRATIVE REPORT (primary source):\n{narrative_text}\n\n" if narrative_text else ""
+    json_block = f"\n\nFULL REPORT DATA:\n{summary}\n{extra}" if not narrative_text else ""
+    case_context = f"{narrative_block}CASE FACTS:\n{facts_block}{json_block}"
 
     # Build user prompt with conversation history (last 6 turns)
     history_lines = []
