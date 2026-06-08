@@ -185,10 +185,13 @@ class GeoffCritic:
     - Commits validation results to git for reproducibility
     """
 
-    def __init__(self, ollama_url: str = None,
-                 model: str = os.environ.get("GEOFF_CRITIC_MODEL", "qwen3.5:cloud")):
+    def __init__(self, ollama_url: str = None, model: str = None):
         self.ollama_url = ollama_url or os.environ.get('OLLAMA_URL', 'http://localhost:11434')
-        self.model = model
+        # Read at instantiation time so dotenv-loaded vars are always visible,
+        # regardless of when this module was first imported.
+        self.model = model if model is not None else (
+            os.environ.get('GEOFF_CRITIC_MODEL') or 'qwen3.5:cloud'
+        )
         self._api_key = os.environ.get('OLLAMA_API_KEY', '')
         self.validation_log = []
 
@@ -220,6 +223,23 @@ class GeoffCritic:
         )
         _start = time.time()
 
+        # Lazy import so _call_critic_llm uses the same URL/headers/model as
+        # call_llm() in geoff_self_heal. geoff_config is fully loaded by the
+        # time this method is called, so there is no circular-import risk.
+        try:
+            from geoff_config import (
+                ollama_base_url as _cfg_url,
+                ollama_headers as _cfg_headers,
+                AGENT_MODELS as _cfg_models,
+            )
+            _llm_url = f"{_cfg_url()}/api/generate"
+            _llm_headers = _cfg_headers()
+            _llm_model = _cfg_models.get("critic", self.model)
+        except (ImportError, Exception):
+            _llm_url = f"{self.ollama_url}/api/generate"
+            _llm_headers = self._ollama_headers()
+            _llm_model = self.model
+
         for attempt in range(_max_retries):
             elapsed = time.time() - _start
             if elapsed > _MAX_RETRY_TIME:
@@ -228,18 +248,37 @@ class GeoffCritic:
 
             try:
                 response = requests.post(
-                    f"{self._base_url()}/api/generate",
-                    headers=self._ollama_headers(),
+                    _llm_url,
+                    headers=_llm_headers,
                     json={
-                        "model": self.model,
+                        "model": _llm_model,
                         "prompt": prompt,
                         "stream": False,
                         "options": {"temperature": 0.2}
                     },
-                    timeout=600
+                    timeout=180
                 )
                 if response.status_code == 200:
-                    result_text = response.json().get('response', '')
+                    resp_json = response.json()
+                    result_text = resp_json.get('response', '')
+                    # Thinking models (qwen3.5, deepseek-r1) sometimes leave response
+                    # empty and put their answer in the separate thinking field.
+                    if not result_text.strip():
+                        thinking = resp_json.get('thinking', '')
+                        if thinking:
+                            m = re.search(r'\{.*\}', thinking, re.DOTALL)
+                            if m:
+                                result_text = m.group()
+                    # Retry on empty response (cloud proxy may return blank under load)
+                    if not result_text.strip():
+                        wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
+                        remaining = _MAX_RETRY_TIME - elapsed
+                        actual_wait = min(wait, min(30, remaining))
+                        if actual_wait <= 0:
+                            return ""
+                        print(f"[CRITIC] Empty response, retry {attempt+1} after {actual_wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
+                        time.sleep(actual_wait)
+                        continue
                     # Reject error messages that leaked into the response
                     if any(pat in result_text for pat in _error_patterns):
                         wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
