@@ -200,6 +200,7 @@
       }});
     }, { rootMargin: '-74px 0px -70% 0px', threshold: 0 });
     sections.forEach(s => { const el = document.getElementById(s.id); if (el) obs.observe(el); });
+    if (typeof selectReportForChat === "function") selectReportForChat(dir, caseName);
   }
 
   /* ============ section renderers ============ */
@@ -650,15 +651,14 @@
     if (input) input.value = '';
     pushReportChat('geoff', '<b>GEOFF</b><span class="rc-thinking" style="color:var(--g-text-faint)">thinking…</span>');
     try {
-      const body = { message: txt };
-      if (caseDir) body.evidence_dir = caseDir;
-      const resp = await fetch('/chat', {
+      const body = { question: txt };
+      const resp = await fetch('/reports/' + encodeURIComponent(caseDir) + '/chat', {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, API_KEY ? { 'X-API-Key': API_KEY } : {}),
         body: JSON.stringify(body),
       });
       const data = await resp.json();
-      const reply = data.response || data.message || 'No response.';
+      const reply = data.answer || data.response || 'No response.';
       const scroll = document.getElementById('report-chat-scroll');
       if (scroll) {
         const thinking = scroll.querySelector('.rc-thinking');
