@@ -1726,7 +1726,7 @@ def report_chat(case_dir):
     if safe_dir:
         case_path = Path(CASES_WORK_DIR) / safe_dir
         if case_path.is_dir():
-            for narrative_name in ("narrative_report.md", "narrative_report.json"):
+            for narrative_name in ("narrative_report.json", "narrative_report.md"):
                 nr_path = case_path / "reports" / narrative_name
                 if nr_path.exists():
                     try:
@@ -1744,11 +1744,8 @@ def report_chat(case_dir):
                         else:
                             narrative_text = text[:8000]
                         break
-                    except (ValueError, OSError, json.JSONDecodeError) as _ne:
-                        print(f"[CHAT] Narrative load error: {_ne}", file=sys.stderr)
+                    except (ValueError, OSError, json.JSONDecodeError):
                         pass
-    import sys
-    print(f"[CHAT] narrative_text loaded: {len(narrative_text)} chars, starts with: {narrative_text[:80]!r}", file=sys.stderr)
 
     # Also load any indicator hits and findings for richer context
     extra_context = []
