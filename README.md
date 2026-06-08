@@ -20,6 +20,22 @@
 
 ---
 
+## Quick Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash
+```
+
+**Options:**
+- `--profile cloud` — cloud models (default, requires Ollama signin)
+- `--profile local` — local models only  
+- `--ollama-key <key>` — API key for direct Ollama cloud access
+- `--dir <path>` — install directory (default: `/opt/geoff`)
+
+After install, Geoff is available at `http://localhost:8080`.
+
+---
+
 ## What is GEOFF?
 
 GEOFF is a **multi-agent conversational DFIR platform** with three specialized AI agents, device-aware evidence processing, behavioral analysis, and LLM-generated narrative reports.
