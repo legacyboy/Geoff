@@ -748,6 +748,18 @@ class NarrativeReportGenerator:
                                      behavioral_flags: dict) -> str:
         """Generate 2-3 paragraph executive summary."""
 
+        # Normalize behavioral_flags: values can be ints (PCAP-style counts)
+        # or lists of dicts (disk-style). Convert everything to list form.
+        _bf_norm = {}
+        for dev_id, flags in behavioral_flags.items():
+            if isinstance(flags, (int, float)):
+                _bf_norm[dev_id] = [{"severity": "INFO", "count": int(flags)}]
+            elif isinstance(flags, (list, tuple)):
+                _bf_norm[dev_id] = list(flags)
+            else:
+                _bf_norm[dev_id] = [flags] if flags else []
+        behavioral_flags = _bf_norm
+
         # Count key metrics
         num_devices = len(device_map)
         num_users = len(user_map.get("users", user_map))
