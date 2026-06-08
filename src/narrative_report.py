@@ -751,10 +751,14 @@ class NarrativeReportGenerator:
         # Count key metrics
         num_devices = len(device_map)
         num_users = len(user_map.get("users", user_map))
-        total_flags = sum(len(f) for f in behavioral_flags.values())
+        total_flags = sum(
+            len(f) if isinstance(f, (list, tuple)) else (f if isinstance(f, (int, float)) else 0)
+            for f in behavioral_flags.values()
+        )
         high_flags = sum(
             1 for flags in behavioral_flags.values()
-            for f in flags if f.get("severity") in ("CRITICAL", "HIGH"))
+            for f in (flags if isinstance(flags, (list, tuple)) else [flags])
+            if isinstance(f, dict) and f.get("severity") in ("CRITICAL", "HIGH"))
         evil_found = report_json.get("evil_found", False)
         severity = report_json.get("severity", "INFO")
         elapsed = report_json.get("elapsed_seconds", 0)
