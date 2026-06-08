@@ -822,10 +822,10 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   .report-chat-head .rc-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600;
     color: var(--g-text-dim); letter-spacing: .4px; flex: 1; }
   .report-chat-head .rc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); }
-  .report-chat-head .rc-action-btn { background: none; border: 1px solid var(--g-border-soft);
-    border-radius: 4px; color: var(--g-text-mute); font-size: 11px; padding: 2px 6px; cursor: pointer;
+  .report-chat-head .rc-action-btn { background: rgba(76,141,255,.08); border: 1px solid var(--g-border);
+    border-radius: 4px; color: var(--g-text-dim); font-size: 13px; padding: 3px 8px; cursor: pointer;
     font-family: var(--font-mono); line-height: 1.4; flex-shrink: 0; }
-  .report-chat-head .rc-action-btn:hover { color: var(--g-text); border-color: var(--g-border); }
+  .report-chat-head .rc-action-btn:hover { color: #fff; background: var(--g-blue); border-color: var(--g-blue); }
   .report-chat-body { display: flex; flex-direction: column; }
   .report-chat-scroll { height: 180px; overflow-y: auto; padding: 12px 14px; display: flex;
     flex-direction: column; gap: 8px; }
