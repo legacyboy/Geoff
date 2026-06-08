@@ -28,6 +28,12 @@ curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | ba
 
 **Options:**
 - `--profile cloud` — cloud models (default, requires Ollama signin)
+- `--profile local` — local models only
+- `--ollama-key <key>` — API key for direct Ollama cloud access
+- `--dir <path>` — install directory (default: `/opt/geoff`)
+
+After install, Geoff is available at `http://localhost:8080`.
+
 ---
 
 ## What is GEOFF?
