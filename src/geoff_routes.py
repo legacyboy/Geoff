@@ -1739,20 +1739,42 @@ def report_chat(case_dir):
     # Build system context — report data as background reference only
     summary = json.dumps(report_json, indent=2)[:6000]
     extra = ''.join(extra_context)[:3000]
+
+    # Extract quick facts so the LLM can't miss who/what is involved
+    quick_facts = []
+    quick_facts.append(f"Case: {report_json.get('title', 'Unknown')}")
+    quick_facts.append(f"Classification: {report_json.get('classification', 'Unknown')}")
+    quick_facts.append(f"Severity: {report_json.get('severity', 'Unknown')}")
+    quick_facts.append(f"OS: {report_json.get('os_type', 'Unknown')}")
+    # Device owners and hostnames
+    for dev_id, dev in (report_json.get('device_map') or {}).items():
+        owner = dev.get('owner') or 'unknown'
+        hostname = dev.get('hostname') or 'unknown'
+        dev_type = dev.get('device_type') or 'unknown'
+        quick_facts.append(f"Device '{dev_id}': owner={owner}, hostname={hostname}, type={dev_type}")
+    # User map
+    for user_id, user_info in (report_json.get('user_map') or {}).items():
+        quick_facts.append(f"User: {user_id} -> {json.dumps(user_info)[:120]}")
+    # Key findings headlines
+    for f in (report_json.get('findings_detail') or [])[:10]:
+        h = f.get('headline') or f.get('summary') or ''
+        if h:
+            quick_facts.append(f"Finding: {h[:120]}")
+    facts_block = '\n'.join(quick_facts[:20])
+
     system_context = (
         "You are Geoff, an expert DFIR analyst embedded in this report viewer. "
         "An analyst is asking you questions about this investigation.\n\n"
+        "FIRST, read these key facts about the case:\n"
+        f"{facts_block}\n\n"
         "RULES:\n"
-        "1. ANSWER THE QUESTION. Do not fence-sit. If the data contains a relevant answer, give it. "
-        "Even if the exact phrase isn't in a finding, infer from context — device owners, hostnames, "
-        "classifications, indicator hits, and timeline data are all valid evidence.\n"
-        "2. When asked 'who' or 'what', lead with the answer you found, then qualify if needed. "
-        "Say 'According to the evidence, Kim received...' not 'I cannot determine...' "
-        "3. Be concise. 2-4 sentences unless asked for detail. "
-        "4. If you genuinely lack the data after checking thoroughly, say exactly what's missing "
-        "and which playbook or tool would fill the gap. Do NOT suggest the user re-check the same data.\n"
-        "5. Do NOT echo raw JSON fields. Use natural language.\n\n"
-        f"CASE DATA:\n{summary}\n{extra}\n\n"
+        "1. ANSWER THE QUESTION using the facts above. If asked 'who', look at device owners and users first. "
+        "If asked 'what happened', check the classification and findings. "
+        "ALWAYS start with the answer you found, not with hedging.\n"
+        "2. Be concise. 2-4 sentences unless asked for detail.\n"
+        "3. If the facts truly do not cover the question, say so briefly and name the specific evidence type "
+        "or playbook that would fill the gap.\n\n"
+        f"FULL CASE DATA (for deeper context):\n{summary}\n{extra}\n\n"
     )
 
     # Build user prompt with conversation history (last 6 turns)
