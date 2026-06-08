@@ -813,15 +813,23 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   /* report chat dock */
   .report-chat { position: fixed; bottom: 0; right: 24px; width: 380px; z-index: 100;
     background: var(--g-surface); border: 1px solid var(--g-border-soft); border-bottom: none;
-    border-radius: 12px 12px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.35); }
+    border-radius: 12px 12px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,.35);
+    transition: all .2s ease; }
+  .report-chat.maximized { top: 0; left: 0; right: 0; bottom: 0; width: 100%; border-radius: 0;
+    border: none; z-index: 200; }
   .report-chat-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
     border-bottom: 1px solid var(--g-border-soft); cursor: pointer; }
   .report-chat-head .rc-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600;
     color: var(--g-text-dim); letter-spacing: .4px; flex: 1; }
   .report-chat-head .rc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-blue); }
+  .report-chat-head .rc-action-btn { background: none; border: 1px solid var(--g-border-soft);
+    border-radius: 4px; color: var(--g-text-mute); font-size: 11px; padding: 2px 6px; cursor: pointer;
+    font-family: var(--font-mono); line-height: 1.4; flex-shrink: 0; }
+  .report-chat-head .rc-action-btn:hover { color: var(--g-text); border-color: var(--g-border); }
   .report-chat-body { display: flex; flex-direction: column; }
   .report-chat-scroll { height: 180px; overflow-y: auto; padding: 12px 14px; display: flex;
     flex-direction: column; gap: 8px; }
+  .report-chat.maximized .report-chat-scroll { height: calc(100vh - 108px); }
   .rc-msg { font-size: 12.5px; line-height: 1.5; max-width: 94%; }
   .rc-msg.user { align-self: flex-end; background: rgba(76,141,255,.14);
     border: 1px solid rgba(76,141,255,.3); color: var(--g-text); padding: 7px 11px;
@@ -829,6 +837,9 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   .rc-msg.geoff { align-self: flex-start; color: var(--g-text-dim); }
   .rc-msg.geoff b { color: var(--g-blue-soft); font-family: var(--font-mono); font-weight: 600;
     font-size: 11px; letter-spacing: .5px; display: block; margin-bottom: 2px; }
+  .rc-section-link { color: var(--g-blue-soft); text-decoration: underline;
+    text-decoration-style: dotted; cursor: pointer; }
+  .rc-section-link:hover { color: var(--g-blue); }
   .report-chat-in { display: flex; gap: 7px; padding: 8px 12px 12px;
     border-top: 1px solid var(--g-line); }
   .report-chat-in input { flex: 1; background: var(--g-surface-2); border: 1px solid var(--g-border);
@@ -1075,6 +1086,7 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
   <div class="report-chat-head" onclick="toggleReportChat()">
     <span class="rc-dot"></span>
     <span class="rc-label">GEOFF &mdash; Ask about this case</span>
+    <button class="rc-action-btn" id="rc-maximize" title="Maximize chat" onclick="event.stopPropagation();toggleMaximizeReportChat()">&#x26F6;</button>
     <span id="rc-toggle" style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute);">&#9660;</span>
   </div>
   <div class="report-chat-body">

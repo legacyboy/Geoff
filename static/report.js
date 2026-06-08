@@ -625,12 +625,30 @@
   }
 
   /* -------- report chat dock -------- */
+  const chatHistory = [];
+
   window.toggleReportChat = function() {
     const dock = document.getElementById('report-chat');
     const tog = document.getElementById('rc-toggle');
     if (!dock) return;
     dock.classList.toggle('collapsed');
     if (tog) tog.textContent = dock.classList.contains('collapsed') ? '▲' : '▼';
+  };
+
+  window.toggleMaximizeReportChat = function() {
+    const dock = document.getElementById('report-chat');
+    const btn = document.getElementById('rc-maximize');
+    if (!dock) return;
+    const isMax = dock.classList.toggle('maximized');
+    if (btn) btn.title = isMax ? 'Restore chat' : 'Maximize chat';
+    if (btn) btn.innerHTML = isMax ? '&#x2715;' : '&#x26F6;';
+    if (isMax && dock.classList.contains('collapsed')) {
+      dock.classList.remove('collapsed');
+      const tog = document.getElementById('rc-toggle');
+      if (tog) tog.textContent = '▼';
+    }
+    const scroll = document.getElementById('report-chat-scroll');
+    if (scroll) scroll.scrollTop = scroll.scrollHeight;
   };
 
   function pushReportChat(who, html) {
@@ -649,23 +667,31 @@
     if (!txt) return;
     pushReportChat('user', esc(txt));
     if (input) input.value = '';
+    chatHistory.push({ role: 'user', content: txt });
     pushReportChat('geoff', '<b>GEOFF</b><span class="rc-thinking" style="color:var(--g-text-faint)">thinking…</span>');
     try {
-      const body = { question: txt };
+      const body = { question: txt, history: chatHistory.slice(-12) };
       const resp = await fetch('/reports/' + encodeURIComponent(caseDir) + '/chat', {
         method: 'POST',
         headers: Object.assign({ 'Content-Type': 'application/json' }, API_KEY ? { 'X-API-Key': API_KEY } : {}),
         body: JSON.stringify(body),
       });
       const data = await resp.json();
-      const reply = data.answer || data.response || 'No response.';
+      const replyHtml = data.answer_html || esc(data.answer || data.response || 'No response.');
+      const replyText = data.answer || data.response || 'No response.';
       const scroll = document.getElementById('report-chat-scroll');
       if (scroll) {
         const thinking = scroll.querySelector('.rc-thinking');
         if (thinking && thinking.parentElement) thinking.parentElement.remove();
       }
-      pushReportChat('geoff', `<b>GEOFF</b>${esc(reply)}`);
+      pushReportChat('geoff', `<b>GEOFF</b>${replyHtml}`);
+      chatHistory.push({ role: 'assistant', content: replyText });
     } catch (e) {
+      const scroll = document.getElementById('report-chat-scroll');
+      if (scroll) {
+        const thinking = scroll.querySelector('.rc-thinking');
+        if (thinking && thinking.parentElement) thinking.parentElement.remove();
+      }
       pushReportChat('geoff', `<b>GEOFF</b>Error: ${esc(e.message)}`);
     }
   }

@@ -1658,10 +1658,49 @@ def report_history(case_dir):
         _tb.print_exc()
         return jsonify({"error": str(e)}), 500
 
+def _inject_section_links(text):
+    """Escape text and wrap report-section mentions in anchor links."""
+    import html as _html
+    import re as _re
+    section_patterns = [
+        (r'executive summary', 'summary'),
+        (r'summary section', 'summary'),
+        (r'findings by device', 'findings'),
+        (r'the findings', 'findings'),
+        (r'attack chain', 'attack-chain'),
+        (r'attack narrative', 'attack-chain'),
+        (r'indicators? of compromise', 'iocs'),
+        (r'IOCs?', 'iocs'),
+        (r'kill[\s\-]chain', 'kill-chain-timeline'),
+        (r'blast radius', 'blast-radius'),
+        (r'business impact', 'blast-radius'),
+        (r'MITRE ATT&CK', 'mitre'),
+        (r'super.?timeline', 'timeline'),
+        (r'the conclusion', 'conclusion'),
+    ]
+    combined = '(' + '|'.join(pat for pat, _ in section_patterns) + ')'
+    tokens = _re.split(combined, text, flags=_re.IGNORECASE)
+    result = []
+    for i, tok in enumerate(tokens):
+        if i % 2 == 1:
+            sid = next(
+                (sid for pat, sid in section_patterns if _re.fullmatch(pat, tok, _re.IGNORECASE)),
+                None
+            )
+            if sid:
+                result.append(f'<a href="#{sid}" class="rc-section-link">{_html.escape(tok)}</a>')
+            else:
+                result.append(_html.escape(tok))
+        else:
+            result.append(_html.escape(tok))
+    return ''.join(result)
+
+
 def report_chat(case_dir):
     """Answer questions about the investigation report."""
     data = request.get_json(force=True)
     question = (data.get('question') or '').strip()
+    history = data.get('history') or []
     report_json = data.get('report_json') or {}
 
     if not question:
@@ -1697,17 +1736,28 @@ def report_chat(case_dir):
                     except Exception:
                         pass
 
-    # Build prompt
+    # Build system context — report data as background reference only
     summary = json.dumps(report_json, indent=2)[:6000]
     extra = ''.join(extra_context)[:3000]
     system_context = (
-        "You are Geoff, an expert digital forensic analyst. Answer the analyst's question "
-        "based on the provided investigation data. Be specific — cite file names, "
-        "timestamps, or finding IDs when relevant. If data is missing for a full answer, "
-        "say so and suggest which evidence to re-analyze.\n\n"
-        f"REPORT DATA:\n{summary}\n{extra}\n\n"
+        "You are Geoff, an expert DFIR analyst. You are embedded in a report viewer answering "
+        "an analyst's questions about this investigation. Be conversational and concise — "
+        "2-4 sentences unless detail is specifically requested. Cite specific filenames, "
+        "timestamps, or IOCs only when directly relevant. Do not dump or echo raw data fields. "
+        "If the data does not cover the question, say so briefly and suggest what to look for.\n\n"
+        f"CASE DATA (use as reference, do not echo back unless asked):\n{summary}\n{extra}\n\n"
     )
-    user_prompt = f"QUESTION: {question}"
+
+    # Build user prompt with conversation history (last 6 turns)
+    history_lines = []
+    for turn in (history or [])[-6:]:
+        role = (turn.get('role') or '').strip()
+        content = (turn.get('content') or '').strip()[:400]
+        if role == 'user':
+            history_lines.append(f"Analyst: {content}")
+        elif role == 'assistant':
+            history_lines.append(f"Geoff: {content}")
+    user_prompt = ('\n'.join(history_lines) + f"\nAnalyst: {question}") if history_lines else question
 
     # Try LLM, fall back to data lookup
     try:
@@ -1738,7 +1788,7 @@ def report_chat(case_dir):
             suggest_playbook = pb_id
             break
 
-    result = {'answer': answer}
+    result = {'answer': answer, 'answer_html': _inject_section_links(answer)}
     if suggest_playbook:
         result['suggest_playbook'] = suggest_playbook
     return jsonify(result)
