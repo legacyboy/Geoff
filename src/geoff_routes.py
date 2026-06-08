@@ -1744,8 +1744,11 @@ def report_chat(case_dir):
                         else:
                             narrative_text = text[:8000]
                         break
-                    except (ValueError, OSError, json.JSONDecodeError):
+                    except (ValueError, OSError, json.JSONDecodeError) as _ne:
+                        print(f"[CHAT] Narrative load error: {_ne}", file=sys.stderr)
                         pass
+    import sys
+    print(f"[CHAT] narrative_text loaded: {len(narrative_text)} chars, starts with: {narrative_text[:80]!r}", file=sys.stderr)
 
     # Also load any indicator hits and findings for richer context
     extra_context = []
