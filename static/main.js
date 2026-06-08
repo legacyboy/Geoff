@@ -817,9 +817,10 @@
           : 'unknown';
 
         const card = el("div", "rpt-card " + (isEvil ? "evil" : "clean"));
+        const caseName = rpt.case_name || rpt.dir;
         card.innerHTML = `
           <div class="rt-top">
-            <span class="rt-name">${escHtml(rpt.case_name || rpt.dir)}</span>
+            <span class="rt-name">${escHtml(caseName)}</span>
             <span class="sev-pill ${sev}">${sev}</span>
             ${isEvil ? '<span class="sev-pill CRITICAL" style="font-size:9px;">EVIL</span>' : '<span class="sev-pill" style="font-size:9px;background:var(--g-green);color:var(--g-bg);">CLEAN</span>'}
           </div>
@@ -829,7 +830,14 @@
             <span>${rpt.classification || 'unclassified'}</span>
           </div>
           <div class="rt-desc">${escHtml(rpt.evidence_dir || '')}</div>
+          <div class="rt-actions">
+            <span class="rt-chat-btn" data-dir="${escHtml(rpt.dir)}" data-name="${escHtml(caseName)}">&#128172; Ask GEOFF</span>
+          </div>
         `;
+        card.querySelector('.rt-chat-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectReportForChat(rpt.dir, caseName);
+        });
         card.onclick = () => {
           const caseDir = encodeURIComponent(rpt.dir);
           window.open('/reports/narrative?case=' + caseDir, '_blank');
@@ -840,6 +848,114 @@
       body.innerHTML = '<div class="case-empty">Failed to load reports: ' + escHtml(e.message) + '</div>';
     }
   }
+
+  /* ============================================================
+     REPORTS TAB CHAT
+     ============================================================ */
+  let rpChatCase = null;
+  let rpChatCaseName = '';
+
+  window.toggleRpChat = function() {
+    const dock = $('rp-chat-dock');
+    const tog = $('rp-chat-toggle');
+    if (!dock) return;
+    dock.classList.toggle('collapsed');
+    if (tog) tog.textContent = dock.classList.contains('collapsed') ? '▲' : '▼';
+  };
+
+  function rpPushMsg(who, html) {
+    const s = $('rp-chat-scroll');
+    if (!s) return null;
+    const m = el('div', 'rp-msg ' + who);
+    m.innerHTML = html;
+    s.appendChild(m);
+    s.scrollTop = s.scrollHeight;
+    return m;
+  }
+
+  function selectReportForChat(dir, name) {
+    rpChatCase = dir;
+    rpChatCaseName = name;
+    // Deselect all cards, select this one
+    document.querySelectorAll('#rp-panel-body .rpt-card').forEach(c => c.classList.remove('rp-selected'));
+    const btn = document.querySelector(`.rt-chat-btn[data-dir="${CSS.escape(dir)}"]`);
+    if (btn) btn.closest('.rpt-card').classList.add('rp-selected');
+    // Show and expand dock
+    const dock = $('rp-chat-dock');
+    if (dock) { dock.classList.remove('hidden'); dock.classList.remove('collapsed'); }
+    const label = $('rp-chat-label');
+    if (label) label.textContent = 'GEOFF — ' + name;
+    // Reset messages
+    const scroll = $('rp-chat-scroll');
+    if (scroll) {
+      scroll.innerHTML = '';
+      rpPushMsg('geoff', '<b>GEOFF</b>Loaded <em>' + escHtml(name) + '</em>. Ask me anything about this investigation.');
+    }
+    const input = $('rp-chat-input');
+    if (input) input.focus();
+  }
+
+  async function rpSendChat() {
+    const input = $('rp-chat-input');
+    const txt = input && input.value.trim();
+    if (!txt || !rpChatCase) return;
+    rpPushMsg('user', escHtml(txt));
+    input.value = '';
+    const thinking = rpPushMsg('geoff', '<b>GEOFF</b><span style="color:var(--g-text-faint)">thinking…</span>');
+
+    try {
+      const resp = await apiFetch('/reports/' + encodeURIComponent(rpChatCase) + '/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: txt }),
+      });
+      const data = await resp.json();
+      if (thinking) thinking.remove();
+      const answer = data.answer || data.response || 'No response.';
+      const msgDiv = rpPushMsg('geoff', '<b>GEOFF</b>' + escHtml(answer));
+      if (data.suggest_playbook && msgDiv) {
+        const btn = document.createElement('button');
+        btn.className = 'dig-deeper-btn';
+        btn.innerHTML = '&#128269; Dig Deeper [' + escHtml(data.suggest_playbook) + ']';
+        btn.onclick = () => rpDigDeeper(rpChatCase, data.suggest_playbook);
+        msgDiv.appendChild(btn);
+      }
+    } catch (e) {
+      if (thinking) thinking.remove();
+      rpPushMsg('geoff', '<b>GEOFF</b>Error: ' + escHtml(e.message));
+    }
+  }
+
+  async function rpDigDeeper(caseDir, playbookId) {
+    const msg = rpPushMsg('geoff', '<b>GEOFF</b>&#128269; Running deeper analysis [' + escHtml(playbookId) + ']…');
+    try {
+      const resp = await apiFetch('/replay-playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case: caseDir, playbook_id: playbookId }),
+      });
+      const data = await resp.json();
+      if (msg) msg.remove();
+      if (data.status === 'complete') {
+        rpPushMsg('geoff', '<b>GEOFF</b>✓ Re-analysis complete. Found <b>' + (data.new_findings || 0) + '</b> new findings from ' + escHtml(playbookId) + '.');
+      } else {
+        rpPushMsg('geoff', '<b>GEOFF</b>Re-analysis result: ' + escHtml(data.error || data.message || JSON.stringify(data)));
+      }
+    } catch (e) {
+      if (msg) msg.remove();
+      rpPushMsg('geoff', '<b>GEOFF</b>Error during re-analysis: ' + escHtml(e.message));
+    }
+  }
+
+  // Wire up Reports tab chat events
+  (function() {
+    const sendBtn = $('rp-chat-send');
+    const chatInput = $('rp-chat-input');
+    if (sendBtn) sendBtn.addEventListener('click', rpSendChat);
+    if (chatInput) chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); rpSendChat(); }
+    });
+  })();
 
   /* ============================================================
      LIVE JOB DETECTION — CHECK FOR RUNNING JOBS ON PAGE LOAD

@@ -1667,9 +1667,10 @@ def report_chat(case_dir):
     if not question:
         return jsonify({'answer': 'No question provided.'}), 400
 
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
+
     # If report_json is empty, try loading from the case directory
     if not report_json or (isinstance(report_json, dict) and not report_json):
-        safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
         if safe_dir:
             case_path = Path(CASES_WORK_DIR) / safe_dir
             if case_path.is_dir():
@@ -1681,12 +1682,30 @@ def report_chat(case_dir):
                 except (ValueError, OSError, json.JSONDecodeError):
                     pass
 
+    # Also load any indicator hits and findings for richer context
+    extra_context = []
+    if safe_dir:
+        case_path = Path(CASES_WORK_DIR) / safe_dir
+        if case_path.is_dir():
+            for fname in ('findings.jsonl', 'audit_trail.jsonl'):
+                fp = case_path / fname
+                if fp.exists():
+                    try:
+                        lines = fp.read_text(encoding='utf-8', errors='replace').splitlines()
+                        sample = [json.loads(l) for l in lines[:80] if l.strip()]
+                        extra_context.append(f"\n{fname.upper()}:\n" + json.dumps(sample, indent=1)[:3000])
+                    except Exception:
+                        pass
+
     # Build prompt
-    summary = json.dumps(report_json, indent=2)[:8000]  # cap context size
+    summary = json.dumps(report_json, indent=2)[:6000]
+    extra = ''.join(extra_context)[:3000]
     system_context = (
-        "You are a forensic report analyst. Answer the question based ONLY on the "
-        "provided investigation data. If the answer isn't in the data, say so.\n\n"
-        f"REPORT DATA:\n{summary}\n\n"
+        "You are Geoff, an expert digital forensic analyst. Answer the analyst's question "
+        "based on the provided investigation data. Be specific — cite file names, "
+        "timestamps, or finding IDs when relevant. If data is missing for a full answer, "
+        "say so and suggest which evidence to re-analyze.\n\n"
+        f"REPORT DATA:\n{summary}\n{extra}\n\n"
     )
     user_prompt = f"QUESTION: {question}"
 
@@ -1698,7 +1717,31 @@ def report_chat(case_dir):
     except Exception:
         answer = _fallback_answer(question, report_json)
 
-    return jsonify({'answer': answer})
+    # Suggest a relevant playbook for dig-deeper if the question hints at a specific area
+    suggest_playbook = None
+    q_lower = question.lower()
+    _playbook_hints = [
+        ('PB-SIFT-005', ['shell history', 'bash history', 'shell command', 'terminal']),
+        ('PB-SIFT-004', ['browser', 'firefox', 'chrome', 'web history', 'download']),
+        ('PB-SIFT-006', ['network', 'connection', 'socket', 'ip address', 'dns']),
+        ('PB-SIFT-007', ['persistence', 'cron', 'startup', 'autorun', 'service']),
+        ('PB-SIFT-008', ['user account', 'login', 'auth', 'passwd', 'sudo']),
+        ('PB-SIFT-010', ['filesystem', 'deleted file', 'inode', 'mtime']),
+        ('PB-SIFT-012', ['memory', 'process', 'malware', 'inject', 'dump']),
+        ('PB-SIFT-015', ['syslog', 'wtmp', 'utmp', 'auth.log', 'event log']),
+        ('PB-SIFT-005', ['shell', 'bash', 'command']),
+        ('PB-SIFT-004', ['browser', 'web', 'history', 'download']),
+        ('PB-SIFT-008', ['user', 'account', 'log']),
+    ]
+    for pb_id, keywords in _playbook_hints:
+        if any(kw in q_lower for kw in keywords):
+            suggest_playbook = pb_id
+            break
+
+    result = {'answer': answer}
+    if suggest_playbook:
+        result['suggest_playbook'] = suggest_playbook
+    return jsonify(result)
 
 
 def get_execution_log(case_id):

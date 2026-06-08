@@ -5256,6 +5256,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     pb_findings = []
                     any_step_ran = False
 
+                    # Skip orphan-user playbooks for devices with no matching other_files
+                    if playbook_id in ('PB-SIFT-041', 'PB-SIFT-042'):
+                        _of = dev_ev.get('other_files', [])
+                        if not _of:
+                            continue  # skip this device — no user files to analyze
+
                     for ev_type, step_templates in pb_steps_def.items():
                         if _abort or _is_job_cancelled(job_id):
                             break

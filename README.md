@@ -40,11 +40,13 @@ After install, Geoff is available at `http://localhost:8080`.
 
 GEOFF is a **multi-agent conversational DFIR platform** with three specialized AI agents, device-aware evidence processing, behavioral analysis, and LLM-generated narrative reports.
 
-## Agentic Framework
+---
+
+## Agents & Architecture
 
 Geoff's primary execution engine is the **Geoff Triad** — a three-agent autonomous loop that plans, executes, observes, critiques, and self-corrects without per-step human approval. The competition rules permit "comparable agentic architectures" alongside Claude Code and OpenClaw; the Geoff Triad is that architecture.
 
-### The agents
+### The Agents
 
 - **Manager** — receives the high-level goal ("find evil in this evidence"), reviews triage output, builds and amends the execution plan, decides post-execution actions (approve / flag / replay). Implementation: `src/geoff_self_heal.py::_manager_review_execution_plan`, `src/geoff_pipeline.py::_manager_post_critic_decision`.
 - **Forensicator** — selects forensic tools per playbook step, interprets each tool's output into a structured analyst note (significance + threat indicators + evidence chain). Implementation: `src/geoff_forensicator.py::call_forensicator_llm`.
@@ -61,61 +63,7 @@ A fourth role — **Healer** — is the Critic operating in error-recovery mode 
 | **Critic** | Validates output for hallucinations and accuracy | glm-5.1:cloud | qwen2.5:14b |
 | **Critic 2** | Independent parallel validation (different architecture) | gemma4:31b-cloud | gemma4:31b |
 
-**Workflow:**
-```
-User → Manager → Preflight Validation
-                      ↓
-               Forensicator runs ALL steps autonomously
-               (per-step custody commits to git)
-                      ↓
-               Dual Critic (GeoffCriticPool) validates ALL findings
-               — Critic 1 (glm-5.1:cloud) + Critic 2 (gemma4:31b-cloud)
-               — Confidence: VERY_HIGH / HIGH / MEDIUM / LOW
-                      ↓
-               Batch Critic reviews ALL findings at once
-               (holistic cross-step correlation)
-                      ↓
-               Manager decision: approve / flag / replay
-                      ↓ (if replay)
-               Incremental Replay (patched params, affected steps only)
-                      ↓
-               Adaptive Pass 2 — intelligence-driven follow-up selection
-                      ↓
-               Behavioral Analyzer + Super Timeline + Correlation
-                      ↓
-               Narrative Report (gated by Manager approval)
-```
-
-### Capability comparison
-
-| Capability | Claude Code | OpenClaw | **Geoff Triad** |
-|------------|-------------|----------|------------------|
-| Goal-directed planning | ✅ single agent | ✅ single agent | ✅ **dedicated planner agent (Manager)** |
-| Tool selection at runtime | ✅ | ✅ | ✅ Forensicator chooses per-step from 53 playbooks |
-| Observation → reasoning loop | ✅ | ✅ | ✅ Forensicator analyst note → Critic validation |
-| Self-critique | ⚠ via prompt | ⚠ via prompt | ✅ **dual parallel critics + batch holistic review** |
-| Autonomous error recovery | ⚠ retry only | ⚠ retry only | ✅ **`_attempt_heal` with fast-path + LLM diagnosis** |
-| Multi-agent specialization | ❌ | ❌ | ✅ **three distinct roles, three model profiles** |
-| Persistent memory | session context | session context | ✅ **git-backed per-case repo with custody sidecars** |
-| Reproducible audit trail | ❌ | partial | ✅ **per-step SHA-256 custody + commands log + audit_trail.jsonl** |
-| Pluggable LLM backend | Anthropic-only | Ollama-only | Ollama (cloud or local), profile-switchable |
-| Runs on SIFT Workstation | requires net + key | yes | yes (cloud or local) |
-
-### Why a custom triad instead of Claude Code or OpenClaw
-
-DFIR investigations require three properties that single-agent frameworks struggle to provide:
-
-1. **Separation of concerns.** Tool execution (Forensicator), validation (Critic), and decision-making (Manager) come from different model temperaments. We use different models per role (`profiles.json`) — a coder model for tool selection, a general-reasoning model for critique, a planner model for decisions.
-2. **Holistic cross-step critique.** A per-step LLM check misses inconsistencies between findings. The Geoff Critic reviews all findings in one pass (`_batch_critic_review_all_playbooks`), which catches hallucinations a single-agent loop cannot.
-3. **Forensic chain of custody.** Every step commits to a per-case git repository with a SHA-256-of-evidence custody sidecar. This is a forensic non-negotiable; bolted onto a general-purpose agent framework it becomes fragile, but it's primary in Geoff.
-
----
-
-## Architecture Overview
-
-### Geoff Triad — Three-Agent Pipeline
-
-The core execution engine is the **Geoff Triad**: three specialized agents that plan, execute, validate, and self-correct without per-step human approval.
+### Workflow
 
 ```
 User → Manager → Preflight Validation
@@ -144,46 +92,30 @@ User → Manager → Preflight Validation
                Narrative Report (gated by Manager approval)
 ```
 
-#### Component Boundaries
+### Capability Comparison
 
-| Component | Boundary | Notes |
-|-----------|----------|-------|
-| **MCP Server** | `127.0.0.1:9999` only | Network is the auth layer; remote access via SSH tunnel |
-| **Evidence paths** | Path validation allowlist | Shell metacharacters rejected before any tool call (`src/geoff_routes.py`) |
-| **SIFT tool execution** | Subprocess calls with validated args | Tools read evidence; they do not write to the evidence directory |
-| **Case work directory** | Separate from evidence | All output (findings, custody sidecars, git repo) goes to `GEOFF_WORK_DIR`, never back into evidence |
-| **LLM backend** | Ollama API at `OLLAMA_URL` | All three agents call the same endpoint; model profiles configured per-agent |
+| Capability | Claude Code | OpenClaw | **Geoff Triad** |
+|------------|-------------|----------|------------------|
+| Goal-directed planning | ✅ single agent | ✅ single agent | ✅ **dedicated planner agent (Manager)** |
+| Tool selection at runtime | ✅ | ✅ | ✅ Forensicator chooses per-step from 53 playbooks |
+| Observation → reasoning loop | ✅ | ✅ | ✅ Forensicator analyst note → Critic validation |
+| Self-critique | ⚠ via prompt | ⚠ via prompt | ✅ **dual parallel critics + batch holistic review** |
+| Autonomous error recovery | ⚠ retry only | ⚠ retry only | ✅ **`_attempt_heal` with fast-path + LLM diagnosis** |
+| Multi-agent specialization | ❌ | ❌ | ✅ **three distinct roles, three model profiles** |
+| Persistent memory | session context | session context | ✅ **git-backed per-case repo with custody sidecars** |
+| Reproducible audit trail | ❌ | partial | ✅ **per-step SHA-256 custody + commands log + audit_trail.jsonl** |
+| Pluggable LLM backend | Anthropic-only | Ollama-only | Ollama (cloud or local), profile-switchable |
+| Runs on SIFT Workstation | requires net + key | yes | yes (cloud or local) |
 
-#### Security Boundaries
+### Why a Custom Triad
 
-| Boundary | Enforcement type | Mechanism |
-|----------|-----------------|-----------|
-| Evidence path injection prevention | **Architectural (code-enforced)** | `src/geoff_routes.py` validates paths against shell metacharacter blocklist before any subprocess call |
-| API authentication | **Architectural (code-enforced)** | `GEOFF_API_KEY` bearer token on all HTTP endpoints; absent = local-only unauthenticated mode |
-| MCP network isolation | **Architectural (code-enforced)** | Server binds `127.0.0.1` only; no unauthenticated remote access |
-| Evidence non-modification | **Detective (custody, not preventive)** | SHA-256 custody sidecars record evidence state per-step; modification is detectable but not prevented at the OS level |
-| Chat response grounding | **Architectural (code-enforced)** | `_self_check_chat_response` regenerates responses that assert claims absent from case context |
+DFIR investigations require three properties that single-agent frameworks struggle to provide:
 
-#### Guardrail Types
+1. **Separation of concerns.** Tool execution (Forensicator), validation (Critic), and decision-making (Manager) come from different model temperaments. We use different models per role (`profiles.json`) — a coder model for tool selection, a general-reasoning model for critique, a planner model for decisions.
+2. **Holistic cross-step critique.** A per-step LLM check misses inconsistencies between findings. The Geoff Critic reviews all findings in one pass (`_batch_critic_review_all_playbooks`), which catches hallucinations a single-agent loop cannot.
+3. **Forensic chain of custody.** Every step commits to a per-case git repository with a SHA-256-of-evidence custody sidecar. This is a forensic non-negotiable; bolted onto a general-purpose agent framework it becomes fragile, but it's primary in Geoff.
 
-**Code-enforced (structural) guardrails** — a misbehaving model cannot bypass these:
-- Evidence path allowlist validation
-- Per-step git commit (append-only; steps cannot be deleted without detection)
-- SHA-256 custody sidecars (tamper-evident chain of custody)
-- `127.0.0.1`-only MCP bind
-- API key enforcement
-
-**Prompt-enforced guardrails** — depend on the model following instructions:
-- Forensicator: prohibited from speculating beyond tool output
-- Narrative report: required to cite evidence anchors; prohibited from asserting unverified claims
-- Chat: `Hypothesis → Evidence → Assessment` reasoning protocol
-- Attack chain synthesis: must write "Insufficient evidence to assess" for unsupported sections
-
-**Important disclosure:** Narrative report generation has no structural backstop equivalent to `_self_check_chat_response`. A model that ignores its system prompt could assert unsupported claims in the report. Chat responses have structural regeneration; narrative reports rely solely on prompt instructions. See `docs/ACCURACY_REPORT.md` for the full accuracy assessment.
-
----
-
-### Component Architecture Diagram
+### Component Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -216,6 +148,43 @@ User → Manager → Preflight Validation
 Sleuth Vol Reg Plaso Net Logs Mob REMnux Brow Mail macOS
   DNS  YARA  Hash  Cloud  EDR  AD  IoT  VM  Container
 ```
+
+#### Component Boundaries
+
+| Component | Boundary | Notes |
+|-----------|----------|-------|
+| **MCP Server** | `127.0.0.1:9999` only | Network is the auth layer; remote access via SSH tunnel |
+| **Evidence paths** | Path validation allowlist | Shell metacharacters rejected before any tool call (`src/geoff_routes.py`) |
+| **SIFT tool execution** | Subprocess calls with validated args | Tools read evidence; they do not write to the evidence directory |
+| **Case work directory** | Separate from evidence | All output (findings, custody sidecars, git repo) goes to `GEOFF_WORK_DIR`, never back into evidence |
+| **LLM backend** | Ollama API at `OLLAMA_URL` | All three agents call the same endpoint; model profiles configured per-agent |
+
+#### Security Boundaries
+
+| Boundary | Enforcement type | Mechanism |
+|----------|-----------------|-----------|
+| Evidence path injection prevention | **Architectural (code-enforced)** | `src/geoff_routes.py` validates paths against shell metacharacter blocklist before any subprocess call |
+| API authentication | **Architectural (code-enforced)** | `GEOFF_API_KEY` bearer token on all HTTP endpoints; absent = local-only unauthenticated mode |
+| MCP network isolation | **Architectural (code-enforced)** | Server binds `127.0.0.1` only; no unauthenticated remote access |
+| Evidence non-modification | **Detective (custody, not preventive)** | SHA-256 custody sidecars record evidence state per-step; modification is detectable but not prevented at the OS level |
+| Chat response grounding | **Architectural (code-enforced)** | `_self_check_chat_response` regenerates responses that assert claims absent from case context |
+
+#### Guardrails
+
+**Code-enforced (structural) guardrails** — a misbehaving model cannot bypass these:
+- Evidence path allowlist validation
+- Per-step git commit (append-only; steps cannot be deleted without detection)
+- SHA-256 custody sidecars (tamper-evident chain of custody)
+- `127.0.0.1`-only MCP bind
+- API key enforcement
+
+**Prompt-enforced guardrails** — depend on the model following instructions:
+- Forensicator: prohibited from speculating beyond tool output
+- Narrative report: required to cite evidence anchors; prohibited from asserting unverified claims
+- Chat: `Hypothesis → Evidence → Assessment` reasoning protocol
+- Attack chain synthesis: must write "Insufficient evidence to assess" for unsupported sections
+
+**Important disclosure:** Narrative report generation has no structural backstop equivalent to `_self_check_chat_response`. A model that ignores its system prompt could assert unsupported claims in the report. Chat responses have structural regeneration; narrative reports rely solely on prompt instructions. See `docs/ACCURACY_REPORT.md` for the full accuracy assessment.
 
 ### Key Architecture Concepts
 
@@ -458,246 +427,6 @@ Interactive matrix and heatmap views mapping all investigation findings to the M
 
 ---
 
-## Tool Coverage
-
-### Forensic Tools by Category
-
-| Category | Specialist | Tools | Functions |
-|----------|-----------|-------|----------|
-| **Disk** | sleuthkit | SleuthKit (mmls, fls, fsstat, icat, istat, ils, blkls, blkcat, blkcalc, blkstat, ifind, ffind, tsk_recover) | Partition detection, filesystem analysis, file extraction, deleted file recovery, block-level analysis |
-| **Recovery** | photorec | PhotoRec, Foremost, Scalpel | File carving from unallocated space, deleted file recovery, fragmented file recovery |
-| **Memory** | volatility | Volatility3 | pslist, netscan, malfind, dll_list, handles, mutantscan, apihooks, modscan, vadinfo, procdump, memmap, registry hive extraction, process dump |
-| **IOC Extraction** | strings | strings, bulk_extractor, floss | URL, IP, email, credit card, registry path extraction |
-| **Registry** | registry | RegRipper (rip.pl), Python-Registry | Hive parsing, UserAssist, ShellBags, USB, autoruns, services, mounted devices |
-| **Windows Analysis** | zimmerman | Eric Zimmerman Tools (EvtxECmd, MFTECmd, bstrings, ShellBagsExplorer, AmcacheParser, SRUMDB2) | Event log parsing, MFT timeline, string extraction, shellbag analysis, AmCache execution history, SRUM resource usage |
-| **VSS** | vss | vshadowmount, ewfmount | Shadow copy enumeration, VSS mounting, file extraction from shadow copies, cross-VSS timeline |
-| **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
-| **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
-| **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
-| **DNS** | dns | DNS_Specialist | DGA detection (Shannon entropy), DNS tunneling detection, PCAP DNS extraction |
-| **YARA** | yara | YARA_Specialist | 5 built-in rule sets (PE overlay, encoded PowerShell, ransomware, credential dumping, webshell), file/directory/memory/disk scanning |
-| **Hash** | hash | HASH_Specialist | SHA-256/MD5/SHA1 file hashing, directory hashing, NSRL lookup |
-| **DNS** | dns | DNS_Specialist | DGA detection (Shannon entropy), DNS tunneling detection, PCAP DNS extraction |
-| **YARA** | yara | YARA_Specialist | 5 built-in rule sets (PE overlay, encoded PowerShell, ransomware, credential dumping, webshell), file/directory/memory/disk scanning |
-| **Hash** | hash | HASH_Specialist | SHA-256/MD5/SHA1 file hashing, directory hashing, NSRL lookup |
-| **Mobile** | mobile | Pure-Python (plistlib, sqlite3), iLEAPP, ALEAPP | iOS backup analysis (23 functions), Android data extraction (20+ functions), jailbreak/root detection, WhatsApp/Telegram extraction, photo EXIF/GPS |
-| **Browser** | browser | SQLite3 (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
-| **Email** | email | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
-| **Jump Lists / LNK** | jumplist | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
-| **macOS** | macos | plistlib, log(1), fsevents_parser | Plist parsing, Unified Log, LaunchAgents/Daemons, FSEvents |
-| **Malware** | remnux | REMnux suite (die, exiftool, peframe, oledump, pdfid, upx, r2, clamav, ssdeep, hashdeep) | 15 tool wrappers, 5 specialist classes |
-| **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
-| **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
-| **Antivirus** | remnux | ClamAV | Signature-based malware detection |
-| **Steganography** | stego | Stegoveritas, steghide, zsteg, binwalk, Stegexpose | Steganography detection and extraction (image, audio, file-in-file) |
-| **Keylogger/Spyware** | keylogger | Registry analysis, process inspection, strings extraction | Keylogger/surveillanceware detection (hooked APIs, log files, suspicious processes) |
-| **Chat Aggregation** | chat_aggregator | SQLite3, plistlib, strings | IM chat recovery across WhatsApp, Telegram, Discord, Slack, Teams |
-
-### SANS SIFT Workstation Compatibility
-
-Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary runtime environment. The following SIFT tools are leveraged:
-
-| SIFT Tool | Geoff Specialist | Status |
-|-----------|----------------|--------|
-| SleuthKit | sleuthkit | ✅ Full coverage |
-| Volatility3 | volatility | ✅ Installed via pip (not in SIFT apt — see [Issue #628](https://github.com/teamdfir/sift/issues/628)) |
-| PhotoRec | photorec | ✅ Batch mode with foremost/scalpel fallback |
-| RegRipper | registry | ✅ Full coverage |
-| Plaso | plaso | ✅ Full coverage |
-| tshark | network | ✅ Non-interactive installer |
-| tcpflow | network | ✅ Full coverage |
-| vshadowmount | vss | ✅ Full coverage |
-| ewfmount | sleuthkit/vss | ✅ E01 mounting support |
-| bulk_extractor | strings | ✅ Full coverage |
-| hashdeep/ssdeep | remnux | ✅ Full coverage |
-| Zimmerman Tools | zimmerman | ✅ Auto-download via installer |
-| REMnux | remnux | ✅ Full coverage |
-| Scalpel/Foremost | photorec | ✅ Carving fallback chain |
-| ClamAV | remnux | ✅ Full coverage |
-| YARA | yara | ✅ Built-in rule sets + custom rules support |
-| dotnet | zimmerman | ✅ Required for Zimmerman DLLs |
-
-**Note:** Volatility3 was removed from the SIFT 2026.03.24 release due to installer crashes from community plugin git cloning ([teamdfir/sift#628](https://github.com/teamdfir/sift/issues/628)). Geoff's installer works around this by installing Volatility3 directly via pip.
-
-### Recently Added Tools (Mobile Forensics Expansion)
-
-The following mobile forensic capabilities were added in the latest update:
-
-| Tool/Method | Platform | Description |
-|-------------|----------|-------------|
-| `extract_ios_keychain` | iOS | Extract passwords, certificates from KeychainDomain.plist |
-| `extract_ios_health` | iOS | Parse HealthKit databases (HealthExport.db, Health.db) |
-| `extract_ios_notifications` | iOS | Extract notification history from SpringBoard |
-| `extract_ios_usage_stats` | iOS | Parse app usage statistics |
-| `extract_android_notifications` | Android | Parse notification_log from settings.db |
-| `extract_android_usage_stats` | Android | Parse /data/system/usagestats/ XML files |
-| `detect_jailbreak_indicators` | iOS | Detect Cydia, Zebra, Sileo, TrollStore, Dopamine |
-| `detect_root_indicators` | Android | Detect Magisk, SuperSU, busybox, su binary |
-| `run_ileapp` | iOS | iLEAPP integration wrapper |
-| `run_aleapp` | Android | ALEAPP integration wrapper |
-| `extract_whatsapp` | Both | WhatsApp message extraction (iOS & Android) |
-| `extract_telegram` | Both | Telegram message extraction (iOS & Android) |
-| `recover_deleted_sqlite_messages` | Both | WAL/journal recovery for deleted messages |
-| `extract_mobile_photo_exif` | Both | EXIF/GPS extraction from DCIM |
-
-**Total Mobile Functions:** 15 iOS + 13 Android + 4 cross-platform = 32 mobile forensic methods
-
----
-
-## Novel Contribution
-
-GEOFF is a new autonomous DFIR platform built on top of the SANS SIFT Workstation. This section documents what is novel versus what it builds on.
-
-### Built On (pre-existing)
-
-| Component | Source |
-|-----------|--------|
-| Forensic tools (mmls, fls, fsstat, icat, strings, vol.py, rip.pl, log2timeline, tshark, etc.) | SANS SIFT Workstation |
-| PhotoRec, Foremost, Scalpel | Pre-existing open source |
-| Volatility3 | Pre-existing open source |
-| Eric Zimmerman Tools (EvtxECmd, MFTECmd, etc.) | Pre-existing open source |
-| RegRipper | Pre-existing open source |
-| Plaso | Pre-existing open source |
-| REMnux malware analysis tools (die, exiftool, oledump, pdfid, etc.) | Pre-existing open source |
-| YARA | Pre-existing open source |
-| Flask, requests, Python stdlib | Pre-existing open source |
-
-### Novel Contribution (created during hackathon, April 15–June 15 2026)
-
-**1. Three-agent autonomous pipeline**
-A Manager / Forensicator / Critic architecture where no human is in the loop. The Manager plans and reviews the execution plan. The Forensicator interprets each tool result and assesses threat significance. The Critic validates every output for hallucinations and accuracy. All three agents communicate via structured JSON and are wired into a single deterministic pipeline — none of this exists in SIFT or any of the upstream tools.
-
-**2. Multi-Critic dual validation (GeoffCriticPool)**
-Two independent Critic instances run in parallel on each finding — using different model architectures (Qwen vs Gemma) for genuinely independent validation. Agreement patterns produce confidence levels (VERY_HIGH when both approve, LOW when both challenge). Disagreement triggers mandatory human review. This goes beyond single-critic validation and catches findings that one model alone would miss or wrongly approve.
-
-**3. Batch self-correction loop**
-The Forensicator runs all playbooks autonomously without per-step gates. After execution, the Batch Critic reviews all findings in one pass — enabling cross-step correlation that per-step validation misses — and flags hallucinations or replay candidates. The Manager then decides: approve, flag for review, or trigger incremental replay with adjusted parameters (only affected steps re-run). Chat responses go through an independent grounding check. This is novel — SIFT tools have no self-validation capability.
-
-**4. Evidence chain and Provenance DAG**
-Every completed step record carries an `evidence_chain` dict linking the finding to a specific artifact, evidence file, specialist tool, and Forensicator observation. The ProvenanceDAG tracks the full derivation graph: source evidence → extracted artifacts → derived findings. Every node in the graph records its source, transform, and output path, providing complete traceability from any finding back to the original evidence. No SIFT tool or prior DFIR framework produces this structured provenance automatically.
-
-**5. Device-centric investigation architecture**
-Evidence is grouped by device (not by file type), with each device getting its own playbook execution, behavioral analysis, and correlated findings. Cross-device lateral movement detection and a unified super-timeline are built from the per-device outputs. This device-centric model is not present in SIFT.
-
-**6. 53-playbook MITRE ATT&CK-aligned execution engine**
-PB-SIFT-000 through PB-SIFT-104 cover the full kill chain (initial access → execution → persistence → privilege escalation → credential access → lateral movement → exfiltration → impact) plus specialized playbooks for cloud, memory forensics, DNS, YARA, hash correlation, EDR, Active Directory, IoT, containers, and VM snapshots. PB-SIFT-000 is a mandatory triage meta-playbook that generates the execution plan dynamically based on evidence type, OS detection, and indicator hits. The Manager LLM reviews and approves the plan before execution begins. Adaptive Pass 2 can dynamically add follow-up playbooks when Pass 1 findings suggest additional investigation paths.
-
-**7. Adaptive Playbook Generation**
-The AdaptivePlaybook class composes investigation plans for findings that don't match any existing playbook. When the triage step discovers an indicator without a dedicated playbook, the system dynamically selects relevant specialist functions and builds a custom playbook on the fly. This means Geoff can investigate novel threat patterns without manual playbook authoring.
-
-**8. Confidence Calibration**
-The ConfidenceCalibrator tracks critic agreement patterns across an investigation and produces per-finding confidence scores. Findings validated by both critics get VERY_HIGH confidence; findings where critics disagree get MEDIUM and are flagged for review. This calibrated confidence is persisted and available in the final report, giving analysts a meaningful signal about which findings to trust most.
-
-**9. Behavioral analysis engine**
-Ten deterministic behavioral checks (process path/parent validation, spawn chain analysis, beaconing detection, timestomp detection, typosquatting, temp-directory executables, off-hours clustering, etc.) replace static signature matching. Each flag includes a severity rating, MITRE ATT&CK technique tag, and supporting evidence dict.
-
-**10. LLM-generated investigative narrative with artifact citations**
-The `NarrativeReportGenerator` produces an 8-section human-readable investigation report driven by the Manager LLM, including an attack chain synthesis that maps findings to MITRE techniques, assesses attribution, and requires every factual claim to cite a specific evidence anchor from the pipeline. No SIFT tool produces narrative output of this kind.
-
-**11. Git-backed reproducibility with per-step chain of custody**
-Every step execution is committed to a per-case git repository immediately on completion (not at the end of the run). Each commit includes a `custody/<step_key>.json` sidecar with the SHA-256 hash of the evidence file, a SHA-256 hash of the step parameters, a timestamp, and the tool version. The `ChainOfCustodyLog` uses Merkle hash-chained JSONL — each record includes the SHA-256 hash of the previous record, forming a tamper-evident chain. Evidence intake hashes all source files at case start, and pre/post verification detects any modification during processing. The findings.jsonl stream, validations/ directory, batch_critic_assessment.json, manager_decision.json, and audit_trail.jsonl collectively form a full forensic audit trail that can be independently verified or re-run.
-
-**12. IP Map visualization**
-Interactive VisJS network graph showing all IP connections discovered across an investigation. Internal/external/multicast nodes are color-coded. Edge labels show protocol and port. Accessible via GET `/reports/<case>/ip-map` or the report viewer.
-
-**13. MITRE ATT&CK matrix and heatmap**
-Interactive visualizations mapping all investigation findings to the MITRE ATT&CK framework. Accessible via GET `/reports/mitre-matrix` and GET `/reports/mitre-heatmap`.
-
----
-
-## Competition Compliance
-
-GEOFF is designed to meet three core requirements for autonomous forensic investigation:
-
-### Self-Correction
-
-The agent detects and resolves errors or inconsistencies in its own output **without human intervention**:
-
-**At step execution time (tool self-healing):** When a forensic tool call fails, the error is first classified deterministically — tool not found, permission denied, mount failure, SQLite lock — and fixed without LLM involvement. Missing tools are installed automatically (`sudo apt-get install -y sleuthkit`, `pip3 install volatility3`, etc.) and the step is retried. Only errors that cannot be resolved deterministically are escalated to the Healer (Critic in recovery mode) for LLM diagnosis. A token-bucket rate limiter prevents heal loops from flooding the LLM backend. This fast path handles the most common field errors — tools absent from a fresh SIFT image — without interrupting the investigation.
-
-**In `find_evil()`:** After all playbooks complete, the Batch Critic reviews every finding holistically. If quality is below `GOOD` or replay candidates are identified, the Manager LLM generates adjusted parameters and triggers incremental replay — re-running only the affected steps without repeating the full investigation. Steps flagged by the Critic as unverified are marked `needs_review: true` and the final report includes `steps_needs_review` and `steps_unverified` counts.
-
-**Dual-critic validation:** The GeoffCriticPool runs two independent critics in parallel. When they disagree, findings are flagged with MEDIUM confidence and `needs_review: true`. This catches errors that a single critic would miss.
-
-**In chat:** After each LLM response, a lightweight grounding check verifies the response does not assert claims absent from the available case context. If unsupported claims are detected, the response is regenerated once with an explicit correction prompt before being returned to the user.
-
-### Accuracy Validation
-
-All findings are traceable to specific artifacts, files, offsets, and log entries:
-
-- **Evidence chain:** Every completed `find_evil` step record includes an `evidence_chain` dict:
-  ```json
-  {
-    "artifact": "fls_list_files",
-    "evidence_file": "/evidence/disk.E01",
-    "tool": "sleuthkit.fls_list_files",
-    "playbook": "PB-SIFT-002",
-    "significance": "HIGH",
-    "analyst_note": "Output shows cmd.exe spawned from winword.exe at inode 54321",
-    "threat_indicators": ["cmd.exe spawned from Office process"]
-  }
-  ```
-- **Provenance DAG:** Every finding links back through a derivation graph to the original source evidence. `ProvenanceDAG.finding_provenance()` returns the full chain from source → extracted artifact → derived finding.
-- **Narrative citations:** The attack chain synthesis receives the top 30 CRITICAL/HIGH evidence anchors and is required to cite each factual claim as `(source: <tool> on <file>)`.
-- **Chat accuracy:** The GEOFF_PROMPT requires that every assertion names the source artifact, tool used, and specific observed value. Inferences use qualified language ("appears to", "consistent with").
-- **Confidence calibration:** Per-finding confidence scores (VERY_HIGH / HIGH / MEDIUM / LOW) based on critic agreement patterns give analysts a quantitative signal about finding reliability.
-
-### Analytical Reasoning
-
-Output is structured as an investigative narrative, not a raw execution log:
-
-- **GEOFF_PROMPT** enforces a Hypothesis → Evidence → Assessment structure for all chat responses. Claims without evidence citations are prohibited.
-- **Narrative reports** require investigative prose with explicit evidence citations in each section — Attack Narrative, Key Evidence, MITRE mapping, and Recommended Actions all anchor to named artifacts from the evidence chain.
-- **Attack chain synthesis** is prohibited from speculating beyond the verified evidence anchors; it must write "Insufficient evidence to assess" for sections not supported by the data.
-
----
-
-## The Critic Pipeline
-
-Geoff uses a **dual-critic + batch review** model — two critics run in parallel on each finding, then a batch review covers all findings holistically:
-
-```
-Forensicator runs ALL steps autonomously
-  (each step committed to git with custody sidecar)
-          ↓
-GeoffCriticPool validates in parallel
-  • Critic A + Critic B review each finding independently
-  • BOTH_APPROVE → VERY_HIGH confidence
-  • ONE_APPROVES → HIGH confidence
-  • ONE_CHALLENGES → MEDIUM confidence (flag for review)
-  • BOTH_CHALLENGE → LOW / likely false-positive
-          ↓
-Batch Critic reviews ALL findings in one pass
-  • Groups by status: completed / unverified / failed
-  • Focuses on HIGH/CRITICAL + unverified findings (up to 50)
-  • Checks for hallucinations, cross-step inconsistencies, replay needs
-  • Outputs: batch_critic_assessment.json
-          ↓
-ConfidenceCalibrator records agreement stats
-  • Per-finding confidence persisted to case_work_dir
-          ↓
-Manager reviews Critic assessment + confidence scores
-  • GOOD quality + no replay → APPROVE immediately
-  • Otherwise → LLM decides: approve / flag / replay
-  • Outputs: manager_decision.json
-          ↓ (if replay)
-Incremental replay — patch params, re-run affected steps only
-  (idempotency via findings_writer.is_completed(); new custody commits)
-          ↓
-Narrative report generated only if Manager approves
-```
-
-**Batch Critic checks for:**
-- Hallucinations (step claims not supported by tool output)
-- HIGH/CRITICAL findings that need replay with different params
-- Whether findings are sufficient to generate a report
-
-**Performance:** ~20 LLM calls per 12-playbook run vs. 60+ in per-step mode (~3x speedup). The Critic sees the full picture, enabling cross-step correlation that per-step validation misses.
-
-**If Critic LLM is unavailable:** defaults to `overall_quality: ACCEPTABLE`, `sufficient_for_report: true`, and Manager approves — execution continues rather than blocking. Steps remain tagged `needs_review: true` in the findings.
-
----
-
 ## Device Discovery
 
 GEOFF identifies devices and owners from evidence using a priority strategy:
@@ -750,6 +479,35 @@ This eliminates redundant invocations across playbooks — common when multiple 
 ### Parallel Execution
 
 Steps against different evidence items run concurrently via a thread pool. Set `GEOFF_MAX_WORKERS` (default: 3) to control concurrency. Each worker deep-copies its parameters to avoid shared mutable state; a per-`(module, function, evidence_item)` lock prevents the same call from running twice simultaneously across workers.
+
+---
+
+## The Critic Pipeline
+
+Geoff uses a **dual-critic + batch review** model — two critics run in parallel on each finding, then a batch review covers all findings holistically.
+
+**Per-finding validation (GeoffCriticPool):**
+- Critic A (glm-5.1:cloud) + Critic B (gemma4:31b-cloud) review each finding independently
+- BOTH_APPROVE → VERY_HIGH confidence
+- ONE_APPROVES → HIGH confidence
+- ONE_CHALLENGES → MEDIUM confidence (flag for review)
+- BOTH_CHALLENGE → LOW / likely false-positive
+
+**After all playbooks complete:**
+1. **Batch Critic** reviews ALL findings in one pass — groups by status (completed / unverified / failed), focuses on HIGH/CRITICAL + unverified findings (up to 50), checks for hallucinations and cross-step inconsistencies. Outputs `batch_critic_assessment.json`.
+2. **ConfidenceCalibrator** records critic agreement stats per-finding, persisted to the case directory.
+3. **Manager decision** — GOOD quality + no replay → APPROVE immediately; otherwise the Manager LLM decides: approve / flag / replay. Outputs `manager_decision.json`.
+4. **Incremental replay** (if triggered) — patch params, re-run affected steps only (idempotency via `findings_writer.is_completed()`; new custody commits).
+5. **Narrative report** generated only if Manager approves.
+
+**Batch Critic checks for:**
+- Hallucinations (step claims not supported by tool output)
+- HIGH/CRITICAL findings that need replay with different params
+- Whether findings are sufficient to generate a report
+
+**Performance:** ~20 LLM calls per 12-playbook run vs. 60+ in per-step mode (~3x speedup). The Critic sees the full picture, enabling cross-step correlation that per-step validation misses.
+
+**If Critic LLM is unavailable:** defaults to `overall_quality: ACCEPTABLE`, `sufficient_for_report: true`, and Manager approves — execution continues rather than blocking. Steps remain tagged `needs_review: true` in the findings.
 
 ---
 
@@ -842,6 +600,197 @@ Every investigation is fully reproducible:
 9. **Audit Trail** — `audit_trail.jsonl` records all state transitions
 10. **Behavioral Flags** — All anomaly detections stored with evidence and explanation
 11. **Confidence Scores** — Per-finding confidence from dual-critic agreement persisted in case directory
+
+---
+
+## Novel Contribution
+
+GEOFF is a new autonomous DFIR platform built on top of the SANS SIFT Workstation. This section documents what is novel versus what it builds on.
+
+### Built On (pre-existing)
+
+| Component | Source |
+|-----------|--------|
+| Forensic tools (mmls, fls, fsstat, icat, strings, vol.py, rip.pl, log2timeline, tshark, etc.) | SANS SIFT Workstation |
+| PhotoRec, Foremost, Scalpel | Pre-existing open source |
+| Volatility3 | Pre-existing open source |
+| Eric Zimmerman Tools (EvtxECmd, MFTECmd, etc.) | Pre-existing open source |
+| RegRipper | Pre-existing open source |
+| Plaso | Pre-existing open source |
+| REMnux malware analysis tools (die, exiftool, oledump, pdfid, etc.) | Pre-existing open source |
+| YARA | Pre-existing open source |
+| Flask, requests, Python stdlib | Pre-existing open source |
+
+### Novel (created during hackathon, April 15–June 15 2026)
+
+**1. Three-agent autonomous pipeline**
+A Manager / Forensicator / Critic architecture where no human is in the loop. The Manager plans and reviews the execution plan. The Forensicator interprets each tool result and assesses threat significance. The Critic validates every output for hallucinations and accuracy. All three agents communicate via structured JSON and are wired into a single deterministic pipeline — none of this exists in SIFT or any of the upstream tools.
+
+**2. Multi-Critic dual validation (GeoffCriticPool)**
+Two independent Critic instances run in parallel on each finding — using different model architectures (GLM vs Gemma) for genuinely independent validation. Agreement patterns produce confidence levels (VERY_HIGH when both approve, LOW when both challenge). Disagreement triggers mandatory human review. This goes beyond single-critic validation and catches findings that one model alone would miss or wrongly approve.
+
+**3. Batch self-correction loop**
+The Forensicator runs all playbooks autonomously without per-step gates. After execution, the Batch Critic reviews all findings in one pass — enabling cross-step correlation that per-step validation misses — and flags hallucinations or replay candidates. The Manager then decides: approve, flag for review, or trigger incremental replay with adjusted parameters (only affected steps re-run). Chat responses go through an independent grounding check. This is novel — SIFT tools have no self-validation capability.
+
+**4. Evidence chain and Provenance DAG**
+Every completed step record carries an `evidence_chain` dict linking the finding to a specific artifact, evidence file, specialist tool, and Forensicator observation. The ProvenanceDAG tracks the full derivation graph: source evidence → extracted artifacts → derived findings. Every node in the graph records its source, transform, and output path, providing complete traceability from any finding back to the original evidence. No SIFT tool or prior DFIR framework produces this structured provenance automatically.
+
+**5. Device-centric investigation architecture**
+Evidence is grouped by device (not by file type), with each device getting its own playbook execution, behavioral analysis, and correlated findings. Cross-device lateral movement detection and a unified super-timeline are built from the per-device outputs. This device-centric model is not present in SIFT.
+
+**6. 53-playbook MITRE ATT&CK-aligned execution engine**
+PB-SIFT-000 through PB-SIFT-104 cover the full kill chain (initial access → execution → persistence → privilege escalation → credential access → lateral movement → exfiltration → impact) plus specialized playbooks for cloud, memory forensics, DNS, YARA, hash correlation, EDR, Active Directory, IoT, containers, and VM snapshots. PB-SIFT-000 is a mandatory triage meta-playbook that generates the execution plan dynamically based on evidence type, OS detection, and indicator hits. The Manager LLM reviews and approves the plan before execution begins. Adaptive Pass 2 can dynamically add follow-up playbooks when Pass 1 findings suggest additional investigation paths.
+
+**7. Adaptive Playbook Generation**
+The AdaptivePlaybook class composes investigation plans for findings that don't match any existing playbook. When the triage step discovers an indicator without a dedicated playbook, the system dynamically selects relevant specialist functions and builds a custom playbook on the fly. This means Geoff can investigate novel threat patterns without manual playbook authoring.
+
+**8. Confidence Calibration**
+The ConfidenceCalibrator tracks critic agreement patterns across an investigation and produces per-finding confidence scores. Findings validated by both critics get VERY_HIGH confidence; findings where critics disagree get MEDIUM and are flagged for review. This calibrated confidence is persisted and available in the final report, giving analysts a meaningful signal about which findings to trust most.
+
+**9. Behavioral analysis engine**
+Ten deterministic behavioral checks (process path/parent validation, spawn chain analysis, beaconing detection, timestomp detection, typosquatting, temp-directory executables, off-hours clustering, etc.) replace static signature matching. Each flag includes a severity rating, MITRE ATT&CK technique tag, and supporting evidence dict.
+
+**10. LLM-generated investigative narrative with artifact citations**
+The `NarrativeReportGenerator` produces an 8-section human-readable investigation report driven by the Manager LLM, including an attack chain synthesis that maps findings to MITRE techniques, assesses attribution, and requires every factual claim to cite a specific evidence anchor from the pipeline. No SIFT tool produces narrative output of this kind.
+
+**11. Git-backed reproducibility with per-step chain of custody**
+Every step execution is committed to a per-case git repository immediately on completion (not at the end of the run). Each commit includes a `custody/<step_key>.json` sidecar with the SHA-256 hash of the evidence file, a SHA-256 hash of the step parameters, a timestamp, and the tool version. The `ChainOfCustodyLog` uses Merkle hash-chained JSONL — each record includes the SHA-256 hash of the previous record, forming a tamper-evident chain. Evidence intake hashes all source files at case start, and pre/post verification detects any modification during processing. The findings.jsonl stream, validations/ directory, batch_critic_assessment.json, manager_decision.json, and audit_trail.jsonl collectively form a full forensic audit trail that can be independently verified or re-run.
+
+**12. IP Map visualization**
+Interactive VisJS network graph showing all IP connections discovered across an investigation. Internal/external/multicast nodes are color-coded. Edge labels show protocol and port. Accessible via GET `/reports/<case>/ip-map` or the report viewer.
+
+**13. MITRE ATT&CK matrix and heatmap**
+Interactive visualizations mapping all investigation findings to the MITRE ATT&CK framework. Accessible via GET `/reports/mitre-matrix` and GET `/reports/mitre-heatmap`.
+
+---
+
+## Competition Compliance
+
+GEOFF is designed to meet three core requirements for autonomous forensic investigation:
+
+### Self-Correction
+
+The agent detects and resolves errors or inconsistencies in its own output **without human intervention**:
+
+**At step execution time (tool self-healing):** When a forensic tool call fails, the error is first classified deterministically — tool not found, permission denied, mount failure, SQLite lock — and fixed without LLM involvement. Missing tools are installed automatically (`sudo apt-get install -y sleuthkit`, `pip3 install volatility3`, etc.) and the step is retried. Only errors that cannot be resolved deterministically are escalated to the Healer (Critic in recovery mode) for LLM diagnosis. A token-bucket rate limiter prevents heal loops from flooding the LLM backend. This fast path handles the most common field errors — tools absent from a fresh SIFT image — without interrupting the investigation.
+
+**In `find_evil()`:** After all playbooks complete, the Batch Critic reviews every finding holistically. If quality is below `GOOD` or replay candidates are identified, the Manager LLM generates adjusted parameters and triggers incremental replay — re-running only the affected steps without repeating the full investigation. Steps flagged by the Critic as unverified are marked `needs_review: true` and the final report includes `steps_needs_review` and `steps_unverified` counts.
+
+**Dual-critic validation:** The GeoffCriticPool runs two independent critics in parallel. When they disagree, findings are flagged with MEDIUM confidence and `needs_review: true`. This catches errors that a single critic would miss.
+
+**In chat:** After each LLM response, a lightweight grounding check verifies the response does not assert claims absent from the available case context. If unsupported claims are detected, the response is regenerated once with an explicit correction prompt before being returned to the user.
+
+### Accuracy Validation
+
+All findings are traceable to specific artifacts, files, offsets, and log entries:
+
+- **Evidence chain:** Every completed `find_evil` step record includes an `evidence_chain` dict:
+  ```json
+  {
+    "artifact": "fls_list_files",
+    "evidence_file": "/evidence/disk.E01",
+    "tool": "sleuthkit.fls_list_files",
+    "playbook": "PB-SIFT-002",
+    "significance": "HIGH",
+    "analyst_note": "Output shows cmd.exe spawned from winword.exe at inode 54321",
+    "threat_indicators": ["cmd.exe spawned from Office process"]
+  }
+  ```
+- **Provenance DAG:** Every finding links back through a derivation graph to the original source evidence. `ProvenanceDAG.finding_provenance()` returns the full chain from source → extracted artifact → derived finding.
+- **Narrative citations:** The attack chain synthesis receives the top 30 CRITICAL/HIGH evidence anchors and is required to cite each factual claim as `(source: <tool> on <file>)`.
+- **Chat accuracy:** The GEOFF_PROMPT requires that every assertion names the source artifact, tool used, and specific observed value. Inferences use qualified language ("appears to", "consistent with").
+- **Confidence calibration:** Per-finding confidence scores (VERY_HIGH / HIGH / MEDIUM / LOW) based on critic agreement patterns give analysts a quantitative signal about finding reliability.
+
+### Analytical Reasoning
+
+Output is structured as an investigative narrative, not a raw execution log:
+
+- **GEOFF_PROMPT** enforces a Hypothesis → Evidence → Assessment structure for all chat responses. Claims without evidence citations are prohibited.
+- **Narrative reports** require investigative prose with explicit evidence citations in each section — Attack Narrative, Key Evidence, MITRE mapping, and Recommended Actions all anchor to named artifacts from the evidence chain.
+- **Attack chain synthesis** is prohibited from speculating beyond the verified evidence anchors; it must write "Insufficient evidence to assess" for sections not supported by the data.
+
+---
+
+## Tool Coverage
+
+### Forensic Tools by Category
+
+| Category | Specialist | Tools | Functions |
+|----------|-----------|-------|----------|
+| **Disk** | sleuthkit | SleuthKit (mmls, fls, fsstat, icat, istat, ils, blkls, blkcat, blkcalc, blkstat, ifind, ffind, tsk_recover) | Partition detection, filesystem analysis, file extraction, deleted file recovery, block-level analysis |
+| **Recovery** | photorec | PhotoRec, Foremost, Scalpel | File carving from unallocated space, deleted file recovery, fragmented file recovery |
+| **Memory** | volatility | Volatility3 | pslist, netscan, malfind, dll_list, handles, mutantscan, apihooks, modscan, vadinfo, procdump, memmap, registry hive extraction, process dump |
+| **IOC Extraction** | strings | strings, bulk_extractor, floss | URL, IP, email, credit card, registry path extraction |
+| **Registry** | registry | RegRipper (rip.pl), Python-Registry | Hive parsing, UserAssist, ShellBags, USB, autoruns, services, mounted devices |
+| **Windows Analysis** | zimmerman | Eric Zimmerman Tools (EvtxECmd, MFTECmd, bstrings, ShellBagsExplorer, AmcacheParser, SRUMDB2) | Event log parsing, MFT timeline, string extraction, shellbag analysis, AmCache execution history, SRUM resource usage |
+| **VSS** | vss | vshadowmount, ewfmount | Shadow copy enumeration, VSS mounting, file extraction from shadow copies, cross-VSS timeline |
+| **Timeline** | plaso | Plaso (log2timeline, psort, pinfo) | Super timeline creation, filtering, timezone-aware correlation |
+| **Event Logs** | logs | python-evtx, EvtxECmd (Zimmerman) | Windows Event Log parsing, syslog analysis |
+| **Network** | network | tshark, tcpflow | PCAP analysis, flow extraction, HTTP traffic reconstruction, DNS analysis |
+| **DNS** | dns | DNS_Specialist | DGA detection (Shannon entropy), DNS tunneling detection, PCAP DNS extraction |
+| **YARA** | yara | YARA_Specialist | 5 built-in rule sets (PE overlay, encoded PowerShell, ransomware, credential dumping, webshell), file/directory/memory/disk scanning |
+| **Hash** | hash | HASH_Specialist | SHA-256/MD5/SHA1 file hashing, directory hashing, NSRL lookup |
+| **Mobile** | mobile | Pure-Python (plistlib, sqlite3), iLEAPP, ALEAPP | iOS backup analysis (23 functions), Android data extraction (20+ functions), jailbreak/root detection, WhatsApp/Telegram extraction, photo EXIF/GPS |
+| **Browser** | browser | SQLite3 (Chrome/Firefox DBs) | History, cookies, downloads, saved password origins |
+| **Email** | email | readpst, mailbox, email (stdlib) | PST/OST conversion, mbox parsing, .eml header extraction |
+| **Jump Lists / LNK** | jumplist | LnkParse3, RegRipper | LNK file metadata, jump lists, RecentDocs, TypedPaths |
+| **macOS** | macos | plistlib, log(1), fsevents_parser | Plist parsing, Unified Log, LaunchAgents/Daemons, FSEvents |
+| **Malware** | remnux | REMnux suite (die, exiftool, peframe, oledump, pdfid, upx, r2, clamav, ssdeep, hashdeep) | 15 tool wrappers, 5 specialist classes |
+| **Hashing** | remnux | hashdeep, ssdeep | Fuzzy hashing, audit mode verification |
+| **Binary** | remnux | exiftool, upx, radare2, die, peframe | Metadata extraction, unpacking, disassembly, PE analysis |
+| **Antivirus** | remnux | ClamAV | Signature-based malware detection |
+| **Steganography** | stego | Stegoveritas, steghide, zsteg, binwalk, Stegexpose | Steganography detection and extraction (image, audio, file-in-file) |
+| **Keylogger/Spyware** | keylogger | Registry analysis, process inspection, strings extraction | Keylogger/surveillanceware detection (hooked APIs, log files, suspicious processes) |
+| **Chat Aggregation** | chat_aggregator | SQLite3, plistlib, strings | IM chat recovery across WhatsApp, Telegram, Discord, Slack, Teams |
+
+### SANS SIFT Workstation Compatibility
+
+Geoff targets the **SANS SIFT Workstation** (Ubuntu 22.04 Jammy) as its primary runtime environment. The following SIFT tools are leveraged:
+
+| SIFT Tool | Geoff Specialist | Status |
+|-----------|----------------|--------|
+| SleuthKit | sleuthkit | ✅ Full coverage |
+| Volatility3 | volatility | ✅ Installed via pip (not in SIFT apt — see [Issue #628](https://github.com/teamdfir/sift/issues/628)) |
+| PhotoRec | photorec | ✅ Batch mode with foremost/scalpel fallback |
+| RegRipper | registry | ✅ Full coverage |
+| Plaso | plaso | ✅ Full coverage |
+| tshark | network | ✅ Non-interactive installer |
+| tcpflow | network | ✅ Full coverage |
+| vshadowmount | vss | ✅ Full coverage |
+| ewfmount | sleuthkit/vss | ✅ E01 mounting support |
+| bulk_extractor | strings | ✅ Full coverage |
+| hashdeep/ssdeep | remnux | ✅ Full coverage |
+| Zimmerman Tools | zimmerman | ✅ Auto-download via installer |
+| REMnux | remnux | ✅ Full coverage |
+| Scalpel/Foremost | photorec | ✅ Carving fallback chain |
+| ClamAV | remnux | ✅ Full coverage |
+| YARA | yara | ✅ Built-in rule sets + custom rules support |
+| dotnet | zimmerman | ✅ Required for Zimmerman DLLs |
+
+**Note:** Volatility3 was removed from the SIFT 2026.03.24 release due to installer crashes from community plugin git cloning ([teamdfir/sift#628](https://github.com/teamdfir/sift/issues/628)). Geoff's installer works around this by installing Volatility3 directly via pip.
+
+### Recently Added Tools (Mobile Forensics Expansion)
+
+The following mobile forensic capabilities were added in the latest update:
+
+| Tool/Method | Platform | Description |
+|-------------|----------|-------------|
+| `extract_ios_keychain` | iOS | Extract passwords, certificates from KeychainDomain.plist |
+| `extract_ios_health` | iOS | Parse HealthKit databases (HealthExport.db, Health.db) |
+| `extract_ios_notifications` | iOS | Extract notification history from SpringBoard |
+| `extract_ios_usage_stats` | iOS | Parse app usage statistics |
+| `extract_android_notifications` | Android | Parse notification_log from settings.db |
+| `extract_android_usage_stats` | Android | Parse /data/system/usagestats/ XML files |
+| `detect_jailbreak_indicators` | iOS | Detect Cydia, Zebra, Sileo, TrollStore, Dopamine |
+| `detect_root_indicators` | Android | Detect Magisk, SuperSU, busybox, su binary |
+| `run_ileapp` | iOS | iLEAPP integration wrapper |
+| `run_aleapp` | Android | ALEAPP integration wrapper |
+| `extract_whatsapp` | Both | WhatsApp message extraction (iOS & Android) |
+| `extract_telegram` | Both | Telegram message extraction (iOS & Android) |
+| `recover_deleted_sqlite_messages` | Both | WAL/journal recovery for deleted messages |
+| `extract_mobile_photo_exif` | Both | EXIF/GPS extraction from DCIM |
+
+**Total Mobile Functions:** 15 iOS + 13 Android + 4 cross-platform = 32 mobile forensic methods
 
 ---
 
@@ -974,16 +923,6 @@ cd Geoff && chmod +x install.sh && ./install.sh --profile local
 
 Switch between cloud and local with a single flag:
 
-| Agent | Cloud Profile | Local Profile |
-|-------|--------------|---------------|
-| **Manager** | deepseek-v4-flash:cloud | deepseek-r1:32b |
-| **Forensicator** | qwen3-coder-next:cloud | qwen2.5-coder:14b |
-| **Critic** | glm-5.1:cloud | qwen2.5:14b |
-
-**Cloud profile authentication:** Run `ollama signin` once after installation. This stores your Ollama Cloud credentials in the local Ollama service. No `OLLAMA_API_KEY` environment variable is needed — the signed-in Ollama daemon proxies cloud model requests automatically.
-
-**Local profile:** Models run on your GPU. No internet required during investigation. Pull ~40GB on first run.
-
 ```bash
 # Switch at runtime
 GEOFF_PROFILE=cloud python3 src/geoff_integrated.py
@@ -995,6 +934,12 @@ GEOFF_PROFILE=local GEOFF_CRITIC_MODEL=qwen2.5:32b python3 src/geoff_integrated.
 # Second critic model (dual-critic pool)
 GEOFF_CRITIC2_MODEL=gemma4:31b-cloud python3 src/geoff_integrated.py
 ```
+
+**Cloud profile authentication:** Run `ollama signin` once after installation. This stores your Ollama Cloud credentials in the local Ollama service. No `OLLAMA_API_KEY` environment variable is needed — the signed-in Ollama daemon proxies cloud model requests automatically.
+
+**Local profile:** Models run on your GPU. No internet required during investigation. Pull ~40GB on first run.
+
+Full model table (all four agents, cloud and local) is in [Agents & Architecture](#agents--architecture).
 
 **Evidence and case directories:**
 
@@ -1044,7 +989,7 @@ export GEOFF_API_KEY="your-secret-key"
 export GEOFF_PORT=8080
 
 # Or override individual models
-export GEOFF_MANAGER_MODEL="deepseek-v4-flash:cloud"
+export GEOFF_MANAGER_MODEL="deepseek-v4-pro:cloud"
 export GEOFF_FORENSICATOR_MODEL="qwen3-coder-next:cloud"
 export GEOFF_CRITIC_MODEL="glm-5.1:cloud"
 export GEOFF_CRITIC2_MODEL="gemma4:31b-cloud"  # second critic (different architecture for independent validation)

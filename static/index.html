@@ -252,6 +252,48 @@
   .rpt-card .rt-meta { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
   .rpt-card .rt-meta span { font-family: var(--font-mono); font-size: 10.5px; color: var(--g-text-mute); }
   .rpt-card .rt-desc { font-size: 12.5px; color: var(--g-text-dim); margin-top: 6px; line-height: 1.45; }
+  .rpt-card .rt-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .rpt-card .rt-chat-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+    background: rgba(76,141,255,.1); border: 1px solid rgba(76,141,255,.25); border-radius: 5px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--g-blue-soft); cursor: pointer;
+    transition: all .14s; }
+  .rpt-card .rt-chat-btn:hover { background: rgba(76,141,255,.2); border-color: var(--g-blue); }
+  .rpt-card.rp-selected { border-color: var(--g-blue); box-shadow: 0 0 0 1px var(--g-blue); }
+
+  /* ---- report chat dock (Reports tab) ---- */
+  .rp-chat-dock { border-top: 2px solid var(--g-border-soft); background: rgba(8,13,24,.7);
+    display: flex; flex-direction: column; flex-shrink: 0; }
+  .rp-chat-dock.hidden { display: none; }
+  .rp-chat-head { display: flex; align-items: center; gap: 9px; padding: 9px 16px;
+    cursor: pointer; user-select: none; border-bottom: 1px solid var(--g-border-soft); }
+  .rp-chat-head:hover { background: rgba(76,141,255,.06); }
+  .rp-chat-head .rp-chat-label { font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    color: var(--g-text-dim); letter-spacing: .4px; flex: 1; }
+  .rp-chat-body { display: flex; flex-direction: column; }
+  .rp-chat-scroll { height: 200px; overflow-y: auto; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px; }
+  .rp-msg { font-size: 12.5px; line-height: 1.5; max-width: 94%; }
+  .rp-msg.user { align-self: flex-end; background: rgba(76,141,255,.14);
+    border: 1px solid rgba(76,141,255,.3); color: var(--g-text); padding: 7px 11px;
+    border-radius: 12px 12px 3px 12px; }
+  .rp-msg.geoff { align-self: flex-start; color: var(--g-text-dim); }
+  .rp-msg.geoff b { color: var(--g-blue-soft); font-family: var(--font-mono); font-weight: 600;
+    font-size: 11px; letter-spacing: .5px; display: block; margin-bottom: 2px; }
+  .rp-chat-in { display: flex; gap: 7px; padding: 8px 12px 12px;
+    border-top: 1px solid var(--g-border-soft); }
+  .rp-chat-in input { flex: 1; background: var(--g-surface-2); border: 1px solid var(--g-border);
+    border-radius: 999px; padding: 8px 13px; font-size: 12px; outline: none;
+    color: var(--g-text); transition: border-color .15s; }
+  .rp-chat-in input:focus { border-color: var(--g-blue); }
+  .rp-chat-in button { width: 34px; height: 34px; border-radius: 50%; background: var(--g-blue);
+    color: #fff; display: grid; place-items: center; flex-shrink: 0; font-size: 14px; }
+  .rp-chat-in button:hover { filter: brightness(1.15); }
+  .rp-chat-dock.collapsed .rp-chat-body { display: none; }
+  .dig-deeper-btn { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px;
+    padding: 5px 11px; background: rgba(76,141,255,.1); border: 1px solid rgba(76,141,255,.28);
+    border-radius: 5px; font-family: var(--font-mono); font-size: 11px; color: var(--g-blue-soft);
+    cursor: pointer; transition: all .14s; }
+  .dig-deeper-btn:hover { background: rgba(76,141,255,.22); border-color: var(--g-blue); }
 
   /* ---- live job banner ---- */
   .job-banner {
@@ -487,6 +529,23 @@
     </div>
     <div class="panel-body" id="rp-panel-body">
       <div class="case-empty">Loading reports…</div>
+    </div>
+    <!-- Report Chat Dock -->
+    <div class="rp-chat-dock hidden" id="rp-chat-dock">
+      <div class="rp-chat-head" onclick="toggleRpChat()">
+        <span class="rc-dot"></span>
+        <span class="rp-chat-label" id="rp-chat-label">GEOFF &mdash; Select a report to chat</span>
+        <span id="rp-chat-toggle" style="font-family:var(--font-mono);font-size:11px;color:var(--g-text-mute);">&#9660;</span>
+      </div>
+      <div class="rp-chat-body">
+        <div class="rp-chat-scroll" id="rp-chat-scroll">
+          <div class="rp-msg geoff"><b>GEOFF</b>Ask me anything about this investigation.</div>
+        </div>
+        <div class="rp-chat-in">
+          <input id="rp-chat-input" placeholder="Ask about this case…" autocomplete="off">
+          <button id="rp-chat-send" aria-label="Send">&#10148;</button>
+        </div>
+      </div>
     </div>
   </div>
 

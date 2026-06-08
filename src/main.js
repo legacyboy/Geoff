@@ -575,6 +575,104 @@
   }
 
   /* ============================================================
+     REPORTS CHAT DOCK
+     ============================================================ */
+  let activeRpCase = null; // { dir, name }
+
+  window.toggleRpChat = function() {
+    const dock = $('rp-chat-dock');
+    const tog  = $('rp-chat-toggle');
+    if (!dock) return;
+    dock.classList.toggle('collapsed');
+    if (tog) tog.textContent = dock.classList.contains('collapsed') ? '▲' : '▼';
+  };
+
+  function pushRpChat(who, html) {
+    const s = $('rp-chat-scroll');
+    if (!s) return;
+    const m = el('div', 'rp-msg ' + who, html);
+    s.appendChild(m);
+    s.scrollTop = s.scrollHeight;
+  }
+
+  function openRpChat(caseDir, caseName) {
+    activeRpCase = { dir: caseDir, name: caseName };
+    const dock  = $('rp-chat-dock');
+    const label = $('rp-chat-label');
+    if (dock)  { dock.classList.remove('hidden'); dock.classList.remove('collapsed'); }
+    if (label) label.textContent = 'GEOFF — ' + caseName;
+    const scroll = $('rp-chat-scroll');
+    if (scroll) {
+      scroll.innerHTML = '';
+      const m = el('div', 'rp-msg geoff', '<b>GEOFF</b>Ask me anything about ' + escHtml(caseName) + '.');
+      scroll.appendChild(m);
+    }
+    const input = $('rp-chat-input');
+    if (input) input.focus();
+  }
+
+  async function sendRpChat() {
+    if (!activeRpCase) return;
+    const input = $('rp-chat-input');
+    const txt = input && input.value.trim();
+    if (!txt) return;
+    pushRpChat('user', escHtml(txt));
+    if (input) input.value = '';
+    const thinkId = 'rpt-think-' + Date.now();
+    pushRpChat('geoff', `<b>GEOFF</b><span id="${thinkId}" style="color:var(--g-text-faint)">thinking…</span>`);
+    try {
+      const resp = await apiFetch('/reports/' + encodeURIComponent(activeRpCase.dir) + '/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: txt }),
+      });
+      const data = await resp.json();
+      const answer = data.answer || data.response || 'No response.';
+      const scroll = $('rp-chat-scroll');
+      const think = scroll && document.getElementById(thinkId);
+      if (think && think.parentElement) think.parentElement.remove();
+      let html = '<b>GEOFF</b>' + escHtml(answer);
+      if (data.suggest_playbook) {
+        const pb = escHtml(data.suggest_playbook);
+        html += `<div><button class="dig-deeper-btn" onclick="digDeeper('${pb}')">&#128269; Dig Deeper &mdash; re-run ${pb}</button></div>`;
+      }
+      pushRpChat('geoff', html);
+    } catch (e) {
+      const scroll = $('rp-chat-scroll');
+      const think = scroll && document.getElementById(thinkId);
+      if (think && think.parentElement) think.parentElement.remove();
+      pushRpChat('geoff', '<b>GEOFF</b>Error: ' + escHtml(e.message));
+    }
+  }
+
+  window.digDeeper = async function(playbookId) {
+    if (!activeRpCase) return;
+    pushRpChat('geoff', '<b>GEOFF</b>&#128269; Re-running ' + escHtml(playbookId) + ' on ' + escHtml(activeRpCase.name) + '…');
+    try {
+      const resp = await apiFetch('/replay-playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case: activeRpCase.dir, playbook_id: playbookId }),
+      });
+      const data = await resp.json();
+      if (data.status === 'complete' || data.status === 'ok') {
+        pushRpChat('geoff',
+          '<b>GEOFF</b>&#10003; ' + escHtml(playbookId) + ' complete &mdash; ' +
+          (data.new_findings || 0) + ' new finding(s) (' +
+          (data.critic_approved || 0) + ' approved, ' +
+          (data.critic_rejected || 0) + ' rejected). ' +
+          'Reload the report to see updated results.'
+        );
+      } else {
+        const msg = data.error || JSON.stringify(data);
+        pushRpChat('geoff', '<b>GEOFF</b>Playbook result: ' + escHtml(msg));
+      }
+    } catch (e) {
+      pushRpChat('geoff', '<b>GEOFF</b>Dig Deeper error: ' + escHtml(e.message));
+    }
+  };
+
+  /* ============================================================
      TAB SWITCHING — Evidence / Reports / Console
      ============================================================ */
   let activeTab = 'console';
@@ -752,6 +850,7 @@
         card.onclick = () => {
           const caseDir = encodeURIComponent(rpt.dir);
           window.open('/reports/narrative?case=' + caseDir, '_blank');
+          openRpChat(rpt.dir, rpt.case_name || rpt.dir);
         };
         body.appendChild(card);
       });
@@ -834,6 +933,11 @@
   const sendBtn = $("chat-send"); if (sendBtn) sendBtn.onclick = sendChat;
   const chatInput = $("chat-input");
   if (chatInput) chatInput.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+
+  // Reports chat dock
+  const rpSendBtn = $("rp-chat-send"); if (rpSendBtn) rpSendBtn.onclick = sendRpChat;
+  const rpChatInput = $("rp-chat-input");
+  if (rpChatInput) rpChatInput.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendRpChat(); } });
 
   // Tab switching
   const navConsole = $("nav-console");
