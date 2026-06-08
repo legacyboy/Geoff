@@ -1696,116 +1696,277 @@ def _inject_section_links(text):
     return ''.join(result)
 
 
+def _search_case_json(question, report_json, narrative_json=None, max_chars=3000):
+    """Keyword search over case JSON data to surface evidence relevant to a question.
+
+    Returns a formatted text block (up to max_chars) of matching findings,
+    indicators, user narratives, and report sections, or empty string if nothing matches.
+    """
+    q_lower = question.lower()
+
+    KEYWORD_GROUPS = {
+        'email':       ['email', 'phish', 'mail', 'smtp', 'imap', 'inbox', 'spoof', 'recipient', 'sender', 'attachment', 'message'],
+        'process':     ['process', 'proc', 'pid', 'executable', 'binary', 'running', 'task', 'program', 'command', 'spawn'],
+        'registry':    ['registry', 'regedit', 'hklm', 'hkcu', 'run key', 'runkey', 'hive', 'reg'],
+        'persistence': ['persist', 'startup', 'autorun', 'cron', 'service', 'scheduled', 'boot', 'init'],
+        'network':     ['network', 'connect', 'ip address', 'dns', 'socket', 'port', 'traffic', 'remote', 'c2', 'beacon', 'lateral'],
+        'browser':     ['browser', 'firefox', 'chrome', 'edge', 'web', 'url', 'download', 'history'],
+        'usb':         ['usb', 'removable', 'external drive', 'media', 'mount'],
+        'delete':      ['delete', 'delet', 'remov', 'recycle', 'wipe', 'shred'],
+        'user':        ['user', 'account', 'login', 'logon', 'auth', 'password', 'credential', 'session'],
+        'file':        ['file', 'document', 'folder', 'directory', 'inode', 'created', 'modified', 'path'],
+        'exfil':       ['exfil', 'data out', 'transfer', 'upload', 'leak', 'copy'],
+        'malware':     ['malware', 'virus', 'trojan', 'ransomware', 'backdoor', 'rootkit', 'exploit', 'inject'],
+    }
+
+    active_groups = {g for g, terms in KEYWORD_GROUPS.items() if any(t in q_lower for t in terms)}
+
+    # Names mentioned in question (short stopwords filtered out)
+    _stopwords = {
+        'the', 'who', 'what', 'when', 'how', 'did', 'was', 'were', 'has', 'have',
+        'had', 'get', 'got', 'for', 'any', 'all', 'can', 'are', 'this', 'that',
+        'from', 'with', 'about', 'send', 'data', 'out', 'run', 'running', 'make',
+        'made', 'find', 'found', 'show', 'tell', 'give', 'their', 'them', 'they',
+        'email', 'emails', 'files', 'system', 'case', 'just', 'some', 'also',
+    }
+    names_in_q = {
+        w.strip('?,.:!()').lower()
+        for w in question.split()
+        if len(w.strip('?,.:!()')) >= 3
+        and w.strip('?,.:!()').isalpha()
+        and w.strip('?,.:!()').lower() not in _stopwords
+    }
+
+    def _relevant(text):
+        tl = str(text).lower()
+        if any(any(t in tl for t in KEYWORD_GROUPS[g]) for g in active_groups):
+            return True
+        return any(n in tl for n in names_in_q)
+
+    matches = []  # list of (priority, text_snippet)
+
+    # --- findings_detail: search headline + result summary ---
+    for finding in (report_json.get('findings_detail') or []):
+        headline = finding.get('headline') or finding.get('summary') or ''
+        if not headline or not _relevant(headline):
+            continue
+        detail = ''
+        result = finding.get('result')
+        if isinstance(result, dict):
+            for key in ('summary', 'narrative', 'description', 'detail', 'output', 'raw_output'):
+                val = result.get(key, '')
+                if isinstance(val, str) and len(val) > 20:
+                    detail = val[:400]
+                    break
+        snippet = headline if not detail else f"{headline}\n  Detail: {detail}"
+        matches.append((2, f"[finding] {snippet}"))
+
+    # --- pass2_findings_detail ---
+    for finding in (report_json.get('pass2_findings_detail') or []):
+        headline = finding.get('headline') or finding.get('summary') or ''
+        if headline and _relevant(headline):
+            matches.append((2, f"[pass2_finding] {headline}"))
+
+    # --- indicator_hits ---
+    for hit in (report_json.get('indicator_hits') or []):
+        hit_text = json.dumps(hit)[:400]
+        if _relevant(hit_text):
+            matches.append((2, f"[indicator] {hit_text}"))
+
+    # --- behavioral_flags ---
+    for flag in (report_json.get('behavioral_flags') or []):
+        flag_text = json.dumps(flag)[:300]
+        if _relevant(flag_text):
+            matches.append((2, f"[behavioral_flag] {flag_text}"))
+
+    # --- attack_chain ---
+    ac = report_json.get('attack_chain')
+    if ac:
+        ac_text = json.dumps(ac) if not isinstance(ac, str) else ac
+        if _relevant(ac_text):
+            matches.append((1, f"[attack_chain] {ac_text[:600]}"))
+
+    # --- communications_analysis ---
+    comms = report_json.get('communications_analysis')
+    if comms:
+        comms_text = json.dumps(comms)
+        if _relevant(comms_text):
+            matches.append((1, f"[communications] {comms_text[:600]}"))
+
+    # --- connection_map ---
+    conn = report_json.get('connection_map')
+    if conn:
+        conn_text = json.dumps(conn)
+        if _relevant(conn_text):
+            matches.append((1, f"[connection_map] {conn_text[:500]}"))
+
+    # --- mitre_techniques ---
+    for mt in (report_json.get('mitre_techniques') or []):
+        mt_text = json.dumps(mt)
+        if _relevant(mt_text):
+            matches.append((2, f"[mitre] {mt_text[:300]}"))
+
+    # --- user_activity_summary ---
+    uas = report_json.get('user_activity_summary')
+    if uas:
+        uas_text = json.dumps(uas) if not isinstance(uas, str) else uas
+        if _relevant(uas_text):
+            matches.append((1, f"[user_activity] {uas_text[:500]}"))
+
+    # --- correlated_users ---
+    cu = report_json.get('correlated_users')
+    if cu:
+        cu_text = json.dumps(cu)
+        if _relevant(cu_text):
+            matches.append((1, f"[correlated_users] {cu_text[:400]}"))
+
+    # --- narrative_report.json extra sections ---
+    if narrative_json:
+        # user_narratives — per-user forensic prose (very rich)
+        user_narratives = narrative_json.get('user_narratives') or {}
+        if isinstance(user_narratives, dict):
+            for uname, utext in user_narratives.items():
+                utext = str(utext)
+                if _relevant(utext) or uname.lower() in names_in_q:
+                    matches.append((1, f"[user_narrative:{uname}] {utext[:800]}"))
+        elif isinstance(user_narratives, str) and _relevant(user_narratives):
+            matches.append((1, f"[user_narratives] {user_narratives[:800]}"))
+
+        # full_written_report — search paragraph by paragraph
+        fwr = narrative_json.get('full_written_report') or ''
+        if fwr:
+            for para in (p.strip() for p in fwr.split('\n\n') if p.strip()):
+                if len(para) > 50 and _relevant(para):
+                    matches.append((3, f"[report_section] {para[:500]}"))
+
+        # iocs
+        iocs = narrative_json.get('iocs') or {}
+        if iocs:
+            iocs_text = json.dumps(iocs) if not isinstance(iocs, str) else iocs
+            if _relevant(iocs_text):
+                matches.append((1, f"[iocs] {iocs_text[:400]}"))
+
+    if not matches:
+        return ""
+
+    matches.sort(key=lambda x: -x[0])
+    parts = []
+    total = 0
+    for _, text in matches:
+        if total + len(text) > max_chars:
+            remaining = max_chars - total
+            if remaining > 100:
+                parts.append(text[:remaining] + "...(truncated)")
+            break
+        parts.append(text)
+        total += len(text)
+
+    return '\n\n'.join(parts)
+
+
 def report_chat(case_dir):
-    """Answer questions about the investigation report."""
+    """Answer questions about the investigation report using conversational RAG."""
     data = request.get_json(force=True)
     question = (data.get('question') or '').strip()
     history = data.get('history') or []
-    report_json = data.get('report_json') or {}
 
     if not question:
         return jsonify({'answer': 'No question provided.'}), 400
 
     safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '', case_dir)
 
-    # If report_json is empty, try loading from the case directory
-    if not report_json or (isinstance(report_json, dict) and not report_json):
-        if safe_dir:
-            case_path = Path(CASES_WORK_DIR) / safe_dir
-            if case_path.is_dir():
-                try:
-                    case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
-                    report_file = case_path / "reports" / "find_evil_report.json"
-                    if report_file.exists():
-                        report_json = json.loads(report_file.read_text(encoding='utf-8'))
-                except (ValueError, OSError, json.JSONDecodeError):
-                    pass
+    # --- Load find_evil_report.json (searchable case data) ---
+    report_json = data.get('report_json') or {}
+    if not report_json and safe_dir:
+        case_path = Path(CASES_WORK_DIR) / safe_dir
+        if case_path.is_dir():
+            try:
+                case_path.resolve().relative_to(Path(CASES_WORK_DIR).resolve())
+                report_file = case_path / "reports" / "find_evil_report.json"
+                if report_file.exists():
+                    report_json = json.loads(report_file.read_text(encoding='utf-8'))
+            except (ValueError, OSError, json.JSONDecodeError):
+                pass
 
-    # Try to load narrative report for rich conversational context
+    # --- Load narrative_report.json (primary conversational anchor) ---
+    narrative_json = {}
     narrative_text = ""
     if safe_dir:
         case_path = Path(CASES_WORK_DIR) / safe_dir
         if case_path.is_dir():
-            for narrative_name in ("narrative_report.json", "narrative_report.md"):
-                nr_path = case_path / "reports" / narrative_name
-                if nr_path.exists():
+            nr_path = case_path / "reports" / "narrative_report.json"
+            if nr_path.exists():
+                try:
+                    narrative_json = json.loads(nr_path.read_text(encoding='utf-8', errors='replace'))
+                    parts = []
+                    for section in ('email_phishing', 'devices_and_users', 'executive_summary',
+                                    'findings', 'attack_chain', 'conclusion'):
+                        val = narrative_json.get(section, '')
+                        if val:
+                            parts.append(val if isinstance(val, str) else json.dumps(val)[:2000])
+                    narrative_text = '\n\n'.join(parts)[:8000]
+                except (ValueError, OSError, json.JSONDecodeError):
+                    pass
+            if not narrative_text:
+                nr_md = case_path / "reports" / "narrative_report.md"
+                if nr_md.exists():
                     try:
-                        text = nr_path.read_text(encoding='utf-8', errors='replace')
-                        if narrative_name.endswith('.json'):
-                            nr_data = json.loads(text)
-                            # Build flat text from key sections — phishing/email first so LLM sees evidence before summary
-                            parts = []
-                            for section in ('email_phishing', 'devices_and_users', 'executive_summary',
-                                           'findings', 'conclusion', 'significant_events'):
-                                val = nr_data.get(section, '')
-                                if val:
-                                    parts.append(val if isinstance(val, str) else json.dumps(val)[:2000])
-                            narrative_text = '\n\n'.join(parts)[:8000]
-                        else:
-                            narrative_text = text[:8000]
-                        break
-                    except (ValueError, OSError, json.JSONDecodeError):
+                        narrative_text = nr_md.read_text(encoding='utf-8', errors='replace')[:8000]
+                    except OSError:
                         pass
 
-    # Also load any indicator hits and findings for richer context
-    extra_context = []
-    if safe_dir:
-        case_path = Path(CASES_WORK_DIR) / safe_dir
-        if case_path.is_dir():
-            for fname in ('findings.jsonl', 'audit_trail.jsonl'):
-                fp = case_path / fname
-                if fp.exists():
-                    try:
-                        lines = fp.read_text(encoding='utf-8', errors='replace').splitlines()
-                        sample = [json.loads(l) for l in lines[:80] if l.strip()]
-                        extra_context.append(f"\n{fname.upper()}:\n" + json.dumps(sample, indent=1)[:3000])
-                    except Exception:
-                        pass
+    # --- Pass 2: targeted keyword search over case JSON ---
+    search_results = _search_case_json(
+        question, report_json,
+        narrative_json=narrative_json if narrative_json else None,
+        max_chars=3000
+    )
 
-    # Build system context — report data as background reference only
-    summary = json.dumps(report_json, indent=2)[:6000]
-    extra = ''.join(extra_context)[:3000]
-
-    # Extract quick facts so the LLM can't miss who/what is involved
+    # --- Quick facts block (always included) ---
     quick_facts = []
     quick_facts.append(f"Case: {report_json.get('title', 'Unknown')}")
     quick_facts.append(f"Classification: {report_json.get('classification', 'Unknown')}")
     quick_facts.append(f"Severity: {report_json.get('severity', 'Unknown')}")
     quick_facts.append(f"OS: {report_json.get('os_type', 'Unknown')}")
-    # Device owners and hostnames
     for dev_id, dev in (report_json.get('device_map') or {}).items():
         owner = dev.get('owner') or 'unknown'
         hostname = dev.get('hostname') or 'unknown'
         dev_type = dev.get('device_type') or 'unknown'
         quick_facts.append(f"Device '{dev_id}': owner={owner}, hostname={hostname}, type={dev_type}")
-    # User map
     for user_id, user_info in (report_json.get('user_map') or {}).items():
         quick_facts.append(f"User: {user_id} -> {json.dumps(user_info)[:120]}")
-    # Key findings headlines
     for f in (report_json.get('findings_detail') or [])[:10]:
         h = f.get('headline') or f.get('summary') or ''
         if h:
             quick_facts.append(f"Finding: {h[:120]}")
-    facts_block = '\n'.join(quick_facts[:20])
+    facts_block = '\n'.join(quick_facts[:25])
 
-    # Chat-specific system prompt (replaces GEOFF_PROMPT for conversational use)
+    # --- Assemble two-pass context ---
+    narrative_block = f"NARRATIVE REPORT (primary source):\n{narrative_text}\n\n" if narrative_text else ""
+    search_block = f"SEARCH RESULTS (targeted evidence for this question):\n{search_results}\n\n" if search_results else ""
+    fallback_block = f"FULL REPORT DATA:\n{json.dumps(report_json, indent=2)[:5000]}\n\n" if not narrative_text else ""
+    case_context = f"{narrative_block}{search_block}{fallback_block}CASE FACTS:\n{facts_block}"
+
+    # --- System prompt ---
     chat_system_prompt = (
         "You are Geoff, a forensic analyst answering questions about an investigation. "
-        "Answer in plain conversational English. Single paragraph. No formatting.\n\n"
+        "Answer in plain conversational English. One paragraph. No bullet points, no markdown, no headers.\n\n"
+        "CONTEXT HIERARCHY:\n"
+        "1. NARRATIVE REPORT is the primary source — comprehensive analysis written after investigation.\n"
+        "2. SEARCH RESULTS contain targeted evidence retrieved specifically for this question — "
+        "if SEARCH RESULTS contradict or extend the NARRATIVE, trust the SEARCH RESULTS.\n"
+        "3. CASE FACTS are ground-truth metadata (device owners, classifications, user list).\n\n"
         "RULES:\n"
-        "- Look at the EMAIL PHISHING section first for phishing/social-engineering questions. "
-        "The 'To' fields in those emails tell you exactly who received them.\n"
-        "- 'Who' questions: Name the person from device owners, users list, or email recipients.\n"
-        "- Never say 'no evidence' without checking all sections first. "
-        "State what you found, then what's missing.\n"
-        "- No bullet points, no markdown, no Hypothesis/Evidence/Assessment format.\n"
+        "- For phishing/email questions: check SEARCH RESULTS for email details and named recipients. "
+        "The 'To' fields in flagged emails tell you exactly who received them. Name them.\n"
+        "- For 'who' questions: name the specific person from device owners, user map, or email To/From fields.\n"
+        "- For 'what processes/files/activity' questions: look in SEARCH RESULTS findings_detail sections.\n"
+        "- If data is genuinely absent from all sources, say what IS known and name what playbook could find more.\n"
+        "- Never say 'no evidence' if SEARCH RESULTS show any relevant hits — cite what you found.\n"
+        "- Never hedge with 'it appears' or 'it seems' when the data directly says something.\n"
     )
-    # Case data — narrative is the primary source when available, raw JSON only as fallback
-    narrative_block = f"NARRATIVE REPORT (primary source):\n{narrative_text}\n\n" if narrative_text else ""
-    json_block = f"\n\nFULL REPORT DATA:\n{summary}\n{extra}" if not narrative_text else ""
-    case_context = f"{narrative_block}CASE FACTS:\n{facts_block}{json_block}"
 
-    # Build user prompt with conversation history (last 6 turns)
+    # --- Build conversation history ---
     history_lines = []
     for turn in (history or [])[-6:]:
         role = (turn.get('role') or '').strip()
@@ -1816,7 +1977,7 @@ def report_chat(case_dir):
             history_lines.append(f"Geoff: {content}")
     user_prompt = ('\n'.join(history_lines) + f"\nAnalyst: {question}") if history_lines else question
 
-    # Try LLM, fall back to data lookup
+    # --- Call LLM ---
     try:
         answer = call_llm(user_prompt, case_context, agent_type="manager", system_prompt=chat_system_prompt)
         if not answer:
@@ -1824,9 +1985,10 @@ def report_chat(case_dir):
     except Exception:
         answer = _fallback_answer(question, report_json)
 
-    # Suggest a relevant playbook for dig-deeper if the question hints at a specific area
+    # --- Playbook suggestions ---
     suggest_playbook = None
     q_lower = question.lower()
+    a_lower = answer.lower()
     _playbook_hints = [
         ('PB-SIFT-005', ['shell history', 'bash history', 'shell command', 'terminal']),
         ('PB-SIFT-004', ['browser', 'firefox', 'chrome', 'web history', 'download']),
@@ -1844,6 +2006,14 @@ def report_chat(case_dir):
         if any(kw in q_lower for kw in keywords):
             suggest_playbook = pb_id
             break
+    # Also suggest a playbook when the answer says data is missing/not collected
+    if not suggest_playbook:
+        _missing_signals = ['not collected', 'not available', 'no data', 'not run', 'playbook', 'would require', 'deeper analysis']
+        if any(sig in a_lower for sig in _missing_signals):
+            for pb_id, keywords in _playbook_hints:
+                if any(kw in a_lower for kw in keywords):
+                    suggest_playbook = pb_id
+                    break
 
     result = {'answer': answer, 'answer_html': _inject_section_links(answer)}
     if suggest_playbook:
