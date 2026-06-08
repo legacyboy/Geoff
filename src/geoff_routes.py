@@ -1733,10 +1733,10 @@ def report_chat(case_dir):
                         text = nr_path.read_text(encoding='utf-8', errors='replace')
                         if narrative_name.endswith('.json'):
                             nr_data = json.loads(text)
-                            # Build flat text from key sections
+                            # Build flat text from key sections — phishing/email first so LLM sees evidence before summary
                             parts = []
-                            for section in ('executive_summary', 'devices_and_users', 'email_phishing',
-                                           'findings', 'significant_events', 'failed_steps'):
+                            for section in ('email_phishing', 'devices_and_users', 'executive_summary',
+                                           'findings', 'conclusion', 'significant_events'):
                                 val = nr_data.get(section, '')
                                 if val:
                                     parts.append(val if isinstance(val, str) else json.dumps(val)[:2000])
@@ -1793,9 +1793,11 @@ def report_chat(case_dir):
         "You are Geoff, a forensic analyst answering questions about an investigation. "
         "Answer in plain conversational English. Single paragraph. No formatting.\n\n"
         "RULES:\n"
-        "- Answer from the NARRATIVE REPORT first — it contains the human-readable findings.\n"
-        "- 'Who' questions: Name the device owner and any users from the report.\n"
-        "- Never say 'cannot determine' — state what the report DOES say, then what it doesn't cover.\n"
+        "- Look at the EMAIL PHISHING section first for phishing/social-engineering questions. "
+        "The 'To' fields in those emails tell you exactly who received them.\n"
+        "- 'Who' questions: Name the person from device owners, users list, or email recipients.\n"
+        "- Never say 'no evidence' without checking all sections first. "
+        "State what you found, then what's missing.\n"
         "- No bullet points, no markdown, no Hypothesis/Evidence/Assessment format.\n"
     )
     # Case data (narrative first, then facts, then raw JSON as fallback)
