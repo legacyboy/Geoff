@@ -66,7 +66,7 @@ ollama signin
 **Cloud profile models** (used automatically when `GEOFF_PROFILE=cloud`):
 - Manager: `deepseek-v4-flash:cloud`
 - Forensicator: `qwen3-coder-next:cloud`
-- Critic: `qwen3.5:cloud`
+- Critic: `glm-5.1:cloud`
 
 **Local profile (no internet required during investigation, ~40 GB models):**
 

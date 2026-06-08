@@ -308,7 +308,7 @@ class AIEvidenceClassifier:
         registry_names = {'ntuser.dat', 'system', 'software', 'security', 'sam', 'amcache.hve',
                           'usrclass.dat', 'default', 'system.sav', 'software.sav'}
         mobile_indicators = {'info.plist', 'manifest.db', 'manifest.plist'}
-        mobile_ext = {'.tar.gz', '.zip', '.ab'}  # Android/iOS backup archives
+        mobile_ext = {'.ab'}  # Only .ab (Android backup) is unambiguously mobile
         mobile_name_indicators = {'android', 'ios', 'iphone', 'ipad', 'pixel', 'galaxy', 'samsung', 'mobile', 'backup'}
         syslog_names = {'syslog', 'auth.log', 'kern.log', 'messages', 'secure', 'auth.log.1', 'daemon.log'}
         
@@ -446,8 +446,9 @@ class AIEvidenceClassifier:
         if any(kw in header_lower for kw in ['windows nt registry', 'registry file']):
             return "registry_hives"
         
-        # Archives (could be mobile backup)
-        if any(kw in header_lower for kw in ['zip archive', 'tar archive', 'gzip compressed', 'compressed data', 'ios backup', 'itunes backup']):
+        # Only explicit iOS/iTunes backup markers → mobile_backups
+        # Generic archives (zip/tar/gzip) are ambiguous — fall through to LLM
+        if any(kw in header_lower for kw in ['ios backup', 'itunes backup']):
             return "mobile_backups"
         
         # Logs

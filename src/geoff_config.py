@@ -476,6 +476,8 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-038": "Web Shell Indicators",
     "PB-SIFT-039": "Insider Threat Behavioral Analysis",
     "PB-SIFT-040": "IoT Device Forensics",
+    "PB-SIFT-041": "Orphan User Artifact Analysis",
+    "PB-SIFT-042": "Stray Windows User Artifacts",
     "PB-SIFT-060": "Communications Analysis",
     "PB-SIFT-061": "Steganography Detection",
     "PB-SIFT-062": "Keylogger/Spyware Analysis",
@@ -1205,6 +1207,44 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-062": {  # Keylogger/Spyware Analysis — KeyloggerAnalyzer reads findings
         # No direct tool steps: reads from memory/process/file findings.
         # Runs after memory analysis (PB-SIFT-027) and process playbooks.
+    },
+    "PB-SIFT-041": {  # Orphan User Artifact Analysis — stray Linux/Unix home dir files
+        "other_files": [
+            # Shell history (.bash_history, .zsh_history, .sh_history)
+            ("linux_user", "analyze_shell_history",     {"history_file": "{file}"}),
+            # Shell config (.bashrc, .bash_profile, .profile, .zshrc)
+            ("linux_user", "analyze_shell_config",      {"config_file": "{file}"}),
+            # SSH artifacts (known_hosts, authorized_keys, config, identity keys)
+            ("linux_user", "analyze_ssh_artifacts",     {"ssh_file": "{file}"}),
+            # Legacy Firefox 2-era flat files (history.dat, cookies.txt, signons2.txt, bookmarks.html, formhistory.dat)
+            ("linux_user", "analyze_legacy_firefox",    {"profile_file": "{file}"}),
+            # Desktop environment artifacts (.gnome2/, .gnome/, .gconf/, .mc/)
+            ("linux_user", "analyze_desktop_artifacts", {"artifact_file": "{file}"}),
+            # Editor artifacts (.emacs, .viminfo, .vimrc, .nano_history)
+            ("linux_user", "analyze_editor_artifacts",  {"artifact_file": "{file}"}),
+            # Misc user config (.dmrc, .lesshst, .xsession-errors, .gtkrc*)
+            ("linux_user", "analyze_misc_user_config",  {"config_file": "{file}"}),
+            # Aggregate all findings with indicators
+            ("linux_user", "aggregate_findings",        {"output_path": "{output_dir}/PB-SIFT-041.json"}),
+        ],
+    },
+    "PB-SIFT-042": {  # Stray Windows User Artifacts — Windows user profile files outside a disk image
+        "other_files": [
+            # NTUSER.DAT registry hive
+            ("windows_user", "analyze_ntuser_dat",      {"hive_path": "{file}"}),
+            # Prefetch files (.pf)
+            ("windows_user", "analyze_prefetch",        {"prefetch_file": "{file}"}),
+            # LNK / Recent shortcut files
+            ("windows_user", "analyze_lnk_files",       {"lnk_path": "{file}"}),
+            # Jump lists (AutomaticDestinations, CustomDestinations)
+            ("windows_user", "analyze_jump_lists",      {"jump_list_path": "{file}"}),
+            # AppData artifacts (Roaming/Local application data)
+            ("windows_user", "analyze_appdata",         {"artifact_path": "{file}"}),
+            # Browser profiles (Chrome/Edge/Firefox — modern SQLite-based)
+            ("windows_user", "analyze_browser_profile", {"profile_path": "{file}"}),
+            # Aggregate all findings with indicators
+            ("windows_user", "aggregate_findings",      {"output_path": "{output_dir}/PB-SIFT-042.json"}),
+        ],
     },
     "PB-SIFT-063": {  # Chat & Messaging Aggregation — ChatAggregator reads findings
         # No direct tool steps: reads from PB-SIFT-021 (Mobile) and PB-SIFT-031 (Collaboration).

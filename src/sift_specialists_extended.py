@@ -11406,6 +11406,12 @@ class ExtendedOrchestrator:
         # File scanner specialist (file identification / signature mismatch)
         self.file_scanner = FileScanner(evidence_base)
 
+        # PB-SIFT-041 / PB-SIFT-042 user artifact specialists
+        from geoff_linux_user import LinuxUserSpecialist
+        from geoff_windows_user import WindowsUserSpecialist
+        self.linux_user = LinuxUserSpecialist()
+        self.windows_user = WindowsUserSpecialist()
+
         try:
             from sift_specialists_remnux import REMNUX_Orchestrator
             self.remnux = REMNUX_Orchestrator()
@@ -11449,6 +11455,8 @@ class ExtendedOrchestrator:
             'dns':            self.dns,
             'yara':           self.yara,
             'hash_correlation': self.hash_correlation,
+            'linux_user':     self.linux_user,
+            'windows_user':   self.windows_user,
         }
 
     def run_playbook_step(self, investigation_id: str, step: Dict[str, Any]) -> Dict[str, Any]:

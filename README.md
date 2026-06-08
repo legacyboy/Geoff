@@ -42,7 +42,7 @@ A fourth role — **Healer** — is the Critic operating in error-recovery mode 
 |-------|------|-------------|-------------|
 | **Manager** | Orchestrates investigations, strategic decisions | deepseek-v4-pro:cloud | deepseek-r1:32b |
 | **Forensicator** | Executes forensic tools, extracts artifacts | qwen3-coder-next:cloud | qwen2.5-coder:14b |
-| **Critic** | Validates output for hallucinations and accuracy | qwen3.5:cloud | qwen2.5:14b |
+| **Critic** | Validates output for hallucinations and accuracy | glm-5.1:cloud | qwen2.5:14b |
 | **Critic 2** | Independent parallel validation (different architecture) | gemma4:31b-cloud | gemma4:31b-cloud |
 
 **Workflow:**
@@ -53,7 +53,7 @@ User → Manager → Preflight Validation
                (per-step custody commits to git)
                       ↓
                Dual Critic (GeoffCriticPool) validates ALL findings
-               — Critic 1 (qwen3.5:cloud) + Critic 2 (gemma4:31b-cloud)
+               — Critic 1 (glm-5.1:cloud) + Critic 2 (gemma4:31b-cloud)
                — Confidence: VERY_HIGH / HIGH / MEDIUM / LOW
                       ↓
                Batch Critic reviews ALL findings at once
@@ -108,7 +108,7 @@ User → Manager → Preflight Validation
                (per-step custody commits to git)
                       ↓
                Dual Critic (GeoffCriticPool) validates in parallel
-               — Critic 1 (qwen3.5:cloud) + Critic 2 (gemma4:31b-cloud)
+               — Critic 1 (glm-5.1:cloud) + Critic 2 (gemma4:31b-cloud)
                — Confidence: VERY_HIGH / HIGH / MEDIUM / LOW
                       ↓
                Batch Critic reviews ALL findings at once
@@ -962,7 +962,7 @@ Switch between cloud and local with a single flag:
 |-------|--------------|---------------|
 | **Manager** | deepseek-v4-flash:cloud | deepseek-r1:32b |
 | **Forensicator** | qwen3-coder-next:cloud | qwen2.5-coder:14b |
-| **Critic** | qwen3.5:cloud | qwen2.5:14b |
+| **Critic** | glm-5.1:cloud | qwen2.5:14b |
 
 **Cloud profile authentication:** Run `ollama signin` once after installation. This stores your Ollama Cloud credentials in the local Ollama service. No `OLLAMA_API_KEY` environment variable is needed — the signed-in Ollama daemon proxies cloud model requests automatically.
 
@@ -1030,7 +1030,7 @@ export GEOFF_PORT=8080
 # Or override individual models
 export GEOFF_MANAGER_MODEL="deepseek-v4-flash:cloud"
 export GEOFF_FORENSICATOR_MODEL="qwen3-coder-next:cloud"
-export GEOFF_CRITIC_MODEL="qwen3.5:cloud"
+export GEOFF_CRITIC_MODEL="glm-5.1:cloud"
 export GEOFF_CRITIC2_MODEL="gemma4:31b-cloud"  # second critic (different architecture for independent validation)
 
 python src/geoff_integrated.py

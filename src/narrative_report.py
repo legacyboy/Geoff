@@ -3428,6 +3428,7 @@ class NarrativeReportGenerator:
                             _email_phishing_md = _nr_data.get("email_phishing", "")
                         except Exception:
                             pass
+                _body_blocks = []
                 if _email_phishing_md:
                     # Extract email bodies from the rendered markdown
                     import re as _re_synth

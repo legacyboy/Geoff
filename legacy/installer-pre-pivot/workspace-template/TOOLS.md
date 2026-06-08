@@ -40,5 +40,5 @@ GEOFF runs on SANS SIFT Workstation. Available tools:
 
 | Profile | Manager | Forensicator | Critic |
 |---------|---------|-------------|--------|
-| Cloud | deepseek-v3.2:cloud | qwen3-coder-next:cloud | qwen3.5:cloud |
+| Cloud | deepseek-v3.2:cloud | qwen3-coder-next:cloud | glm-5.1:cloud |
 | Local | deepseek-r1:32b | qwen2.5-coder:14b | qwen2.5:14b |

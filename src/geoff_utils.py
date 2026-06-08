@@ -1250,7 +1250,7 @@ def _detect_os(inventory: dict) -> str:
     return "unknown"
 
 
-def _detect_os_from_devices(device_map: dict) -> str:
+def _detect_os_from_devices(device_map: dict, inventory: dict = None) -> str:
     """Determine dominant OS from device map for playbook selection."""
     os_counts = {}
     for dev in device_map.values():
@@ -1258,10 +1258,51 @@ def _detect_os_from_devices(device_map: dict) -> str:
         os_counts[os_t] = os_counts.get(os_t, 0) + 1
     if not os_counts:
         return "unknown"
-    # Return most common OS type, excluding 'network' and 'unknown'
     filtered = {k: v for k, v in os_counts.items() if k not in ("network", "unknown")}
     if filtered:
-        return max(filtered, key=filtered.get)
+        dominant = max(filtered, key=filtered.get)
+        if dominant != "mobile":
+            return dominant
+        # "mobile" result: check for contradiction with non-mobile evidence types.
+        # If memory dumps or pcaps are present alongside mobile devices, the mobile
+        # classification is likely due to a misclassified archive — re-detect from paths.
+        has_non_mobile = any(
+            dev.get("device_type") in ("memory_dump", "pcap")
+            for dev in device_map.values()
+        )
+        if not has_non_mobile and inventory:
+            has_non_mobile = bool(inventory.get("memory_dumps") or inventory.get("pcaps"))
+        if not has_non_mobile:
+            return "mobile"
+        # Fall through to path-pattern detection
+
+    # Fallback: scan evidence paths for OS fingerprints
+    if inventory:
+        all_paths = (
+            inventory.get("disk_images", []) +
+            inventory.get("other_files", []) +
+            inventory.get("memory_dumps", []) +
+            inventory.get("pcaps", [])
+        )
+        for dev in device_map.values():
+            all_paths.extend(dev.get("evidence_files", []) or [])
+        path_str = " ".join(all_paths).lower()
+        linux_hits = sum(1 for pat in [".bash", "/home/", "/etc/", ".gnome",
+                                        ".mozilla", ".ssh/", "/proc/", "/usr/",
+                                        "/var/log", "/root/"]
+                         if pat in path_str)
+        windows_hits = sum(1 for pat in ["windows", "system32", "ntuser",
+                                          "pagefile", "appdata", "program files",
+                                          "registry"]
+                           if pat in path_str)
+        macos_hits = sum(1 for pat in ["library/", "applications/", ".app/",
+                                        "launchd", ".plist", "macos"]
+                         if pat in path_str)
+        counts = {"linux": linux_hits, "windows": windows_hits, "macos": macos_hits}
+        best = max(counts, key=counts.get)
+        if counts[best] > 0:
+            return best
+
     return "unknown"
 
 

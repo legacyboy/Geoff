@@ -241,7 +241,7 @@ The Forensicator receives a prompt containing: the playbook name and step, the t
 - Batch holistic review: after all playbooks complete, reviews all findings in one pass for cross-step inconsistencies.
 - Error diagnosis: in Healer mode, diagnoses failed tool runs and emits `HealDecision`s with prescribed fix types.
 
-**Model:** `qwen3.5:cloud` (cloud profile), `qwen2.5:14b` (local profile)
+**Model:** `glm-5.1:cloud` (cloud profile), `qwen2.5:14b` (local profile)
 
 **Per-step validation prompt** (from `src/geoff_critic.py:392`):
 
@@ -487,7 +487,7 @@ HealDecision(
     fix_detail="offset=2048",
     root_cause="wrong_partition_offset",
     confidence=8,
-    llm_model="qwen3.5:cloud",
+    llm_model="glm-5.1:cloud",
 )
 ```
 
@@ -630,7 +630,7 @@ This uses the same idempotency guards and custody commit path as the internal re
 |-------|-----------------|------------------------|------------------------|
 | Manager | `GEOFF_MANAGER_MODEL` | `deepseek-v4-flash:cloud` | `deepseek-r1:32b` |
 | Forensicator | `GEOFF_FORENSICATOR_MODEL` | `qwen3-coder-next:cloud` | `qwen2.5-coder:14b` |
-| Critic | `GEOFF_CRITIC_MODEL` | `qwen3.5:cloud` | `qwen2.5:14b` |
+| Critic | `GEOFF_CRITIC_MODEL` | `glm-5.1:cloud` | `qwen2.5:14b` |
 | Critic 2 | `GEOFF_CRITIC2_MODEL` | _(same as Critic)_ | _(same as Critic)_ |
 
 Profile switch: `GEOFF_PROFILE=cloud|local` (reads `profiles.json` at startup).

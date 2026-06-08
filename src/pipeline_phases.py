@@ -402,9 +402,11 @@ def _execute_pass2(
                     except ValueError:
                         continue
 
-                    # For other_files, only invoke email analysis on actual email files.
-                    if ev_type == "other_files":
-                        if Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
+                    # For other_files, skip email-filter only for orphan-artifact playbooks
+                    if ev_type == 'other_files':
+                        if playbook_id in ('PB-SIFT-041', 'PB-SIFT-042'):
+                            pass
+                        elif Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
                             continue
 
                     item_stem = Path(item).stem
@@ -1086,7 +1088,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         all_inventory_paths = _all_inventory_paths(inventory)
 
         # Determine OS from dominant device type (for playbook selection)
-        os_type = _detect_os_from_devices(device_map)
+        os_type = _detect_os_from_devices(device_map, inventory)
         # Triage indicators still useful for initial severity classification
         indicator_hits = _scan_triage_indicators(inventory)
 
@@ -1824,6 +1826,39 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             execution_plan.append("PB-SIFT-033")
             _fe_log(job_id, "  PB-SIFT-033: Container Forensics queued")
 
+        # Orphan User Artifact Analysis (PB-SIFT-041) — stray Linux/Unix home dir files
+        _linux_user_names = {
+            ".bash_history", ".zsh_history", ".sh_history",
+            ".bashrc", ".bash_profile", ".profile", ".zshrc",
+            ".emacs", ".viminfo", ".vimrc", ".nano_history",
+            ".dmrc", ".lesshst", ".xsession-errors",
+        }
+        _linux_user_patterns = (".ssh/", ".gnome2/", ".gnome/", ".gconf/", ".mc/",
+                                ".mozilla/firefox/", "history.dat", "cookies.txt",
+                                "signons2.txt", "formhistory.dat", ".gtkrc")
+        _linux_user_found = any(
+            Path(f).name in _linux_user_names
+            or any(p in str(f) for p in _linux_user_patterns)
+            for f in inventory.get("other_files", [])
+        )
+        if _linux_user_found:
+            execution_plan.append("PB-SIFT-042")
+            _fe_log(job_id, "  PB-SIFT-041: Orphan User Artifact Analysis queued (Linux/Unix home dir files)")
+
+        # Stray Windows User Artifacts (PB-SIFT-042) — Windows user profile files outside a disk image
+        _win_user_names = {"ntuser.dat", "usrclass.dat"}
+        _win_user_patterns = (".pf", ".lnk", ".automaticDestinations-ms",
+                              ".customDestinations-ms", "AppData/", "AppData\\",
+                              "Prefetch/", "Recent/")
+        _win_user_found = any(
+            Path(f).name.lower() in _win_user_names
+            or any(p.lower() in str(f).lower() for p in _win_user_patterns)
+            for f in inventory.get("other_files", [])
+        )
+        if _win_user_found:
+            execution_plan.append("PB-SIFT-042")
+            _fe_log(job_id, "  PB-SIFT-042: Stray Windows User Artifacts queued")
+
         # --- END NEW PLAYBOOK AUTO-TRIGGERS ---
 
         # Add malware playbooks when:
@@ -2392,10 +2427,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             _fe_log(job_id, f"  ✗ Skipping unsafe evidence path: {path_err}")
                             continue
 
-                        # For other_files, only invoke email analysis on actual email files.
-                        if ev_type == "other_files":
-                            if Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
-                                continue
+                    # For other_files, skip email-filter only for orphan-artifact playbooks
+                    if ev_type == 'other_files':
+                        if playbook_id in ('PB-SIFT-041', 'PB-SIFT-042'):
+                            pass
+                        elif Path(item).suffix.lower() not in _EMAIL_EXTENSIONS:
+                            continue
 
                         item_stem = Path(item).stem
                         for module, function, raw_params in step_templates:

@@ -2,7 +2,7 @@
   "cloud": {
     "manager": "deepseek-v4-pro:cloud",
     "forensicator": "qwen3-coder-next:cloud",
-    "critic": "qwen3.5:cloud",
+    "critic": "glm-5.1:cloud",
     "critic2": "gemma4:31b-cloud"
   },
   "local": {

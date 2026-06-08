@@ -543,7 +543,7 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
             if [[ "$PROFILE" == "cloud" ]]; then
                 MANAGER_MODEL="deepseek-v3.2:cloud"
                 FORENSICATOR_MODEL="qwen3-coder-next:cloud"
-                CRITIC_MODEL="qwen3.5:cloud"
+                CRITIC_MODEL="glm-5.1:cloud"
                 CRITIC2_MODEL="gemma4:31b-cloud"
             else
                 MANAGER_MODEL="deepseek-r1:32b"

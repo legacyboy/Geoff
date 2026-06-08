@@ -19,7 +19,7 @@ GEOFF uses a three-agent pipeline:
    - Structured data extraction from forensic images
    - Playbook step execution
 
-3. **✅ Critic** (`qwen3.5:cloud` / `qwen2.5:14b` local)
+3. **✅ Critic** (`glm-5.1:cloud` / `qwen2.5:14b` local)
    - Sanity-check Forensicator output
    - Verify tool results are reasonable
    - Pass/fail validation, not double-analysis
