@@ -1721,6 +1721,32 @@ def report_chat(case_dir):
                 except (ValueError, OSError, json.JSONDecodeError):
                     pass
 
+    # Try to load narrative report for rich conversational context
+    narrative_text = ""
+    if safe_dir:
+        case_path = Path(CASES_WORK_DIR) / safe_dir
+        if case_path.is_dir():
+            for narrative_name in ("narrative_report.md", "narrative_report.json"):
+                nr_path = case_path / "reports" / narrative_name
+                if nr_path.exists():
+                    try:
+                        text = nr_path.read_text(encoding='utf-8', errors='replace')
+                        if narrative_name.endswith('.json'):
+                            nr_data = json.loads(text)
+                            # Build flat text from key sections
+                            parts = []
+                            for section in ('executive_summary', 'devices_and_users', 'email_phishing',
+                                           'findings', 'significant_events', 'failed_steps'):
+                                val = nr_data.get(section, '')
+                                if val:
+                                    parts.append(val if isinstance(val, str) else json.dumps(val)[:2000])
+                            narrative_text = '\n\n'.join(parts)[:8000]
+                        else:
+                            narrative_text = text[:8000]
+                        break
+                    except (ValueError, OSError, json.JSONDecodeError):
+                        pass
+
     # Also load any indicator hits and findings for richer context
     extra_context = []
     if safe_dir:
@@ -1764,18 +1790,17 @@ def report_chat(case_dir):
 
     # Chat-specific system prompt (replaces GEOFF_PROMPT for conversational use)
     chat_system_prompt = (
-        "You are Geoff, a forensic analyst embedded in a report viewer. "
-        "An investigator is asking you questions about this case. "
+        "You are Geoff, a forensic analyst answering questions about an investigation. "
         "Answer in plain conversational English. Single paragraph. No formatting.\n\n"
         "RULES:\n"
-        "- 'Who' questions: The device OWNER is your answer. Say their name. Do not hedge.\n"
-        "- 'What' questions: State the classification and key findings.\n"
-        "- Never say 'cannot determine' or 'insufficient evidence.' "
-        "Tell the investigator what you know, then what you don't know.\n"
+        "- Answer from the NARRATIVE REPORT first — it contains the human-readable findings.\n"
+        "- 'Who' questions: Name the device owner and any users from the report.\n"
+        "- Never say 'cannot determine' — state what the report DOES say, then what it doesn't cover.\n"
         "- No bullet points, no markdown, no Hypothesis/Evidence/Assessment format.\n"
     )
-    # Case data (facts + full report) passed as context
-    case_context = f"CASE FACTS:\n{facts_block}\n\nFULL REPORT DATA:\n{summary}\n{extra}"
+    # Case data (narrative first, then facts, then raw JSON as fallback)
+    narrative_block = f"NARRATIVE REPORT:\n{narrative_text}\n\n" if narrative_text else ""
+    case_context = f"{narrative_block}CASE FACTS:\n{facts_block}\n\nFULL REPORT DATA:\n{summary}\n{extra}"
 
     # Build user prompt with conversation history (last 6 turns)
     history_lines = []
