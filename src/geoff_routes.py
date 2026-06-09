@@ -2100,6 +2100,17 @@ def get_execution_log(case_id):
         except OSError:
             pass
 
+    # Load additional judge-relevant artifacts
+    for key, fname in [
+        ('execution_plan', 'execution_plan.json'),
+        ('dual_critic_assessment', 'dual_critic_assessment.json'),
+        ('confidence_calibration', 'confidence_calibration.json'),
+        ('timeline_intelligence', 'timeline_intelligence.json'),
+    ]:
+        p = case_path / fname
+        if p.exists():
+            result[key] = _read_json_file(p)
+
     metadata = {'case_id': safe_id, 'case_dir': str(case_path)}
     report_p = case_path / 'reports' / 'find_evil_report.json'
     if report_p.exists():
@@ -2278,6 +2289,8 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
   <button class="tab-btn" data-tab="tab-git" onclick="switchTab('tab-git')">Git Log ({len(result.get('git_log') or [])})</button>
   <button class="tab-btn" data-tab="tab-commands" onclick="switchTab('tab-commands')">Commands ({len(commands)})</button>
   <button class="tab-btn" data-tab="tab-prov" onclick="switchTab('tab-prov')">Provenance DAG</button>
+  <button class="tab-btn" data-tab="tab-plan" onclick="switchTab('tab-plan')">Execution Plan</button>
+  <button class="tab-btn" data-tab="tab-critic" onclick="switchTab('tab-critic')">Critic Assessment</button>
 </div>
 
 <div class="tab-panel active" id="tab-audit">
@@ -2305,6 +2318,14 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
 <thead><tr><th>#</th><th>From</th><th></th><th>To</th><th>Relationship</th><th>Specialist</th><th>Playbook</th></tr></thead>
 <tbody>{prov_html}</tbody>
 </table>
+</div>
+
+<div class="tab-panel" id="tab-plan">
+<pre class="git-log">{_html_escape(json.dumps(result.get('execution_plan'), indent=2)[:20000] if result.get('execution_plan') else 'No execution plan found.')}</pre>
+</div>
+
+<div class="tab-panel" id="tab-critic">
+<pre class="git-log">{_html_escape(json.dumps(result.get('dual_critic_assessment') or result.get('critic_assessment'), indent=2)[:20000] if (result.get('dual_critic_assessment') or result.get('critic_assessment')) else 'No critic assessment found.')}</pre>
 </div>
 </body>
 </html>'''
