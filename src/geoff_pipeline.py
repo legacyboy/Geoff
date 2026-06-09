@@ -1903,12 +1903,27 @@ def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
             function = f.get('function', '')
             pb = f.get('playbook') or f.get('playbook_id', '')
             if ev_file:
+                forensicator = f.get('forensicator') or {}
+                ev_chain = f.get('evidence_chain') or {}
+                sig = forensicator.get('significance') or ev_chain.get('significance') or ''
+                analyst_note = forensicator.get('analyst_note') or ev_chain.get('analyst_note') or ''
+                threat_iocs = forensicator.get('threat_indicators') or []
+                result_snippet = ''
+                raw_result = f.get('result')
+                if isinstance(raw_result, dict):
+                    stdout = raw_result.get('stdout') or ''
+                    result_snippet = str(stdout)[:300].strip()
                 dag.add_derived(
                     fid, 'finding', '', ev_file,
                     relationship=f'{module}.{function}',
                     specialist=module, playbook=pb,
-                    metadata={'status': f.get('status', ''),
-                               'significance': f.get('forensicator', {}).get('significance', '')},
+                    metadata={
+                        'status': f.get('status', ''),
+                        'significance': sig,
+                        'analyst_note': analyst_note,
+                        'threat_indicators': threat_iocs,
+                        'result_snippet': result_snippet,
+                    },
                 )
         dag_path = dag.save()
         _fe_log(job_id, f'  [PROVENANCE] DAG saved: {len(seen_sources)} sources, {len(findings)} findings → {dag_path}', agent='Provenance')

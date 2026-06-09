@@ -2187,28 +2187,101 @@ def _render_git_log(git_log):
 
 
 def _render_provenance_dag(prov_dag):
-    """Render provenance DAG with summary and readable edge list."""
+    """Render provenance DAG with severity filtering and analyst-readable summaries."""
     nodes = prov_dag.get('nodes', {})
     edges = prov_dag.get('edges', [])
     if not nodes and not edges:
         return '<div style="padding:24px;color:#64748b;font-family:monospace">No provenance DAG found for this case.</div>'
-    # Summary
-    source_count = sum(1 for n in nodes.values() if not any(e['to'] == n['id'] for e in edges))
-    html = f'''<div style="padding:20px 24px;background:rgba(76,141,255,.04);border-bottom:1px solid rgba(71,85,105,.15)">
-  <p style="font-size:14px;color:#cbd5e1;margin-bottom:8px"><b>Evidence Derivation Chain</b></p>
-  <p style="font-size:12px;color:#94a3b8;line-height:1.6">Tracks every artifact from its source evidence through each processing step. {len(nodes)} artifacts across {len(edges)} derivation steps. Source evidence nodes appear at the top — follow the arrows to see how each finding was produced.</p>
-</div>'''
-    # Edge table
+
+    to_ids = {e.get('to') for e in edges}
+    source_count = sum(1 for nid in nodes if nid not in to_ids)
+    finding_count = len([nid for nid in nodes if nid in to_ids])
+
+    sev_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'OTHER': 0}
+    for edge in edges:
+        sig = (nodes.get(edge.get('to', ''), {}).get('metadata') or {}).get('significance', '') or ''
+        if sig in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'):
+            sev_counts[sig] += 1
+        else:
+            sev_counts['OTHER'] += 1
+
+    critical_high = sev_counts['CRITICAL'] + sev_counts['HIGH']
+    badge_color = '#f87171' if sev_counts['CRITICAL'] > 0 else ('#fbbf24' if sev_counts['HIGH'] > 0 else '#34d399')
+
+    html = f'''<div style="padding:16px 24px;background:rgba(76,141,255,.04);border-bottom:1px solid rgba(71,85,105,.15)">
+  <p style="font-size:14px;color:#cbd5e1;margin-bottom:10px"><b>Evidence Provenance DAG</b></p>
+  <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;font-family:monospace;font-size:12px">
+    <span style="color:#94a3b8">{source_count} sources → {finding_count} findings across {len(edges)} steps</span>
+    <span style="color:{badge_color};font-weight:600">{critical_high} CRITICAL/HIGH</span>
+    <span style="color:#f59e0b">{sev_counts["MEDIUM"]} MEDIUM</span>
+    <span style="color:#34d399">{sev_counts["LOW"]} LOW</span>
+  </div>
+</div>
+<div style="padding:10px 24px;border-bottom:1px solid rgba(71,85,105,.1);display:flex;gap:8px;align-items:center;font-family:monospace">
+  <span style="font-size:11px;color:#64748b">Filter:</span>
+  <button onclick="dagFilter('ALL')" id="dagf-ALL" style="padding:3px 10px;font-size:11px;font-family:monospace;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;border-radius:3px;outline:2px solid #60a5fa">ALL</button>
+  <button onclick="dagFilter('CRITICAL')" id="dagf-CRITICAL" style="padding:3px 10px;font-size:11px;font-family:monospace;background:#1e293b;border:1px solid #7f1d1d;color:#f87171;cursor:pointer;border-radius:3px">CRITICAL</button>
+  <button onclick="dagFilter('HIGH')" id="dagf-HIGH" style="padding:3px 10px;font-size:11px;font-family:monospace;background:#1e293b;border:1px solid #78350f;color:#fbbf24;cursor:pointer;border-radius:3px">HIGH</button>
+  <button onclick="dagFilter('MEDIUM')" id="dagf-MEDIUM" style="padding:3px 10px;font-size:11px;font-family:monospace;background:#1e293b;border:1px solid #713f12;color:#f59e0b;cursor:pointer;border-radius:3px">MEDIUM</button>
+  <button onclick="dagFilter('LOW')" id="dagf-LOW" style="padding:3px 10px;font-size:11px;font-family:monospace;background:#1e293b;border:1px solid #14532d;color:#34d399;cursor:pointer;border-radius:3px">LOW</button>
+</div>
+<script>
+function dagFilter(sev) {{
+  document.querySelectorAll('tr.dag-row').forEach(function(r) {{
+    r.style.display = (sev === 'ALL' || r.dataset.sev === sev) ? '' : 'none';
+  }});
+  document.querySelectorAll('[id^="dagf-"]').forEach(function(b) {{
+    b.style.outline = b.id === 'dagf-' + sev ? '2px solid #60a5fa' : 'none';
+  }});
+}}
+</script>'''
+
+    _SEV_COLOR = {'CRITICAL': '#f87171', 'HIGH': '#fbbf24', 'MEDIUM': '#f59e0b',
+                  'LOW': '#34d399', 'NONE': '#475569', 'UNKNOWN': '#64748b', '': '#64748b'}
     rows = []
     for i, edge in enumerate(edges):
-        from_id = edge.get('from', '?')[:50]
-        to_id = edge.get('to', '?')[:50]
+        from_id = edge.get('from', '?')
+        to_id = edge.get('to', '?')
         rel = edge.get('relationship', '?')
-        sp = edge.get('specialist', '')
         pb = edge.get('playbook', '')
-        rows.append(f'<tr><td style="color:#475569;width:40px;text-align:right;padding-right:10px">{i+1}</td><td style="color:#60a5fa;max-width:200px;overflow:hidden;text-overflow:ellipsis">{_html_escape(from_id)}</td><td style="color:#34d399">→</td><td style="color:#60a5fa;max-width:200px;overflow:hidden;text-overflow:ellipsis">{_html_escape(to_id)}</td><td style="color:#94a3b8">{_html_escape(rel)}</td><td style="color:#64748b;font-size:11px">{_html_escape(sp)}</td><td style="color:#64748b;font-size:11px">{_html_escape(pb)}</td></tr>')
+        node_meta = (nodes.get(to_id, {}).get('metadata') or {})
+        sig = node_meta.get('significance') or ''
+        analyst_note = node_meta.get('analyst_note') or ''
+        threat_iocs = node_meta.get('threat_indicators') or []
+        sev_color = _SEV_COLOR.get(sig, '#64748b')
+
+        finding_parts = []
+        if analyst_note:
+            finding_parts.append(f'<span style="color:#e2e8f0">{_html_escape(analyst_note[:140])}</span>')
+        if threat_iocs:
+            ioc_text = ', '.join(str(x) for x in threat_iocs[:3])
+            finding_parts.append(f'<br><span style="color:#fb923c;font-size:10px">[{_html_escape(ioc_text[:100])}]</span>')
+        if not finding_parts:
+            finding_parts.append(f'<span style="color:#475569">{_html_escape(rel)}</span>')
+
+        from_short = _html_escape((from_id.split('/')[-1] or from_id)[:55])
+        rows.append(
+            f'<tr class="dag-row" data-sev="{_html_escape(sig or "UNKNOWN")}" style="border-left:3px solid {sev_color}">'
+            f'<td style="color:#475569;width:36px;text-align:right;padding-right:10px">{i+1}</td>'
+            f'<td style="color:{sev_color};font-weight:600;width:76px;white-space:nowrap">{_html_escape(sig or "—")}</td>'
+            f'<td style="color:#60a5fa;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{_html_escape(from_id)}">{from_short}</td>'
+            f'<td style="color:#34d399;width:16px;text-align:center">→</td>'
+            f'<td style="color:#818cf8;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="{_html_escape(to_id)}">{_html_escape(rel)}</td>'
+            f'<td style="max-width:340px">{"".join(finding_parts)}</td>'
+            f'<td style="color:#64748b;font-size:11px;white-space:nowrap">{_html_escape(pb)}</td>'
+            f'</tr>'
+        )
+
     html += f'''<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:12px">
-<thead><tr style="position:sticky;top:52px;background:#0f172a"><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">#</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">From</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px"></th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">To</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Relationship</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Specialist</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Playbook</th></tr></thead>
+<thead><tr style="position:sticky;top:52px;background:#0f172a">
+  <th style="padding:10px 14px;text-align:right;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px;width:36px">#</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px;width:76px">Severity</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Source</th>
+  <th style="padding:10px 14px;border-bottom:2px solid rgba(71,85,105,.3);width:16px"></th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Tool</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Finding</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Playbook</th>
+</tr></thead>
 <tbody>{chr(10).join(rows)}</tbody>
 </table>'''
     return html
@@ -2357,22 +2430,22 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
   <span>Evidence: <b>{_html_escape(str(meta.get('evidence_dir', '—')))}</b></span>
 </div>
 <div class="tab-bar">
-  <button class="tab-btn active" data-tab="tab-audit" onclick="switchTab('tab-audit')">Audit Trail</button>
-  <button class="tab-btn" data-tab="tab-git" onclick="switchTab('tab-git')">Git Log ({len(result.get('git_log') or [])})</button>
+  <button class="tab-btn active" data-tab="tab-git" onclick="switchTab('tab-git')">Git Log ({len(result.get('git_log') or [])})</button>
+  <button class="tab-btn" data-tab="tab-audit" onclick="switchTab('tab-audit')">Audit Trail</button>
   <button class="tab-btn" data-tab="tab-commands" onclick="switchTab('tab-commands')">Commands ({len(commands)})</button>
   <button class="tab-btn" data-tab="tab-prov" onclick="switchTab('tab-prov')">Provenance DAG</button>
   <button class="tab-btn" data-tab="tab-plan" onclick="switchTab('tab-plan')">Execution Plan</button>
   <button class="tab-btn" data-tab="tab-critic" onclick="switchTab('tab-critic')">Critic Assessment</button>
 </div>
 
-<div class="tab-panel active" id="tab-audit">
+<div class="tab-panel" id="tab-audit">
 <table>
 <thead><tr><th>#</th><th>Time</th><th>Event</th><th>Severity</th><th>Detail</th></tr></thead>
 <tbody>{row_html}</tbody>
 </table>
 </div>
 
-<div class="tab-panel" id="tab-git">
+<div class="tab-panel active" id="tab-git">
 <div class="git-log">
 {_render_git_log(result.get('git_log'))}
 </div>
