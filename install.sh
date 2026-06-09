@@ -465,7 +465,7 @@ else
     info "Cloning GEOFF repository..."
     sudo mkdir -p "$INSTALL_DIR"
     sudo chown "$(whoami):$(id -gn)" "$INSTALL_DIR"
-    git clone "$REPO" "$INSTALL_DIR"
+    git clone -b main "$REPO" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 ok "Code ready at ${INSTALL_DIR}"
@@ -713,7 +713,7 @@ info "Starting Geoff services..."
 mkdir -p "${INSTALL_DIR}/logs"
 
 # Start web server (Flask on 8080)
-nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && set -a && source .env && set +a && python3 src/geoff_integrated.py" > "${INSTALL_DIR}/logs/geoff.log" 2>&1 &
+nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && set -a && source .env && set +a && python3 geoff_integrated.py" > "${INSTALL_DIR}/logs/geoff.log" 2>&1 &
 GEOFF_PID=$!
 info "Geoff web server starting on port 8080 (PID: ${GEOFF_PID})"
 
@@ -722,18 +722,28 @@ nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && python3 src/geof
 MCP_PID=$!
 info "Geoff MCP server starting on port 9999 (PID: ${MCP_PID})"
 
-# Wait a moment and check if processes are running
-sleep 2
-if kill -0 ${GEOFF_PID} 2>/dev/null; then
-    ok "Geoff web server running"
+# Wait for servers to become ready
+info "Waiting for services to start..."
+GEOFF_READY=false
+for i in $(seq 1 15); do
+    if curl -s http://127.0.0.1:8080/ >/dev/null 2>&1; then
+        GEOFF_READY=true
+        break
+    fi
+    sleep 2
+done
+if $GEOFF_READY; then
+    ok "Geoff web server is responding on port 8080"
+elif kill -0 ${GEOFF_PID} 2>/dev/null; then
+    warn "Geoff web server process running but not yet responding on port 8080"
 else
-    warn "Geoff web server may have failed to start (check logs/geoff.log)"
+    warn "Geoff web server may have failed to start (check ${INSTALL_DIR}/logs/geoff.log)"
 fi
 
 if kill -0 ${MCP_PID} 2>/dev/null; then
     ok "Geoff MCP server running"
 else
-    warn "Geoff MCP server may have failed to start (check logs/mcp.log)"
+    warn "Geoff MCP server may have failed to start (check ${INSTALL_DIR}/logs/mcp.log)"
 fi
 
 # ── External tool presence checks ────────────────────────────────────────────
@@ -800,7 +810,7 @@ echo -e "${GREEN}╠════════════════════
 echo -e "${GREEN}║${NC} To restart manually:                             ${NC}"
 echo -e "${GREEN}║${NC}   cd ${INSTALL_DIR}                               ${NC}"
 echo -e "${GREEN}║${NC}   source venv/bin/activate                      ${NC}"
-echo -e "${GREEN}║${NC}   python3 src/geoff_integrated.py &             ${NC}"
+echo -e "${GREEN}║${NC}   python3 geoff_integrated.py &             ${NC}"
 echo -e "${GREEN}║${NC}   python3 src/geoff_mcp_server.py &             ${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║${NC} To switch profiles:                             ${NC}"
