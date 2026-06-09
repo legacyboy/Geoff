@@ -2117,6 +2117,18 @@ def get_execution_log(case_id):
                 )
     result['metadata'] = metadata
 
+    # Load per-command execution records from commands/ directory
+    commands_dir = case_path / 'commands'
+    if commands_dir.exists() and commands_dir.is_dir():
+        cmd_records = []
+        for cf in sorted(commands_dir.glob('*.json'))[:2000]:
+            rec = _read_json_file(cf)
+            if rec:
+                rec['_filename'] = cf.name
+                cmd_records.append(rec)
+        if cmd_records:
+            result['commands'] = cmd_records
+
     if accept_html:
         # Render as HTML for browser viewing
         return _render_execution_log_html(result, safe_id)
@@ -2143,6 +2155,21 @@ def _render_execution_log_html(result, safe_id):
         rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time))}</td><td class="p">{_html_escape(str(pb))}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td>{_html_escape(str(msg))}</td></tr>')
 
     row_html = '\n'.join(rows) if rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No audit entries found for this case.</td></tr>'
+
+    # Build command execution rows
+    commands = result.get('commands') or []
+    cmd_rows = []
+    for i, cmd in enumerate(commands):
+        argv = cmd.get('argv') or []
+        cmd_str = ' '.join(str(a) for a in argv) if argv else str(cmd.get('command', ''))
+        exit_code = cmd.get('exit_code') or cmd.get('returncode', '—')
+        duration = cmd.get('duration') or cmd.get('elapsed', '')
+        step = cmd.get('step') or cmd.get('step_key', '')
+        if isinstance(duration, (int, float)):
+            duration = f'{duration:.1f}s'
+        cmd_rows.append(f'<tr><td class="n">{i+1}</td><td class="s">{_html_escape(str(exit_code))}</td><td class="p">{_html_escape(str(step)[:80])}</td><td class="t">{_html_escape(str(duration))}</td><td style="font-size:11px;word-break:break-all;">{_html_escape(str(cmd_str)[:300])}</td></tr>')
+
+    cmd_html = '\n'.join(cmd_rows) if cmd_rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No command records found for this case.</td></tr>'
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -2194,6 +2221,12 @@ def _render_execution_log_html(result, safe_id):
 <table>
 <thead><tr><th>#</th><th>Time</th><th>Playbook</th><th>Severity</th><th>Message</th></tr></thead>
 <tbody>{row_html}</tbody>
+</table>
+
+<h2 style="padding:24px 24px 12px;font-size:16px;font-weight:600;border-bottom:1px solid rgba(71,85,105,.2);">Commands Executed ({len(commands)} records)</h2>
+<table>
+<thead><tr><th>#</th><th>Exit</th><th>Step</th><th>Duration</th><th>Command</th></tr></thead>
+<tbody>{cmd_html}</tbody>
 </table>
 </body>
 </html>'''
