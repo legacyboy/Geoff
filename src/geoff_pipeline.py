@@ -1897,11 +1897,11 @@ def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
             if ev_file and ev_file not in seen_sources:
                 seen_sources.add(ev_file)
                 dag.add_source(ev_file, ev_type, ev_file)
-            # Register finding as derived node
-            fid = f.get('step_key') or str(id(f))
+            # Register finding as derived node — use meaningful ID
+            fid = f.get('step_key') or f'{f.get("module","?")}.{f.get("function","?")}_{f.get("evidence_file","").split("/")[-1] or "unknown"}'
             module = f.get('module', '')
             function = f.get('function', '')
-            pb = f.get('playbook_id', '')
+            pb = f.get('playbook') or f.get('playbook_id', '')
             if ev_file:
                 dag.add_derived(
                     fid, 'finding', '', ev_file,
