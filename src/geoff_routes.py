@@ -2132,7 +2132,7 @@ def get_execution_log(case_id):
     commands_dir = case_path / 'commands'
     if commands_dir.exists() and commands_dir.is_dir():
         cmd_records = []
-        for cf in sorted(commands_dir.glob('*.json'))[:2000]:
+        for cf in sorted(commands_dir.glob('*.json')):
             rec = _read_json_file(cf)
             if rec:
                 rec['_filename'] = cf.name
@@ -2173,21 +2173,93 @@ def get_execution_log(case_id):
     }
 
 
+def _render_git_log(git_log):
+    """Format git log lines with color-coded hashes and messages."""
+    if not git_log:
+        return '<p style="padding:24px;color:#64748b;font-family:monospace">No git history found for this case.</p>'
+    lines = []
+    for line in git_log:
+        parts = line.split(' ', 1)
+        hash_str = _html_escape(parts[0]) if parts else ''
+        msg_str = _html_escape(parts[1]) if len(parts) > 1 else ''
+        lines.append(f'<div style="padding:3px 0"><span style="color:#f59e0b;font-family:monospace;font-size:12px">{hash_str}</span> <span style="color:#cbd5e1;font-family:monospace;font-size:12px">{msg_str}</span></div>')
+    return '\n'.join(lines)
+
+
+def _render_provenance_dag(prov_dag):
+    """Render provenance DAG with summary and readable edge list."""
+    nodes = prov_dag.get('nodes', {})
+    edges = prov_dag.get('edges', [])
+    if not nodes and not edges:
+        return '<div style="padding:24px;color:#64748b;font-family:monospace">No provenance DAG found for this case.</div>'
+    # Summary
+    source_count = sum(1 for n in nodes.values() if not any(e['to'] == n['id'] for e in edges))
+    html = f'''<div style="padding:20px 24px;background:rgba(76,141,255,.04);border-bottom:1px solid rgba(71,85,105,.15)">
+  <p style="font-size:14px;color:#cbd5e1;margin-bottom:8px"><b>Evidence Derivation Chain</b></p>
+  <p style="font-size:12px;color:#94a3b8;line-height:1.6">Tracks every artifact from its source evidence through each processing step. {len(nodes)} artifacts across {len(edges)} derivation steps. Source evidence nodes appear at the top — follow the arrows to see how each finding was produced.</p>
+</div>'''
+    # Edge table
+    rows = []
+    for i, edge in enumerate(edges):
+        from_id = edge.get('from', '?')[:50]
+        to_id = edge.get('to', '?')[:50]
+        rel = edge.get('relationship', '?')
+        sp = edge.get('specialist', '')
+        pb = edge.get('playbook', '')
+        rows.append(f'<tr><td style="color:#475569;width:40px;text-align:right;padding-right:10px">{i+1}</td><td style="color:#60a5fa;max-width:200px;overflow:hidden;text-overflow:ellipsis">{_html_escape(from_id)}</td><td style="color:#34d399">→</td><td style="color:#60a5fa;max-width:200px;overflow:hidden;text-overflow:ellipsis">{_html_escape(to_id)}</td><td style="color:#94a3b8">{_html_escape(rel)}</td><td style="color:#64748b;font-size:11px">{_html_escape(sp)}</td><td style="color:#64748b;font-size:11px">{_html_escape(pb)}</td></tr>')
+    html += f'''<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:12px">
+<thead><tr style="position:sticky;top:52px;background:#0f172a"><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">#</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">From</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px"></th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">To</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Relationship</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Specialist</th><th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Playbook</th></tr></thead>
+<tbody>{chr(10).join(rows)}</tbody>
+</table>'''
+    return html
+
+
+def _render_critic_assessment(result):
+    """Render critic assessment — handle missing or malformed data gracefully."""
+    dual = result.get('dual_critic_assessment')
+    critic = result.get('critic_assessment')
+    data = dual or critic
+    if not data:
+        return '<div style="padding:24px;color:#64748b;font-family:monospace">No critic assessment available for this case.</div>'
+    if isinstance(data, str) and 'undefined' in data.lower():
+        return '<div style="padding:24px;color:#64748b;font-family:monospace">Critic assessment not yet generated for this case. Re-run the investigation with critic enabled.</div>'
+    if isinstance(data, dict):
+        approved = data.get('approved', data.get('critic_approved', '—'))
+        rejected = data.get('rejected', data.get('critic_rejected', '—'))
+        total = data.get('total', data.get('steps_reviewed', '—'))
+        html = f'<div style="padding:20px 24px;background:rgba(76,141,255,.04);border-bottom:1px solid rgba(71,85,105,.15)">'
+        html += f'<p style="font-size:14px;color:#cbd5e1;margin-bottom:8px"><b>Critic Assessment Summary</b></p>'
+        html += f'<p style="font-size:12px;color:#94a3b8">Steps reviewed: {total} &nbsp;|&nbsp; <span style="color:#34d399">Approved: {approved}</span> &nbsp;|&nbsp; <span style="color:#f87171">Rejected: {rejected}</span></p>'
+        if total and isinstance(total, (int, float)) and total > 0:
+            pct = round(approved / total * 100, 1) if approved else 0
+            html += f'<p style="font-size:12px;color:#94a3b8;margin-top:4px">Approval rate: <b style="color:{("#34d399" if pct >= 80 else "#fbbf24" if pct >= 50 else "#f87171")}">{pct}%</b></p>'
+        html += '</div>'
+        html += f'<pre style="font-family:monospace;font-size:12px;padding:16px 24px;line-height:1.6;color:#94a3b8">{_html_escape(json.dumps(data, indent=2)[:15000])}</pre>'
+        return html
+    return f'<pre style="font-family:monospace;font-size:12px;padding:16px 24px;line-height:1.6;color:#94a3b8">{_html_escape(json.dumps(data, indent=2)[:15000])}</pre>'
+
+
 def _render_execution_log_html(result, safe_id):
     """Render execution log as a styled HTML page."""
     meta = result.get('metadata', {})
     title = meta.get('case_id', safe_id)
     audit = result.get('audit_trail') or []
 
-    # Build audit rows
+    # Build audit rows — filter to significant events only
+    _significant_events = {'case_init', 'playbook_start', 'playbook_complete', 'Find Evil complete',
+                          'git_commit', 'extraction_start', 'error', 'fail', 'case_finalized'}
     rows = []
     for i, entry in enumerate(audit):
         time = entry.get('ts') or entry.get('time') or entry.get('timestamp', '')
-        msg = entry.get('event') or entry.get('msg') or entry.get('message', '') or str(entry)[:200]
+        event = entry.get('event') or ''
+        msg = event or entry.get('msg') or entry.get('message', '') or str(entry)[:200]
         pb = entry.get('playbook') or ''
         sev = entry.get('severity') or ''
         if isinstance(sev, dict):
             sev = sev.get('level', sev.get('severity', ''))
+        # Filter: skip routine noise
+        if event and event not in _significant_events and 'playbook' not in event.lower() and 'error' not in str(msg).lower():
+            continue
         rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time))}</td><td class="p">{_html_escape(str(pb))}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td>{_html_escape(str(msg))}</td></tr>')
 
     row_html = '\n'.join(rows) if rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No audit entries found for this case.</td></tr>'
@@ -2302,7 +2374,7 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
 
 <div class="tab-panel" id="tab-git">
 <div class="git-log">
-{_html_escape('\n'.join(result.get('git_log') or ['No git history found.']))}
+{_render_git_log(result.get('git_log'))}
 </div>
 </div>
 
@@ -2314,10 +2386,7 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
 </div>
 
 <div class="tab-panel" id="tab-prov">
-<table>
-<thead><tr><th>#</th><th>From</th><th></th><th>To</th><th>Relationship</th><th>Specialist</th><th>Playbook</th></tr></thead>
-<tbody>{prov_html}</tbody>
-</table>
+{_render_provenance_dag(prov_dag)}
 </div>
 
 <div class="tab-panel" id="tab-plan">
@@ -2325,7 +2394,7 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
 </div>
 
 <div class="tab-panel" id="tab-critic">
-<pre class="git-log">{_html_escape(json.dumps(result.get('dual_critic_assessment') or result.get('critic_assessment'), indent=2)[:20000] if (result.get('dual_critic_assessment') or result.get('critic_assessment')) else 'No critic assessment found.')}</pre>
+{_render_critic_assessment(result)}
 </div>
 </body>
 </html>'''
