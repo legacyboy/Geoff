@@ -2129,6 +2129,24 @@ def get_execution_log(case_id):
         if cmd_records:
             result['commands'] = cmd_records
 
+    # Load git log for full reproducibility trail
+    git_log = []
+    git_dir = case_path / '.git'
+    if git_dir.exists():
+        try:
+            out = subprocess.run(
+                ['git', '-C', str(case_path), 'log', '--oneline', '--all', '-500'],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in out.stdout.strip().splitlines():
+                line = line.strip()
+                if line:
+                    git_log.append(line)
+        except Exception:
+            pass
+    if git_log:
+        result['git_log'] = git_log
+
     if accept_html:
         # Render as HTML for browser viewing
         return _render_execution_log_html(result, safe_id)
@@ -2203,14 +2221,29 @@ def _render_execution_log_html(result, safe_id):
   td.s.MEDIUM {{ color: #f59e0b; }}
   td.s.LOW {{ color: #34d399; }}
   .empty {{ padding: 40px; text-align: center; color: #475569; }}
+  .tab-bar {{ display: flex; gap: 0; padding: 0 24px; border-bottom: 2px solid rgba(71,85,105,.2); }}
+  .tab-btn {{ padding: 10px 18px; background: none; border: none; border-bottom: 2px solid transparent;
+    margin-bottom: -2px; color: #64748b; font-family: monospace; font-size: 12px; cursor: pointer;
+    transition: all .15s; }}
+  .tab-btn:hover {{ color: #94a3b8; }}
+  .tab-btn.active {{ color: #60a5fa; border-bottom-color: #60a5fa; }}
+  .tab-panel {{ display: none; }}
+  .tab-panel.active {{ display: block; }}
+  .git-log {{ font-family: monospace; font-size: 12px; padding: 16px 24px; line-height: 1.8; color: #94a3b8; }}
+  .git-log .hash {{ color: #f59e0b; }}
+  .git-log .msg {{ color: #cbd5e1; }}
+  th.gh {{ top: 106px; }}
 </style>
+<script>
+function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===name)); document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id===name)); }}
+</script>
 </head>
 <body>
 <div class="bar">
   <a href="/">← Geoff</a>
   <h1>Execution Log — {_html_escape(title)}</h1>
   <span style="flex:1;"></span>
-  <span style="font-family:monospace;font-size:11px;color:#475569;">{len(audit)} entries</span>
+  <span style="font-family:monospace;font-size:11px;color:#475569;">{len(audit)} events · {len(commands)} commands · {len(result.get('git_log') or [])} commits</span>
 </div>
 <div class="meta">
   <span>Classification: <b>{_html_escape(str(meta.get('classification', '—')))}</b></span>
@@ -2218,16 +2251,31 @@ def _render_execution_log_html(result, safe_id):
   <span>Elapsed: <b>{meta.get('elapsed_seconds', '—')}s</b></span>
   <span>Evidence: <b>{_html_escape(str(meta.get('evidence_dir', '—')))}</b></span>
 </div>
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="tab-audit" onclick="switchTab('tab-audit')">Audit Trail</button>
+  <button class="tab-btn" data-tab="tab-git" onclick="switchTab('tab-git')">Git Log ({len(result.get('git_log') or [])})</button>
+  <button class="tab-btn" data-tab="tab-commands" onclick="switchTab('tab-commands')">Commands ({len(commands)})</button>
+</div>
+
+<div class="tab-panel active" id="tab-audit">
 <table>
-<thead><tr><th>#</th><th>Time</th><th>Playbook</th><th>Severity</th><th>Message</th></tr></thead>
+<thead><tr><th>#</th><th>Time</th><th>Event</th><th>Severity</th><th>Detail</th></tr></thead>
 <tbody>{row_html}</tbody>
 </table>
+</div>
 
-<h2 style="padding:24px 24px 12px;font-size:16px;font-weight:600;border-bottom:1px solid rgba(71,85,105,.2);">Commands Executed ({len(commands)} records)</h2>
+<div class="tab-panel" id="tab-git">
+<div class="git-log">
+{_html_escape('\n'.join(result.get('git_log') or ['No git history found.']))}
+</div>
+</div>
+
+<div class="tab-panel" id="tab-commands">
 <table>
-<thead><tr><th>#</th><th>Exit</th><th>Step</th><th>Duration</th><th>Command</th></tr></thead>
+<thead><tr class="gh"><th>#</th><th>Exit</th><th>Step</th><th>Duration</th><th>Command</th></tr></thead>
 <tbody>{cmd_html}</tbody>
 </table>
+</div>
 </body>
 </html>'''
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
