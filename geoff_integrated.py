@@ -84,6 +84,8 @@ def main():
 
     # Normal operation: delegate to src/geoff_integrated.py
     if os.path.exists(MAIN_MODULE):
+        # Ensure src/ is on sys.path so sibling imports work
+        sys.path.insert(0, os.path.join(SCRIPT_DIR, "src"))
         # Execute the main module directly, preserving sys.argv
         import runpy
         sys.argv = [MAIN_MODULE] + [a for a in sys.argv[1:]
