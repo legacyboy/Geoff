@@ -2134,10 +2134,12 @@ def _render_execution_log_html(result, safe_id):
     # Build audit rows
     rows = []
     for i, entry in enumerate(audit):
-        time = entry.get('time') or entry.get('timestamp', '')
-        msg = entry.get('msg') or entry.get('message', '') or str(entry)[:200]
-        pb = entry.get('playbook', '')
-        sev = entry.get('severity', '')
+        time = entry.get('ts') or entry.get('time') or entry.get('timestamp', '')
+        msg = entry.get('event') or entry.get('msg') or entry.get('message', '') or str(entry)[:200]
+        pb = entry.get('playbook') or ''
+        sev = entry.get('severity') or ''
+        if isinstance(sev, dict):
+            sev = sev.get('level', sev.get('severity', ''))
         rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time))}</td><td class="p">{_html_escape(str(pb))}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td>{_html_escape(str(msg))}</td></tr>')
 
     row_html = '\n'.join(rows) if rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No audit entries found for this case.</td></tr>'
@@ -2195,7 +2197,7 @@ def _render_execution_log_html(result, safe_id):
 </table>
 </body>
 </html>'''
-    return html, 200, {{'Content-Type': 'text/html; charset=utf-8'}}
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
 def _fallback_answer(question, report):
