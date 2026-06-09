@@ -2031,6 +2031,9 @@ def get_execution_log(case_id):
     if not case_path:
         return jsonify({'error': 'Case not found'}), 404
 
+    # Browser requests get HTML; API requests get JSON
+    accept_html = 'text/html' in (request.headers.get('Accept') or '')
+
     def _read_jsonl(path, limit=5000):
         records = []
         try:
@@ -2114,9 +2117,85 @@ def get_execution_log(case_id):
                 )
     result['metadata'] = metadata
 
+    if accept_html:
+        # Render as HTML for browser viewing
+        return _render_execution_log_html(result, safe_id)
     return json.dumps(result, indent=2, default=str), 200, {
         'Content-Type': 'application/json; charset=utf-8'
     }
+
+
+def _render_execution_log_html(result, safe_id):
+    """Render execution log as a styled HTML page."""
+    meta = result.get('metadata', {})
+    title = meta.get('case_id', safe_id)
+    audit = result.get('audit_trail') or []
+
+    # Build audit rows
+    rows = []
+    for i, entry in enumerate(audit):
+        time = entry.get('time') or entry.get('timestamp', '')
+        msg = entry.get('msg') or entry.get('message', '') or str(entry)[:200]
+        pb = entry.get('playbook', '')
+        sev = entry.get('severity', '')
+        rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time))}</td><td class="p">{_html_escape(str(pb))}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td>{_html_escape(str(msg))}</td></tr>')
+
+    row_html = '\n'.join(rows) if rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No audit entries found for this case.</td></tr>'
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geoff — Execution Log — {_html_escape(title)}</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #0a0f1a; color: #cbd5e1; font-family: ui-sans-serif, system-ui, sans-serif; }}
+  .bar {{ position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 16px;
+    padding: 12px 24px; background: rgba(8,13,24,.92); border-bottom: 1px solid rgba(71,85,105,.2);
+    backdrop-filter: blur(8px); }}
+  .bar a {{ color: #60a5fa; text-decoration: none; font-family: monospace; font-size: 13px; }}
+  .bar h1 {{ font-size: 16px; font-weight: 600; }}
+  .meta {{ display: flex; gap: 24px; padding: 16px 24px; font-family: monospace; font-size: 12px;
+    color: #64748b; border-bottom: 1px solid rgba(71,85,105,.15); }}
+  table {{ width: 100%; border-collapse: collapse; font-family: monospace; font-size: 12px; }}
+  th {{ position: sticky; top: 52px; z-index: 5; background: #0f172a; padding: 10px 14px;
+    text-align: left; font-weight: 600; color: #94a3b8; border-bottom: 2px solid rgba(71,85,105,.3);
+    text-transform: uppercase; font-size: 10px; letter-spacing: .8px; }}
+  td {{ padding: 8px 14px; border-bottom: 1px solid rgba(71,85,105,.1); vertical-align: top; }}
+  tr:hover td {{ background: rgba(76,141,255,.04); }}
+  td.n {{ color: #475569; width: 40px; text-align: right; padding-right: 10px; }}
+  td.t {{ color: #94a3b8; white-space: nowrap; width: 90px; }}
+  td.p {{ color: #60a5fa; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }}
+  td.s {{ font-weight: 600; width: 70px; }}
+  td.s.CRITICAL {{ color: #f87171; }}
+  td.s.HIGH {{ color: #fbbf24; }}
+  td.s.MEDIUM {{ color: #f59e0b; }}
+  td.s.LOW {{ color: #34d399; }}
+  .empty {{ padding: 40px; text-align: center; color: #475569; }}
+</style>
+</head>
+<body>
+<div class="bar">
+  <a href="/">← Geoff</a>
+  <h1>Execution Log — {_html_escape(title)}</h1>
+  <span style="flex:1;"></span>
+  <span style="font-family:monospace;font-size:11px;color:#475569;">{len(audit)} entries</span>
+</div>
+<div class="meta">
+  <span>Classification: <b>{_html_escape(str(meta.get('classification', '—')))}</b></span>
+  <span>Severity: <b>{_html_escape(str(meta.get('severity', '—')))}</b></span>
+  <span>Elapsed: <b>{meta.get('elapsed_seconds', '—')}s</b></span>
+  <span>Evidence: <b>{_html_escape(str(meta.get('evidence_dir', '—')))}</b></span>
+</div>
+<table>
+<thead><tr><th>#</th><th>Time</th><th>Playbook</th><th>Severity</th><th>Message</th></tr></thead>
+<tbody>{row_html}</tbody>
+</table>
+</body>
+</html>'''
+    return html, 200, {{'Content-Type': 'text/html; charset=utf-8'}}
 
 
 def _fallback_answer(question, report):

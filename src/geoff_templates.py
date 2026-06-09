@@ -875,6 +875,7 @@ NARRATIVE_REPORT_HTML = r"""<!DOCTYPE html>
         <button class="btn" id="btn-ip-map" onclick="openIPMap()" style="cursor:pointer;">&#9671; IP Map</button>
         <a class="btn" id="dl-md" href="#">↓ Markdown</a>
         <a class="btn" id="dl-json" href="#">↓ JSON</a>
+        <button class="btn" id="btn-exec-log" style="cursor:pointer;" title="View every command Geoff ran">⎘ Commands</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;margin-top:18px;">

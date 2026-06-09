@@ -135,6 +135,10 @@
     if (dl_json) dl_json.href = `/reports/${encodeURIComponent(dir)}/download/json`;
     const dl_md = $('dl-md');
     if (dl_md) dl_md.href = `/reports/${encodeURIComponent(dir)}/download/markdown`;
+    const btnExec = $('btn-exec-log');
+    if (btnExec) btnExec.addEventListener('click', () => {
+      window.open(`/reports/execution/${encodeURIComponent(dir)}`, '_blank');
+    });
 
     // meta strip
     const devMap = data.device_map || {};
