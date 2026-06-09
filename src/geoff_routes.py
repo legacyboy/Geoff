@@ -2147,6 +2147,13 @@ def get_execution_log(case_id):
     if git_log:
         result['git_log'] = git_log
 
+    # Load provenance DAG for evidence derivation chain
+    prov_path = case_path / 'provenance_dag.json'
+    if prov_path.exists():
+        prov_data = _read_json_file(prov_path)
+        if prov_data:
+            result['provenance_dag'] = prov_data
+
     if accept_html:
         # Render as HTML for browser viewing
         return _render_execution_log_html(result, safe_id)
@@ -2188,6 +2195,21 @@ def _render_execution_log_html(result, safe_id):
         cmd_rows.append(f'<tr><td class="n">{i+1}</td><td class="s">{_html_escape(str(exit_code))}</td><td class="p">{_html_escape(str(step)[:80])}</td><td class="t">{_html_escape(str(duration))}</td><td style="font-size:11px;word-break:break-all;">{_html_escape(str(cmd_str)[:300])}</td></tr>')
 
     cmd_html = '\n'.join(cmd_rows) if cmd_rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No command records found for this case.</td></tr>'
+
+    # Build provenance DAG rows
+    prov_dag = result.get('provenance_dag') or {}
+    prov_nodes = prov_dag.get('nodes', {})
+    prov_edges = prov_dag.get('edges', [])
+    prov_rows = []
+    for i, edge in enumerate(prov_edges):
+        from_id = edge.get('from', '?')[:40]
+        to_id = edge.get('to', '?')[:40]
+        rel = edge.get('relationship', '?')
+        sp = edge.get('specialist', '')
+        pb = edge.get('playbook', '')
+        prov_rows.append(f'<tr><td class="n">{i+1}</td><td class="p">{_html_escape(from_id)}</td><td style="color:#34d399;">→</td><td class="p">{_html_escape(to_id)}</td><td>{_html_escape(rel)}</td><td class="t">{_html_escape(sp)}</td><td class="t">{_html_escape(pb)}</td></tr>')
+
+    prov_html = '\n'.join(prov_rows) if prov_rows else '<tr><td colspan="7" style="color:var(--g-text-mute);padding:40px;text-align:center;">No provenance DAG found for this case.</td></tr>'
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -2255,6 +2277,7 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
   <button class="tab-btn active" data-tab="tab-audit" onclick="switchTab('tab-audit')">Audit Trail</button>
   <button class="tab-btn" data-tab="tab-git" onclick="switchTab('tab-git')">Git Log ({len(result.get('git_log') or [])})</button>
   <button class="tab-btn" data-tab="tab-commands" onclick="switchTab('tab-commands')">Commands ({len(commands)})</button>
+  <button class="tab-btn" data-tab="tab-prov" onclick="switchTab('tab-prov')">Provenance DAG</button>
 </div>
 
 <div class="tab-panel active" id="tab-audit">
@@ -2274,6 +2297,13 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
 <table>
 <thead><tr class="gh"><th>#</th><th>Exit</th><th>Step</th><th>Duration</th><th>Command</th></tr></thead>
 <tbody>{cmd_html}</tbody>
+</table>
+</div>
+
+<div class="tab-panel" id="tab-prov">
+<table>
+<thead><tr><th>#</th><th>From</th><th></th><th>To</th><th>Relationship</th><th>Specialist</th><th>Playbook</th></tr></thead>
+<tbody>{prov_html}</tbody>
 </table>
 </div>
 </body>
