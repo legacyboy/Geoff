@@ -4210,15 +4210,47 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                         lines.append("   - Return-Path mismatch detected (spoofing indicator)")
                 lines.append("")
         elif scan_records:
-            lines.append(
-                f"No phishing indicators detected across {total_scanned} email(s) scanned."
+            _has_spoofing = bool(
+                report_json.get("email_iocs", {}).get("return_path_mismatches")
+                or report_json.get("email_iocs", {}).get("spoofed_domains")
             )
+            if _has_spoofing:
+                lines.append(
+                    f"**{total_scanned} email(s) scanned** — "
+                    f"Return-Path spoofing detected (see Spoofing Evidence below)."
+                )
+            else:
+                lines.append(
+                    f"No phishing indicators detected across {total_scanned} email(s) scanned."
+                )
         else:
             lines.append(
                 f"{len(email_findings)} email-related finding(s) present, "
                 f"none flagged as phishing."
             )
 
+        # Show email message inventory from top-level email_iocs
+        _top_iocs = report_json.get("email_iocs", {})
+        _subjects = _top_iocs.get("subjects", [])
+        _from_addrs = _top_iocs.get("from_addresses", [])
+        _to_addrs = _top_iocs.get("to_addresses", [])
+        if _from_addrs and _subjects and not phishing_hits:
+            lines.append("\n### Messages Found\n")
+            lines.append(f"{len(_from_addrs)} email(s) recovered from the evidence.\n")
+            shown = 0
+            for i, (frm, to_addr, subj) in enumerate(zip(_from_addrs, _to_addrs, _subjects)):
+                if shown >= 30:
+                    lines.append(f"... and {len(_from_addrs) - 30} more")
+                    break
+                if not subj.strip() and not frm.strip():
+                    continue
+                shown += 1
+                lines.append(f"{shown}. **{subj[:120]}**" if subj.strip() else f"{shown}. *(no subject)*")
+                lines.append(f"   - From: `{frm}`")
+                if to_addr.strip():
+                    lines.append(f"   - To: `{to_addr}`")
+                lines.append("")
+        
         # Return-Path mismatches from top-level email_iocs (direct extraction path)
         # Filter: only show REAL spoofing (skip bounce-path mismatches from mailing lists)
         _top_iocs = report_json.get("email_iocs", {})
