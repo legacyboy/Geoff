@@ -123,9 +123,26 @@ if [[ "$SKIP_DEPS" == false ]]; then
                 warn "$tool not found in PATH — REMnux playbook may skip this tool"
             fi
         done
+        # guestmount fallback — libguestfs-tools may not be in all repos
+        if ! command -v guestmount &>/dev/null; then
+            info "guestmount not found — attempting specific install..."
+            sudo apt-get install -y -qq libguestfs-tools 2>/dev/null || true
+            if ! command -v guestmount &>/dev/null; then
+                # Fallback: download and install the deb from Debian bookworm
+                info "  Attempting direct .deb install from Debian..."
+                GUESTFS_DEB="libguestfs-tools_1.52.0-5+b1_amd64.deb"
+                curl -sL "http://ftp.debian.org/debian/pool/main/libg/libguestfs/${GUESTFS_DEB}" \
+                    -o "/tmp/${GUESTFS_DEB}" 2>/dev/null && \
+                    sudo dpkg -i "/tmp/${GUESTFS_DEB}" 2>/dev/null && \
+                    sudo apt-get install -f -y -qq 2>/dev/null && \
+                    rm -f "/tmp/${GUESTFS_DEB}" && \
+                    ok "guestmount installed via direct .deb" || \
+                    warn "guestmount install failed — VM forensics will use qemu-img only"
+            fi
+        fi
         # REMnux tools (install if on REMnux or SIFT with REMnux repo)
         sudo apt-get install -y -qq die upx clamav radare2 2>/dev/null || true
-        # Python-based REMnux tools (install via pip since apt packages may not exist)
+        # Python-based REMnux/malware tools (install via pip since apt packages may not exist)
         info "Installing Python-based REMnux/malware tools..."
         pip3 install --break-system-packages \
             oletools floss jsbeautifier capstone python-evtx \
@@ -137,6 +154,25 @@ if [[ "$SKIP_DEPS" == false ]]; then
             plyvel pyinstxtractor uncompyle6 \
             pefile python-magic lief construct \
             gitpython mcp 2>/dev/null || true
+        # Verify critical Python forensic tools
+        info "Verifying Python forensic imports..."
+        for _py_tool in python-evtx lief construct mcp; do
+            _py_mod="${_py_tool//-/_}"
+            if python3 -c "import ${_py_mod}" 2>/dev/null; then
+                info "  ${_py_tool}: OK"
+            else
+                warn "  ${_py_tool}: NOT INSTALLED — retrying individually..."
+                pip3 install --break-system-packages "${_py_tool}" 2>/dev/null || \
+                    pip3 install --user "${_py_tool}" 2>/dev/null || true
+            fi
+        done
+        # yara-python — Python bindings for YARA (binary installed via apt separately)
+        if ! python3 -c "import yara" 2>/dev/null; then
+            info "Installing yara-python (YARA Python bindings)..."
+            pip3 install --break-system-packages yara-python 2>/dev/null || \
+                pip3 install --user yara-python 2>/dev/null || \
+                warn "yara-python install failed — YARA scanning from Python will be unavailable"
+        fi
         # Ensure ~/.local/bin is on PATH for pip-installed tools
         LOCAL_BIN="${HOME}/.local/bin"
         if [ -d "$LOCAL_BIN" ] && [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
@@ -145,24 +181,31 @@ if [[ "$SKIP_DEPS" == false ]]; then
         fi
         # peframe — install from GitHub (no pip package)
         if ! command -v peframe &>/dev/null; then
-            info "Installing peframe from GitHub..."
+            info "Installing peframe (PE static analysis)..."
+            info "  Cloning from guelfoweb/peframe.git..."
             pip3 install --break-system-packages git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
                 pip3 install --user git+https://github.com/guelfoweb/peframe.git 2>/dev/null || \
                 warn "peframe install failed — PE analysis will use die/file as fallback"
+            command -v peframe &>/dev/null && ok "peframe installed"
         fi
         # crackmapexec — AD/network security assessment (PB-SIFT-035)
         if ! command -v crackmapexec &>/dev/null && ! command -v nxc &>/dev/null; then
-            info "Installing crackmapexec..."
+            info "Installing crackmapexec (AD/network security)..."
+            info "  pip installing crackmapexec..."
             pip3 install --break-system-packages crackmapexec 2>/dev/null || \
                 pip3 install --user crackmapexec 2>/dev/null || \
                 warn "crackmapexec install failed — AD DC forensics playbook may be limited"
+            if command -v crackmapexec &>/dev/null || command -v nxc &>/dev/null; then
+                ok "crackmapexec installed"
+            fi
         fi
         # fsevents-parser — macOS FSEvents log parser (PB-SIFT-024)
         if ! python3 -c "import fsevents_parser" &>/dev/null 2>&1; then
-            info "Installing fsevents-parser..."
+            info "Installing fsevents-parser (macOS FSEvents)..."
             pip3 install --break-system-packages fsevents-parser 2>/dev/null || \
                 pip3 install --user fsevents-parser 2>/dev/null || \
                 warn "fsevents-parser install failed — macOS FSEvents analysis will be limited"
+            python3 -c "import fsevents_parser" 2>/dev/null && ok "fsevents-parser installed"
         fi
         # kubectl — Kubernetes CLI (PB-SIFT-033 container forensics)
         if ! command -v kubectl &>/dev/null; then
@@ -188,10 +231,11 @@ if [[ "$SKIP_DEPS" == false ]]; then
         fi
         # chrome-historiographer — Chrome history parser (PB-SIFT-022)
         if ! python3 -c "import chrome_historian" &>/dev/null 2>&1; then
-            info "Installing chrome-historiographer..."
+            info "Installing chrome-historiographer (Chrome history parser)..."
             pip3 install --break-system-packages chrome-historiographer 2>/dev/null || \
                 pip3 install --user chrome-historiographer 2>/dev/null || \
                 warn "chrome-historiographer install failed — Chrome history parsing will use SQLite fallback"
+            python3 -c "import chrome_historian" 2>/dev/null && ok "chrome-historiographer installed"
         fi
         # Tshark (needs non-interactive setup)
         echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
@@ -228,32 +272,74 @@ if [[ "$SKIP_DEPS" == false ]]; then
         fi
         # Volatility2 - install alongside Volatility3 for legacy OS support (Win2K, XP early)
         vol2_found=false
-        if command -v vol.py &>/dev/null || command -v volatility &>/dev/null; then
-            vol2_found=true
-            info "Volatility2 already installed ($(command -v vol.py 2>/dev/null || command -v volatility 2>/dev/null))"
+        if command -v vol.py &>/dev/null || [ -f /usr/local/bin/vol.py ]; then
+            # Verify the existing vol.py actually runs on python3
+            if python3 /usr/local/bin/vol.py --help &>/dev/null 2>&1; then
+                vol2_found=true
+                info "Volatility2 already installed and working"
+            else
+                warn "Existing vol.py found but broken — will reinstall"
+                sudo rm -f /usr/local/bin/vol.py 2>/dev/null || true
+            fi
         fi
         if [ "$vol2_found" = false ]; then
-            info "Installing Volatility2 for legacy OS support..."
-            sudo apt-get install -y -qq python2 python2-dev python3-pip 2>/dev/null || true
-            # Install volatility2 from pip (community fork)
-            sudo pip3 install volatility2 --break-system-packages 2>/dev/null || \
-                sudo pip install volatility2 2>/dev/null || \
-                pip3 install --user volatility2 2>/dev/null || true
-            # Also try installing the standalone script
-            if ! command -v vol.py &>/dev/null; then
-                curl -sL "https://github.com/volatilityfoundation/volatility/archive/refs/heads/master.zip" -o "/tmp/vol2.zip" 2>/dev/null && \
-                    unzip -q -o "/tmp/vol2.zip" -d "/tmp/vol2" 2>/dev/null && \
-                    sudo mkdir -p /opt/volatility2 && \
-                    sudo cp -r /tmp/vol2/volatility-master/* /opt/volatility2/ 2>/dev/null && \
-                    sudo ln -sf /opt/volatility2/vol.py /usr/local/bin/vol.py 2>/dev/null && \
-                    rm -rf "/tmp/vol2" "/tmp/vol2.zip" || \
-                    warn "Volatility2 standalone install failed"
-            fi
-            if command -v vol.py &>/dev/null || [ -f "/usr/local/bin/vol.py" ]; then
-                ok "Volatility2 installed"
+            info "Installing Volatility2 for legacy OS support (Win2K, XP early)..."
+            # Volatility2 is Python 2 source. On modern SIFT/Kali (Python 3.12+),
+            # 2to3/lib2to3 are removed from stdlib. We apply manual sed fixes
+            # for Python 2 syntax (print statements, except clauses).
+            VOL2_URL="https://github.com/volatilityfoundation/volatility/archive/refs/heads/master.zip"
+            info "  Downloading Volatility2 from GitHub..."
+            if curl -sL "$VOL2_URL" -o "/tmp/vol2.zip" 2>/dev/null && \
+               unzip -q -o "/tmp/vol2.zip" -d "/tmp/vol2" 2>/dev/null && \
+               sudo mkdir -p /opt/volatility2 && \
+               sudo cp -r /tmp/vol2/volatility-master/* /opt/volatility2/ 2>/dev/null; then
+                info "  Applying Python 2→3 syntax fixes to all Volatility2 .py files..."
+                # Fix shebang in all .py files: python → python3
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i '1s|^#!.*python[0-9]*\?|#!/usr/bin/env python3|' {} \;
+                # Convert print statements: print X → print(X)
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/^\([[:space:]]*\)print \([^(].*\)$/\1print(\2)/' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/^\([[:space:]]*\)print$/\1print()/' {} \;
+                # Convert except X, e: → except X as e: (single class)
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/except \([A-Za-z_][A-Za-z0-9_.]*\), \([a-z_][a-z0-9_]*\):/except \1 as \2:/g' {} \;
+                # Convert except (X, Y), e: → except (X, Y) as e: (tuple exceptions)
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/except (\([^)]*\)), \([a-z_][a-z0-9_]*\):/except (\1) as \2:/g' {} \;
+                # Convert Python 2 stdlib imports to Python 3
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/import ConfigParser/import configparser/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/ConfigParser\.ConfigParser/configparser.ConfigParser/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/import StringIO/import io/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/StringIO\.StringIO/io.StringIO/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/import cPickle as pickle/import pickle/g' {} \;
+                # Convert raise Class, "msg" → raise Class("msg") (Python 2 raise syntax)
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/raise \([A-Z][A-Za-z]*\), \(.*\)/raise \1(\2)/g' {} \;
+                # Convert long → int (Python 2 builtin, unified in Python 3)
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/class Address(long)/class Address(int)/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/class Address64(long)/class Address64(int)/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/class Hex(long)/class Hex(int)/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/long\.__new__/int.__new__/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/= long(/= int(/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/set(\[int, long,/set([int,/g' {} \;
+                # Fix type-check comparisons with long
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/== long)/== int)/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/== long and/== int and/g' {} \;
+                # Fix collections.abc for Python 3.12+
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/collections\.Sequence/collections.abc.Sequence/g' {} \;
+                sudo find /opt/volatility2 -name '*.py' -exec sed -i 's/collections\.OrderedDict()/dict()/g' {} \;
+                # Fix StandardError → Exception (removed in Python 3)
+                sudo sed -i 's/class TreePopulationError(StandardError)/class TreePopulationError(Exception)/' /opt/volatility2/volatility/renderers/__init__.py
+                # Fix tuple parameter unpacking in lambda (2 instances in renderers/__init__.py)
+                sudo sed -i 's/lambda (x, y): sort_key(x\.values)/lambda xy: sort_key(xy[0].values)/g' /opt/volatility2/volatility/renderers/__init__.py
+                # Verify vol.py runs on python3
+                if python3 /opt/volatility2/vol.py --help &>/dev/null 2>&1; then
+                    sudo ln -sf /opt/volatility2/vol.py /usr/local/bin/vol.py
+                    ok "Volatility2 installed and verified (python3 compatible)"
+                else
+                    warn "Volatility2 syntax fixes incomplete — vol.py may have issues"
+                    sudo ln -sf /opt/volatility2/vol.py /usr/local/bin/vol.py 2>/dev/null || true
+                fi
             else
-                warn "Volatility2 installation may have failed — legacy memory dumps will need manual processing"
+                warn "Volatility2 download failed — legacy memory dumps will need manual processing"
             fi
+            rm -rf "/tmp/vol2" "/tmp/vol2.zip" 2>/dev/null || true
         fi
         # Install REMnux distro for malware analysis tools
         # REMnux addon install can take 20+ minutes on first run.
@@ -358,14 +444,29 @@ DIE_EOF
     # apfs-fuse — APFS volume mounting (macOS + encrypted container playbooks)
     if ! command -v apfs-fuse &>/dev/null; then
         info "Installing apfs-fuse for APFS volume support..."
+        info "  Installing apfs-fuse build dependencies..."
+        sudo apt-get update -qq 2>/dev/null || true
         sudo apt-get install -y -qq fuse libfuse-dev cmake libattr1-dev zlib1g-dev bzip2 libbz2-dev \
-            libz-dev liblzfse-dev 2>/dev/null || true
+            libz-dev 2>/dev/null || true
+        # liblzfse-dev may not exist in all repos — try it but don't fail
+        sudo apt-get install -y -qq liblzfse-dev 2>/dev/null || \
+            info "  liblzfse-dev not available — building without LZFSE compression"
+        # Verify critical build deps before attempting build
+        MISSING_DEPS=""
+        for _dep in cmake gcc g++; do
+            command -v $_dep &>/dev/null || MISSING_DEPS="$MISSING_DEPS $_dep"
+        done
+        dpkg -s libfuse-dev 2>/dev/null | grep -q 'install ok installed' || MISSING_DEPS="$MISSING_DEPS libfuse-dev"
+        if [ -n "$MISSING_DEPS" ]; then
+            warn "Missing apfs-fuse build deps:${MISSING_DEPS} — APFS mounting may use fsapfs fallback"
+        fi
         if ! command -v apfs-fuse &>/dev/null; then
+            info "  Building apfs-fuse from source..."
             ( cd /tmp && \
                 git clone --depth=1 https://github.com/sgan81/apfs-fuse.git /tmp/apfs-fuse 2>/dev/null && \
-                cd /tmp/apfs-fuse && git submodule update --init && \
-                mkdir -p build && cd build && cmake .. && make -j2 && \
-                sudo make install && rm -rf /tmp/apfs-fuse 2>/dev/null
+                cd /tmp/apfs-fuse && git submodule update --init --recursive 2>/dev/null && \
+                mkdir -p build && cd build && cmake .. 2>/dev/null && make -j"$(nproc)" 2>/dev/null && \
+                sudo make install 2>/dev/null && rm -rf /tmp/apfs-fuse 2>/dev/null
             ) || warn "apfs-fuse build failed — APFS volumes will need manual mounting"
         fi
     else
@@ -400,10 +501,11 @@ DIE_EOF
     fi
 
     # python-cim — WMI repository parser (persistence playbooks)
+    # Note: flare-wmi was renamed to flare-cim in 2023
     if ! python3 -c "import cim" &>/dev/null 2>&1; then
         info "Installing python-cim for WMI repository forensics..."
-        pip3 install --break-system-packages git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
-            pip3 install --user git+https://github.com/mandiant/flare-wmi.git 2>/dev/null || \
+        pip3 install --break-system-packages git+https://github.com/mandiant/flare-cim.git 2>/dev/null || \
+            pip3 install --user git+https://github.com/mandiant/flare-cim.git 2>/dev/null || \
             warn "python-cim install failed — WMI OBJECTS.DATA parsing will use strings fallback"
     else
         info "python-cim already installed"
@@ -430,10 +532,12 @@ DIE_EOF
     fi
     # Mobile malware analysis tools (APK/IPA)
     if ! command -v apktool &>/dev/null; then
-        info "Installing apktool for Android APK analysis..."
-        wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool 2>/dev/null || \
+        info "Installing apktool (Android APK analysis)..."
+        info "  Downloading apktool wrapper script..."
+        sudo wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool 2>/dev/null && \
+            sudo chmod +x /usr/local/bin/apktool && \
+            ok "apktool installed" || \
             warn "apktool download failed — APK analysis may be limited"
-        chmod +x /usr/local/bin/apktool 2>/dev/null || true
     fi
     sudo apt-get install -y -qq yara 2>/dev/null || true
 
@@ -465,7 +569,7 @@ else
     info "Cloning GEOFF repository..."
     sudo mkdir -p "$INSTALL_DIR"
     sudo chown "$(whoami):$(id -gn)" "$INSTALL_DIR"
-    git clone -b main "$REPO" "$INSTALL_DIR"
+    git clone "$REPO" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 ok "Code ready at ${INSTALL_DIR}"
@@ -713,7 +817,7 @@ info "Starting Geoff services..."
 mkdir -p "${INSTALL_DIR}/logs"
 
 # Start web server (Flask on 8080)
-nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && set -a && source .env && set +a && python3 geoff_integrated.py" > "${INSTALL_DIR}/logs/geoff.log" 2>&1 &
+nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && set -a && source .env && set +a && python3 src/geoff_integrated.py" > "${INSTALL_DIR}/logs/geoff.log" 2>&1 &
 GEOFF_PID=$!
 info "Geoff web server starting on port 8080 (PID: ${GEOFF_PID})"
 
@@ -722,28 +826,18 @@ nohup bash -c "cd ${INSTALL_DIR} && source venv/bin/activate && python3 src/geof
 MCP_PID=$!
 info "Geoff MCP server starting on port 9999 (PID: ${MCP_PID})"
 
-# Wait for servers to become ready
-info "Waiting for services to start..."
-GEOFF_READY=false
-for i in $(seq 1 15); do
-    if curl -s http://127.0.0.1:8080/ >/dev/null 2>&1; then
-        GEOFF_READY=true
-        break
-    fi
-    sleep 2
-done
-if $GEOFF_READY; then
-    ok "Geoff web server is responding on port 8080"
-elif kill -0 ${GEOFF_PID} 2>/dev/null; then
-    warn "Geoff web server process running but not yet responding on port 8080"
+# Wait a moment and check if processes are running
+sleep 2
+if kill -0 ${GEOFF_PID} 2>/dev/null; then
+    ok "Geoff web server running"
 else
-    warn "Geoff web server may have failed to start (check ${INSTALL_DIR}/logs/geoff.log)"
+    warn "Geoff web server may have failed to start (check logs/geoff.log)"
 fi
 
 if kill -0 ${MCP_PID} 2>/dev/null; then
     ok "Geoff MCP server running"
 else
-    warn "Geoff MCP server may have failed to start (check ${INSTALL_DIR}/logs/mcp.log)"
+    warn "Geoff MCP server may have failed to start (check logs/mcp.log)"
 fi
 
 # ── External tool presence checks ────────────────────────────────────────────
@@ -810,7 +904,7 @@ echo -e "${GREEN}╠════════════════════
 echo -e "${GREEN}║${NC} To restart manually:                             ${NC}"
 echo -e "${GREEN}║${NC}   cd ${INSTALL_DIR}                               ${NC}"
 echo -e "${GREEN}║${NC}   source venv/bin/activate                      ${NC}"
-echo -e "${GREEN}║${NC}   python3 geoff_integrated.py &             ${NC}"
+echo -e "${GREEN}║${NC}   python3 src/geoff_integrated.py &             ${NC}"
 echo -e "${GREEN}║${NC}   python3 src/geoff_mcp_server.py &             ${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║${NC} To switch profiles:                             ${NC}"

@@ -49,8 +49,10 @@ class GeoffCriticPool:
     def __init__(self, critic_a=None, critic_b=None):
         # Import here to avoid circular imports
         from geoff_critic import GeoffCritic
+        from geoff_config import AGENT_MODELS
         model_b = os.environ.get('GEOFF_CRITIC2_MODEL',
-                                  os.environ.get('GEOFF_CRITIC_MODEL', 'qwen3.5:cloud'))
+                                 AGENT_MODELS.get('critic2',
+                                  os.environ.get('GEOFF_CRITIC_MODEL', 'qwen3.5:cloud')))
         self.critic_a = critic_a or GeoffCritic()
         self.critic_b = critic_b or GeoffCritic(model=model_b)
         self._lock = threading.Lock()

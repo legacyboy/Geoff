@@ -815,8 +815,23 @@ def safe_git_commit(message: str, base_path: str = None):
         _log_error(f"git commit: not a git repo: {base_path}")
         return {"status": "failed", "error": "not a git repo", "hash": None}
 
-    # Run git add -A
+    # Run git add -A to track all modified/deleted/new files
     add_result = safe_run(['git', 'add', '-A'], cwd=base_path, timeout=60)
+    if add_result["code"] != 0:
+        _log_error(f"git add failed: {add_result['stderr'][:200]}")
+        return {"status": "failed", "error": f"git add failed: {add_result['stderr'][:100]}", "hash": None}
+
+    # Also explicitly add commands/ to catch new untracked command JSON files
+    commands_dir = Path(base_path) / 'commands'
+    if commands_dir.is_dir():
+        safe_run(['git', 'add', '--', 'commands/'], cwd=base_path, timeout=30)
+
+    # Quick check if anything was actually staged — avoid empty commits
+    diff_result = safe_run(['git', 'diff', '--cached', '--name-only'], cwd=base_path, timeout=10)
+    if diff_result['code'] == 0 and not diff_result['stdout'].strip():
+        untracked = safe_run(['git', 'ls-files', '--others', '--exclude-standard'], cwd=base_path, timeout=10)
+        if untracked['code'] == 0 and not untracked['stdout'].strip():
+            return {"status": "noop", "hash": None, "error": None}
     if add_result["code"] != 0:
         _log_error(f"git add failed: {add_result['stderr'][:200]}")
         return {"status": "failed", "error": f"git add failed: {add_result['stderr'][:100]}", "hash": None}

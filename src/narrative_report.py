@@ -3788,6 +3788,119 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
         scored.sort(key=lambda x: (-x[0], x[1].get("playbook", ""), x[1].get("step_key", "")))
         return [f for _, f in scored]
 
+
+    def _render_human_review_section(self, report_json: dict) -> str:
+        """Collect and render items that need human analyst review."""
+        findings = report_json.get("findings_detail", [])
+        batch_critic = report_json.get("batch_critic_assessment") or {}
+        llm_assessment = batch_critic.get("llm_assessment") or {}
+        hall_flags = llm_assessment.get("hallucination_flags") or []
+
+        items = []
+
+        # Findings where critic verdict is REQUIRES_REVIEW, REJECTED, FAILED
+        for f in findings:
+            critic = f.get("critic") or {}
+            verdict = critic.get("verdict", "")
+            if verdict in ("REQUIRES_REVIEW", "REJECTED", "FAILED"):
+                items.append({
+                    "playbook": f.get("playbook") or f.get("playbook_id", ""),
+                    "tool": f"{f.get('module','')}.{f.get('function','')}",
+                    "evidence": f.get("evidence_file", ""),
+                    "why": f"Critic verdict: {verdict} — {str(critic.get('verdict_reason',''))[:150]}",
+                    "action": "Verify finding against raw tool output and re-run if needed",
+                    "priority": "HIGH",
+                })
+
+        # Steps with status unverified or failed
+        for f in findings:
+            status = f.get("status", "")
+            if status in ("completed_unverified", "failed") and not any(
+                i["tool"] == f"{f.get('module','')}.{f.get('function','')}" and
+                i["evidence"] == f.get("evidence_file","") for i in items
+            ):
+                reason = f.get("unverified_reason") or f.get("error") or status
+                items.append({
+                    "playbook": f.get("playbook") or f.get("playbook_id", ""),
+                    "tool": f"{f.get('module','')}.{f.get('function','')}",
+                    "evidence": f.get("evidence_file", ""),
+                    "why": f"Step status: {status} — {str(reason)[:150]}",
+                    "action": "Manual re-run or manual evidence review",
+                    "priority": "MEDIUM" if status == "completed_unverified" else "HIGH",
+                })
+
+        # Findings with no severity classification (severity "?")
+        for f in findings:
+            forensicator = f.get("forensicator") or {}
+            sig = forensicator.get("significance") or (f.get("evidence_chain") or {}).get("significance") or "?"
+            if sig == "?":
+                items.append({
+                    "playbook": f.get("playbook") or f.get("playbook_id", ""),
+                    "tool": f"{f.get('module','')}.{f.get('function','')}",
+                    "evidence": f.get("evidence_file", ""),
+                    "why": "Severity not classified — analyst must determine significance",
+                    "action": "Classify severity (CRITICAL/HIGH/MEDIUM/LOW) based on context",
+                    "priority": "LOW",
+                })
+
+        # Items where batch critic flagged hallucinations
+        for flag in hall_flags:
+            step_key = flag if isinstance(flag, str) else (flag.get("step_key", "") if isinstance(flag, dict) else "")
+            items.append({
+                "playbook": "",
+                "tool": step_key,
+                "evidence": "",
+                "why": f"Batch critic flagged potential hallucination: {str(flag)[:200]}",
+                "action": "Cross-check claim against raw evidence before including in report",
+                "priority": "HIGH",
+            })
+
+        # High-severity findings (CRITICAL, HIGH)
+        for f in findings:
+            forensicator = f.get("forensicator") or {}
+            sig = forensicator.get("significance") or (f.get("evidence_chain") or {}).get("significance") or ""
+            if sig in ("CRITICAL", "HIGH"):
+                note = forensicator.get("analyst_note") or ""
+                items.append({
+                    "playbook": f.get("playbook") or f.get("playbook_id", ""),
+                    "tool": f"{f.get('module','')}.{f.get('function','')}",
+                    "evidence": f.get("evidence_file", ""),
+                    "why": f"{sig} severity finding — {note[:150] if note else 'requires examiner verification'}",
+                    "action": "Verify and document in final report with chain of custody",
+                    "priority": sig,
+                })
+
+        if not items:
+            return "_No items flagged for human review in this investigation._"
+
+        # Deduplicate by (tool, evidence, why)
+        seen = set()
+        deduped = []
+        for item in items:
+            key = (item["tool"], item["evidence"][:50], item["priority"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+
+        # Sort: CRITICAL first, then HIGH, MEDIUM, LOW
+        _prio_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        deduped.sort(key=lambda x: _prio_order.get(x["priority"], 4))
+
+        lines = [f"**{len(deduped)} item(s) require human review.**\n"]
+        lines.append("| # | Priority | Playbook | Tool/Step | Evidence | Why it needs review | Suggested action |")
+        lines.append("|---|----------|----------|-----------|----------|---------------------|-----------------|")
+        for i, item in enumerate(deduped[:100], 1):
+            prio = item["priority"]
+            ev = Path(item["evidence"]).name if item["evidence"] else "—"
+            pb = str(item["playbook"])[:30] if item["playbook"] else "—"
+            tool = str(item["tool"])[:40]
+            why = str(item["why"])[:120].replace("|", "/")
+            action = str(item["action"])[:80].replace("|", "/")
+            lines.append(f"| {i} | **{prio}** | {pb} | {tool} | {ev} | {why} | {action} |")
+        if len(deduped) > 100:
+            lines.append(f"| | | | | | *+{len(deduped)-100} more items* | |")
+        return "\n".join(lines)
+
     def _render_detailed_steps(self, report_json: dict) -> str:
         """Render detailed step-by-step execution log showing actual CLI commands,
         raw output excerpts, critic verdicts, and status for every step."""
@@ -4881,6 +4994,38 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
         return "\n".join(lines)
 
     @staticmethod
+    def _quality_gate_banner(report_json: dict) -> str:
+        """Return a warning banner if the quality gate was not fully executed."""
+        qg = report_json.get("quality_gate", {})
+        if not isinstance(qg, dict):
+            return ""
+        auto_approved = qg.get("auto_approved", False)
+        critic_executed = qg.get("critic_executed", True)
+        manager_executed = qg.get("manager_executed", True)
+        reason = qg.get("auto_approve_reason", "")
+        if not auto_approved:
+            return ""
+        issues = []
+        if not critic_executed:
+            issues.append("the **Critic** agent did not run — findings were not sanity-checked for hallucinations or IOC bleed-through")
+        if not manager_executed:
+            issues.append("the **Manager** agent did not run — replay candidates could not be identified and decisions were defaulted")
+        if not issues:
+            issues.append("one or more quality gates were unavailable")
+        banner = (
+            "\n> ⚠️ **ATTENTION — Quality Gate Down**\n"
+            "> \n"
+            "> The automated quality review could not be completed because "
+            + "; ".join(issues) + ". "
+            "This does NOT mean the findings are wrong, "
+            "but human review is strongly recommended."
+        )
+        if reason:
+            banner += f"\n> \n> **Reason:** `{reason}`"
+        banner += "\n"
+        return banner
+
+    @staticmethod
     def _full_written_report_banner(sections: dict) -> str:
         """Return a warning banner if the full written report needs review."""
         if sections.get('needs_review'):
@@ -4918,7 +5063,7 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
         )
 
         md = f"""# {title}
-
+{self._quality_gate_banner(report_json)}
 **Generated:** {generated}
 **Evidence Sources:** {_evidence_display}
 **Analysis:** {report_json.get("steps_completed", 0)} steps completed, {report_json.get("steps_failed", 0)} failed, {report_json.get("steps_skipped", 0)} skipped, {report_json.get("steps_unprocessable", 0)} unprocessable
@@ -4947,6 +5092,12 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
 ## Command History
 
 {self._render_detailed_steps(report_json)}
+
+---
+
+## Human Review Items
+
+{self._render_human_review_section(report_json)}
 
 ---
 

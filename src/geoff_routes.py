@@ -137,6 +137,19 @@ _ALLOWED_TOOL_FUNCTIONS: dict = {
 }
 
 
+def _strip_futures(obj):
+    """Recursively strip non-serializable Future objects from result dicts."""
+    if isinstance(obj, dict):
+        keys_to_del = [k for k in obj.keys() if k.startswith('_') and ('future' in k.lower() or 'Future' in type(obj[k]).__name__)]
+        for k in keys_to_del:
+            del obj[k]
+        for v in obj.values():
+            _strip_futures(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_futures(item)
+
+
 def _extract_path_from_message(msg: str) -> str:
     """Extract a filesystem path from a chat message."""
     match = re.search(r'(/[a-zA-Z0-9._/-]+)', msg)
@@ -1428,7 +1441,11 @@ def find_evil_status_latest():
         "log": job.get("log", [])[-50:],
     }
     if job["status"] == "complete":
-        resp["result"] = job["result"]
+        result = job["result"]
+        if result:
+            # Strip non-serializable Future objects before returning
+            _strip_futures(result)
+        resp["result"] = result
     elif job["status"] in ("error", "cancelled"):
         resp["error"] = job.get("error")
     return jsonify(resp)
@@ -1460,7 +1477,10 @@ def find_evil_status(job_id):
     }
 
     if job["status"] == "complete":
-        resp["result"] = job["result"]
+        result = job["result"]
+        if result:
+            _strip_futures(result)
+        resp["result"] = result
     elif job["status"] == "error":
         resp["error"] = job["error"]
 
@@ -2259,16 +2279,39 @@ function dagFilter(sev) {{
         if not finding_parts:
             finding_parts.append(f'<span style="color:#475569">{_html_escape(rel)}</span>')
 
+        analyst_summary = node_meta.get('analyst_summary') or ''
+        tool_desc = node_meta.get('tool_description') or ''
+        ev_path = node_meta.get('evidence_path') or ''
+        ts = node_meta.get('timestamp') or ''
+        finding_count = node_meta.get('finding_count') or ''
+
+        summary_parts = []
+        if analyst_summary:
+            summary_parts.append(f'<span style="color:#e2e8f0;display:block">{_html_escape(analyst_summary[:200])}</span>')
+        elif analyst_note:
+            summary_parts.append(f'<span style="color:#e2e8f0;display:block">{_html_escape(analyst_note[:200])}</span>')
+        if tool_desc:
+            summary_parts.append(f'<span style="color:#94a3b8;font-size:10px;display:block">{_html_escape(tool_desc[:120])}</span>')
+        if threat_iocs:
+            ioc_text = ', '.join(str(x) for x in threat_iocs[:3])
+            summary_parts.append(f'<span style="color:#fb923c;font-size:10px;display:block">[IOC: {_html_escape(ioc_text[:100])}]</span>')
+        if not summary_parts:
+            summary_parts.append(f'<span style="color:#475569">{_html_escape(rel)}</span>')
+
         from_short = _html_escape((from_id.split('/')[-1] or from_id)[:55])
+        ev_short = _html_escape(ev_path[:50]) if ev_path else from_short
+        ts_short = _html_escape(str(ts)[:19]) if ts else ''
         rows.append(
-            f'<tr class="dag-row" data-sev="{_html_escape(sig or "UNKNOWN")}" style="border-left:3px solid {sev_color}">'
-            f'<td style="color:#475569;width:36px;text-align:right;padding-right:10px">{i+1}</td>'
-            f'<td style="color:{sev_color};font-weight:600;width:76px;white-space:nowrap">{_html_escape(sig or "—")}</td>'
-            f'<td style="color:#60a5fa;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{_html_escape(from_id)}">{from_short}</td>'
-            f'<td style="color:#34d399;width:16px;text-align:center">→</td>'
-            f'<td style="color:#818cf8;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="{_html_escape(to_id)}">{_html_escape(rel)}</td>'
-            f'<td style="max-width:340px">{"".join(finding_parts)}</td>'
-            f'<td style="color:#64748b;font-size:11px;white-space:nowrap">{_html_escape(pb)}</td>'
+            f'<tr class="dag-row" data-sev="{_html_escape(sig or "UNKNOWN")}" style="border-left:3px solid {sev_color}">' +
+            f'<td style="color:#475569;width:36px;text-align:right;padding-right:10px">{i+1}</td>' +
+            f'<td style="color:{sev_color};font-weight:600;width:76px;white-space:nowrap">{_html_escape(sig or "—")}</td>' +
+            f'<td style="color:#60a5fa;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="{_html_escape(from_id)}">{ev_short}</td>' +
+            f'<td style="color:#34d399;width:16px;text-align:center">→</td>' +
+            f'<td style="color:#818cf8;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px" title="{_html_escape(to_id)}">{_html_escape(rel)}</td>' +
+            f'<td style="max-width:320px">{"".join(summary_parts)}</td>' +
+            f'<td style="color:#64748b;font-size:11px;white-space:nowrap">{_html_escape(pb)}</td>' +
+            f'<td style="color:#94a3b8;font-size:10px;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis" title="{_html_escape(str(ts))}">{ts_short}</td>' +
+            f'<td style="color:#475569;font-size:10px;text-align:center;width:32px">{_html_escape(str(finding_count)) if finding_count else "—"}</td>' +
             f'</tr>'
         )
 
@@ -2276,11 +2319,13 @@ function dagFilter(sev) {{
 <thead><tr style="position:sticky;top:52px;background:#0f172a">
   <th style="padding:10px 14px;text-align:right;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px;width:36px">#</th>
   <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px;width:76px">Severity</th>
-  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Source</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Evidence</th>
   <th style="padding:10px 14px;border-bottom:2px solid rgba(71,85,105,.3);width:16px"></th>
   <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Tool</th>
-  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Finding</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Analyst Summary</th>
   <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Playbook</th>
+  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px">Timestamp</th>
+  <th style="padding:10px 14px;text-align:center;font-weight:600;color:#94a3b8;border-bottom:2px solid rgba(71,85,105,.3);text-transform:uppercase;font-size:10px;width:32px">N</th>
 </tr></thead>
 <tbody>{chr(10).join(rows)}</tbody>
 </table>'''
@@ -2320,20 +2365,77 @@ def _render_execution_log_html(result, safe_id):
 
     # Build audit rows — filter to significant events only
     _significant_events = {'case_init', 'playbook_start', 'playbook_complete', 'Find Evil complete',
-                          'git_commit', 'extraction_start', 'error', 'fail', 'case_finalized'}
+                          'git_commit', 'extraction_start', 'error', 'fail', 'case_finalized',
+                          'finding_requires_review', 'find_evil_complete', 'anti_forensics_detected',
+                          'unverified', 'self_correction'}
     rows = []
     for i, entry in enumerate(audit):
         time = entry.get('ts') or entry.get('time') or entry.get('timestamp', '')
         event = entry.get('event') or ''
         msg = event or entry.get('msg') or entry.get('message', '') or str(entry)[:200]
-        pb = entry.get('playbook') or ''
+        pb = entry.get('playbook_id') or entry.get('playbook') or ''
         sev = entry.get('severity') or ''
         if isinstance(sev, dict):
             sev = sev.get('level', sev.get('severity', ''))
         # Filter: skip routine noise
         if event and event not in _significant_events and 'playbook' not in event.lower() and 'error' not in str(msg).lower():
             continue
-        rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time))}</td><td class="p">{_html_escape(str(pb))}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td>{_html_escape(str(msg))}</td></tr>')
+        # Build enriched detail cell based on event type
+        detail_parts = [_html_escape(str(msg))]
+        if event == 'playbook_complete':
+            finding_count = entry.get('finding_count', '')
+            unverified = entry.get('steps_unverified', '')
+            failed = entry.get('steps_failed', '')
+            hallucinations = entry.get('hallucination_count', 0)
+            review_count = entry.get('requires_review_count', 0)
+            critic_summary = entry.get('critic_verdict_summary') or {}
+            detail_parts = [f'<b>playbook_complete</b> {_html_escape(str(pb))}']
+            if finding_count:
+                detail_parts.append(f'<span style="color:#34d399">{finding_count} findings</span>')
+            if unverified:
+                detail_parts.append(f'<span style="color:#fbbf24">{unverified} unverified</span>')
+            if failed:
+                detail_parts.append(f'<span style="color:#f87171">{failed} failed</span>')
+            if review_count:
+                detail_parts.append(f'<span style="color:#f87171">{review_count} need review</span>')
+            if hallucinations:
+                detail_parts.append(f'<span style="color:#fb923c">{hallucinations} hallucinations</span>')
+            if critic_summary:
+                cs_text = ' | '.join(f'{k}:{v}' for k, v in critic_summary.items())
+                detail_parts.append(f'<span style="color:#64748b;font-size:10px">[critic: {_html_escape(cs_text[:100])}]</span>')
+        elif event == 'case_init':
+            ev_count = entry.get('evidence_count', '')
+            ev_types = entry.get('evidence_types') or []
+            ev_size = entry.get('total_size_bytes', '')
+            detail_parts = ['<b>case_init</b> — evidence dir: ' + _html_escape(str(entry.get('evidence_dir','')))]
+            if ev_count:
+                detail_parts.append(f'<span style="color:#60a5fa">{ev_count} files</span>')
+            if ev_types:
+                detail_parts.append(f'<span style="color:#94a3b8">{_html_escape(", ".join(ev_types[:5]))}</span>')
+            if ev_size:
+                mb = round(int(ev_size) / 1048576, 1) if isinstance(ev_size, (int, float)) else ev_size
+                detail_parts.append(f'<span style="color:#64748b">{mb} MB</span>')
+        elif event == 'finding_requires_review':
+            verdict = entry.get('verdict', '')
+            reason = entry.get('verdict_reason', '')
+            module = entry.get('module', '')
+            func = entry.get('function', '')
+            halls = entry.get('hallucinations') or []
+            detail_parts = ['<b style="color:#f87171">REVIEW REQUIRED</b> — ' + _html_escape(module) + '.' + _html_escape(func)]
+            if verdict:
+                detail_parts.append(f'<span style="color:#fbbf24">[{_html_escape(verdict)}]</span>')
+            if reason:
+                detail_parts.append(f'<span style="color:#94a3b8">{_html_escape(str(reason)[:150])}</span>')
+            if halls:
+                detail_parts.append(f'<span style="color:#fb923c">hallucinations: {_html_escape(str(halls)[:100])}</span>')
+        elif event == 'unverified':
+            module = entry.get('module', '')
+            func = entry.get('function', '')
+            reason = entry.get('reason') or []
+            detail_parts = ['<b style="color:#fbbf24">unverified</b> — ' + _html_escape(module) + '.' + _html_escape(func)]
+            if reason:
+                detail_parts.append(f'<span style="color:#94a3b8">{_html_escape(str(reason)[:150])}</span>')
+        rows.append(f'<tr><td class="n">{i+1}</td><td class="t">{_html_escape(str(time)[:19])}</td><td class="p">{_html_escape(str(pb)[:40])}</td><td class="s {_html_escape(str(sev))}">{_html_escape(str(sev))}</td><td style="font-size:11px;line-height:1.6">{" &nbsp;|&nbsp; ".join(detail_parts)}</td></tr>')
 
     row_html = '\n'.join(rows) if rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No audit entries found for this case.</td></tr>'
 
@@ -2348,7 +2450,7 @@ def _render_execution_log_html(result, safe_id):
         step = cmd.get('step') or cmd.get('step_key', '')
         if isinstance(duration, (int, float)):
             duration = f'{duration:.1f}s'
-        cmd_rows.append(f'<tr><td class="n">{i+1}</td><td class="s">{_html_escape(str(exit_code))}</td><td class="p">{_html_escape(str(step)[:80])}</td><td class="t">{_html_escape(str(duration))}</td><td style="font-size:11px;word-break:break-all;">{_html_escape(str(cmd_str)[:300])}</td></tr>')
+        cmd_rows.append(f'<tr><td class="n">{i+1}</td><td class="s">{_html_escape(str(exit_code))}</td><td class="p">{_html_escape(str(step))}</td><td class="t">{_html_escape(str(duration))}</td><td style="font-size:11px;word-break:break-all;">{_html_escape(str(cmd_str))}</td></tr>')
 
     cmd_html = '\n'.join(cmd_rows) if cmd_rows else '<tr><td colspan="5" style="color:var(--g-text-mute);padding:40px;text-align:center;">No command records found for this case.</td></tr>'
 

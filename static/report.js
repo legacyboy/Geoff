@@ -163,6 +163,7 @@
       { id: 'email-phishing', num: '03.5', title: 'Phishing & Email Threats', render: (r) => { r.innerHTML = renderMarkdown(data.email_phishing || ''); } },
       { id: 'mitre',    num: '04', title: 'MITRE ATT&CK Coverage',      render: (r) => renderMitreLink(r, dir) },
       { id: 'iocs',     num: '05', title: 'Indicators of Compromise',   render: (r) => renderIocs(r, data) },
+      { id: 'human-review', num: '05.5', title: 'Human Review Items', render: (r) => renderHumanReview(r, data) },
       // --- New narrative sections ---
       { id: 'attack-chain', num: '06', title: 'Attack Chain / Attack Narrative', render: (r) => renderAttackChain(r, data) },
       { id: 'kill-chain-timeline', num: '07', title: 'Kill Chain & Timeline Reconstruction', render: (r) => renderKillChainTimeline(r, data) },
@@ -543,6 +544,92 @@
       root.innerHTML = renderTextBlock(ec);
     }
   }
+
+  function renderHumanReview(root, data) {
+    // Collect items needing human review from findings
+    const findings = data.findings_detail || [];
+    const batchCritic = data.batch_critic_assessment || {};
+    const hallFlags = (batchCritic.llm_assessment || {}).hallucination_flags || [];
+    const items = [];
+
+    const PRIO_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    const PRIO_COLOR = { CRITICAL: 'var(--sev-crit)', HIGH: 'var(--sev-high)', MEDIUM: 'var(--sev-med)', LOW: 'var(--sev-low)' };
+
+    findings.forEach(f => {
+      const critic = f.critic || {};
+      const verdict = critic.verdict || '';
+      const forensicator = f.forensicator || {};
+      const sig = forensicator.significance || (f.evidence_chain || {}).significance || '';
+      const evFile = f.evidence_file || '';
+      const evName = evFile.split('/').pop() || '—';
+      const pb = f.playbook || f.playbook_id || '—';
+      const tool = `${f.module || ''}.${f.function || ''}`;
+
+      if (['REQUIRES_REVIEW', 'REJECTED', 'FAILED'].includes(verdict)) {
+        items.push({ priority: 'HIGH', pb, tool, evidence: evName, why: `Critic verdict: ${verdict} — ${String(critic.verdict_reason || '').slice(0, 120)}`, action: 'Verify against raw output' });
+      } else if (['completed_unverified', 'failed'].includes(f.status || '')) {
+        const reason = f.unverified_reason || f.error || f.status || '';
+        items.push({ priority: f.status === 'failed' ? 'HIGH' : 'MEDIUM', pb, tool, evidence: evName, why: `Step status: ${f.status} — ${String(reason).slice(0, 120)}`, action: 'Manual re-run or evidence review' });
+      } else if (sig === '?') {
+        items.push({ priority: 'LOW', pb, tool, evidence: evName, why: 'Severity unclassified — needs analyst judgment', action: 'Classify severity' });
+      }
+      if (['CRITICAL', 'HIGH'].includes(sig)) {
+        const note = forensicator.analyst_note || '';
+        items.push({ priority: sig, pb, tool, evidence: evName, why: `${sig} finding — ${note.slice(0, 120) || 'requires examiner verification'}`, action: 'Verify and document with chain of custody' });
+      }
+    });
+
+    hallFlags.forEach(flag => {
+      const flagStr = typeof flag === 'string' ? flag : (flag.step_key || JSON.stringify(flag).slice(0, 100));
+      items.push({ priority: 'HIGH', pb: '—', tool: flagStr, evidence: '—', why: 'Batch critic flagged potential hallucination', action: 'Cross-check claim against raw evidence' });
+    });
+
+    if (!items.length) {
+      root.innerHTML = '<p style="color:var(--g-text-mute)">No items flagged for human review in this investigation.</p>';
+      return;
+    }
+
+    // Deduplicate and sort
+    const seen = new Set();
+    const deduped = items.filter(item => {
+      const k = `${item.tool}|${item.evidence}|${item.priority}`;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    deduped.sort((a, b) => (PRIO_ORDER[a.priority] ?? 4) - (PRIO_ORDER[b.priority] ?? 4));
+
+    let html = `<div style="margin-bottom:16px;padding:12px 16px;background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);border-radius:6px;">
+      <b style="color:#f87171">${deduped.length} item(s) require human review</b>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12px">
+    <thead><tr style="background:var(--g-surface-2)">
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">#</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Priority</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Playbook</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Tool/Step</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Evidence</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Why it needs review</th>
+      <th style="padding:8px 12px;text-align:left;color:#94a3b8;text-transform:uppercase;font-size:10px">Suggested Action</th>
+    </tr></thead><tbody>`;
+    deduped.slice(0, 200).forEach((item, i) => {
+      const color = PRIO_COLOR[item.priority] || '#94a3b8';
+      html += `<tr style="border-bottom:1px solid var(--g-border-soft)">
+        <td style="padding:8px 12px;color:#475569">${i+1}</td>
+        <td style="padding:8px 12px;font-weight:600;color:${color}">${esc(item.priority)}</td>
+        <td style="padding:8px 12px;color:#60a5fa;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.pb)}</td>
+        <td style="padding:8px 12px;color:#818cf8;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.tool)}</td>
+        <td style="padding:8px 12px;color:#94a3b8;white-space:nowrap">${esc(item.evidence)}</td>
+        <td style="padding:8px 12px;color:#e2e8f0;max-width:220px">${esc(item.why)}</td>
+        <td style="padding:8px 12px;color:#64748b;max-width:160px">${esc(item.action)}</td>
+      </tr>`;
+    });
+    if (deduped.length > 200) {
+      html += `<tr><td colspan="7" style="padding:8px 12px;color:#475569">+${deduped.length - 200} more items</td></tr>`;
+    }
+    html += '</tbody></table>';
+    root.innerHTML = html;
+  }
+
 
   function renderConclusion(root, data) {
     const c = data.conclusion;

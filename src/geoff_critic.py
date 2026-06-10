@@ -336,6 +336,64 @@ class GeoffCritic:
                     return ""
                 time.sleep(actual_wait)
                 continue
+        # --- Fallback model chain ---
+        # Primary model exhausted all retries. Try fallback models with shorter timeouts.
+        _fallback_models = []
+
+        # Fallback 1: if primary has :cloud suffix, try local profile critic
+        if ":cloud" in _llm_model.lower():
+            try:
+                from geoff_config import load_profile as _load_profile
+                _local_models = _load_profile("local")
+                _local_critic = _local_models.get("critic", "")
+                if _local_critic and _local_critic != _llm_model:
+                    _fallback_models.append(("local-critic", _local_critic, 90))
+            except Exception as _fb_err:
+                print(f"[CRITIC] Could not load local profile for fallback: {_fb_err}")
+
+        # Fallback 2: forensicator model as last resort
+        try:
+            _forensicator = _cfg_models.get("forensicator", "")
+            if _forensicator and _forensicator != _llm_model:
+                _fallback_models.append(("forensicator", _forensicator, 30))
+        except NameError:
+            pass  # _cfg_models not available from failed lazy import
+
+        for _fb_label, _fb_model, _fb_timeout in _fallback_models:
+            _fb_start = time.time()
+            _fb_max_wait = _fb_timeout * 2
+            print(f"[CRITIC] Fallback attempt: {_fb_label} ({_fb_model}) timeout={_fb_timeout}s")
+            for _fb_attempt in range(5):
+                if time.time() - _fb_start > _fb_max_wait:
+                    break
+                try:
+                    _fb_response = requests.post(
+                        _llm_url,
+                        headers=_llm_headers,
+                        json={
+                            "model": _fb_model,
+                            "prompt": prompt,
+                            "stream": False,
+                            "options": {"temperature": 0.2}
+                        },
+                        timeout=_fb_timeout,
+                    )
+                    if _fb_response.status_code == 200:
+                        _fb_text = _fb_response.json().get("response", "")
+                        if not _fb_text.strip():
+                            _thinking = _fb_response.json().get("thinking", "")
+                            if _thinking:
+                                _m = re.search(r'\{.*\}', _thinking, re.DOTALL)
+                                if _m:
+                                    _fb_text = _m.group()
+                        if _fb_text.strip() and not any(pat in _fb_text for pat in _error_patterns):
+                            print(f"[CRITIC] Fallback SUCCESS: {_fb_label} ({_fb_model}) after {_fb_attempt+1} attempt(s)")
+                            return _fb_text
+                except Exception:
+                    pass
+            print(f"[CRITIC] Fallback EXHAUSTED: {_fb_label} ({_fb_model})")
+
+        print(f"[CRITIC] All models exhausted (primary + {len(_fallback_models)} fallbacks) — returning empty")
         return ""  # All retries exceeded (should not normally reach here)
 
     # Forensic metadata keywords that indicate IOC bleed-through

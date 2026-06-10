@@ -1887,8 +1887,38 @@ def _novel_apply_confidence(findings: list, case_work_dir: Path,
 def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
                                   job_id: str) -> dict:
     """Novel 4: Build evidence provenance DAG and save to case_work_dir."""
+    # Tool description lookup by module.function name
+    _TOOL_DESCS = {
+        'filesystem.list_files': 'Enumerates files in the evidence image',
+        'filesystem.find_suspicious': 'Searches for suspicious files by pattern and extension',
+        'registry.parse_hive': 'Parses Windows registry hives for persistence and config keys',
+        'registry.find_run_keys': 'Enumerates autorun registry keys for persistence mechanisms',
+        'memory.list_processes': 'Lists running processes from a memory dump',
+        'memory.find_injected': 'Detects injected code and hollowed processes in memory',
+        'network.extract_flows': 'Extracts network connection flows from capture files',
+        'network.analyze_pcap': 'Analyses packet captures for suspicious communications',
+        'logs.parse_evtx': 'Parses Windows event logs for security-relevant events',
+        'logs.find_lateral': 'Searches event logs for lateral movement indicators',
+        'strings.extract': 'Extracts printable strings from binary files',
+        'yara.scan': 'Runs YARA rules against files or memory to match malware patterns',
+        'hash.lookup': 'Computes file hashes and checks against NSRL/threat intel',
+        'dns.parse_cache': 'Parses DNS cache for domain resolution history',
+        'prefetch.parse': 'Parses Windows prefetch files for execution history',
+        'browser.parse_history': 'Extracts browser history, downloads, and cookies',
+        'email.parse': 'Parses email files for phishing indicators and attachments',
+        'shellbags.parse': 'Extracts shellbag artefacts showing folder navigation history',
+        'lnk.parse': 'Parses Windows LNK shortcut files for recently accessed paths',
+        'mft.parse': 'Parses the Master File Table for file creation and modification history',
+        'usb.parse': 'Extracts USB device connection history from registry and logs',
+    }
     try:
         dag = ProvenanceDAG(case_work_dir=str(case_work_dir))
+        # Count findings per evidence file for finding_count enrichment
+        ev_finding_counts: dict = {}
+        for f in findings:
+            ef = f.get('evidence_file', '')
+            if ef:
+                ev_finding_counts[ef] = ev_finding_counts.get(ef, 0) + 1
         # Register each unique evidence source
         seen_sources = set()
         for f in findings:
@@ -1909,10 +1939,27 @@ def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
                 analyst_note = forensicator.get('analyst_note') or ev_chain.get('analyst_note') or ''
                 threat_iocs = forensicator.get('threat_indicators') or []
                 result_snippet = ''
+                analyst_summary = ''
                 raw_result = f.get('result')
                 if isinstance(raw_result, dict):
                     stdout = raw_result.get('stdout') or ''
+                    summary_text = raw_result.get('summary') or raw_result.get('description') or raw_result.get('analyst_summary') or ''
+                    if summary_text:
+                        analyst_summary = str(summary_text)[:400]
+                    elif analyst_note:
+                        analyst_summary = str(analyst_note)[:400]
+                    elif stdout:
+                        analyst_summary = str(stdout)[:400]
                     result_snippet = str(stdout)[:300].strip()
+                elif analyst_note:
+                    analyst_summary = str(analyst_note)[:400]
+                # Human-readable evidence path (basename of evidence file)
+                ev_basename = ev_file.split('/')[-1] if ev_file else ''
+                # Tool description
+                tool_key = f'{module}.{function}'
+                tool_desc = _TOOL_DESCS.get(tool_key, f'Runs {module} {function} analysis on evidence')
+                # Timestamp: use finding's timestamp or created field
+                ts = f.get('timestamp') or f.get('created') or f.get('ts') or ''
                 dag.add_derived(
                     fid, 'finding', '', ev_file,
                     relationship=f'{module}.{function}',
@@ -1923,6 +1970,13 @@ def _novel_build_provenance_dag(findings: list, case_work_dir: Path,
                         'analyst_note': analyst_note,
                         'threat_indicators': threat_iocs,
                         'result_snippet': result_snippet,
+                        'playbook_name': pb,
+                        'playbook_description': f'Playbook {pb} — {module} analysis',
+                        'evidence_path': ev_basename,
+                        'timestamp': ts,
+                        'analyst_summary': analyst_summary,
+                        'tool_description': tool_desc,
+                        'finding_count': ev_finding_counts.get(ev_file, 1),
                     },
                 )
         dag_path = dag.save()
@@ -2076,7 +2130,21 @@ Respond ONLY in valid JSON (no extra text):
         "replay_adjustments": {},
         "generate_report": sufficient,
         "reasoning": "Manager LLM unavailable - defaulting to approve",
+        "critic_unavailable": False,
     }
+    if not (raw and raw.strip()):
+        # First attempt failed — log explicitly and retry with a shorter prompt
+        _fe_log(job_id, "  ⚠ [MANAGER] LLM did not respond on first attempt — retrying with simplified prompt", agent="Manager")
+        short_prompt = (
+            f"Manager DFIR review. Critic quality={overall_quality}, "
+            f"sufficient_for_report={sufficient}. "
+            f"Replay candidates: {replay_candidates[:3]}. "
+            'Respond ONLY in JSON: {"action":"approve","generate_report":true,"reasoning":"brief"}'
+        )
+        raw = _call_manager_llm(short_prompt, timeout=60)
+        if not (raw and raw.strip()):
+            _fe_log(job_id, "  ⚠ [MANAGER] LLM unavailable after retry — proceeding fail-open with critic_unavailable flag", agent="Manager")
+            decision["critic_unavailable"] = True
     if raw and raw.strip():
         try:
             m = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -2086,6 +2154,7 @@ Respond ONLY in valid JSON (no extra text):
                 decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
                 decision["generate_report"]    = parsed.get("generate_report", sufficient)
                 decision["reasoning"]          = parsed.get("reasoning", "")
+                decision["critic_unavailable"] = False
                 manager_executed = True
         except Exception as e:
             _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve", agent="Manager")
@@ -2947,6 +3016,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 job_id=job_id,
                                 evidence_file=img,
                                 evidence_type="disk_image",
+                                case_work_dir=str(case_work_dir),
                             )
                             if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
                                 _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped for {img_name}: {healed.get('_skip_reason', 'LLM skip')}")
@@ -2987,6 +3057,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             job_id=job_id,
                             evidence_file=img,
                             evidence_type="disk_image",
+                            case_work_dir=str(case_work_dir),
                         )
                         if healed and (healed.get("status") in ("skipped",) or healed.get("_heal_skipped")):
                             _fe_log(job_id, f"  ⎘ [HEAL] Partition detection skipped after crash for {img_name}")
@@ -3989,8 +4060,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         except (OSError, FileExistsError):
             pass
 
-        # Init git (skip on resume - already initialised in prior run)
-        if not resuming:
+        # Init git if not already initialised
+        if not (case_work_dir / '.git').is_dir():
             try:
                 r = safe_run(['git', 'init'], cwd=case_work_dir, timeout=30)
                 if r.get("code", -1) != 0:
@@ -4004,9 +4075,33 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                 safe_git_commit('Initial case setup', base_path=str(case_work_dir))
             except Exception as e:
                 _log_error(f"git init case_work_dir {case_work_dir}", e)
+        elif resuming:
+            _fe_log(job_id, f"[GIT] Repo already initialised at {case_work_dir}, skipping init")
 
         _update_job(8, "setup", "Case directory ready", log_msg=f"Case directory ready: {case_work_dir}")
-        _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir))
+        # Enrich case_init with evidence inventory details
+        _ev_count = 0
+        _ev_types = []
+        _ev_total_size = 0
+        try:
+            _ev_dir = Path(str(evidence_dir))
+            if _ev_dir.exists():
+                _ext_counts: dict = {}
+                for _ev_f in _ev_dir.rglob('*'):
+                    if _ev_f.is_file():
+                        _ev_count += 1
+                        _ext = _ev_f.suffix.lower() or '.bin'
+                        _ext_counts[_ext] = _ext_counts.get(_ext, 0) + 1
+                        try:
+                            _ev_total_size += _ev_f.stat().st_size
+                        except OSError:
+                            pass
+                _ev_types = [f"{ext}({cnt})" for ext, cnt in sorted(_ext_counts.items(), key=lambda x: -x[1])[:10]]
+        except Exception:
+            pass
+        _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir),
+                      evidence_count=_ev_count, evidence_types=_ev_types,
+                      total_size_bytes=_ev_total_size)
 
         # Crash Recovery - reset any 'running' steps from previous runs
         for pb_file in case_work_dir.glob("output/*.json"):
@@ -5660,6 +5755,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 evidence_file=item,
                                                 evidence_type=_infer_evidence_type(item),
                                                 os_type=os_type,
+                                                case_work_dir=str(case_work_dir),
                                             )
                                             if healed is not None and healed.get("status") == "success":
                                                 step_record["status"] = "completed"
@@ -5697,6 +5793,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 evidence_file=item,
                                                 evidence_type=_infer_evidence_type(item),
                                                 os_type=os_type,
+                                                case_work_dir=str(case_work_dir),
                                             )
                                             if healed is not None:
                                                 if healed.get("status") == "success":
@@ -6017,6 +6114,19 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         "steps_failed": sum(1 for s in pb_findings if s.get("status") == "failed"),
                         "steps_unprocessable": sum(1 for s in pb_findings if s.get("_fallback_exhausted")),
                     })
+                    # Build critic verdict summary for audit enrichment
+                    _critic_verdicts = {}
+                    _requires_review_count = 0
+                    _hallucination_count = 0
+                    for _pbs in pb_findings:
+                        _cr = _pbs.get("critic") or {}
+                        if isinstance(_cr, dict):
+                            _vd = _cr.get("verdict", "")
+                            _critic_verdicts[_vd] = _critic_verdicts.get(_vd, 0) + 1
+                            if _vd in ("REQUIRES_REVIEW", "FAILED", "REJECTED"):
+                                _requires_review_count += 1
+                            _hallucination_count += len(_cr.get("hallucinations") or [])
+                    _finding_count = sum(1 for s in pb_findings if s.get("status") in ("completed", "completed_unverified"))
                     _audit_append(
                         case_work_dir, "playbook_complete",
                         playbook_id=playbook_id, device_id=dev_id,
@@ -6024,7 +6134,25 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         steps_completed=sum(1 for s in pb_findings if s.get("status") == "completed"),
                         steps_unverified=sum(1 for s in pb_findings if s.get("status") == "completed_unverified"),
                         steps_failed=sum(1 for s in pb_findings if s.get("status") == "failed"),
+                        finding_count=_finding_count,
+                        requires_review_count=_requires_review_count,
+                        hallucination_count=_hallucination_count,
+                        critic_verdict_summary=_critic_verdicts,
                     )
+                    # Emit finding_requires_review events for findings needing human review
+                    for _pbs in pb_findings:
+                        _cr = _pbs.get("critic") or {}
+                        if isinstance(_cr, dict) and _cr.get("verdict") in ("REQUIRES_REVIEW", "FAILED", "REJECTED"):
+                            _audit_append(
+                                case_work_dir, "finding_requires_review",
+                                playbook_id=playbook_id, device_id=dev_id,
+                                step_key=_pbs.get("step_key", ""),
+                                module=_pbs.get("module", ""),
+                                function=_pbs.get("function", ""),
+                                verdict=_cr.get("verdict", ""),
+                                verdict_reason=str(_cr.get("verdict_reason", ""))[:200],
+                                hallucinations=(_cr.get("hallucinations") or [])[:3],
+                            )
 
                     # Git commit after each playbook - part of transaction, not optional
                     try:
@@ -7159,6 +7287,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             },
             "findings_detail": findings_writer.all_records(),
             "findings_jsonl": str(findings_writer._path),
+            "findings": findings_writer.all_records(),
             "user_activity_summary": correlated_users if correlated_users is not None else {},
             "correlated_users": correlated_users if correlated_users is not None else {},
             "device_map": device_map if device_map is not None else {},

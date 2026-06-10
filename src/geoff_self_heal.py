@@ -128,6 +128,17 @@ def classify_error_fast(ctx: ErrorContext) -> Optional[str]:
             return "mount_error.no_such_device"
     if "loop device" in stderr:
         return "mount_error.loop_device"
+    # Bug fix: Volatility2 vol.py uses Python 2 syntax (print statement, etc.) but
+    # the system may only have Python 3 installed. The shebang "#!/usr/bin/env python"
+    # resolves to python3, causing SyntaxError on Python 2 code. Self-heal by fixing
+    # the shebang and running 2to3.
+    if "syntaxerror" in stderr and ("vol.py" in stderr or ctx.tool_command
+            and "vol.py" in (ctx.tool_command or "")):
+        return "vol_py_python2_syntax"
+    # Also catch "bad interpreter" when vol.py shebang points to missing python binary
+    if ("bad interpreter" in stderr or "no such file or directory" in stderr) \
+            and ctx.tool_command and "vol.py" in (ctx.tool_command or ""):
+        return "vol_py_bad_interpreter"
     return None
 
 
@@ -137,7 +148,7 @@ def classify_error_fast(ctx: ErrorContext) -> Optional[str]:
 
 _TOOL_INSTALL_CMDS = {
     "vol": "pip3 install volatility3 --break-system-packages",
-    "vol.py": "pip3 install volatility3 --break-system-packages",
+    "vol.py": "pip3 install volatility2 --break-system-packages",  # Volatility2, not 3
     "volatility3": "pip3 install volatility3 --break-system-packages",
     "fls": "sudo apt-get install -y -qq sleuthkit",
     "mmls": "sudo apt-get install -y -qq sleuthkit",
@@ -232,6 +243,91 @@ def _fast_heal(fast_class: str, module: str, function: str, params: dict,
             "_missing_tool": binary,
             "_remediation": remediation,
             "error": f"tool not installed: {binary or function}",
+        }
+
+    # --- Volatility2 vol.py Python 2 syntax error: fix shebang + sed conversion ---
+    # Bug fix: The GitHub standalone vol.py uses Python 2 syntax. When Python 2
+    # is not installed, the shebang resolves to python3 and produces SyntaxError.
+    # Since Python 3.12+ removed 2to3/lib2to3 from stdlib, we use sed to convert
+    # the most common Python 2 syntax patterns (print statements, except clauses).
+    if fast_class in ("vol_py_python2_syntax", "vol_py_bad_interpreter"):
+        vol_py_path = None
+        for candidate in ("/opt/volatility2/vol.py", "/usr/local/bin/vol.py",
+                          "/usr/bin/vol.py"):
+            if os.path.isfile(candidate):
+                vol_py_path = os.path.realpath(candidate)  # resolve symlinks
+                break
+        if not vol_py_path:
+            # Find vol.py via which/shutil
+            import shutil as _shutil
+            found = _shutil.which("vol.py")
+            if found:
+                vol_py_path = os.path.realpath(found)
+        if vol_py_path and os.path.isfile(vol_py_path):
+            _fe_log(job_id, f"  [_HEAL] vol.py Python 2 syntax: fixing shebang + syntax in {vol_py_path}")
+            try:
+                # Find vol.py parent dir and fix ALL .py files recursively
+                vol2_dir = os.path.dirname(os.path.dirname(vol_py_path)) if vol_py_path.endswith('vol.py') else os.path.dirname(vol_py_path)
+                if os.path.isdir(vol2_dir):
+                    # 1. Fix shebang: replace Python 2 shebang with Python 3 (recursive)
+                    subprocess.run(
+                        ["find", vol2_dir, "-name", "*.py", "-exec", "sed", "-i",
+                         r"1s|^#!.*python[0-9]*\?|#!/usr/bin/env python3|", "{}", ";"],
+                        capture_output=True, text=True, timeout=60, check=False,
+                    )
+                    # 2. Convert print statements: print X → print(X)
+                    subprocess.run(
+                        ["find", vol2_dir, "-name", "*.py", "-exec", "sed", "-i",
+                         r"s/^\([[:space:]]*\)print \([^(].*\)$/\1print(\2)/", "{}", ";"],
+                        capture_output=True, text=True, timeout=60, check=False,
+                    )
+                    subprocess.run(
+                        ["find", vol2_dir, "-name", "*.py", "-exec", "sed", "-i",
+                         r"s/^\([[:space:]]*\)print$/\1print()/", "{}", ";"],
+                        capture_output=True, text=True, timeout=60, check=False,
+                    )
+                    # 3. Convert except X, e: → except X as e: (single class)
+                    subprocess.run(
+                        ["find", vol2_dir, "-name", "*.py", "-exec", "sed", "-i",
+                         r"s/except \([A-Za-z_][A-Za-z0-9_.]*\), \([a-z_][a-z0-9_]*\):/except \1 as \2:/g", "{}", ";"],
+                        capture_output=True, text=True, timeout=60, check=False,
+                    )
+                    # 4. Convert except (X, Y), e: → except (X, Y) as e: (tuple exceptions)
+                    subprocess.run(
+                        ["find", vol2_dir, "-name", "*.py", "-exec", "sed", "-i",
+                         r"s/except (\([^)]*\)), \([a-z_][a-z0-9_]*\):/except (\1) as \2:/g", "{}", ";"],
+                        capture_output=True, text=True, timeout=60, check=False,
+                    )
+                # Verify vol.py now runs on python3
+                verify = subprocess.run(
+                    ["python3", vol_py_path, "--help"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if verify.returncode == 0:
+                    _fe_log(job_id, f"  ✓ [_HEAL] vol.py syntax fixed — retrying {module}.{function}")
+                    retry_result = _run_step_via_orchestrator(module, function, params, job_id=job_id)
+                    if isinstance(retry_result, dict):
+                        retry_result["_self_healed"] = True
+                        retry_result["_heal_fix_type"] = "vol_py_syntax_fix"
+                    return retry_result
+                else:
+                    _fe_log(job_id, f"  ⚠ [_HEAL] vol.py still broken after sed fix: {verify.stderr[:200]}")
+            except Exception as _vol_heal_err:
+                _fe_log(job_id, f"  ⚠ [_HEAL] vol.py fix failed: {_vol_heal_err}")
+        # Fallback: recommend manual install
+        _fe_log(job_id, f"  ⎘ [_HEAL] vol.py not fixable — run 'sudo python3 /opt/volatility2/vol.py --help' to diagnose")
+        return {
+            "status": "skipped",
+            "_heal_skipped": True,
+            "_heal_fix_type": "vol_py_remediation",
+            "_skip_reason": fast_class,
+            "_remediation": (
+                "Volatility2 vol.py uses Python 2 syntax. On Python 3.12+ you must:"
+                " 1) Fix shebang: sed -i '1s|^#!.*|#!/usr/bin/env python3|' /opt/volatility2/vol.py"
+                " 2) Convert print/except: sed -i 's/print /print(/g' /opt/volatility2/vol.py"
+                " Or use volatility3 (vol) instead for most memory images."
+            ),
+            "error": f"vol.py requires Python 2 syntax: {fast_class}",
         }
 
     # --- Mount errors: bounded retry (often transient), else skip with hint ---
@@ -375,7 +471,8 @@ def _attempt_heal(module: str, function: str, params: dict,
                    prior_attempts: list = None,
                    evidence_file: str = None,
                    evidence_type: str = None,
-                   os_type: str = "") -> Optional[dict]:
+                   os_type: str = "",
+                   case_work_dir: Optional[str] = None) -> Optional[dict]:
     """Ask Critic to diagnose and fix a failed step.
 
     Returns healed result dict, or None if healing failed / not applicable.
@@ -394,9 +491,10 @@ def _attempt_heal(module: str, function: str, params: dict,
         return None
 
     # Deterministic remedies for environmental errors (missing tool, mount
-    # failure) — act on them instead of deferring to an LLM that is told to
-    # give up on these classes.
-    if fast_class and (fast_class == "tool_missing" or fast_class.startswith("mount_error")):
+    # failure, vol.py syntax) — act on them instead of deferring to an LLM
+    # that is told to give up on these classes.
+    if fast_class and (fast_class == "tool_missing" or fast_class.startswith("mount_error")
+                       or fast_class.startswith("vol_py")):
         fast_result = _fast_heal(fast_class, module, function, params, ctx, job_id)
         if fast_result is not None:
             outcome = "healed" if fast_result.get("status") == "success" else "skipped"
@@ -408,7 +506,7 @@ def _attempt_heal(module: str, function: str, params: dict,
                 confidence=10,
                 llm_model="deterministic",
             )
-            _audit_heal(job_id, module, function, ctx, _fast_decision, outcome)
+            _audit_heal(job_id, module, function, ctx, _fast_decision, outcome, case_work_dir=case_work_dir)
             return fast_result
         # else fall through to LLM diagnosis
 
@@ -432,7 +530,7 @@ def _attempt_heal(module: str, function: str, params: dict,
 
     # Audit trail
     outcome = "healed" if (healed_result and healed_result.get("status") == "success") else ("skipped" if (healed_result and healed_result.get("status") == "skipped") else "failed")
-    _audit_heal(job_id, module, function, ctx, decision, outcome)
+    _audit_heal(job_id, module, function, ctx, decision, outcome, case_work_dir=case_work_dir)
 
     if healed_result and healed_result.get("status") == "success":
         healed_result["_self_healed"] = True
@@ -455,8 +553,9 @@ def _attempt_heal(module: str, function: str, params: dict,
 # ---------------------------------------------------------------------------
 
 def _audit_heal(job_id: str, module: str, function: str,
-                 ctx: ErrorContext, decision: HealDecision, outcome: str):
-    """Log a self-heal event to the action audit trail."""
+                 ctx: ErrorContext, decision: HealDecision, outcome: str,
+                 case_work_dir: Optional[str] = None):
+    """Log a self-heal event to the action audit trail and case audit trail."""
     try:
         action_logger.log('SELF_HEAL', {
             'job_id': job_id,
@@ -476,6 +575,27 @@ def _audit_heal(job_id: str, module: str, function: str,
         }, commit=False)
     except Exception:
         pass
+
+    # Also append to case audit_trail.jsonl for visibility in reports
+    if case_work_dir:
+        try:
+            from geoff_utils import _audit_append
+            _audit_append(
+                case_work_dir,
+                "self_heal",
+                job_id=job_id,
+                module=module,
+                function=function,
+                evidence_file=str(ctx.evidence_file or ""),
+                error_class=str(ctx.exception_type or ""),
+                fix_type=decision.fix_type,
+                fix_detail=str(decision.fix_detail or "")[:200],
+                confidence=decision.confidence,
+                outcome=outcome,
+                llm_model=str(decision.llm_model or ""),
+            )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +885,58 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
                 return ""
             time.sleep(actual_wait)
             continue
+
+    # --- Fallback model chain ---
+    # Primary model exhausted all retries. Try fallback models with shorter timeouts.
+    _primary_model = model
+    _fallback_models = []
+
+    # Fallback 1: if primary has :cloud suffix, try local profile manager
+    if ":cloud" in _primary_model.lower():
+        try:
+            from geoff_config import load_profile as _load_profile
+            _local_models = _load_profile("local")
+            _local_mgr = _local_models.get("manager", "")
+            if _local_mgr and _local_mgr != _primary_model:
+                _fallback_models.append(("local-manager", _local_mgr, 90))
+        except Exception as _fb_err:
+            print(f"[MANAGER] Could not load local profile for fallback: {_fb_err}")
+
+    # Fallback 2: forensicator model as middle resort
+    _forensicator = AGENT_MODELS.get("forensicator", "")
+    if _forensicator and _forensicator != _primary_model:
+        _fallback_models.append(("forensicator", _forensicator, 60))
+
+    # Fallback 3: critic model as last resort
+    _critic = AGENT_MODELS.get("critic", "")
+    if _critic and _critic != _primary_model:
+        _fallback_models.append(("critic", _critic, 30))
+
+    for _fb_label, _fb_model, _fb_timeout in _fallback_models:
+        _fb_start = time.time()
+        _fb_max_wait = _fb_timeout * 2  # total max wait for this fallback
+        print(f"[MANAGER] Fallback attempt: {_fb_label} ({_fb_model}) timeout={_fb_timeout}s")
+        for _fb_attempt in range(5):
+            if time.time() - _fb_start > _fb_max_wait:
+                break
+            try:
+                _fb_response = requests.post(
+                    f"{ollama_base_url()}/api/generate",
+                    headers=ollama_headers(),
+                    json={"model": _fb_model, "prompt": prompt, "stream": False,
+                          "options": {"temperature": 0.1}},
+                    timeout=_fb_timeout,
+                )
+                if _fb_response.status_code == 200:
+                    _fb_text = _fb_response.json().get("response", "")
+                    if _fb_text.strip() and not any(pat in _fb_text for pat in _error_patterns):
+                        print(f"[MANAGER] Fallback SUCCESS: {_fb_label} ({_fb_model}) after {_fb_attempt+1} attempt(s)")
+                        return _fb_text
+            except Exception:
+                pass
+        print(f"[MANAGER] Fallback EXHAUSTED: {_fb_label} ({_fb_model})")
+
+    print(f"[MANAGER] All models exhausted (primary + {len(_fallback_models)} fallbacks) — returning empty")
     return ""
 
 

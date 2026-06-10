@@ -113,7 +113,10 @@ def _validate_evidence_path(path: str) -> str:
         raise ValueError(f"Evidence path contains unsafe characters and will not be processed: {path!r}")
     # Resolve real path to prevent traversal (e.g. ../../../etc/passwd)
     real_path = Path(os.path.realpath(path))
-    allowed_bases = [Path(os.path.realpath(b)) for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR, "/mnt"] if b]
+    # Bug fix: icat/fls artifact extraction writes temp files under /tmp/geoff_extract_*
+    # and /tmp/geoff_direct_pst_* during evidence processing. These intermediate
+    # extraction directories must be allowed so downstream playbook steps can validate them.
+    allowed_bases = [Path(os.path.realpath(b)) for b in [EVIDENCE_BASE_DIR, CASES_WORK_DIR, "/mnt", "/tmp"] if b]
     # Only enforce the base-dir check when at least one allowed base is configured.
     # Using relative_to() avoids the startswith() prefix-collision bug where
     # /mnt/evidence_real would slip past a base of /mnt/evidence.
@@ -303,8 +306,8 @@ def load_profile(profile_name: str) -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         # Fallback defaults if profiles.json missing
         profiles = {
-            "cloud": {"manager": "deepseek-v4-flash:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud"},
-            "local": {"manager": "deepseek-r1:32b", "forensicator": "qwen2.5-coder:14b", "critic": "qwen2.5:14b"},
+            "cloud": {"manager": "deepseek-v4-flash:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud", "critic2": "gemma4:31b-cloud"},
+            "local": {"manager": "deepseek-r1:32b", "forensicator": "qwen2.5-coder:14b", "critic": "qwen2.5:14b", "critic2": "gemma4:31b"},
         }
     if profile_name not in profiles:
         print(f"[WARN] Unknown profile '{profile_name}', falling back to 'cloud'")
@@ -320,6 +323,7 @@ AGENT_MODELS = {
     "manager": os.environ.get('GEOFF_MANAGER_MODEL', _profile_models["manager"]),
     "forensicator": os.environ.get('GEOFF_FORENSICATOR_MODEL', _profile_models["forensicator"]),
     "critic": os.environ.get('GEOFF_CRITIC_MODEL', _profile_models["critic"]),
+    "critic2": os.environ.get('GEOFF_CRITIC2_MODEL', _profile_models.get("critic2", _profile_models["critic"])),
 }
 
 # Strip :cloud suffix from model names when using Ollama Cloud API.
