@@ -15,6 +15,7 @@ Exports:
 import os
 import json
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -202,7 +203,7 @@ def _fast_heal(fast_class: str, module: str, function: str, params: dict,
             _fe_log(job_id, f"  [_HEAL] tool_missing: {binary} — installing via: {install_cmd}")
             try:
                 proc = subprocess.run(
-                    install_cmd, shell=True, timeout=120,
+                    shlex.split(install_cmd), timeout=120,
                     capture_output=True, text=True,
                 )
                 if proc.returncode == 0:

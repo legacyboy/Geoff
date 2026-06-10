@@ -114,9 +114,17 @@ app = Flask(__name__)
 # Disable static-file caching so browser picks up UI/CSS/JS changes
 # on refresh without needing a server restart.
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-CORS(app)
+
+# The UI is served same-origin, so cross-origin access is opt-in only:
+# set GEOFF_CORS_ORIGINS to a comma-separated origin list to enable it.
+_cors_origins = [o.strip() for o in os.environ.get('GEOFF_CORS_ORIGINS', '').split(',') if o.strip()]
+if _cors_origins:
+    CORS(app, origins=_cors_origins)
 
 PORT = int(os.environ.get('GEOFF_PORT', 8080))
+# Bind to loopback by default — evidence and API key must not be exposed on
+# all interfaces unless explicitly requested (GEOFF_BIND_HOST=0.0.0.0).
+BIND_HOST = os.environ.get('GEOFF_BIND_HOST', '127.0.0.1')
 
 # Auth decorator → geoff_routes.py (_require_auth)
 
@@ -229,4 +237,7 @@ if __name__ == '__main__':
         import sys as _sys; _sys.exit(0)
     _signal.signal(_signal.SIGTERM, _sigterm_handler)
 
-    app.run(host='0.0.0.0', port=PORT, debug=False, threaded=True)
+    if BIND_HOST not in ('127.0.0.1', 'localhost', '::1'):
+        _srv_log.info("Binding to non-loopback interface — ensure GEOFF_API_KEY is set",
+                      bind_host=BIND_HOST)
+    app.run(host=BIND_HOST, port=PORT, debug=False, threaded=True)

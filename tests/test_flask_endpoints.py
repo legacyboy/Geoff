@@ -59,6 +59,11 @@ def app(test_dirs):
     # object at import time and the patch ends up on a stale re-import.
     sys.modules.pop('geoff_integrated', None)
 
+    # geoff_config may already be imported with a stale key — set the
+    # canonical runtime value directly (auth reads it at request time).
+    import geoff_config
+    geoff_config.GEOFF_API_KEY = ''
+
     from geoff_integrated import app
     app.config['TESTING'] = True
     return app
@@ -82,9 +87,13 @@ def auth_app(test_dirs):
     # for why we don't blanket-delete geoff_* modules.
     sys.modules.pop('geoff_integrated', None)
 
+    import geoff_config
+    geoff_config.GEOFF_API_KEY = 'test-secret-key'
+
     from geoff_integrated import app
     app.config['TESTING'] = True
-    return app
+    yield app
+    geoff_config.GEOFF_API_KEY = ''
 
 
 @pytest.fixture
@@ -140,7 +149,7 @@ class TestHealthEndpoints:
 class TestChatEndpoint:
     """Tests for POST /chat endpoint."""
 
-    @patch('geoff_integrated.call_llm')
+    @patch('geoff_routes.call_llm')
     def test_chat_returns_response(self, mock_call_llm, client):
         """POST /chat should return LLM response."""
         mock_call_llm.return_value = "The evidence shows credential theft activity."
@@ -155,7 +164,7 @@ class TestChatEndpoint:
         assert 'response' in data
         mock_call_llm.assert_called_once()
 
-    @patch('geoff_integrated.call_llm')
+    @patch('geoff_routes.call_llm')
     def test_chat_with_context(self, mock_call_llm, client):
         """POST /chat should accept context parameter."""
         mock_call_llm.return_value = "Based on context, mimikatz was used."
@@ -171,7 +180,7 @@ class TestChatEndpoint:
         assert response.status_code == 200
         mock_call_llm.assert_called_once()
 
-    @patch('geoff_integrated.call_llm')
+    @patch('geoff_routes.call_llm')
     def test_chat_with_agent_type(self, mock_call_llm, client):
         """POST /chat should support agent_type parameter."""
         mock_call_llm.return_value = "Critical analysis complete."
@@ -195,7 +204,7 @@ class TestChatEndpoint:
 class TestFindEvilEndpoints:
     """Tests for /find-evil and /find-evil/status endpoints."""
 
-    @patch('geoff_integrated.find_evil')
+    @patch('geoff_routes.find_evil')
     def test_find_evil_starts_investigation(self, mock_find_evil, client, mock_evidence_dir):
         """POST /find-evil should start investigation and return result."""
         mock_find_evil.return_value = {
@@ -237,7 +246,7 @@ class TestFindEvilEndpoints:
 
     def test_find_evil_status_not_found_returns_404(self, client):
         """GET /find-evil/status for unknown job should return 404."""
-        with patch('geoff_integrated._find_evil_jobs') as mock_jobs:
+        with patch('geoff_routes._find_evil_jobs') as mock_jobs:
             mock_jobs.get.return_value = None
             mock_jobs.__contains__ = MagicMock(return_value=False)
             
@@ -253,7 +262,7 @@ class TestFindEvilEndpoints:
 class TestCasesEndpoints:
     """Tests for /cases and /cases/<name>/report endpoints."""
 
-    @patch('geoff_integrated.get_all_cases')
+    @patch('geoff_routes.get_all_cases')
     def test_list_cases_returns_cases(self, mock_get_cases, client):
         """GET /cases should return list of all cases."""
         mock_get_cases.return_value = {
@@ -282,7 +291,7 @@ class TestCasesEndpoints:
 class TestReportsEndpoints:
     """Tests for /reports and /reports/<case>/json endpoints."""
 
-    @patch('geoff_integrated.get_all_cases')
+    @patch('geoff_routes.get_all_cases')
     def test_list_reports_returns_reports(self, mock_get_cases, client):
         """GET /reports should return list of reports."""
         mock_get_cases.return_value = {
@@ -312,7 +321,7 @@ class TestReportsEndpoints:
 class TestRunToolEndpoint:
     """Tests for POST /run-tool endpoint."""
 
-    @patch('geoff_integrated.orchestrator')
+    @patch('geoff_utils.orchestrator')
     def test_run_tool_executes_specialist(self, mock_orch, client):
         """POST /run-tool should execute specialist tool."""
         mock_orch.run_playbook_step.return_value = {
@@ -384,7 +393,7 @@ class TestJsonResponseFormat:
         data = response.get_json()
         assert isinstance(data, dict)
 
-    @patch('geoff_integrated.call_llm')
+    @patch('geoff_routes.call_llm')
     def test_chat_returns_valid_json(self, mock_call_llm, client):
         """Chat endpoint should return valid JSON."""
         mock_call_llm.return_value = "test response"
@@ -402,18 +411,18 @@ class TestJsonResponseFormat:
 # =============================================================================
 
 class TestCORS:
-    """Tests for CORS headers."""
+    """Cross-origin access is opt-in (GEOFF_CORS_ORIGINS); the UI is
+    same-origin, so by default no CORS headers should be emitted."""
 
-    def test_health_has_cors_headers(self, client):
-        """Health endpoint should have CORS headers."""
+    def test_health_has_no_cors_headers_by_default(self, client):
+        """Health endpoint should not advertise cross-origin access by default."""
         response = client.get('/health')
-        assert 'Access-Control-Allow-Origin' in response.headers
+        assert 'Access-Control-Allow-Origin' not in response.headers
 
-    def test_options_request_returns_cors_headers(self, client):
-        """OPTIONS preflight should return CORS headers."""
+    def test_options_request_has_no_cors_headers_by_default(self, client):
+        """OPTIONS should not return CORS allow headers by default."""
         response = client.options('/health')
-        assert response.status_code == 200
-        assert 'Access-Control-Allow-Origin' in response.headers
+        assert 'Access-Control-Allow-Origin' not in response.headers
 
 
 if __name__ == "__main__":
