@@ -13,6 +13,7 @@ Route handlers are registered at call time via register_routes(app).
 import os
 import json
 import re
+import secrets
 import subprocess
 import threading
 import time
@@ -34,7 +35,7 @@ from markupsafe import escape as _html_escape
 import geoff_config
 import geoff_settings as _geoff_settings
 from geoff_config import (
-    GEOFF_API_KEY, EVIDENCE_BASE_DIR, CASES_WORK_DIR,
+    EVIDENCE_BASE_DIR, CASES_WORK_DIR,
     OLLAMA_API_KEY, AGENT_MODELS, PLAYBOOK_NAMES,
     NON_REPLAYABLE_PLAYBOOKS,
     ollama_base_url,
@@ -292,22 +293,46 @@ def detect_tool_request(message: str) -> dict:
 # Auth decorator
 # ---------------------------------------------------------------------------
 
+# Per-process UI session token. Served pages embed this token (never the
+# long-lived GEOFF_API_KEY) so the real key does not appear in page source
+# or browser memory; it rotates on every server restart.
+_UI_SESSION_TOKEN = secrets.token_urlsafe(32)
+
+
+def _api_key() -> str:
+    """Read the API key from geoff_config at request time so runtime
+    updates (settings, tests) take effect without re-importing this module."""
+    return geoff_config.GEOFF_API_KEY
+
+
+def _ui_key_meta() -> str:
+    """Meta tag carrying the UI session token, or '' when auth is disabled."""
+    if not _api_key():
+        return ''
+    return f'<meta name="geoff-api-key" content="{_html_escape(_UI_SESSION_TOKEN)}">'
+
+
 def _require_auth(f):
     """Decorator that enforces API key authentication when GEOFF_API_KEY is set.
 
     Accepts the key via:
       - X-API-Key: <key>  header
       - Authorization: Bearer <key>  header
+    The per-process UI session token is accepted as an equivalent credential.
     """
     @wraps(f)
     def _decorated(*args, **kwargs):
-        if not GEOFF_API_KEY:
+        key = _api_key()
+        if not key:
             return f(*args, **kwargs)
         provided = (
             request.headers.get('X-API-Key', '')
             or request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
         )
-        if not provided or not hmac.compare_digest(provided, GEOFF_API_KEY):
+        if not provided or not (
+            hmac.compare_digest(provided, key)
+            or hmac.compare_digest(provided, _UI_SESSION_TOKEN)
+        ):
             return jsonify({'error': 'Unauthorized — provide a valid X-API-Key header'}), 401
         return f(*args, **kwargs)
     return _decorated
@@ -327,10 +352,7 @@ def index():
     don't require a server restart — just edit files under static/ and
     refresh the browser.  Running find-evil jobs are not interrupted.
     """
-    key_meta = (
-        f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
-        if GEOFF_API_KEY else ''
-    )
+    key_meta = _ui_key_meta()
     evidence_base_js = EVIDENCE_BASE_DIR.replace("'", "\\'")
 
     # Prefer the standalone file so UI updates don't need a restart.
@@ -676,8 +698,8 @@ def graph_viewer():
     """GET /reports/graph — Serve the new force-directed D3.js graph viewer."""
     viewer_path = Path(__file__).parent.parent / 'static' / 'graph_viewer.html'
     html = viewer_path.read_text(encoding='utf-8')
-    if GEOFF_API_KEY:
-        key_meta = f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+    key_meta = _ui_key_meta()
+    if key_meta:
         html = html.replace('<head>', '<head>\n  ' + key_meta, 1)
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
@@ -1015,8 +1037,8 @@ def viewer_html():
     """GET /reports/viewer — Serve the Evidence Graph viewer UI (with optional case= param)."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'
     html = (viewer_dir / 'index.html').read_text(encoding='utf-8')
-    if GEOFF_API_KEY:
-        key_meta = f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+    key_meta = _ui_key_meta()
+    if key_meta:
         html = html.replace('<head>', '<head>\n  ' + key_meta, 1)
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
@@ -1042,10 +1064,7 @@ def ui_static(filename):
 
 def narrative_report_page():
     """GET /reports/narrative — Serve the narrative report HTML (case picker or specific case view)."""
-    key_meta = (
-        f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
-        if GEOFF_API_KEY else ''
-    )
+    key_meta = _ui_key_meta()
     html = NARRATIVE_REPORT_HTML.replace('<!-- GEOFF_API_KEY_META -->', key_meta)
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
@@ -1085,8 +1104,8 @@ def ip_map_page():
     """GET /ip-map — Serve the IP connection map visualization page."""
     html_path = Path(__file__).parent.parent / 'static' / 'ip-map.html'
     html = html_path.read_text(encoding='utf-8')
-    if GEOFF_API_KEY:
-        key_meta = f'<meta name="geoff-api-key" content="{_html_escape(GEOFF_API_KEY)}">'
+    key_meta = _ui_key_meta()
+    if key_meta:
         html = html.replace('<head>', '<head>\n  ' + key_meta, 1)
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
