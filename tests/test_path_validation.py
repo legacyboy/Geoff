@@ -26,10 +26,14 @@ def _get_validate():
 
 @pytest.fixture(autouse=True)
 def _no_base_dir_restriction(monkeypatch):
-    """Disable the base-directory restriction so tests focus on metachar rejection."""
-    import geoff_integrated
-    monkeypatch.setattr(geoff_integrated, 'EVIDENCE_BASE_DIR', '')
-    monkeypatch.setattr(geoff_integrated, 'CASES_WORK_DIR', '')
+    """Neutralize the base-directory restriction so tests focus on metachar
+    rejection. _validate_evidence_path lives in geoff_config and reads that
+    module's globals at call time, so patch geoff_config (not the stale
+    re-export on geoff_integrated). '/' as an allowed base admits every
+    resolved path."""
+    import geoff_config
+    monkeypatch.setattr(geoff_config, 'EVIDENCE_BASE_DIR', '/')
+    monkeypatch.setattr(geoff_config, 'CASES_WORK_DIR', '')
 
 
 # ---------------------------------------------------------------------------

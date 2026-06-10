@@ -21,6 +21,8 @@ def _no_base_dir_restriction(monkeypatch):
 
 
 import geoff_integrated as gi
+# _reconstruct_attack_chain moved to geoff_pipeline in the monolith split
+from geoff_pipeline import _reconstruct_attack_chain
 
 
 # ---------------------------------------------------------------------------
@@ -77,18 +79,18 @@ class TestAttackChain:
 
     def test_dwell_days_computed(self):
         findings = self._make_findings()
-        chain = gi._reconstruct_attack_chain(findings, [], {})
+        chain = _reconstruct_attack_chain(findings, [], {})
         assert chain["dwell_days"] == pytest.approx(5.17, abs=0.1)
 
     def test_first_and_last_ts(self):
         findings = self._make_findings()
-        chain = gi._reconstruct_attack_chain(findings, [], {})
+        chain = _reconstruct_attack_chain(findings, [], {})
         assert chain["first_seen_ts"] == "2024-01-10T08:00:00"
         assert chain["last_seen_ts"] == "2024-01-15T12:01:00"
 
     def test_lateral_movement_path_ordered(self):
         findings = self._make_findings()
-        chain = gi._reconstruct_attack_chain(findings, [], {})
+        chain = _reconstruct_attack_chain(findings, [], {})
         # host-A first seen before host-B
         assert chain["lateral_movement_path"] == ["host-A", "host-B"]
 
@@ -102,12 +104,12 @@ class TestAttackChain:
             "evtx_logs": [], "syslogs": [],
         }
         hits = gi._scan_triage_indicators(inv)
-        chain = gi._reconstruct_attack_chain([], hits, {})
+        chain = _reconstruct_attack_chain([], hits, {})
         assert "mitre_techniques_observed" in chain
         assert chain["mitre_techniques_observed"]
 
     def test_no_findings_returns_none_dwell(self):
-        chain = gi._reconstruct_attack_chain([], [], {})
+        chain = _reconstruct_attack_chain([], [], {})
         assert chain["dwell_days"] is None
         assert chain["first_seen_ts"] is None
 
@@ -120,7 +122,7 @@ class TestAttackChain:
             "evtx_logs": [], "syslogs": [],
         }
         hits = gi._scan_triage_indicators(inv)
-        chain = gi._reconstruct_attack_chain([], hits, {})
+        chain = _reconstruct_attack_chain([], hits, {})
         assert "credential_theft" in chain["kill_chain_phases"]
 
 
