@@ -117,6 +117,17 @@ from pipeline_reports import _timeline_intelligence_analysis
 # ---------------------------------------------------------------------------
 _EWF_EXTENSIONS = frozenset({'.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01'})
 
+# File-extension–level compatibility guards: prevent modules running against
+# evidence files whose format is incompatible regardless of evidence category.
+_TOOL_EVIDENCE_COMPAT: dict = {
+    "volatility": frozenset({".raw", ".dmp", ".lime", ".mem", ".vmem",
+                              ".dd", ".img", ".e01", ".e02", ".vmdk", ".vhd", ".vhdx"}),
+    "registry":   frozenset({".dd", ".img", ".e01", ".e02", ".dat", ".hive",
+                              ".vmdk", ".vhd", ".vhdx"}),
+    "network":    frozenset({".pcap", ".pcapng", ".log", ".cap"}),
+    "zeek":       frozenset({".pcap", ".pcapng", ".log", ".cap"}),
+}
+
 # Tools that must be skipped even after ewfmount (they need raw image bytes
 # or operate on extracted data, not a mounted filesystem).
 _SKIP_ON_EWF_CONTAINER = frozenset({
@@ -979,7 +990,7 @@ def _manager_post_critic_decision(
         decision = {
             "action": "approve",
             "replay_adjustments": {},
-            "generate_report": sufficient,
+            "generate_report": True,
             "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
             "critic_executed": True,
             "manager_executed": True,
@@ -1031,7 +1042,7 @@ Respond ONLY in valid JSON (no extra text):
     decision = {
         "action": "approve",
         "replay_adjustments": {},
-        "generate_report": sufficient,
+        "generate_report": True,
         "reasoning": "Manager LLM unavailable - defaulting to approve",
         "critic_unavailable": False,
     }
@@ -1055,12 +1066,15 @@ Respond ONLY in valid JSON (no extra text):
                 parsed = json.loads(m.group())
                 decision["action"]             = parsed.get("action", "approve")
                 decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-                decision["generate_report"]    = parsed.get("generate_report", sufficient)
+                decision["generate_report"]    = True
                 decision["reasoning"]          = parsed.get("reasoning", "")
                 decision["critic_unavailable"] = False
                 manager_executed = True
         except Exception as e:
             _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve", agent="Manager")
+
+    # Always generate the report regardless of critic/manager LLM output.
+    decision["generate_report"] = True
 
     # Fail-open transparency: flag when the approval only happened because a
     # checker was unavailable (Critic didn't run, or Manager LLM didn't respond).
@@ -4263,6 +4277,13 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     steps_skipped += 1
                                     _fe_log(job_id, f"  ⎘ {module}.{function} skipped — incompatible evidence type: {_skip_reason}")
                                     continue
+                                # Extension-level compatibility guard (e.g. volatility against .pcap)
+                                _item_ext = Path(item).suffix.lower()
+                                _compat_exts = _TOOL_EVIDENCE_COMPAT.get(module)
+                                if _compat_exts is not None and _item_ext not in _compat_exts:
+                                    steps_skipped += 1
+                                    _fe_log(job_id, f"  ⏭ Skipped {module}.{function}: evidence type {_item_ext} not compatible with {module} module")
+                                    continue
                                 # A009 - Anti-forensics steps handled by dedicated checkpoint phase; skip here
                                 if module == "anti_forensics":
                                     continue
@@ -6270,7 +6291,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Gated on manager_decision['generate_report'].
         # ------------------------------------------------------------------
         _update_job(98, "narrative", "Generating human-readable report")
-        _generate_narrative = manager_decision.get("generate_report", True)
+        _generate_narrative = True
         if not _generate_narrative:
             _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
         if _generate_narrative:
