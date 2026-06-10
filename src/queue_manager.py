@@ -23,8 +23,6 @@ from typing import Optional, Callable
 from geoff_logger import get_logger as _get_logger
 _qlog = _get_logger("geoff.queue")
 
-from geoff_logger import get_logger as _get_logger
-_qlog = _get_logger("geoff.queue")
 
 QUEUE_FILE = "/mnt/cases/.geoff_queue.json"
 

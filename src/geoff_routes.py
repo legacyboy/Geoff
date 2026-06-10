@@ -2995,7 +2995,7 @@ def queue_list():
                 "current_playbook": job.get("current_playbook", ""),
                 "current_step": job.get("current_step", ""),
                 "elapsed_seconds": job.get("elapsed_seconds", 0.0),
-                "queued_at": job.get("started_at", _dt.now().isoformat()),
+                "queued_at": job.get("started_at", ""),
                 "started_at": job.get("started_at"),
                 "completed_at": None,
                 "result_summary": None,
