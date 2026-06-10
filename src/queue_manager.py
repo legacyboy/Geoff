@@ -23,6 +23,9 @@ from typing import Optional, Callable
 from geoff_logger import get_logger as _get_logger
 _qlog = _get_logger("geoff.queue")
 
+from geoff_logger import get_logger as _get_logger
+_qlog = _get_logger("geoff.queue")
+
 QUEUE_FILE = "/mnt/cases/.geoff_queue.json"
 
 _lock = threading.Lock()
@@ -299,6 +302,18 @@ def force_advance() -> dict:
             job_id_to_kill = None
             ev_path = None
 
+    if not job_id_to_kill:
+        try:
+            from geoff_utils import _find_evil_jobs, _state_lock
+            with _state_lock:
+                for jid, job in _find_evil_jobs.items():
+                    if job.get("status") in ("running", "initializing", "starting"):
+                        job_id_to_kill = jid
+                        ev_path = job.get("evidence_dir", "")
+                        break
+        except Exception:
+            pass
+
     if job_id_to_kill:
         _cleanup_job(job_id_to_kill, ev_path)
 
@@ -311,8 +326,6 @@ def force_advance() -> dict:
         "next_item": next_item,
         "cancelled_item": cancelled_item,
     }
-
-
 def sync_progress(job_id: str, progress_pct: float, current_playbook: str,
                   current_step: str, elapsed_seconds: float) -> None:
     """Update progress fields for a running queue item."""

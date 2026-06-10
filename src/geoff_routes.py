@@ -2947,32 +2947,77 @@ def ask_case(case_dir):
 # ---------------------------------------------------------------------------
 
 def queue_list():
-    """GET /queue — List all queue items sorted by priority."""
+    """GET /queue — List all queue items, merging direct find_evil jobs."""
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
     try:
         items = _queue_manager.get_all_items()
+
+        with _state_lock:
+            fe_snapshot = dict(_find_evil_jobs)
+
+        queue_job_ids = {i["job_id"] for i in items if i.get("job_id")}
+
+        for item in items:
+            if item["status"] == "running" and item.get("job_id"):
+                job = fe_snapshot.get(item["job_id"])
+                if job:
+                    try:
+                        _queue_manager.sync_progress(
+                            item["job_id"],
+                            job.get("progress_pct", 0.0),
+                            job.get("current_playbook", ""),
+                            job.get("current_step", ""),
+                            job.get("elapsed_seconds", 0.0),
+                        )
+                    except Exception:
+                        pass
+                    item["progress_pct"] = job.get("progress_pct", 0.0)
+                    item["current_playbook"] = job.get("current_playbook", "")
+                    item["current_step"] = job.get("current_step", "")
+                    item["elapsed_seconds"] = job.get("elapsed_seconds", 0.0)
+
+        for job_id, job in fe_snapshot.items():
+            if job_id in queue_job_ids:
+                continue
+            fe_status = job.get("status", "running")
+            if fe_status not in ("running", "initializing", "starting"):
+                continue
+            ev_dir = job.get("evidence_dir", "")
+            items.append({
+                "id": job_id,
+                "evidence_path": ev_dir,
+                "display_name": _Path(ev_dir).name if ev_dir else job_id,
+                "priority": -1,
+                "status": "running",
+                "job_id": job_id,
+                "progress_pct": job.get("progress_pct", 0.0),
+                "current_playbook": job.get("current_playbook", ""),
+                "current_step": job.get("current_step", ""),
+                "elapsed_seconds": job.get("elapsed_seconds", 0.0),
+                "queued_at": job.get("started_at", _dt.now().isoformat()),
+                "started_at": job.get("started_at"),
+                "completed_at": None,
+                "result_summary": None,
+                "error": None,
+                "created_by": "direct",
+            })
+
+        items = [
+            i for i in items
+            if i["status"] in ("running", "queued")
+            or not i.get("evidence_path")
+            or _Path(i["evidence_path"]).exists()
+        ]
+
+        _ORDER = {"running": 0, "queued": 1, "completed": 2, "failed": 3, "cancelled": 4}
+        items.sort(key=lambda i: (_ORDER.get(i["status"], 9), i.get("priority", 0)))
+
         running = next((i for i in items if i["status"] == "running"), None)
-        # Sync running item progress from _find_evil_jobs
-        if running and running.get("job_id"):
-            job = _find_evil_jobs.get(running["job_id"])
-            if job:
-                try:
-                    _queue_manager.sync_progress(
-                        running["job_id"],
-                        job.get("progress_pct", 0.0),
-                        job.get("current_playbook", ""),
-                        job.get("current_step", ""),
-                        job.get("elapsed_seconds", 0.0),
-                    )
-                    items = _queue_manager.get_all_items()
-                    running = next((i for i in items if i["status"] == "running"), None)
-                except Exception:
-                    pass
         next_item = next((i for i in items if i["status"] == "queued"), None)
         return jsonify({"status": "ok", "items": items, "running": running, "next": next_item})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
-
-
 def queue_add():
     """POST /queue — Enqueue evidence directory."""
     try:
@@ -3021,13 +3066,19 @@ def queue_cancel_item(item_id):
         _queue_logger.info("Job cancelled", item_id=item_id)
         return jsonify({"status": "cancelled", **result})
     except KeyError:
+        with _state_lock:
+            job = _find_evil_jobs.get(item_id)
+        if job and job.get("status") in ("running", "initializing", "starting"):
+            with _state_lock:
+                _find_evil_jobs[item_id]["status"] = "cancelled"
+                _find_evil_jobs[item_id]["error"] = "Cancelled by user"
+            _queue_logger.info("Direct job cancelled", job_id=item_id)
+            return jsonify({"status": "cancelled", "item_id": item_id, "cleaned": False})
         return jsonify({"status": "error", "error": "Item not found"}), 404
     except RuntimeError as e:
         return jsonify({"status": "error", "error": str(e)}), 409
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
-
-
 def queue_update_item(item_id):
     """PATCH /queue/<item_id> — Update priority of a queued item."""
     try:
