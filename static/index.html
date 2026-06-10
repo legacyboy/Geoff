@@ -117,6 +117,15 @@
   .feed-head { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
   .feed-head .eyebrow { font-size: 10px; }
   .feed-head .line { flex: 1; height: 1px; background: var(--g-border-soft); }
+  .feed-lock-btn {
+    flex-shrink: 0; font-family: var(--font-mono); font-size: 9px;
+    letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--g-text-mute); padding: 2px 9px; border-radius: var(--radius-sm);
+    border: 1px solid var(--g-border-soft); cursor: pointer; transition: all .14s;
+    display: inline-flex; align-items: center; gap: 5px; background: none;
+  }
+  .feed-lock-btn:hover { color: var(--g-text-dim); border-color: var(--g-border); background: var(--g-surface); }
+  .feed-lock-btn.locked { color: var(--g-amber); border-color: rgba(251,181,52,.35); background: rgba(251,181,52,.07); }
 
   @keyframes slidein { from { transform: translateY(7px); opacity: 0; } to { transform: none; opacity: 1; } }
 
@@ -452,7 +461,7 @@
       </div>
 
       <div class="feed-wrap" id="feed-wrap">
-        <div class="feed-head"><span class="eyebrow">Live Findings</span><span class="line"></span></div>
+        <div class="feed-head"><span class="eyebrow">Live Findings</span><span class="line"></span><button class="feed-lock-btn" id="scroll-lock-btn" title="Pause auto-scroll to read older entries">⬇ AUTO</button></div>
         <div id="feed"></div>
       </div>
     </main>

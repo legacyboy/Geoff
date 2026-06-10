@@ -185,6 +185,7 @@
     const n = el("div", "logline");
     n.innerHTML = `<span class="tk">${new Date().toISOString().slice(11, 19)}</span><span class="ar">›</span><span>${escHtml(text)}</span>`;
     feed.appendChild(n);
+    n.animate([{ background: 'rgba(76,141,255,.1)' }, { background: 'rgba(76,141,255,0)' }], { duration: 900, easing: 'ease-out' });
     scrollFeed();
   }
 
@@ -217,15 +218,48 @@
         ${evEntries ? `<div class="ftags">${evEntries}</div>` : ''}
       </div>`;
     feed.appendChild(n);
+    n.animate([{ background: 'rgba(76,141,255,.1)' }, { background: 'rgba(76,141,255,0)' }], { duration: 1100, easing: 'ease-out' });
     scrollFeed();
     bumpSeverity(sev);
   }
 
-  function scrollFeed() { const w = $("feed-wrap"); if (w) w.scrollTop = w.scrollHeight; }
+  function scrollFeed() {
+    if (!autoScroll) return;
+    const w = $("feed-wrap");
+    if (!w) return;
+    w.scrollTo({ top: w.scrollHeight, behavior: 'smooth' });
+  }
 
   /* ---------- severity counters ---------- */
   const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
   const sevId = { CRITICAL: "c-crit", HIGH: "c-high", MEDIUM: "c-med", LOW: "c-low" };
+
+  function initScrollLock() {
+    const wrap = $("feed-wrap");
+    const btn = $("scroll-lock-btn");
+    if (!wrap || !btn) return;
+    wrap.addEventListener('scroll', () => {
+      if (!autoScroll) return;
+      const nearBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+      if (!nearBottom) {
+        autoScroll = false;
+        btn.textContent = '⏸ PAUSED';
+        btn.classList.add('locked');
+      }
+    });
+    btn.addEventListener('click', () => {
+      autoScroll = !autoScroll;
+      if (autoScroll) {
+        btn.textContent = '⬇ AUTO';
+        btn.classList.remove('locked');
+        const w = $("feed-wrap");
+        if (w) w.scrollTo({ top: w.scrollHeight, behavior: 'smooth' });
+      } else {
+        btn.textContent = '⏸ PAUSED';
+        btn.classList.add('locked');
+      }
+    });
+  }
 
   function bumpSeverity(sev) {
     if (!(sev in counts)) return;
@@ -255,6 +289,7 @@
   let elapsedTimer = null;
   let lastPct = 0;
   let shownFlags = new Set();
+  let autoScroll = true;
 
   function fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
@@ -279,6 +314,9 @@
     lastLogTs = '';
     lastPct = 0;
     shownFlags = new Set();
+    autoScroll = true;
+    const lockBtn = $("scroll-lock-btn");
+    if (lockBtn) { lockBtn.textContent = '⬇ AUTO'; lockBtn.classList.remove('locked'); }
     resetManifest();
   }
 
@@ -1055,6 +1093,7 @@
 
   // Check for active jobs on page load
   checkActiveJobs();
+  initScrollLock();
 
   /* ============================================================
      EXECUTION LOG TAB
