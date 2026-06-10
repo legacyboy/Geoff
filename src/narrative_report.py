@@ -806,13 +806,15 @@ class NarrativeReportGenerator:
                 (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
                 or [t["technique_id"] for t in report_json.get("mitre_techniques", []) if isinstance(t, dict) and "technique_id" in t]
             ),
-            # Email / phishing findings - collect from multiple sources
+            # Email / phishing findings - handle both list and boolean forms
             "email_direct_findings": (
-                [
-                    f for f in report_json.get("findings_detail", [])
-                    if f.get("playbook") == "EMAIL_DIRECT"
-                ]
-                or report_json.get("email_direct_findings", [])
+                lambda _raw, _detail: _detail if _detail else (
+                    _raw if isinstance(_raw, list) else []
+                )
+            )(
+                report_json.get("email_direct_findings", []),
+                [f for f in report_json.get("findings_detail", [])
+                 if f.get("playbook") == "EMAIL_DIRECT"],
             ),
             # Collect email_iocs for executive summary
             "email_iocs": report_json.get("email_iocs", {}),
