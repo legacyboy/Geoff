@@ -25,16 +25,23 @@ import sys
 
 def _make_client(api_key: str):
     """
-    Re-import geoff_integrated with the given GEOFF_API_KEY env var so the
-    module-level constant picks it up, then return a Flask test client.
-
-    Because geoff_integrated is a module singleton we patch the module-level
-    GEOFF_API_KEY variable directly after import.
+    Patch geoff_config.GEOFF_API_KEY (the canonical location read by
+    _require_auth at request time) and return a Flask test client.
     """
+    import geoff_config
     import geoff_integrated
-    # Patch the module-level constant without re-importing
-    geoff_integrated.GEOFF_API_KEY = api_key
+    geoff_config.GEOFF_API_KEY = api_key
     return geoff_integrated.app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def _restore_api_key():
+    """Restore GEOFF_API_KEY after each test so the patched value doesn't
+    leak into other test modules (auth is read dynamically at request time)."""
+    import geoff_config
+    original = geoff_config.GEOFF_API_KEY
+    yield
+    geoff_config.GEOFF_API_KEY = original
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +110,15 @@ class TestAuthEnabled:
         assert resp.status_code == 200
 
     def test_post_chat_with_correct_key(self):
-        resp = self.client.post(
-            "/chat",
-            json={"message": "hello"},
-            headers={"X-API-Key": self.KEY},
-        )
+        # Mock the LLM call — this test only verifies auth passes, and the
+        # real call_llm would retry against an unreachable Ollama backend.
+        from unittest.mock import patch
+        with patch("geoff_routes.call_llm", return_value="hi"):
+            resp = self.client.post(
+                "/chat",
+                json={"message": "hello"},
+                headers={"X-API-Key": self.KEY},
+            )
         assert resp.status_code != 401
 
     def test_post_chat_without_key_returns_401(self):

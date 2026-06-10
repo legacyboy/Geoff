@@ -212,17 +212,12 @@ class GeoffCritic:
         Returns the LLM response, or empty string on failure.
         On Ollama timeout after retries, returns empty string so the caller
         can mark the step needs_review instead of producing a finding.
-        """
-        _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
-        _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
-        _max_retries = 99  # effectively unlimited within time window
-        _error_patterns = (
-            "Having trouble connecting to Ollama",
-            "Check OLLAMA_URL",
-            "[ERROR] Ollama returned",
-        )
-        _start = time.time()
 
+        Retry policy lives in geoff_llm_client.generate_with_retry. Critic
+        specifics: 30-minute window, one retry on 401/403 (transient token
+        issues), retry on empty responses, and extraction of answers that
+        thinking models leave in the `thinking` field.
+        """
         # Lazy import so _call_critic_llm uses the same URL/headers/model as
         # call_llm() in geoff_self_heal. geoff_config is fully loaded by the
         # time this method is called, so there is no circular-import risk.
@@ -232,113 +227,31 @@ class GeoffCritic:
                 ollama_headers as _cfg_headers,
                 AGENT_MODELS as _cfg_models,
             )
-            _llm_url = f"{_cfg_url()}/api/generate"
+            _llm_url = _cfg_url()
             _llm_headers = _cfg_headers()
             _llm_model = _cfg_models.get("critic", self.model)
         except (ImportError, Exception):
-            _llm_url = f"{self.ollama_url}/api/generate"
+            _llm_url = self.ollama_url
             _llm_headers = self._ollama_headers()
             _llm_model = self.model
 
-        for attempt in range(_max_retries):
-            elapsed = time.time() - _start
-            if elapsed > _MAX_RETRY_TIME:
-                print(f"[CRITIC] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
-                return ""
+        from geoff_llm_client import generate_with_retry
+        return generate_with_retry(
+            prompt,
+            base_url=_llm_url,
+            headers=_llm_headers,
+            model=_llm_model,
+            temperature=0.2,
+            request_timeout=180,
+            max_retry_time=1800,  # 30 minutes total retry window
+            tag="CRITIC",
+            failure_value="",
+            auth_retries=1,
+            retry_on_empty=True,
+            extract_thinking=True,
+        )
 
-            try:
-                response = requests.post(
-                    _llm_url,
-                    headers=_llm_headers,
-                    json={
-                        "model": _llm_model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {"temperature": 0.2}
-                    },
-                    timeout=180
-                )
-                if response.status_code == 200:
-                    resp_json = response.json()
-                    result_text = resp_json.get('response', '')
-                    # Thinking models (qwen3.5, deepseek-r1) sometimes leave response
-                    # empty and put their answer in the separate thinking field.
-                    if not result_text.strip():
-                        thinking = resp_json.get('thinking', '')
-                        if thinking:
-                            m = re.search(r'\{.*\}', thinking, re.DOTALL)
-                            if m:
-                                result_text = m.group()
-                    # Retry on empty response (cloud proxy may return blank under load)
-                    if not result_text.strip():
-                        wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                        remaining = _MAX_RETRY_TIME - elapsed
-                        actual_wait = min(wait, min(30, remaining))
-                        if actual_wait <= 0:
-                            return ""
-                        print(f"[CRITIC] Empty response, retry {attempt+1} after {actual_wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                        time.sleep(actual_wait)
-                        continue
-                    # Reject error messages that leaked into the response
-                    if any(pat in result_text for pat in _error_patterns):
-                        wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                        remaining = _MAX_RETRY_TIME - elapsed
-                        actual_wait = min(wait, remaining)
-                        if actual_wait <= 0:
-                            return ""
-                        print(f"[CRITIC] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                        time.sleep(actual_wait)
-                        continue
-                    return result_text
-                elif response.status_code in (401, 403):
-                    # Auth errors: retry once after a short delay (transient token issues)
-                    if attempt < 1:
-                        print(f"[CRITIC] LLM HTTP {response.status_code} — auth error, retry {attempt+1} after 10s")
-                        time.sleep(10)
-                        continue
-                    print(f"[CRITIC] LLM HTTP {response.status_code} — bad auth, giving up after retry")
-                    return ""
-                elif 500 <= response.status_code < 600:
-                    # Server errors: brief retry (3 attempts with 10s backoff)
-                    if attempt < 3:
-                        wait = 10
-                        remaining = _MAX_RETRY_TIME - elapsed
-                        actual_wait = min(wait, remaining)
-                        if actual_wait <= 0:
-                            return ""
-                        print(f"[CRITIC] LLM HTTP {response.status_code} (server error), retry {attempt+1} after {wait}s")
-                        time.sleep(actual_wait)
-                        continue
-                    # After 3 attempts, fall through to full retry window
-                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return ""
-                    print(f"[CRITIC] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                    time.sleep(actual_wait)
-                    continue
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return ""
-                print(f"[CRITIC] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                time.sleep(actual_wait)
-                continue
-            except Exception as e:
-                print(f"[CRITIC] LLM Error (attempt {attempt+1}): {e}")
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return ""
-                time.sleep(actual_wait)
-                continue
-        return ""  # All retries exceeded (should not normally reach here)
-
-    # Forensic metadata keywords that indicate IOC bleed-through
+    # Forensic metadata keywords that indicate IOC bleed-through    # Forensic metadata keywords that indicate IOC bleed-through
     # (same list used in narrative_report._FORENSIC_METADATA_KEYWORDS)
     _FORENSIC_NOISE_KEYWORDS = frozenset([
         'Image Verification', 'Acquisition started', 'Acquisition finished',
