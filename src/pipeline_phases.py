@@ -719,7 +719,7 @@ def _manager_post_critic_decision(
         decision = {
             "action": "approve",
             "replay_adjustments": {},
-            "generate_report": sufficient,
+            "generate_report": True,
             "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
         }
         _fe_log(job_id, f"  [MANAGER] Decision: APPROVE | Report: {decision['generate_report']}")
@@ -779,6 +779,12 @@ Respond ONLY in valid JSON (no extra text):
             decision["reasoning"]          = parsed.get("reasoning", "")
     except Exception as e:
         _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} — defaulting to approve")
+
+    # Approve semantically means the investigation is complete — always generate report.
+    # generate_report=False with action=approve is contradictory: the manager signed off,
+    # so findings are sufficient to write up regardless of batch critic quality flags.
+    if decision["action"] == "approve":
+        decision["generate_report"] = True
 
     _fe_log(job_id, (
         f"  [MANAGER] Decision: {decision['action'].upper()} | "
