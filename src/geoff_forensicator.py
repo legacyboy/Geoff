@@ -13,7 +13,6 @@ import re
 import os
 from datetime import datetime
 from typing import Dict, List, Any
-import requests
 import time
 
 # Forensicator Model Configuration
@@ -24,48 +23,14 @@ FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen3-coder-nex
 OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
 
-# Token-bucket rate limiter for Ollama API calls
-_ollama_rate_limiter = {
-    "tokens": 10,          # Max burst capacity
-    "max_tokens": 10,      # Burst ceiling
-    "refill_rate": 0.5,    # Tokens per second (30 per minute)
-    "last_refill": time.time(),
-    "lock": __import__("threading").Lock(),
-}
+from geoff_llm_client import TokenBucket, generate_with_retry
+
+# Token-bucket rate limiter for forensicator LLM calls (applied per chunk,
+# before entering the retry loop — not per retry attempt).
+_ollama_rate_limiter = TokenBucket(label="FORENSICATOR")
 
 def _ollama_rate_limit():
-    """Token-bucket rate limiter: waits if needed before allowing a call."""
-    with _ollama_rate_limiter["lock"]:
-        now = time.time()
-        elapsed = now - _ollama_rate_limiter["last_refill"]
-        # Refill tokens
-        _ollama_rate_limiter["tokens"] = min(
-            _ollama_rate_limiter["max_tokens"],
-            _ollama_rate_limiter["tokens"] + elapsed * _ollama_rate_limiter["refill_rate"]
-        )
-        _ollama_rate_limiter["last_refill"] = now
-        if _ollama_rate_limiter["tokens"] < 1:
-            # Need to wait for next token
-            wait_time = (1 - _ollama_rate_limiter["tokens"]) / _ollama_rate_limiter["refill_rate"]
-            _ollama_rate_limiter["tokens"] = 0
-            _ollama_rate_limiter["last_refill"] = now + wait_time
-        else:
-            wait_time = 0
-            _ollama_rate_limiter["tokens"] -= 1
-    if wait_time > 0:
-        print(f"[FORENSICATOR] Rate limited — waiting {wait_time:.1f}s for token bucket")
-        time.sleep(wait_time)
-
-def _parse_retry_after(response) -> float:
-    """Parse Retry-After header from HTTP response, returns wait time in seconds."""
-    retry_after = response.headers.get("Retry-After")
-    if retry_after:
-        try:
-            return float(retry_after)
-        except ValueError:
-            # HTTP-date format — fallback to a default
-            return 60
-    return 0
+    _ollama_rate_limiter.acquire()
 
 def _ollama_base_url():
     if OLLAMA_API_KEY:
@@ -85,19 +50,32 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
     Returns the LLM response, or None on connection failure (after retries).
     The caller should treat None as "LLM unavailable" and mark the step
     needs_review rather than producing a finding with error text.
+
+    Retry policy lives in geoff_llm_client.generate_with_retry (30-minute
+    window, 600s request timeout — cloud models can be slow).
     """
     url = ollama_url or _ollama_base_url()
     _MAX_RETRY_TIME = 1800  # 30 minutes total retry window
-    _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
-    _max_retries = 99  # effectively unlimited within time window
-    _error_patterns = (
-        "Having trouble connecting to Ollama",
-        "Check OLLAMA_URL",
-        "[ERROR] Ollama returned",
-    )
     # Token limit: 3000 tokens ≈ 8000 chars for English, ~12000 for Chinese
     _TOKEN_BUDGET_CHARS = 8000
     _start = time.time()
+
+    def _call(p, window):
+        return generate_with_retry(
+            p,
+            base_url=url,
+            headers=_ollama_headers,
+            model=lambda: FORENSICATOR_MODEL,
+            temperature=0.1,
+            request_timeout=600,
+            max_retry_time=window,
+            tag="FORENSICATOR",
+            failure_value=None,
+        )
+
+    def _remaining():
+        # Chunks share one retry-time budget (the window covers the whole call)
+        return max(0, _MAX_RETRY_TIME - (time.time() - _start))
 
     # --- Fix 4: LLM token limit truncation ---
     # If the prompt exceeds the safe token budget, chunk it and process each chunk
@@ -111,7 +89,7 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
             else:
                 chunk_prompt = f"[Continued from chunk {ci}/{len(chunks)}]\n\n{chunk}\n\nBriefly analyze this portion of evidence. Respond concisely."
             _ollama_rate_limit()  # Fix 13: rate limit before each chunk
-            result = _call_ollama_with_retry(url, chunk_prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_retries, _error_patterns, _start)
+            result = _call(chunk_prompt, _remaining())
             if result:
                 chunk_results.append(result)
         if chunk_results:
@@ -121,7 +99,7 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
                 # Ask the LLM to synthesize
                 synthesis_prompt = f"The following are {len(chunk_results)} analysis segments. Synthesize them into a single concise summary:\n\n{summary}"
                 _ollama_rate_limit()
-                synthesized = _call_ollama_with_retry(url, synthesis_prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_retries, _error_patterns, time.time())
+                synthesized = _call(synthesis_prompt, _MAX_RETRY_TIME)
                 if synthesized:
                     return synthesized
             return summary
@@ -129,104 +107,8 @@ def call_forensicator_llm(prompt: str, ollama_url: str = None) -> str:
 
     _ollama_rate_limit()  # Fix 13: rate limit before API call
 
-    return _call_ollama_with_retry(url, prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_retries, _error_patterns, _start)
+    return _call(prompt, _MAX_RETRY_TIME)
 
-
-def _call_ollama_with_retry(url, prompt, _MAX_RETRY_TIME, _BACKOFF_TIMES, _max_retries, _error_patterns, _start):
-    """Internal retry loop for calling Ollama — used by call_forensicator_llm."""
-    for attempt in range(_max_retries):
-        elapsed = time.time() - _start
-        if elapsed > _MAX_RETRY_TIME:
-            print(f"[FORENSICATOR] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
-            return None
-
-        try:
-            response = requests.post(
-                f"{url}/api/generate",
-                headers=_ollama_headers(),
-                json={
-                    "model": FORENSICATOR_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.1}
-                },
-                timeout=600  # 5 min — cloud models can be slow
-            )
-            if response.status_code == 200:
-                result_text = response.json().get('response', '')
-                # Reject error messages that leaked into the response
-                if any(pat in result_text for pat in _error_patterns):
-                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return None
-                    print(f"[FORENSICATOR] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                    time.sleep(actual_wait)
-                    continue
-                return result_text
-            elif response.status_code == 429:
-                # Rate limited — use Retry-After header
-                retry_after = _parse_retry_after(response)
-                wait_time = max(retry_after, _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)])
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait_time, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[FORENSICATOR] HTTP 429 rate limited, retry {attempt+1} after {actual_wait:.0f}s (Retry-After: {retry_after})")
-                time.sleep(actual_wait)
-                continue
-            elif response.status_code in (401, 403):
-                print(f"[FORENSICATOR] LLM HTTP {response.status_code} — bad auth, giving up immediately")
-                return None
-            elif 500 <= response.status_code < 600:
-                # Server errors: brief retry (3 attempts with 10s backoff)
-                if attempt < 3:
-                    wait = 10
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return None
-                    print(f"[FORENSICATOR] LLM HTTP {response.status_code} (server error), retry {attempt+1} after {wait}s")
-                    time.sleep(actual_wait)
-                    continue
-                # After 3 attempts, fall through to full retry window
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                time.sleep(actual_wait)
-                continue
-            else:
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[FORENSICATOR] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                time.sleep(actual_wait)
-                continue
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return None
-            print(f"[FORENSICATOR] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-            time.sleep(actual_wait)
-            continue
-        except Exception as e:
-            print(f"[FORENSICATOR] LLM Error (attempt {attempt+1}): {e}")
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return None
-            time.sleep(actual_wait)
-            continue
-    return None  # All retries exceeded (should not normally reach here)
 
 class ForensicatorAgent:
     """

@@ -34,47 +34,10 @@ from geoff_utils import (
 )
 from geoff_critic import HealCache, ErrorContext, HealDecision
 
-# ---------------------------------------------------------------------------
-# Token-bucket rate limiter (shared with geoff_forensicator.py pattern)
-# ---------------------------------------------------------------------------
-_sh_rate_limiter = {
-    "tokens": 10,
-    "max_tokens": 10,
-    "refill_rate": 0.5,
-    "last_refill": time.time(),
-    "lock": __import__("threading").Lock(),
-}
+from geoff_llm_client import TokenBucket, generate_with_retry
 
-def _sh_rate_limit():
-    """Token-bucket rate limiter: waits if needed before allowing a call."""
-    with _sh_rate_limiter["lock"]:
-        now = time.time()
-        elapsed = now - _sh_rate_limiter["last_refill"]
-        _sh_rate_limiter["tokens"] = min(
-            _sh_rate_limiter["max_tokens"],
-            _sh_rate_limiter["tokens"] + elapsed * _sh_rate_limiter["refill_rate"]
-        )
-        _sh_rate_limiter["last_refill"] = now
-        if _sh_rate_limiter["tokens"] < 1:
-            wait_time = (1 - _sh_rate_limiter["tokens"]) / _sh_rate_limiter["refill_rate"]
-            _sh_rate_limiter["tokens"] = 0
-            _sh_rate_limiter["last_refill"] = now + wait_time
-        else:
-            wait_time = 0
-            _sh_rate_limiter["tokens"] -= 1
-    if wait_time > 0:
-        print(f"[GEOFF] Rate limited — waiting {wait_time:.1f}s for token bucket")
-        time.sleep(wait_time)
-
-def _parse_retry_after(response) -> float:
-    """Parse Retry-After header from HTTP response."""
-    retry_after = response.headers.get("Retry-After")
-    if retry_after:
-        try:
-            return float(retry_after)
-        except ValueError:
-            return 60
-    return 0
+# Token-bucket rate limiter shared by call_llm and _call_manager_llm.
+_sh_rate_limiter = TokenBucket(label="GEOFF")
 
 # ---------------------------------------------------------------------------
 # Module-level references set by importing module
@@ -544,117 +507,25 @@ def call_llm(user_message, context="", agent_type="manager", system_prompt=None)
     agent_type: "manager", "forensicator", or "critic" - determines which model to use
     system_prompt: if set, replaces GEOFF_PROMPT (use for chat/conversational contexts)
 
+    Retry policy lives in geoff_llm_client.generate_with_retry:
     HTTP 401/403 = immediate fail (bad auth). HTTP 5xx = brief retry (3x with 10s backoff).
-    Connection/network errors = full retry window (30 min with exponential backoff).
+    Connection/network errors = retried within a 10-minute window. Returns None on failure.
     """
-    _ollama_error_patterns = (
-        "Having trouble connecting to Ollama",
-        "Check OLLAMA_URL",
-        "[ERROR] Ollama returned",
+    lead_prompt = system_prompt if system_prompt else GEOFF_PROMPT
+    full_prompt = f"{lead_prompt}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
+    return generate_with_retry(
+        full_prompt,
+        base_url=ollama_base_url,
+        headers=ollama_headers,
+        model=lambda: AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"]),
+        temperature=0.3,
+        request_timeout=180,  # 3 min — cloud models respond in seconds or are failing
+        max_retry_time=600,   # 10 minutes total retry window
+        tag="GEOFF",
+        failure_value=None,
+        rate_limiter=_sh_rate_limiter,
+        log_file=sys.stderr,
     )
-    _MAX_RETRY_TIME = 600  # 10 minutes total retry window
-    _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
-    _max_retries = 99  # effectively unlimited within time window
-    _start = time.time()
-
-    for attempt in range(_max_retries):
-        elapsed = time.time() - _start
-        if elapsed > _MAX_RETRY_TIME:
-            print(f"[GEOFF] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s", file=sys.stderr)
-            return None
-
-        _sh_rate_limit()  # Rate limit before API call
-
-        try:
-            model = AGENT_MODELS.get(agent_type, AGENT_MODELS["manager"])
-
-            lead_prompt = system_prompt if system_prompt else GEOFF_PROMPT
-            full_prompt = f"{lead_prompt}\n\n{context}\n\nUser: {user_message}\n\nGeoff:"
-            response = requests.post(
-                f"{ollama_base_url()}/api/generate",
-                headers=ollama_headers(),
-                json={
-                    "model": model,
-                    "prompt": full_prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.3}
-                },
-                timeout=180  # 3 min — cloud models respond in seconds or are failing
-            )
-            if response.status_code == 200:
-                result_text = response.json().get('response', 'Hmm, let me check that again.')
-                # Reject error messages that leaked into the response
-                if any(pat in result_text for pat in _ollama_error_patterns):
-                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return None
-                    print(f"[GEOFF] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)", file=sys.stderr)
-                    time.sleep(actual_wait)
-                    continue
-                return result_text
-            elif response.status_code in (401, 403):
-                print(f"[GEOFF] LLM HTTP {response.status_code} — bad auth, giving up immediately", file=sys.stderr)
-                return None
-            elif response.status_code == 429:
-                retry_after = _parse_retry_after(response)
-                wait_time = max(retry_after, _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)])
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait_time, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[GEOFF] HTTP 429 rate limited, retry {attempt+1} after {actual_wait:.0f}s (Retry-After: {retry_after})", file=sys.stderr)
-                time.sleep(actual_wait)
-                continue
-            elif 500 <= response.status_code < 600:
-                # Server errors: brief retry (3 attempts with 10s backoff)
-                if attempt < 3:
-                    wait = 10
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return None
-                    print(f"[GEOFF] LLM HTTP {response.status_code} (server error), retry {attempt+1} after {wait}s", file=sys.stderr)
-                    time.sleep(actual_wait)
-                    continue
-                # After 3 attempts, fall through to full retry window
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[GEOFF] LLM HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)", file=sys.stderr)
-                time.sleep(actual_wait)
-                continue
-            else:
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return None
-                print(f"[GEOFF] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)", file=sys.stderr)
-                time.sleep(actual_wait)
-                continue
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return None
-            print(f"[GEOFF] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)", file=sys.stderr)
-            time.sleep(actual_wait)
-            continue
-        except Exception as e:
-            print(f"[GEOFF] LLM Error (attempt {attempt+1}): {e}", file=sys.stderr)
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return None
-            time.sleep(actual_wait)
-            continue
-    return None  # All retries exhausted
 
 
 # ---------------------------------------------------------------------------
@@ -666,107 +537,22 @@ def _call_manager_llm(prompt: str, timeout: int = 180) -> str:
 
     Returns empty string on failure. Caller should handle None/empty gracefully.
 
+    Retry policy lives in geoff_llm_client.generate_with_retry:
     HTTP 401/403 = immediate fail (bad auth). HTTP 5xx = brief retry (3x with 10s backoff).
-    Connection/network errors = full retry window (30 min with exponential backoff).
+    Connection/network errors = retried within a 10-minute window.
     """
-    _error_patterns = (
-        "Having trouble connecting to Ollama",
-        "Check OLLAMA_URL",
-        "[ERROR] Ollama returned",
+    return generate_with_retry(
+        prompt,
+        base_url=ollama_base_url,
+        headers=ollama_headers,
+        model=lambda: AGENT_MODELS.get("manager", AGENT_MODELS.get("default", "")),
+        temperature=0.1,
+        request_timeout=timeout,
+        max_retry_time=600,  # 10 minutes total retry window
+        tag="MANAGER",
+        failure_value="",
+        rate_limiter=_sh_rate_limiter,
     )
-    _MAX_RETRY_TIME = 600  # 10 minutes total retry window
-    _BACKOFF_TIMES = [30, 60, 120, 240, 300]  # seconds, last value repeats
-    _max_retries = 99  # effectively unlimited within time window
-    _start = time.time()
-
-    for attempt in range(_max_retries):
-        elapsed = time.time() - _start
-        if elapsed > _MAX_RETRY_TIME:
-            print(f"[MANAGER] LLM retry timeout after {elapsed:.0f}s/{_MAX_RETRY_TIME}s")
-            return ""
-
-        _sh_rate_limit()
-
-        try:
-            model = AGENT_MODELS.get("manager", AGENT_MODELS.get("default", ""))
-            response = requests.post(
-                f"{ollama_base_url()}/api/generate",
-                headers=ollama_headers(),
-                json={"model": model, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.1}},
-                timeout=timeout,
-            )
-            if response.status_code == 200:
-                result_text = response.json().get("response", "")
-                if any(pat in result_text for pat in _error_patterns):
-                    wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return ""
-                    print(f"[MANAGER] Ollama error in response, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                    time.sleep(actual_wait)
-                    continue
-                return result_text
-            elif response.status_code in (401, 403):
-                print(f"[MANAGER] LLM HTTP {response.status_code} — bad auth, giving up immediately")
-                return ""
-            elif response.status_code == 429:
-                retry_after = _parse_retry_after(response)
-                wait_time = max(retry_after, _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)])
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait_time, remaining)
-                if actual_wait <= 0:
-                    return ""
-                print(f"[MANAGER] HTTP 429 rate limited, retry {attempt+1} after {actual_wait:.0f}s (Retry-After: {retry_after})")
-                time.sleep(actual_wait)
-                continue
-            elif 500 <= response.status_code < 600:
-                if attempt < 3:
-                    wait = 10
-                    remaining = _MAX_RETRY_TIME - elapsed
-                    actual_wait = min(wait, remaining)
-                    if actual_wait <= 0:
-                        return ""
-                    print(f"[MANAGER] LLM HTTP {response.status_code} (server error), retry {attempt+1} after {wait}s")
-                    time.sleep(actual_wait)
-                    continue
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return ""
-                print(f"[MANAGER] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                time.sleep(actual_wait)
-                continue
-            else:
-                wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-                remaining = _MAX_RETRY_TIME - elapsed
-                actual_wait = min(wait, remaining)
-                if actual_wait <= 0:
-                    return ""
-                print(f"[MANAGER] Ollama HTTP {response.status_code}, retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-                time.sleep(actual_wait)
-                continue
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return ""
-            print(f"[MANAGER] LLM {type(e).__name__} retry {attempt+1} after {wait}s (elapsed {elapsed:.0f}s/{_MAX_RETRY_TIME}s)")
-            time.sleep(actual_wait)
-            continue
-        except Exception as e:
-            print(f"[MANAGER] LLM error (attempt {attempt+1}): {e}")
-            wait = _BACKOFF_TIMES[min(attempt, len(_BACKOFF_TIMES) - 1)]
-            remaining = _MAX_RETRY_TIME - elapsed
-            actual_wait = min(wait, remaining)
-            if actual_wait <= 0:
-                return ""
-            time.sleep(actual_wait)
-            continue
-    return ""
 
 
 # ---------------------------------------------------------------------------
