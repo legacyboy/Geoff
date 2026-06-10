@@ -134,6 +134,27 @@ _SKIP_ON_EWF_CONTAINER = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# Evidence-type compatibility guards.
+# Maps module name → set of file extensions that module is valid against.
+# A module absent from this dict is unrestricted.
+# ---------------------------------------------------------------------------
+_TOOL_EVIDENCE_COMPAT: dict = {
+    # Volatility operates on raw memory — never on PCAP or log files
+    "volatility": frozenset({
+        '.raw', '.dmp', '.lime', '.mem', '.vmem', '.dd', '.img',
+        '.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01',
+    }),
+    # Registry tools require a disk image or extracted hive — not PCAP/logs
+    "registry": frozenset({
+        '.dd', '.img', '.dat', '.hive',
+        '.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01',
+    }),
+    # Network and Zeek tools only make sense against PCAP/log captures
+    "network": frozenset({'.pcap', '.pcapng', '.log'}),
+    "zeek":    frozenset({'.pcap', '.pcapng', '.log'}),
+}
+
+# ---------------------------------------------------------------------------
 # Pipeline functions
 # ---------------------------------------------------------------------------
 
@@ -766,7 +787,7 @@ Respond ONLY in valid JSON (no extra text):
     decision = {
         "action": "approve",
         "replay_adjustments": {},
-        "generate_report": sufficient,
+        "generate_report": True,
         "reasoning": "Manager LLM unavailable — defaulting to approve",
     }
     try:
@@ -775,16 +796,15 @@ Respond ONLY in valid JSON (no extra text):
             parsed = json.loads(m.group())
             decision["action"]             = parsed.get("action", "approve")
             decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-            decision["generate_report"]    = parsed.get("generate_report", sufficient)
+            decision["generate_report"]    = True
             decision["reasoning"]          = parsed.get("reasoning", "")
     except Exception as e:
         _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} — defaulting to approve")
 
-    # Approve semantically means the investigation is complete — always generate report.
-    # generate_report=False with action=approve is contradictory: the manager signed off,
-    # so findings are sufficient to write up regardless of batch critic quality flags.
-    if decision["action"] == "approve":
-        decision["generate_report"] = True
+    # Reports always generate — sparse findings are documented in the report itself,
+    # not suppressed. Critic quality flags (sufficient_for_report=false) inform the
+    # report narrative, they do not gate report creation.
+    decision["generate_report"] = True
 
     _fe_log(job_id, (
         f"  [MANAGER] Decision: {decision['action'].upper()} | "
@@ -2607,6 +2627,26 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 _fe_log(job_id, f"  SKIP {module}.{function} -- not valid on EWF container {Path(item).name}")
                                 step_record["status"] = "skipped"
                                 step_record["error"] = f"Skipped: {function} requires mounted filesystem, not EWF container"
+                                step_record["completed_at"] = datetime.now().isoformat()
+                                findings_writer.append(step_record)
+                                pb_findings.append(step_record)
+                                steps_skipped += 1
+                                continue
+
+                            # Evidence-type compatibility guard: skip when the tool module
+                            # cannot operate on this evidence file extension (e.g. volatility
+                            # against a PCAP, or registry tools against a log file).
+                            _item_ext = Path(item).suffix.lower()
+                            _compat_exts = _TOOL_EVIDENCE_COMPAT.get(module)
+                            if _compat_exts is not None and _item_ext not in _compat_exts:
+                                _fe_log(job_id, (
+                                    f"  ⏭ Skipped {module}.{function}: evidence type "
+                                    f"{_item_ext} not compatible with {module} tool"
+                                ))
+                                step_record["status"] = "skipped"
+                                step_record["error"] = (
+                                    f"Skipped: {_item_ext} not compatible with {module} tool"
+                                )
                                 step_record["completed_at"] = datetime.now().isoformat()
                                 findings_writer.append(step_record)
                                 pb_findings.append(step_record)
