@@ -1,0 +1,22 @@
+# Gemma-4-31B Q4_K_M
+# Download GGUF from: https://huggingface.co/bartowski/google_gemma-4-31B-it-GGUF
+# File: google_gemma-4-31B-it-Q4_K_M.gguf
+# SHA256: 35dacd53f9f8aa05320a4596efce2b2f72d2ebb6e4141186533419e9e98bc269
+# Size: 19598488192 bytes (~19.6 GB)
+# License: Apache-2.0
+
+FROM ./google_gemma-4-31B-it-Q4_K_M.gguf
+
+TEMPLATE """{{- if .System }}{{ .System }}{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice .Messages $i)) 1}}
+{{- if eq .Role "user" }}<|turn|>user
+{{ .Content }}{{ end }}
+{{- if eq .Role "assistant" }}<|turn|>assistant
+{{ .Content }}{{ end }}
+{{- if and $last (ne .Role "assistant") }}<|turn|>assistant
+{{ end }}
+{{- end }}"""
+
+PARAMETER stop "<|turn|>"
+PARAMETER temperature 0.2

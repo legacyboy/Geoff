@@ -6668,6 +6668,18 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 re.findall(r'https?://[^\s<>"\')\]]+', body_text)
                             ))[:20]
 
+                            # Save email body excerpts for report content
+                            body_excerpt = body_text[:500].strip() if body_text else ""
+                            if body_excerpt:
+                                email_iocs_agg.setdefault("email_bodies", [])
+                                email_iocs_agg["email_bodies"].append({
+                                    "subject": subject[:200],
+                                    "from": from_addr,
+                                    "to": to_addr[:200],
+                                    "date": date,
+                                    "body_excerpt": body_excerpt,
+                                })
+
                             # Collect IOCs for aggregation
                             if from_addr:
                                 email_iocs_agg["from_addresses"].append(from_addr)
@@ -6733,6 +6745,10 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         ioc_text_lines.append(f"return-path: {addr}")
                     for url in email_iocs_agg["urls_in_body"]:
                         ioc_text_lines.append(f"url: {url}")
+                    for eb in email_iocs_agg.get("email_bodies", [])[:20]:
+                        ioc_text_lines.append(
+                            f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')[:200]}"
+                        )
                     ioc_text = "\n".join(ioc_text_lines)
 
                     # Step 7: Write findings to findings_writer, enriched with IOCs
@@ -6754,6 +6770,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 "return_path_mismatches": email_iocs_agg[
                                     "return_path_mismatches"],
                                 "spoofed_domains": email_iocs_agg["spoofed_domains"],
+                                "email_bodies": email_iocs_agg.get("email_bodies", [])[:30],
                             }
                             findings_writer.append({
                                 "step_key": step_key,
@@ -6805,6 +6822,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         "return_path_mismatches"],
                                     "spoofed_domains": email_iocs_agg[
                                         "spoofed_domains"],
+                                    "email_bodies": email_iocs_agg.get("email_bodies", [])[:30],
                                 },
                                 "note": (
                                     "No phishing indicators detected"

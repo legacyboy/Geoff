@@ -806,13 +806,29 @@ class NarrativeReportGenerator:
                 (report_json.get("attack_chain", {}) or {}).get("mitre_techniques_observed", [])
                 or [t["technique_id"] for t in report_json.get("mitre_techniques", []) if isinstance(t, dict) and "technique_id" in t]
             ),
-            # Email / phishing findings from direct extraction
-            "email_direct_findings": [
-                f for f in report_json.get("findings_detail", [])
-                if f.get("playbook") == "EMAIL_DIRECT"
-            ],
-            # Collect email_iocs from findings_detail for executive summary
+            # Email / phishing findings - collect from multiple sources
+            "email_direct_findings": (
+                [
+                    f for f in report_json.get("findings_detail", [])
+                    if f.get("playbook") == "EMAIL_DIRECT"
+                ]
+                or report_json.get("email_direct_findings", [])
+            ),
+            # Collect email_iocs for executive summary
             "email_iocs": report_json.get("email_iocs", {}),
+            "email_spoofing_found": bool(
+                report_json.get("email_iocs", {}).get("return_path_mismatches")
+                or report_json.get("email_iocs", {}).get("spoofed_domains")
+            ),
+            "email_phishing_indicators": {
+                "return_path_mismatches": report_json.get("email_iocs", {}).get("return_path_mismatches", [])[:10],
+                "spoofed_domains": report_json.get("email_iocs", {}).get("spoofed_domains", []),
+                "emails_scanned": len(report_json.get("email_iocs", {}).get("from_addresses", [])),
+                "phishing_detected": bool(
+                    report_json.get("email_iocs", {}).get("return_path_mismatches")
+                    or report_json.get("email_iocs", {}).get("spoofed_domains")
+                ),
+            },
         }
 
         if self.call_llm:
@@ -837,11 +853,11 @@ class NarrativeReportGenerator:
                 f"\nWrite a factual executive summary. Do not speculate "
                 f"beyond what the evidence shows. Use professional tone "
                 f"suitable for legal documentation.\n"
-                f"\nCRITICAL RULE: If the email_direct_findings list is empty or "
-                f"email_iocs is empty, state clearly that no email or phishing "
-                f"indicators were found. DO NOT invent numbers, Return-Path "
-                f"mismatches, or spoofing counts that are not in the evidence. "
-                f"Report ONLY what the data above shows."
+                f"\nIMPORTANT: If email_phishing_indicators shows phishing_detected=true, "
+                f"you MUST mention the phishing/spoofing findings in the summary. "
+                f"If any return_path_mismatches or spoofed_domains are present, "
+                f"describe the email spoofing activity. Report ONLY what the data "
+                f"above shows — do not invent numbers or patterns not in the evidence."
             )
 
             try:
