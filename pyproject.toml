@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoff-dfir"
+version = "1.0.0"
+description = "GEOFF — Git-backed Evidence Operations Forensic Framework: multi-agent conversational DFIR platform"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0,<4.0",
+    "flask-cors>=4.0,<5.0",
+    "requests>=2.31,<3.0",
+    "jsonschema>=4.21,<5.0",
+    "gitpython>=3.1,<4.0",
+    "markupsafe>=2.1,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "mcp==1.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.2",
+]
+
+[project.urls]
+Repository = "https://github.com/legacyboy/Geoff"
+
+# The codebase is a flat collection of top-level modules under src/ that
+# import each other by bare name (e.g. `import geoff_config`); list them as
+# py-modules so `pip install -e .` makes them importable without sys.path
+# manipulation.
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = [
+    "behavioral_analyzer",
+    "command_logger",
+    "device_discovery",
+    "evidence_classifier",
+    "file_scanner",
+    "geoff_adaptive_pass2",
+    "geoff_adaptive_playbook",
+    "geoff_chain_of_custody",
+    "geoff_chat_aggregator",
+    "geoff_chat_extractor",
+    "geoff_classifier",
+    "geoff_communications",
+    "geoff_confidence",
+    "geoff_config",
+    "geoff_critic",
+    "geoff_discord_extractor",
+    "geoff_discovery",
+    "geoff_dns_forensics",
+    "geoff_dual_critic",
+    "geoff_fallback_chains",
+    "geoff_forensicator",
+    "geoff_gaps_novel",
+    "geoff_hash_correlation",
+    "geoff_integrated",
+    "geoff_ip_map",
+    "geoff_keylogger",
+    "geoff_linux_user",
+    "geoff_logger",
+    "geoff_mcp_server",
+    "geoff_memory_analysis",
+    "geoff_mitre",
+    "geoff_models",
+    "geoff_phase34",
+    "geoff_pipeline",
+    "geoff_provenance",
+    "geoff_rag",
+    "geoff_routes",
+    "geoff_self_heal",
+    "geoff_selfcheck",
+    "geoff_settings",
+    "geoff_stego",
+    "geoff_templates",
+    "geoff_utils",
+    "geoff_windows_user",
+    "geoff_yara",
+    "host_correlator",
+    "narrative_report",
+    "offset_cache",
+    "pipeline_phases",
+    "queue_manager",
+    "recover_timelines",
+    "sift_specialists",
+    "sift_specialists_extended",
+    "sift_specialists_remnux",
+    "super_timeline",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Per-test ceiling: LLM retry loops can otherwise hang a run for 30+ minutes
+# when no Ollama backend is reachable.
+timeout = 120
