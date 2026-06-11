@@ -16,6 +16,8 @@
 
 **Your digital forensics colleague with multi-agent analysis, device-centric investigation, and narrative reporting.**
 
+> **⚠️ Platform Requirement:** Geoff is designed to run on the **SANS SIFT Workstation** (Ubuntu 22.04+). It depends on 100+ forensic tools pre-installed by SIFT (SleuthKit, Volatility, Plaso, RegRipper, bulk_extractor, etc.). While Geoff will attempt to install missing tools via self-heal, a clean SIFT VM provides the most reliable experience and avoids tool-missing errors. Install on a fresh SIFT VM for best results.
+
 **License:** Apache 2.0 — see [LICENSE](LICENSE).
 
 ---
