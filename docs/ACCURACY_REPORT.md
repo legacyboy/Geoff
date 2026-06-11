@@ -1,7 +1,7 @@
 # Geoff DFIR — Accuracy Report
 
-**Date:** 2026-06-01  
-**Version:** v1.0 (tagged at competition-submission HEAD)  
+**Date:** 2026-06-10 (updated)  
+**Version:** v1.1 (post-audit, all known caps removed)  
 **Purpose:** Judge-facing structured assessment of Geoff's accuracy, self-correction effectiveness, evidence integrity approach, and known limitations.
 
 ---
@@ -179,7 +179,7 @@ After each chat response, `_self_check_chat_response` (`src/geoff_self_heal.py:9
 
 ## 6. Narrative Generation Self-Check Gap
 
-**This is a known, disclosed limitation.**
+**This is a known, disclosed limitation — partially mitigated 2026-06-10.**
 
 Chat responses go through an independent grounding check (`_self_check_chat_response`) that verifies responses cite only present-in-context evidence. If the check fails, the response is regenerated once.
 
@@ -189,6 +189,8 @@ Narrative reports (`narrative_report.md`) do **not** go through this structural 
 - Requires "Insufficient evidence to assess" for unsupported sections
 
 These are **prompt-enforced constraints only**. A model that does not follow its system prompt can still produce uncited claims in the narrative report. There is no code path that checks the narrative output against the evidence chain and regenerates if claims are unsupported.
+
+**2026-06-10 mitigation:** The Executive Summary prompt previously contained a destructive instruction that told the LLM to state "no email or phishing indicators were found" when the `email_direct_findings` list was empty — even when phishing evidence existed elsewhere in the report. This caused the M57-Jean executive summary to contradict its own detailed findings (3 spoofed phishing emails were identified in the Email & Phishing section but the Executive Summary claimed none). Fixed by: (a) populating `email_direct_findings` from multiple sources (findings_detail + email_iocs + EMAIL_DIRECT), (b) feeding `email_phishing_indicators` context with spoofed domains and Return-Path mismatches directly to the LLM, and (c) replacing the destructive prompt instruction with a requirement to report actual findings. All commits traceable in git log.
 
 This asymmetry is intentional in the current implementation — narrative regeneration on failure would require either (a) parsing the narrative to extract claims, or (b) a separate Critic pass against the narrative draft. Neither is implemented.
 
@@ -202,7 +204,7 @@ This asymmetry is intentional in the current implementation — narrative regene
 |------------|----------|--------|--------|
 | Three mislabeled playbooks (PB-004, PB-011, PB-013) | Content correctness | A judge running privilege escalation gets network device output | Known; disclosed; not fixed |
 | Multi-block PowerShell 4104 reassembly | Artifact coverage | Split obfuscated PowerShell appears as fragments | Known; not implemented |
-| Narrative self-check gap | Accuracy validation | Narrative claims not structurally verified | Known; disclosed above |
+| Narrative self-check gap | Accuracy validation | Narrative claims not structurally verified | Known; partially mitigated 2026-06-10 |
 | LOLBin obfuscation decoding | Artifact coverage | Encoded LOLBin commands not decoded automatically | Known; technique-without-tool gap |
 | WMI OBJECTS.DATA parsing | Artifact coverage | WMI persistence artifacts not parsed | Known; no `python-cim` integration |
 | RAR extraction | Evidence coverage | RAR archives not extracted | Known; not confirmed fixed |
@@ -210,6 +212,57 @@ This asymmetry is intentional in the current implementation — narrative regene
 | Self-heal cache staleness | Self-correction | Cached HealDecisions persist after code fixes | Known; requires manual cache clear |
 | Installer tool gaps (20+ tools) | Installation | Missing tools auto-installed on demand; requires internet | Documented; self-heal mitigates |
 | JA3/JA3S TLS fingerprinting | Network analysis | No JA3 hash extraction from PCAP | Known; technique-without-tool gap |
+
+---
+
+## 8. Evidence Caps Audit (2026-06-10)
+
+A comprehensive audit of the email and communications evidence pipeline was conducted on 2026-06-10 to identify and remove all data truncation caps. The audit examined `src/geoff_pipeline.py`, `src/sift_specialists_extended.py`, `src/geoff_communications.py`, and `src/narrative_report.py`.
+
+### 8.1 Caps Discovered and Removed
+
+| Location | Cap | What Was Limited | Fix |
+|----------|-----|-----------------|-----|
+| `sift_specialists_extended.py:6605` | `eml_files[:500]` | Phishing detection skipped emails 501+ | Removed cap — all emails analyzed |
+| `sift_specialists_extended.py:6619,6628` | `body_text[:2000]` | Phishing body truncated at 2,000 chars | Removed cap — full body preserved |
+| `geoff_pipeline.py:6655` | `html_body[:5000]` | HTML email body capped at 5,000 chars | Removed cap — full body preserved |
+| `geoff_pipeline.py:6723-6727` | `[:30]` on from/to/return_path lists | Address lists capped at 30 entries | Removed caps — all addresses preserved |
+| `geoff_pipeline.py:6669` + `sift_specialists_extended.py:6651` | `[:20]` URL extraction | Each email contributed at most 20 URLs | Removed caps — all URLs preserved |
+| `geoff_pipeline.py:6750` | `body_excerpt[:200]` in IOC regex scanner | IOCs after char 200 in body missed | Removed cap — full body scanned |
+| `geoff_communications.py:162,168,202,207,221` | `body[:500]`, `body[:800]`, etc. | SMTP/IMAP/IRC bodies truncated | Removed all caps — full bodies preserved |
+| `geoff_communications.py:244,276,460` | `stream_ids[:30]`, `[:20]`, `[:40]` | Stream enumeration capped | Removed caps — all streams processed |
+| `geoff_communications.py:466` | `stdout[:8000]` | Per-stream content capped | Removed cap |
+| `geoff_communications.py:1101` | `messages[:200]` | Total output capped at 200 messages | Removed cap |
+| `geoff_pipeline.py:6706-6715` | Missing `body_text`/`subject`/`to` fields | Spoofed email mismatch records had blank body content in reports | Added `body_text`, `subject`, `to` to mismatch dict |
+
+### 8.2 Evidence Deletion Audit
+
+The `_direct_email_extraction()` function's cleanup logic (`geoff_pipeline.py:6848-6880`) was verified to preserve extracted evidence before deleting temp directories. The finally block now copies all extracted PST/EML files and directories to `case_work_dir/extracted_emails/<stem>/` before clearing temp dirs. No extracted evidence is discarded.
+
+---
+
+## 9. Report Generation and Tool-Evidence Compatibility (2026-06-10)
+
+### 9.1 Report Suppression Bug
+
+**Background:** Commit `f6cbe5a8` (2026-06-02) introduced a "Critic hard gate" that blocked narrative report generation whenever any per-step critic produced a `REQUIRES_REVIEW` or `REJECTED` verdict. This was intended to prevent hallucinated findings from reaching the narrative stage, but it created an unintentional side effect: tool-to-evidence mismatches (volatility running against PCAP files, registry tools against non-Windows images) caused legitimate borderline critic verdicts, which cascaded into the hard gate and suppressed report generation entirely.
+
+**Impact on 2026-06-10 batch run:** All four cases (jeanm57, dfrws2008, google-drive-case, network-forensics) completed with `generate_report: false` in their manager decisions, producing no narrative reports despite successful investigation completion.
+
+**Fix:** The `_manager_post_critic_decision()` function was modified to unconditionally set `generate_report: True`. The manager can still decide `action: flag` or `action: replay` for quality concerns, but the report is always generated. Quality concerns are documented in the report rather than suppressing it. Report suppression now requires explicit action — the default is generation.
+
+### 9.2 Tool-Evidence Compatibility Guard
+
+A `_TOOL_EVIDENCE_COMPAT` dictionary was added to the playbook execution loop (`src/geoff_pipeline.py:122`):
+- Volatility tools: only run on memory/disk image formats (`.raw`, `.dmp`, `.mem`, `.dd`, `.img`, `.E01`, `.E02`)
+- Registry tools: only run on disk/hive formats (`.dd`, `.img`, `.dat`, `.hive`, `.E01`, `.E02`)
+- Network tools: only run on capture formats (`.pcap`, `.pcapng`, `.log`)
+
+Mismatched tools are cleanly skipped with a `⏭ Skipped` log entry and `status=skipped` (not `failed`), preventing critic error cascades from tool-evidence mismatches.
+
+### 9.3 Executive Summary Phishing Contradiction
+
+The `_generate_executive_summary()` function had a destructive prompt instruction that directed the LLM to state "no phishing indicators were found" when the `email_direct_findings` list was empty — despite phishing evidence existing in `email_iocs` records elsewhere in the same report. This caused the M57-Jean executive summary to explicitly contradict the detailed Email & Phishing section (which correctly identified 3 spoofed emails, MITRE T1566.002). Fixed by feeding `email_phishing_indicators` context (spoofed domains, Return-Path mismatches, email counts) directly to the LLM and replacing the destructive instruction with a requirement to report actual findings.
 
 ---
 
