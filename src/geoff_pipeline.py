@@ -6770,7 +6770,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 "return_path_mismatches": email_iocs_agg[
                                     "return_path_mismatches"],
                                 "spoofed_domains": email_iocs_agg["spoofed_domains"],
-                                "email_bodies": email_iocs_agg.get("email_bodies", [])[:30],
+                                "email_bodies": email_iocs_agg.get("email_bodies", []),
                             }
                             findings_writer.append({
                                 "step_key": step_key,
@@ -6822,7 +6822,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         "return_path_mismatches"],
                                     "spoofed_domains": email_iocs_agg[
                                         "spoofed_domains"],
-                                    "email_bodies": email_iocs_agg.get("email_bodies", [])[:30],
+                                    "email_bodies": email_iocs_agg.get("email_bodies", []),
                                 },
                                 "note": (
                                     "No phishing indicators detected"
