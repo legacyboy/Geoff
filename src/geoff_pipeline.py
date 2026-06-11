@@ -3447,10 +3447,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                         entry_name = entry.get("name", "unknown")
                         step_key = f"A012:recovered_fat:{hashlib.md5(entry_name.encode()).hexdigest()[:12]}"
                         _pending_fat_recovery_findings.append({
-                            "playbook": "PB-SIFT-013",
+                            "playbook": "PB-SIFT-026",
                             "step_key": step_key,
                             "execution_hash": hashlib.md5(
-                                f"PB-SIFT-013:fat_recovery:{entry_name}".encode()
+                                f"PB-SIFT-026:fat_recovery:{entry_name}".encode()
                             ).hexdigest()[:12],
                             "module": "fat_recovery",
                             "function": "recover_formatted_fat",
@@ -3475,7 +3475,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 "artifact": f"fat_recovered:{entry_name}",
                                 "evidence_file": entry.get("recovered_path", ""),
                                 "tool": "sleuthkit",
-                                "playbook": "PB-SIFT-013",
+                                "playbook": "PB-SIFT-026",
                                 "significance": "HIGH - File recovered from formatted partition",
                                 "analyst_note": (
                                     f"File '{entry_name}' ({entry.get('size', 0)} bytes) "
@@ -3507,7 +3507,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
                     step_key = "A012:usb_format_detected"
                     _pending_fat_recovery_findings.append({
-                        "playbook": "PB-SIFT-013",
+                        "playbook": "PB-SIFT-012",
                         "step_key": step_key,
                         "execution_hash": hashlib.md5(
                             "A012:usb_format_detected".encode()
@@ -3532,7 +3532,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                             "artifact": "usb_format_event",
                             "evidence_file": "",
                             "tool": usb_result.get("tool_used", ""),
-                            "playbook": "PB-SIFT-013",
+                            "playbook": "PB-SIFT-012",
                             "significance": "HIGH - USB device format detected",
                             "analyst_note": (
                                 f"USB device format detected via {usb_result['tool_used']}"
