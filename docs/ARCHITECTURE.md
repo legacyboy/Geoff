@@ -7,7 +7,28 @@ with every step git-committed for chain of custody.
 ![GEOFF architecture diagram](architecture.svg)
 
 High-resolution exports: [`architecture.svg`](architecture.svg) (vector, print-ready) ·
-[`architecture.png`](architecture.png) (2580 px raster).
+[`architecture.png`](architecture.png) (2580 px raster) ·
+[`architecture.pdf`](architecture.pdf) (PDF for submission upload).
+
+## Architectural pattern: Multi-Agent Framework
+
+GEOFF is a **Multi-Agent Framework** (not a Direct Agent Extension, single Custom MCP
+Server, or Alternative Agentic IDE). The core is the **Geoff Triad** — three specialized
+agents on *different* models with separated duties:
+
+- **Manager** plans and gates (approve / flag / replay) — it never executes tools.
+- **Forensicator** executes playbook steps and writes analyst notes — it never approves itself.
+- **Critic** (a dual pool of two independent model architectures, plus a holistic Batch
+  Critic) validates every finding — it never produces findings.
+
+A fourth role, the **Healer**, is the Critic operating in error-recovery mode. The agents
+communicate exclusively through JSON contracts persisted to git (see
+`docs/AGENT_PROTOCOL.md`).
+
+A **Custom MCP Server** (`src/geoff_mcp_server.py`) exists as a *secondary integration
+surface*: it lets external agentic clients (Claude Desktop, Claude Code) drive
+investigations and query results over MCP, but it is a front door to the Triad, not the
+execution engine itself.
 
 ---
 
@@ -109,10 +130,25 @@ flowchart TB
 | Narrative reports | Manager-gated MD/HTML report generation | `src/narrative_report.py` |
 | External service | NSRL known-file hash elimination | `src/geoff_gaps_novel.py::HASH_Specialist` |
 
-## Design guarantees
+## Guardrails: architectural vs prompt-based
 
-- **Chain of custody** — every step is git-committed with a SHA-256 sidecar before the pipeline advances.
-- **Hallucination defense** — two independent critic models must agree; disagreement lowers confidence.
-- **Self-healing** — deterministic fixes first, LLM-diagnosed `HealDecision` second, targeted replay last.
-- **Evidence safety** — sources are processed read-only with a SHA-256 manifest taken at intake.
+**Architectural guardrails** are enforced by code and pipeline structure — they hold even
+if a model misbehaves:
+
+- **Chain of custody** — every step is git-committed with a SHA-256 sidecar before the pipeline advances (`src/geoff_pipeline.py::_commit_step_with_custody`).
+- **Evidence safety** — sources are processed read-only with a SHA-256 manifest taken at intake; originals are never modified.
+- **Dual-critic validation** — two critics run on *different model architectures*; their agreement (and the resulting confidence grade) is computed in code, not asserted by any model (`src/geoff_gaps_novel.py::GeoffCriticPool`). Hallucination flags reduce confidence programmatically.
+- **Report gating** — narrative report generation is conditional in code on the Manager's persisted decision (`manager_decision.json` / `generate_report`), not on a prompt.
 - **Reproducibility** — `audit_trail.jsonl` and the ProvenanceDAG trace every finding back to its source artifact.
+- **Network isolation** — the MCP server binds to `127.0.0.1` by default; remote access requires an explicit SSH tunnel.
+- **Self-healing order** — deterministic fixes are attempted before any LLM-diagnosed `HealDecision`, with targeted replay last.
+
+**Prompt-based guardrails** are instructions steering each model's behaviour
+(`src/geoff_self_heal.py::GEOFF_PROMPT`, `src/geoff_critic.py`):
+
+- **Hypothesis → Evidence → Assessment** reasoning protocol — every claim must be traceable to a named artifact (source file, tool, field/value).
+- **Critic hallucination hunting** — the Critic is instructed to flag any claim not present in the raw tool output and to grade APPROVED / REQUIRES_REVIEW / REJECTED.
+- **Calibrated language** — models must distinguish "confirmed" from "consistent with" / "appears to", and explicitly state when the evidence does not support a conclusion.
+
+Prompts steer the models; architecture catches them — custody, gating, and validation
+never rely on model compliance.

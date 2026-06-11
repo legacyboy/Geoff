@@ -15,8 +15,10 @@
   <rect width="1720" height="1180" fill="#f8fafc"/>
 
   <!-- Title -->
-  <text x="40" y="42" font-size="26" font-weight="700" fill="#0f172a">GEOFF<tspan font-size="16" font-weight="400" fill="#475569"> — Git-backed Evidence Operations Forensic Framework</tspan></text>
-  <text x="1680" y="42" font-size="13" fill="#64748b" text-anchor="end">System Architecture · multi-agent DFIR platform · "Follow every thread"</text>
+  <text x="40" y="42" font-size="26" font-weight="700" fill="#0f172a">GEOFF<tspan font-size="16" font-weight="400" fill="#475569"> — Git-backed Evidence Operations Forensic Framework · System Architecture</tspan></text>
+  <rect x="1056" y="10" width="624" height="42" rx="8" fill="#312e81"/>
+  <text x="1368" y="28" font-size="12" font-weight="700" letter-spacing="1" fill="#ffffff" text-anchor="middle">ARCHITECTURAL PATTERN — MULTI-AGENT FRAMEWORK</text>
+  <text x="1368" y="44" font-size="10" fill="#c7d2fe" text-anchor="middle">the Geoff Triad (Manager · Forensicator · Critic) · Custom MCP Server as secondary integration surface</text>
 
   <!-- ════════ INTERFACES BAND ════════ -->
   <rect x="40" y="62" width="1640" height="106" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
@@ -39,7 +41,7 @@
   <text x="905" y="133" font-size="10" fill="#475569" text-anchor="middle" font-family="monospace">POST /find-evil · /status · /reports</text>
 
   <rect x="1050" y="92" width="330" height="58" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="1.2"/>
-  <text x="1215" y="115" font-size="12" font-weight="700" fill="#1e3a8a" text-anchor="middle">MCP Server — 127.0.0.1:9999 · stdio</text>
+  <text x="1215" y="115" font-size="12" font-weight="700" fill="#1e3a8a" text-anchor="middle">Custom MCP Server — 127.0.0.1:9999 · stdio</text>
   <text x="1215" y="133" font-size="10" fill="#475569" text-anchor="middle">17 tools: start_find_evil · chat · *_analyze · reports</text>
 
   <rect x="1430" y="92" width="230" height="58" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.2"/>
@@ -51,7 +53,7 @@
 
   <!-- ════════ EVIDENCE SOURCES ════════ -->
   <rect x="40" y="210" width="270" height="420" rx="10" fill="#ffffff" stroke="#d97706" stroke-width="1.8"/>
-  <text x="56" y="232" font-size="11" font-weight="700" letter-spacing="1.5" fill="#d97706">EVIDENCE SOURCES</text>
+  <text x="56" y="232" font-size="11" font-weight="700" letter-spacing="1.5" fill="#d97706">EVIDENCE — DATA SOURCES</text>
   <text x="56" y="247" font-size="9.5" fill="#92400e">read-only · SHA-256 manifest at intake</text>
 
   <g font-size="10.5" fill="#451a03">
@@ -76,6 +78,8 @@
   <!-- ════════ GEOFF TRIAD ════════ -->
   <rect x="360" y="210" width="660" height="420" rx="10" fill="#ffffff" stroke="#4f46e5" stroke-width="1.8"/>
   <text x="376" y="232" font-size="11" font-weight="700" letter-spacing="1.5" fill="#4f46e5">THE GEOFF TRIAD — AUTONOMOUS AGENT LOOP</text>
+  <rect x="790" y="216" width="220" height="20" rx="5" fill="#4f46e5"/>
+  <text x="900" y="230" font-size="9.5" font-weight="700" letter-spacing="0.5" fill="#ffffff" text-anchor="middle">PATTERN: MULTI-AGENT FRAMEWORK</text>
   <text x="376" y="247" font-size="9.5" fill="#6366f1" font-family="monospace">src/geoff_pipeline.py::find_evil() · plan → execute → validate → decide</text>
 
   <!-- Triage -->
@@ -126,7 +130,7 @@
 
   <!-- ════════ SIFT TOOL LAYER ════════ -->
   <rect x="360" y="672" width="660" height="348" rx="10" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
-  <text x="376" y="694" font-size="11" font-weight="700" letter-spacing="1.5" fill="#0d9488">SIFT TOOL LAYER — 20+ SPECIALIST MODULES</text>
+  <text x="376" y="694" font-size="11" font-weight="700" letter-spacing="1.5" fill="#0d9488">SIFT WORKSTATION TOOLS — 20+ SPECIALIST MODULES</text>
   <text x="376" y="709" font-size="9.5" fill="#0f766e" font-family="monospace">src/sift_specialists*.py · MITRE ATT&amp;CK-mapped</text>
 
   <rect x="380" y="722" width="620" height="40" rx="6" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.2"/>
@@ -261,17 +265,26 @@
   </g>
   <text x="1540" y="655" font-size="10" fill="#64748b" font-style="italic" text-anchor="middle">everything versioned in a per-case git repo</text>
 
-  <!-- ════════ DESIGN GUARANTEES ════════ -->
+  <!-- ════════ GUARDRAILS ════════ -->
   <rect x="1070" y="740" width="610" height="280" rx="10" fill="#0f172a"/>
-  <text x="1090" y="772" font-size="14" font-weight="700" letter-spacing="1.5" fill="#fbbf24">DESIGN GUARANTEES</text>
-  <g font-size="11.5" fill="#e2e8f0">
-    <text x="1090" y="802"><tspan fill="#fbbf24">▸ </tspan><tspan font-weight="700">Chain of custody</tspan> — every step git-committed with SHA-256 sidecar before advancing</text>
-    <text x="1090" y="828"><tspan fill="#fbbf24">▸ </tspan><tspan font-weight="700">Hallucination defense</tspan> — two independent critics must agree; dissent lowers confidence</text>
-    <text x="1090" y="854"><tspan fill="#fbbf24">▸ </tspan><tspan font-weight="700">Self-healing</tspan> — deterministic fix first, LLM HealDecision second, targeted replay last</text>
-    <text x="1090" y="880"><tspan fill="#fbbf24">▸ </tspan><tspan font-weight="700">Evidence safety</tspan> — read-only processing · SHA-256 manifest · originals never modified</text>
-    <text x="1090" y="906"><tspan fill="#fbbf24">▸ </tspan><tspan font-weight="700">Reproducibility</tspan> — audit_trail.jsonl + ProvenanceDAG trace every finding to its source</text>
+  <text x="1090" y="766" font-size="13.5" font-weight="700" letter-spacing="1.5" fill="#fbbf24">GUARDRAILS — ARCHITECTURAL vs PROMPT-BASED</text>
+
+  <text x="1090" y="790" font-size="11" font-weight="700" letter-spacing="1" fill="#5eead4">ARCHITECTURAL — enforced by code &amp; pipeline structure</text>
+  <g font-size="10.8" fill="#e2e8f0">
+    <text x="1090" y="810"><tspan fill="#5eead4">▸ </tspan>Per-step git custody commit + SHA-256 sidecar before the pipeline advances</text>
+    <text x="1090" y="829"><tspan fill="#5eead4">▸ </tspan>Read-only evidence handling · SHA-256 manifest at intake · originals never modified</text>
+    <text x="1090" y="848"><tspan fill="#5eead4">▸ </tspan>Dual critics on different model architectures — agreement computed in code, not asserted</text>
+    <text x="1090" y="867"><tspan fill="#5eead4">▸ </tspan>Narrative report gated in code on Manager decision (geoff_pipeline.py · manager_decision.json)</text>
+    <text x="1090" y="886"><tspan fill="#5eead4">▸ </tspan>audit_trail.jsonl + ProvenanceDAG lineage · MCP server bound to 127.0.0.1 only</text>
   </g>
-  <text x="1090" y="944" font-size="10.5" fill="#94a3b8" font-style="italic">No per-step human approval — the Triad plans, executes, critiques, and self-corrects autonomously.</text>
+
+  <text x="1090" y="916" font-size="11" font-weight="700" letter-spacing="1" fill="#93c5fd">PROMPT-BASED — agent instructions steering each model's behaviour</text>
+  <g font-size="10.8" fill="#e2e8f0">
+    <text x="1090" y="936"><tspan fill="#93c5fd">▸ </tspan>Hypothesis → Evidence → Assessment protocol — every claim must name its artifact (GEOFF_PROMPT)</text>
+    <text x="1090" y="955"><tspan fill="#93c5fd">▸ </tspan>Critic instructed to flag any claim absent from raw tool output as a hallucination</text>
+    <text x="1090" y="974"><tspan fill="#93c5fd">▸ </tspan>Calibrated language required — "consistent with" vs "confirmed" · admit insufficient evidence</text>
+  </g>
+  <text x="1090" y="1002" font-size="10" fill="#94a3b8" font-style="italic">Prompts steer the models; architecture catches them — custody and gating never rely on model compliance.</text>
 
   <!-- ════════ CROSS-CONTAINER ARROWS ════════ -->
   <!-- 1: interfaces -> triad -->
