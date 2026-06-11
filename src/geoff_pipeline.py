@@ -2076,7 +2076,7 @@ def _manager_post_critic_decision(
         decision = {
             "action": "approve",
             "replay_adjustments": {},
-            "generate_report": sufficient,
+            "generate_report": True,
             "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
             "critic_executed": True,
             "manager_executed": True,
@@ -2128,7 +2128,7 @@ Respond ONLY in valid JSON (no extra text):
     decision = {
         "action": "approve",
         "replay_adjustments": {},
-        "generate_report": sufficient,
+        "generate_report": True,
         "reasoning": "Manager LLM unavailable - defaulting to approve",
         "critic_unavailable": False,
     }
@@ -2152,7 +2152,7 @@ Respond ONLY in valid JSON (no extra text):
                 parsed = json.loads(m.group())
                 decision["action"]             = parsed.get("action", "approve")
                 decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-                decision["generate_report"]    = parsed.get("generate_report", sufficient)
+                decision["generate_report"]    = True  # Always generate report per CC5 audit
                 decision["reasoning"]          = parsed.get("reasoning", "")
                 decision["critic_unavailable"] = False
                 manager_executed = True
@@ -7875,7 +7875,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                                 body_text = payload.decode(
                                                     "utf-8", errors="replace")
                                             except Exception:
-                                                body_text = str(payload)[:5000]
+                                                body_text = str(payload)
                                             break
                                     elif part.get_content_type() == "text/html":
                                         payload = part.get_payload(decode=True)
@@ -7884,7 +7884,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                                 html = payload.decode(
                                                     "utf-8", errors="replace")
                                                 body_text = re.sub(
-                                                    r'<[^>]+>', ' ', html)[:5000]
+                                                    r'<[^>]+>', ' ', html)
                                             except Exception:
                                                 pass
                             else:
@@ -7894,7 +7894,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         body_text = payload.decode(
                                             "utf-8", errors="replace")
                                     except Exception:
-                                        body_text = str(payload)[:5000]
+                                        body_text = str(payload)
 
                             body_urls = list(dict.fromkeys(
                                 re.findall(r'https?://[^\s<>"\')\]]+', body_text)
@@ -7915,6 +7915,18 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                             for url in body_urls:
                                 if url not in email_iocs_agg["urls_in_body"]:
                                     email_iocs_agg["urls_in_body"].append(url)
+
+                            # Save email body excerpts for report content
+                            body_excerpt = body_text.strip() if body_text else ""
+                            if body_excerpt:
+                                email_iocs_agg.setdefault("email_bodies", [])
+                                email_iocs_agg["email_bodies"].append({
+                                    "subject": subject[:200],
+                                    "from": from_addr,
+                                    "to": to_addr[:200],
+                                    "date": date,
+                                    "body_excerpt": body_excerpt,
+                                })
 
                             # Domain spoofing: Return-Path differs from From
                             if return_path and from_addr:
@@ -7943,11 +7955,11 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
 
                     # Deduplicate address lists
                     email_iocs_agg["from_addresses"] = list(dict.fromkeys(
-                        email_iocs_agg["from_addresses"]))[:30]
+                        email_iocs_agg["from_addresses"]))
                     email_iocs_agg["to_addresses"] = list(dict.fromkeys(
-                        email_iocs_agg["to_addresses"]))[:30]
+                        email_iocs_agg["to_addresses"]))
                     email_iocs_agg["return_paths"] = list(dict.fromkeys(
-                        email_iocs_agg["return_paths"]))[:30]
+                        email_iocs_agg["return_paths"]))
 
                     _fe_log(job_id,
                         f"      Email IOCs: {len(email_iocs_agg['sender_ips'])} sender IP(s), "
@@ -7968,6 +7980,10 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         ioc_text_lines.append(f"return-path: {addr}")
                     for url in email_iocs_agg["urls_in_body"]:
                         ioc_text_lines.append(f"url: {url}")
+                    for eb in email_iocs_agg.get("email_bodies", []):
+                        ioc_text_lines.append(
+                            f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')}"
+                        )
                     ioc_text = "\n".join(ioc_text_lines)
 
                     # Step 7: Write findings to findings_writer, enriched with IOCs
@@ -7989,6 +8005,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 "return_path_mismatches": email_iocs_agg[
                                     "return_path_mismatches"],
                                 "spoofed_domains": email_iocs_agg["spoofed_domains"],
+                                "email_bodies": email_iocs_agg.get("email_bodies", []),
                             }
                             findings_writer.append({
                                 "step_key": step_key,
@@ -8040,6 +8057,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         "return_path_mismatches"],
                                     "spoofed_domains": email_iocs_agg[
                                         "spoofed_domains"],
+                                    "email_bodies": email_iocs_agg.get("email_bodies", []),
                                 },
                                 "note": (
                                     "No phishing indicators detected"
@@ -8063,6 +8081,21 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         finally:
             # Cleanup temp dirs
             import shutil
+            # Preserve extracted emails before cleanup
+            if extract_dir and os.path.isdir(extract_dir):
+                preserve_dir = os.path.join(case_work_dir, 'extracted_emails', img_stem)
+                os.makedirs(preserve_dir, exist_ok=True)
+                for f in os.listdir(extract_dir):
+                    src = os.path.join(extract_dir, f)
+                    dst = os.path.join(preserve_dir, f)
+                    try:
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                        elif os.path.isdir(src):
+                            shutil.copytree(src, dst, dirs_exist_ok=True)
+                    except Exception:
+                        pass
+                _fe_log(job_id, f'[EMAIL_DIRECT] Preserved extracted emails to {preserve_dir}')
             if ewf_raw_dir:
                 shutil.rmtree(ewf_raw_dir, ignore_errors=True)
             if extract_dir:

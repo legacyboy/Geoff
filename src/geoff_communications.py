@@ -199,12 +199,12 @@ def _extract_pcap_smtp(pcap_path: Path) -> list:
                     for part in msg.walk():
                         if part.get_content_type() == 'text/plain':
                             payload = part.get_payload(decode=True)
-                            body = (payload or b'').decode('utf-8', errors='replace')[:800]
+                            body = (payload or b'').decode(utf-8, errors='replace')
                             break
                 else:
                     payload = msg.get_payload(decode=True)
                     if payload:
-                        body = payload.decode('utf-8', errors='replace')[:800]
+                        body = payload.decode(utf-8, errors='replace')
 
                 from_clean = _extract_addr(from_hdr)
                 to_list = [_extract_addr(a.strip()) for a in to_hdr.split(',') if a.strip()]
@@ -457,7 +457,7 @@ def _extract_pcap_http_webmail(pcap_path: Path) -> list:
         )
         stream_ids = sorted({ln.strip() for ln in stream_res.stdout.splitlines() if ln.strip().isdigit()})
 
-        for sid in list(stream_ids)[:40]:
+        for sid in list(stream_ids):
             try:
                 fr = subprocess.run(
                     ['tshark', '-r', str(pcap_path), '-qz', f'follow,tcp,ascii,{sid}'],
@@ -546,8 +546,8 @@ def _extract_pcap_irc(pcap_path: Path) -> list:
                             'to': [channel],
                             'subject': f'IRC:{channel}',
                             'date': ts,
-                            'body': text[:500],
-                            'raw_snippet': f'{nick} → {channel}: {text[:200]}',
+                            'body': text,
+                            'raw_snippet': f'{nick} → {channel}: {text}',
                             'source_playbook': 'PCAP_IRC',
                             'source_function': f'pcap:{pcap_path.name}',
                             'protocol': 'irc',
@@ -569,8 +569,8 @@ def _extract_pcap_irc(pcap_path: Path) -> list:
                             'to': [channel],
                             'subject': f'IRC:{channel}',
                             'date': ts,
-                            'body': text[:500],
-                            'raw_snippet': f'{nick} → {channel}: {text[:200]}',
+                            'body': text,
+                            'raw_snippet': f'{nick} → {channel}: {text}',
                             'source_playbook': 'PCAP_IRC',
                             'source_function': f'pcap:{pcap_path.name}',
                             'protocol': 'irc',
@@ -718,12 +718,12 @@ class CommunicationsAnalyzer:
                 module == "email"
                 or "email" in playbook.lower()
                 or any(kw in function for kw in ("pst", "mbox", "eml", "msg", "dbx"))
-                or any(kw in output[:200].lower() for kw in ("from:", "subject:", "received:"))
+                or any(kw in output.lower() for kw in ("from:", "subject:", "received:"))
             )
             is_chat = (
                 module in ("mobile", "collaboration")
                 or any(kw in function for kw in _CHAT_FUNC_KWS)
-                or any(kw in output[:200].lower() for kw in _CHAT_OUTPUT_KWS)
+                or any(kw in output.lower() for kw in _CHAT_OUTPUT_KWS)
             )
             if not is_email and not is_chat:
                 continue

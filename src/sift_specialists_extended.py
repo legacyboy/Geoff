@@ -6619,7 +6619,7 @@ class EMAIL_Specialist:
                                 try:
                                     body_text = payload.decode('utf-8', errors='replace')
                                 except Exception:
-                                    body_text = str(payload)[:2000]
+                                    body_text = str(payload)
                                 break
                     if not body_text:
                         for part in msg.walk():
@@ -6638,7 +6638,7 @@ class EMAIL_Specialist:
                         try:
                             body_text = payload.decode('utf-8', errors='replace')
                         except Exception:
-                            body_text = str(payload)[:2000]
+                            body_text = str(payload)
                 body_text = body_text
 
                 headers = {}
