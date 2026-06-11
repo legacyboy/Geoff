@@ -9,19 +9,10 @@ import subprocess
 import re
 import os
 import shutil
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
-
-# Import _fe_log from geoff_utils if available (for pipeline mode)
-# Safer than direct import since this module may be used standalone
-try:
-    from geoff_utils import _fe_log
-except ImportError:
-    _fe_log = None  # standalone mode; no logging available
-
 
 
 class SLEUTHKIT_Specialist:
@@ -1067,40 +1058,6 @@ class VOLATILITY_Specialist:
                 return result.stdout.strip().decode() if isinstance(result.stdout, bytes) else result.stdout.strip()
         return None
 
-    @staticmethod
-    def _detect_memory_os(memory_dump: str) -> str:
-        """Detect OS from memory dump filename. Returns 'linux', 'windows', or 'unknown'."""
-        name = Path(memory_dump).name.lower()
-        if name.endswith('.lime') or 'linux' in name or 'ubuntu' in name or 'debian' in name:
-            return 'linux'
-        if 'win' in name or name.endswith('.dmp') or name.endswith('.vmem'):
-            return 'windows'
-        return 'unknown'
-
-    def _select_plugin(self, method: str, memory_dump: str) -> Optional[str]:
-        """Return the correct Volatility3 plugin based on detected OS. None = skip."""
-        _PLUGINS: Dict[str, Dict[str, Optional[str]]] = {
-            'linux': {
-                'process_list': 'linux.pslist.PsList',
-                'network_scan':  'linux.netstat.Netstat',
-                'find_malware':  'linux.malfind.Malfind',
-                'scan_registry': None,  # no registry on Linux
-                'dump_process':  'linux.proc.Maps',
-            },
-            'windows': {
-                'process_list': 'windows.pslist.PsList',
-                'network_scan':  'windows.netscan.NetScan',
-                'find_malware':  'windows.malfind.Malfind',
-                'scan_registry': 'windows.registry.hivelist.HiveList',
-                'dump_process':  'windows.memmap.Memmap',
-            },
-        }
-        os_type = self._detect_memory_os(memory_dump)
-        if os_type in _PLUGINS:
-            return _PLUGINS[os_type].get(method)
-        # Unknown OS: fall back to Windows plugins
-        return _PLUGINS['windows'].get(method, method)
-
     def run(self, plugin: str, memory_dump: str, **kwargs) -> Dict[str, Any]:
         if not self.volatility_path:
             return {'tool': 'volatility', 'plugin': plugin, 'status': 'error', 'error': 'Volatility not found', 'timestamp': datetime.now().isoformat()}
@@ -1121,15 +1078,8 @@ class VOLATILITY_Specialist:
             ])
 
             if result.returncode != 0 or no_output or profile_error:
-                # Volatility failed — log visibly and fall back to strings/bulk_extractor
-                _vol_warn = (f"[VOLATILITY] {plugin} on {Path(memory_dump).name} "
-                             f"failed (rc={result.returncode}): {(stderr or '')[:300]}")
-                print(f"  WARN {_vol_warn}", file=sys.stderr)
-                if _fe_log is not None:
-                    try:
-                        _fe_log("volatility", _vol_warn)
-                    except Exception:
-                        pass
+                # Volatility failed — fall back to strings and bulk_extractor
+                _fe_log(f"[VOLATILITY] {plugin} failed for {Path(memory_dump).name} — falling back to strings/bulk_extractor")
                 fallback_result = self._fallback_analysis(memory_dump, plugin)
                 fallback_result['volatility_error'] = stderr[:500] if stderr else 'No output from volatility'
                 fallback_result['volatility_returncode'] = result.returncode
@@ -1266,7 +1216,7 @@ class VOLATILITY_Specialist:
 
     def process_list(self, memory_dump: str) -> Dict[str, Any]:
         """List running processes with parsed table"""
-        raw = self.run(self._select_plugin('process_list', memory_dump), memory_dump)
+        raw = self.run('windows.pslist.PsList', memory_dump)
         if raw['status'] != 'success':
             return raw
 
@@ -1284,7 +1234,7 @@ class VOLATILITY_Specialist:
 
     def network_scan(self, memory_dump: str) -> Dict[str, Any]:
         """Scan for network connections with parsed table"""
-        raw = self.run(self._select_plugin('network_scan', memory_dump), memory_dump)
+        raw = self.run('windows.netscan.NetScan', memory_dump)
         if raw['status'] != 'success':
             return raw
 
@@ -1322,7 +1272,7 @@ class VOLATILITY_Specialist:
 
     def find_malware(self, memory_dump: str) -> Dict[str, Any]:
         """Find injected code/malware with parsed results"""
-        raw = self.run(self._select_plugin('find_malware', memory_dump), memory_dump)
+        raw = self.run('windows.malfind.Malfind', memory_dump)
         if raw['status'] != 'success':
             return raw
 
@@ -1341,12 +1291,7 @@ class VOLATILITY_Specialist:
 
     def scan_registry(self, memory_dump: str) -> Dict[str, Any]:
         """Scan registry hives with parsed results"""
-        _plugin = self._select_plugin('scan_registry', memory_dump)
-        if _plugin is None:
-            return {'tool': 'volatility', 'plugin': 'hivelist', 'status': 'skipped',
-                    'message': 'Registry scanning not applicable for Linux memory dumps',
-                    'timestamp': datetime.now().isoformat()}
-        raw = self.run(_plugin, memory_dump)
+        raw = self.run('windows.registry.hivelist.HiveList', memory_dump)
         if raw['status'] != 'success':
             return raw
 
@@ -1384,7 +1329,7 @@ class VOLATILITY_Specialist:
 
         results: List[Dict[str, Any]] = []
         for _pid in pids:
-            cmd = [self.volatility_path, '-f', memory_dump, '-q', self._select_plugin('dump_process', memory_dump) or 'windows.memmap.Memmap', '--pid', str(_pid), '--dump', '-D', output_dir]
+            cmd = [self.volatility_path, '-f', memory_dump, '-q', 'windows.memmap.Memmap', '--pid', str(_pid), '--dump', '-D', output_dir]
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
                 results.append({

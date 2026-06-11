@@ -57,11 +57,11 @@ _MODULE_EVIDENCE_GUARDS: dict = {
     "memory":     {"memory_dumps"},
     "registry":   {"disk_images", "registry_hives"},
     "windows":    {"disk_images", "registry_hives", "memory_dumps"},
-    "sleuthkit":  {"disk_images"},  # sleuthkit can't parse memory
+    "sleuthkit":  {"disk_images", "memory_dumps"},
     "network":    {"pcaps"},
     "dns":        {"pcaps"},
-    "remnux":     {"pcaps", "disk_images"},  # remnux malware analysis on disk images and pcaps only
-    "linux_user": {"disk_images", "other_files"},  # linux_user needs disk or text files
+    "remnux":     {"pcaps", "memory_dumps", "disk_images"},
+    "linux_user": {"disk_images", "memory_dumps", "other_files"},
     "yara":       {"memory_dumps", "disk_images"},
     "scheduled":  {"memory_dumps", "disk_images"},
     "strings":    {"memory_dumps", "disk_images"},

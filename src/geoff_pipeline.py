@@ -2152,7 +2152,22 @@ Respond ONLY in valid JSON (no extra text):
                 parsed = json.loads(m.group())
                 decision["action"]             = parsed.get("action", "approve")
                 decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-                decision["generate_report"]    = True  # Always generate report per CC5 audit
+                # Pre-decision gate: check rejection rate
+                rejected_count = sum(
+                    1 for f in findings
+                    if isinstance(f.get("critic", {}), dict)
+                    and f["critic"].get("verdict") == "REJECTED"
+                )
+                total_count = len(findings)
+                rejected_pct = rejected_count / max(total_count, 1)
+
+                # If >50% findings rejected, force overall_quality to POOR
+                if rejected_pct > 0.5 and overall_quality != "POOR":
+                    _fe_log(job_id, f"  ⚠ [MANAGER] {rejected_count}/{total_count} ({rejected_pct:.0%}) findings REJECTED - forcing quality to POOR", agent="Manager")
+                    overall_quality = "POOR"
+
+                decision["generate_report"] = parsed.get("generate_report",
+                    overall_quality not in ("POOR",))
                 decision["reasoning"]          = parsed.get("reasoning", "")
                 decision["critic_unavailable"] = False
                 manager_executed = True
@@ -2257,7 +2272,7 @@ def _retry_unprocessed(
 
     all_paths = geoff_discovery._all_inventory_paths(inventory)
     unprocessed = _classify_unprocessed(
-        all_paths, processed_paths, inventory, execution_plan
+        all_paths, processed_paths, inventory, execution_plan, PLAYBOOK_STEPS
     )
 
     retryable = [
@@ -5058,6 +5073,39 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         seen = set()
         execution_plan = [pb for pb in execution_plan if not (pb in seen or seen.add(pb))]
 
+        # --- Catch-all playbooks for unprocessed files ---
+        _other_count = len(inventory.get('other_files', []))
+        if _other_count > 0:
+            # PB-SIFT-025: Cloud/Enterprise IR - generic file analysis
+            if 'PB-SIFT-025' not in execution_plan:
+                execution_plan.append('PB-SIFT-025')
+                _fe_log(job_id, f"  PB-SIFT-025: Force-queued ({_other_count} unclassified files need analysis)")
+            
+            # Check for browser artifacts by filename
+            _browser_files = [f for f in inventory['other_files']
+                              if any(kw in Path(f).name.lower()
+                                     for kw in ('firefox', 'chrome', 'places.sqlite', 'cookies.sqlite',
+                                                'history', 'bookmarks', 'downloads.sqlite', 'formhistory',
+                                                'signons', 'logins.json', 'key4.db', 'cert9.db', 'favicons',
+                                                'extensions.sqlite', 'permissions.sqlite', 'webappsstore'))]
+            if _browser_files and 'PB-SIFT-022' not in execution_plan:
+                execution_plan.append('PB-SIFT-022')
+                _fe_log(job_id, f"  PB-SIFT-022: Browser Forensics force-queued ({len(_browser_files)} browser artifacts)")
+            
+            # Check for Linux user artifacts
+            _linux_files = [f for f in inventory['other_files']
+                            if any(kw in Path(f).name.lower()
+                                   for kw in ('bash_history', 'bashrc', 'bash_profile', '.profile',
+                                              'zsh_history', 'zshrc', '.zprofile', 'known_hosts',
+                                              'authorized_keys', 'crontab', 'sudoers', 'shadow',
+                                              'passwd', 'group', 'hosts', 'resolv.conf', 'fstab',
+                                              'system.map', 'grub.cfg', 'sysctl.conf',
+                                              'ssh_config', 'sshd_config'))]
+            if _linux_files and 'PB-SIFT-014' not in execution_plan:
+                execution_plan.append('PB-SIFT-014')
+                _fe_log(job_id, f"  PB-SIFT-014: Linux Forensics force-queued ({len(_linux_files)} Linux artifacts)")
+        
+
         # --- Manager reviews and may amend the execution plan ---
         execution_plan = _manager_review_execution_plan(
             proposed_plan=execution_plan,
@@ -5401,6 +5449,19 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     pb_findings = []
                     any_step_ran = False
 
+                    # --- Per-playbook evidence precheck ---
+                    # Skip entire playbook for this device if no matching evidence types exist
+                    dev_ev_types = set()
+                    for fpath in dev_ev.get('evidence_files', []):
+                        for ev_type_key, files in inventory.items():
+                            if isinstance(files, list) and fpath in files:
+                                dev_ev_types.add(ev_type_key)
+                    playbook_ev_types = set(pb_steps_def.keys())
+                    if not (dev_ev_types & playbook_ev_types):
+                        if job_id:
+                            _fe_log(job_id, f"  ⎘ {playbook_id} skipped for {dev_id} - no matching evidence types")
+                        continue
+                    
                     # Skip orphan-user playbooks for devices with no matching other_files
                     if playbook_id in ('PB-SIFT-041', 'PB-SIFT-042'):
                         _of = dev_ev.get('other_files', [])
@@ -6883,13 +6944,28 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
         evil_found = False
 
+        # Corroboration gate: count playbook findings BEFORE indicator hits drive severity.
+        # If zero playbook findings exist with indicator hits present, cap at MEDIUM.
+        indicator_hits = evidence_report.get("indicator_hits", [])
+        _gate_playbook_records = list(findings_writer.all_records())
+        _gate_corroborated = sum(1 for f in _gate_playbook_records if f.get("status") == "completed")
+        _uncorroborated = (_gate_corroborated == 0 and len(indicator_hits) > 0)
+        if _uncorroborated:
+            overall_severity = "MEDIUM"
+            classification = "Potential Indicator Hit - Uncorroborated"
+            evil_found = False
+            _fe_log(job_id, f"  [GATE] {len(indicator_hits)} indicator hit(s), "
+                    f"0 corroborated playbook findings"
+                    f" - capping severity to MEDIUM/uncorroborated")
+
         # From triage indicators - only POSSIBLE confidence from string/filename hits
         # evil_found requires CONFIRMED, or single CRITICAL/HIGH hit, or 2+ distinct POSSIBLE categories
         possible_categories = set()
         for hit in indicator_hits:
             sev = hit["severity"]
             confidence = hit.get("confidence", "POSSIBLE")
-            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            if not _uncorroborated:
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
             if confidence == "CONFIRMED":
                 evil_found = True
             elif sev in ("CRITICAL", "HIGH"):
@@ -6915,6 +6991,10 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # From specialist results
         for f in findings_writer.all_records():
+            # Skip REJECTED findings — critic ruled them invalid, do not inflate severity
+            _f_critic = f.get("critic", {})
+            if isinstance(_f_critic, dict) and _f_critic.get("verdict") == "REJECTED":
+                continue
             result = f.get("result", {})
             if not isinstance(result, dict):
                 continue
@@ -6971,7 +7051,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     behavioral_flags=all_behavioral_flags,
                 )
                 _classification_detail = summarize_classification(class_results)
-                if _classification_detail.get("all"):
+                if _classification_detail.get("all") and not _uncorroborated:
                     # Override hardcoded classification with classifier output
                     if _classification_detail["confidence"] > 0.3:
                         classification = _classification_detail["primary"]
@@ -6988,7 +7068,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _ckpt_mark_phase(ckpt, "multi_label_classify", "complete")
             _ckpt_save(case_work_dir, ckpt)
 
-        # ------------------------------------------------------------------
+                # ------------------------------------------------------------------
         # Phase 4b: Campaign Temporal Correlation (A013)
         # ------------------------------------------------------------------
         campaign_results = {}
@@ -7434,7 +7514,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # Compute unprocessed evidence files and categorize reasons
         unprocessed_files = _classify_unprocessed(
-            all_inventory_paths, processed_paths, inventory, execution_plan
+            all_inventory_paths, processed_paths, inventory, execution_plan, PLAYBOOK_STEPS
         )
         report["unprocessed_files"] = unprocessed_files
         report["unprocessed_files_count"] = len(unprocessed_files)

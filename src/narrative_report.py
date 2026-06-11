@@ -2814,6 +2814,15 @@ class NarrativeReportGenerator:
         'stackexchange.com',
         'docker.com',          # container registry
         'hub.docker.com',
+        # Additional known-legitimate domains (common in older PCAPs — not IOCs)
+        'amazon.com',
+        'ebay.com',
+        'disney.com',
+        'yahoo.com',
+        'travelocity.com',
+        'bankrate.com',
+        'myspace.com',
+        'atdmt.com',
     )
     _NOISE_URL_KEYWORDS = (
         'crl.', 'ocsp.', 'verisign', 'thawte', 'globalsign',

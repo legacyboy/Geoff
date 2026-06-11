@@ -284,7 +284,7 @@
   /* ---------- job state ---------- */
   let currentJobId = null;
   let pollTimer = null;
-  let lastLogIdx = -1;
+  let lastLogTs = '';
   let t0 = 0;
   let elapsedTimer = null;
   let lastPct = 0;
@@ -311,7 +311,7 @@
     const vbadge = $("vbadge"); if (vbadge) vbadge.textContent = "— — —";
     const vs = $("v-sevpill"); if (vs) { vs.textContent = "PENDING"; vs.className = "sev-pill"; vs.style.opacity = ".3"; }
     renderPhases();
-    lastLogIdx = -1;
+    lastLogTs = '';
     lastPct = 0;
     shownFlags = new Set();
     autoScroll = true;
@@ -405,11 +405,14 @@
       setPhase(phaseIdx, "active");
 
       const log = lead.log || [];
-      for (let i = lastLogIdx + 1; i < log.length; i++) {
-        const entry = log[i];
-        addLog(entry.msg || entry);
+      for (const entry of log) {
+        const ts = typeof entry === 'string' ? '' : (entry.time || '');
+        if (ts > lastLogTs || !lastLogTs) addLog(entry.msg || entry);
       }
-      if (log.length > 0) lastLogIdx = log.length - 1;
+      if (log.length > 0) {
+        const last = log[log.length - 1];
+        lastLogTs = typeof last === 'string' ? '' : (last.time || '');
+      }
 
       updateJobBanner(jobs);
 
@@ -441,11 +444,14 @@
     setPhase(phaseIdx, status === 'complete' ? "done" : "active");
 
     const log = data.log || [];
-    for (let i = lastLogIdx + 1; i < log.length; i++) {
-      const entry = log[i];
-      addLog(entry.msg || entry);
+    for (const entry of log) {
+      const ts = typeof entry === 'string' ? '' : (entry.time || '');
+      if (ts > lastLogTs || !lastLogTs) addLog(entry.msg || entry);
     }
-    if (log.length > 0) lastLogIdx = log.length - 1;
+    if (log.length > 0) {
+      const last = log[log.length - 1];
+      lastLogTs = typeof last === 'string' ? '' : (last.time || '');
+    }
 
     updateJobBanner([data]);
 
@@ -704,21 +710,18 @@
     const reportsView = $("tab-reports");
     const executionView = $("tab-execution");
     const settingsView = $("tab-settings");
-    const queueView = $("tab-queue");
 
     if (consoleView) consoleView.style.display = (tab === 'console') ? 'flex' : 'none';
     if (evidenceView) { evidenceView.classList.toggle('active', tab === 'evidence'); }
     if (reportsView) { reportsView.classList.toggle('active', tab === 'reports'); }
     if (executionView) { executionView.classList.toggle('active', tab === 'execution'); }
     if (settingsView) { settingsView.classList.toggle('active', tab === 'settings'); }
-    if (queueView) { queueView.classList.toggle('active', tab === 'queue'); }
 
     // Load data on first view
     if (tab === 'evidence') loadEvidencePanel();
     if (tab === 'reports') loadReportsPanel();
     if (tab === 'execution') loadExecutionPanel();
     if (tab === 'settings') loadSettingsPanel();
-    if (tab === 'queue') loadQueue();
   }
 
   /* ============================================================

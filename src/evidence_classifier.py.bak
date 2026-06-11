@@ -365,7 +365,7 @@ class AIEvidenceClassifier:
     # ------------------------------------------------------------------
     def _header_classify(self, inventory: dict):
         """Use file headers to classify ambiguous files."""
-        other_files = inventory["other_files"]  # Process ALL other_files — sufficient thanks to batching
+        other_files = inventory["other_files"][:20]  # Process first 20 to avoid overload
         
         for fpath in other_files:
             try:

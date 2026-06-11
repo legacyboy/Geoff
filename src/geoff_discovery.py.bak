@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Imports from sibling modules
@@ -2161,30 +2161,6 @@ def _inventory_evidence(evidence_path: Path) -> dict:
                 _fe_log(job_id, f"  ⚠ Extension spoof detected: {item.name} has .evt extension but MIME is {mime_type}")
 
         # --- Smart classification for ambiguous extensions ---
-        # --- MIME-based reclassification for text files ---
-        if mime_type and mime_type.startswith('text/plain') and header_type not in ('text_file',):
-            # Check for known forensic artifacts by name
-            name_lower = item.name.lower()
-            if any(kw in name_lower for kw in ('bash_history', 'bashrc', 'bash_profile', '.profile',
-                                               'zsh_history', 'zshrc', 'history', 'known_hosts',
-                                               'authorized_keys', 'crontab', 'sudoers', 'shadow',
-                                               'passwd', 'group', 'hosts', 'resolv.conf', 'fstab')):
-                inventory["syslogs"].append(str(item))  # Shell histories as syslogs
-            elif any(kw in name_lower for kw in ('firefox', 'places.sqlite', 'cookies.sqlite',
-                                                    'chrome', 'bookmarks', 'history.sqlite')):
-                inventory["other_files"].append(str(item))  # Will be picked up by browser playbook
-            elif any(kw in name_lower for kw in ('system.map', 'grub.cfg', 'sysctl.conf',
-                                                    'ssh_config', 'sshd_config')):
-                inventory["other_files"].append(str(item))  # Linux artifacts
-            else:
-                inventory["other_files"].append(str(item))  # Generic text file
-            continue
-        elif mime_type and mime_type.startswith('text/') and header_type not in ('text_file',):
-            # Other text types - check for system files
-            name_lower = item.name.lower()
-            if any(kw in name_lower for kw in ('bash_history', 'bashrc', '.profile', 'zsh_history')):
-                inventory["syslogs"].append(str(item))
-                continue
         # .img can be a disk image OR a memory dump — disambiguate using
         # directory name, file header, and naming patterns.
         if ext in disk_ext and ext == '.img':
@@ -2273,33 +2249,6 @@ def _validate_inventory_classification(inventory: dict, job_id: str = None) -> d
     for the catch-all PB-SIFT-025 (Generic File Analysis).
     """
     validation_log = []
-
-    # --- Artifact type breakdown for playbook gating ---
-    artifact_counts = {
-        "browser": 0,
-        "linux_user": 0,
-        "email": 0,
-        "mobile": 0,
-        "media": 0,
-        "documents": 0,
-        "executables": 0,
-        "unknown": 0,
-    }
-
-    for fpath in inventory.get('other_files', []):
-        p = Path(fpath)
-        name = p.name.lower()
-        if any(kw in name for kw in ('firefox', 'chrome', 'places.sqlite', 'cookies', 'history')):
-            artifact_counts['browser'] += 1
-        elif any(kw in name for kw in ('bash_history', 'bashrc', '.profile', 'zsh_history', 'known_hosts')):
-            artifact_counts['linux_user'] += 1
-        elif any(kw in name for kw in ('.sqlite', '.db', '.sqlite3')):
-            artifact_counts['browser'] += 1  # SQLite DBs are mostly browser-related
-        else:
-            artifact_counts['unknown'] += 1
-
-    inventory['_artifact_counts'] = artifact_counts
-
     moved = {k: [] for k in inventory if k != "other_files" and isinstance(inventory[k], list)}
 
     # Files to re-check: everything currently in 'other_files'
@@ -2927,25 +2876,6 @@ def _all_inventory_paths(inventory: dict) -> set:
     return paths
 
 
-# Mapping from inventory evidence-type labels to canonical playbook step keys.
-# Lets the classifier produce alternative labels that still match playbook definitions.
-EVIDENCE_TYPE_TO_PLAYBOOK_KEY: Dict[str, str] = {
-    "memory_dumps":   "memory_dumps",   # PB-SIFT-027, PB-SIFT-000, PB-SIFT-002
-    "pcaps":          "pcaps",          # PB-SIFT-001, PB-SIFT-006, PB-SIFT-007, PB-SIFT-015
-    "disk_images":    "disk_images",    # PB-SIFT-001, PB-SIFT-002, PB-SIFT-014
-    "other_files":    "other_files",    # PB-SIFT-017, PB-SIFT-025
-    "registry_hives": "registry_hives", # PB-SIFT-003, PB-SIFT-005
-    "evtx_logs":      "evtx_logs",      # PB-SIFT-001, PB-SIFT-006
-    "evt_logs":       "evt_logs",
-    "syslogs":        "syslogs",        # PB-SIFT-014
-    "mobile_backups": "mobile_backups", # PB-SIFT-021
-    # Alternative spellings a classifier may produce
-    "memory_dump":    "memory_dumps",
-    "pcap":           "pcaps",
-    "disk_image":     "disk_images",
-}
-
-
 def _classify_unprocessed(
     all_paths: set,
     processed_paths: set,
@@ -2960,17 +2890,14 @@ def _classify_unprocessed(
     if playbook_steps is None:
         playbook_steps = {}
 
-    # Determine which evidence types have at least one step in the execution plan,
-    # normalizing through EVIDENCE_TYPE_TO_PLAYBOOK_KEY so classifier aliases
-    # (e.g. "memory_dump" vs "memory_dumps") do not cause false no-coverage results.
+    # Determine which evidence types have at least one step in the execution plan
     covered_ev_types = set()
     for pb_id in execution_plan:
         pb_def = playbook_steps.get(pb_id, {})
-        for key in pb_def.keys():
-            covered_ev_types.add(EVIDENCE_TYPE_TO_PLAYBOOK_KEY.get(key, key))
+        covered_ev_types.update(pb_def.keys())
 
     # Item cap applies to types other than disk_images and memory_dumps
-    UNCAPPED_TYPES = {"disk_images", "memory_dumps", "pcaps"}
+    UNCAPPED_TYPES = {"disk_images", "memory_dumps"}
 
     # Build reverse map: path -> ev_type
     skip_keys = {"total_size_bytes", "file_hashes", "integrity_failures"}
@@ -2987,7 +2914,7 @@ def _classify_unprocessed(
         if ev_type is None:
             reason = "not_in_inventory"
             detail = "File appears in evidence dir but was not classified by inventory."
-        elif EVIDENCE_TYPE_TO_PLAYBOOK_KEY.get(ev_type, ev_type) not in covered_ev_types:
+        elif ev_type not in covered_ev_types:
             reason = "no_playbook_coverage"
             detail = (
                 f"Evidence type '{ev_type}' has no steps in any loaded playbook "
@@ -4188,9 +4115,9 @@ def parse_usnjrnl(journal_path: str = None,
 
     Supports two input modes:
       1. **Mounted filesystem** — pass *journal_path* pointing to the
-         ``$Extend$UsnJrnl:$J`` file on a mounted partition.
+         ``\$Extend\$UsnJrnl:\$J`` file on a mounted partition.
       2. **Raw image + icat** — pass *image_path*, *partition_offset* (in
-         512-byte sectors), and *mft_inode* of the ``$Extend$UsnJrnl``
+         512-byte sectors), and *mft_inode* of the ``\$Extend\$UsnJrnl``
          directory entry to extract the ``$J`` stream via ``icat``.
 
     Returns a list of dicts, each containing:
