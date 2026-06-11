@@ -4498,8 +4498,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Include evidence-dependent playbooks
         if inventory["disk_images"]:
             execution_plan.extend(["PB-SIFT-006", "PB-SIFT-007", "PB-SIFT-008", "PB-SIFT-010", "PB-SIFT-012"])
-        if inventory["pcaps"]:
-            execution_plan.append("PB-SIFT-011")
         if os_type == "linux":
             execution_plan.append("PB-SIFT-014")
         if os_type == "macos":

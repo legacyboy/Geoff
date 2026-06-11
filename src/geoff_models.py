@@ -106,7 +106,7 @@ def _re_evaluate_playbooks(completed_playbook, pb_findings, execution_plan, skip
         "evtx":          ["PB-SIFT-028"] if os_type == "windows" else [],
         "evt":           ["PB-SIFT-028"] if os_type == "windows" else [],
         "memory":        ["PB-SIFT-027"],
-        "pcap":          ["PB-SIFT-011"],
+        "pcap":          ["PB-SIFT-036"],
         "mobile":        ["PB-SIFT-021"],
         "encrypted":     ["PB-SIFT-029"],
         "cloud_sync":    ["PB-SIFT-030"],
