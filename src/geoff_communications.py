@@ -1098,7 +1098,7 @@ class CommunicationsAnalyzer:
             "irc_messages": sum(1 for m in messages if m.get("protocol") == "irc"),
             "ftp_sessions": sum(1 for m in messages if m.get("protocol") == "ftp"),
             "webmail_accounts": sum(1 for m in messages if m.get("protocol") == "http_webmail"),
-            "messages": messages[:200],  # cap for large cases
+            "messages": messages,  # cap for large cases
             "communication_graph": graph,
             "steganography_suspects": stego,
             "encrypted_files": encrypted,

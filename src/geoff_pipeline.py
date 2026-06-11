@@ -98,17 +98,194 @@ _adaptive_playbook = AdaptivePlaybook()
 _adaptive_pass2 = AdaptivePass2()
 
 # ---------------------------------------------------------------------------
-# Pipeline split: step-level helpers and reporting/intelligence helpers
-# (re-exported here so existing `from geoff_pipeline import X` callers and
-# the internal find_evil()/replay code keep working unchanged)
+# Evidence-type guards: prevent modules running against incompatible evidence
 # ---------------------------------------------------------------------------
-from pipeline_core import (
-    _MODULE_EVIDENCE_GUARDS, _evidence_type_mismatch, execute_step_parallel,
-    _cleanup_ewf_early_mounts, _reconstruct_attack_chain,
-    _preflight_validation, _reconstruct_raw_command,
-    _commit_step_with_custody, _run_forensicator_batch, _retry_unprocessed,
-)
-from pipeline_reports import _timeline_intelligence_analysis
+
+_MODULE_EVIDENCE_GUARDS: dict = {
+    "volatility": {"memory_dumps"},
+    "memory":     {"memory_dumps"},
+    "registry":   {"disk_images", "registry_hives"},
+    "windows":    {"disk_images", "registry_hives", "memory_dumps"},
+    "sleuthkit":  {"disk_images", "memory_dumps"},
+    "network":    {"pcaps"},
+    "dns":        {"pcaps"},
+    "remnux":     {"pcaps", "memory_dumps", "disk_images"},
+    "linux_user": {"disk_images", "memory_dumps", "other_files"},
+    "yara":       {"memory_dumps", "disk_images"},
+    "scheduled":  {"memory_dumps", "disk_images"},
+    "strings":    {"memory_dumps", "disk_images"},
+}
+
+
+def _evidence_type_mismatch(module: str, ev_type: str, dev: dict) -> tuple:
+    """Return (should_skip, reason). Skip when module is incompatible with ev_type or device OS."""
+    allowed = _MODULE_EVIDENCE_GUARDS.get(module)
+    if allowed is not None and ev_type not in allowed:
+        return True, f"module {module} requires evidence in {sorted(allowed)}, got {ev_type}"
+    dev_os = (dev.get("os_type") or "").lower()
+    if module in ("registry", "windows") and dev_os == "linux":
+        return True, f"module {module} requires Windows; device os_type={dev_os}"
+    if module == "linux_user" and dev_os not in ("", "unknown", "linux"):
+        return True, f"module {module} requires Linux; device os_type={dev_os}"
+    return False, ""
+
+# ---------------------------------------------------------------------------
+# Parallel execution helpers for evidence-level concurrency
+# ---------------------------------------------------------------------------
+
+def execute_step_parallel(module, function, params_list, playbook_id,
+                           job_id, dev_id, dev, output_dir, image_offsets,
+                           findings_writer, pb_findings, exec_cache):
+    """Execute a step across multiple evidence items in parallel.
+
+    Batches same (module, function) across items using ThreadPoolExecutor.
+    Each worker gets independent copies of all inputs.
+    Dedup is checked per-item; cache-hit items aren't double-appended.
+
+    Args:
+        params_list: List of (item, params_dict) tuples, one per evidence item
+        exec_cache: _ExecResultCache instance for dedup
+
+    Returns:
+        (completed_delta, failed_delta, skipped_delta)
+    """
+    if not params_list:
+        return (0, 0, 0)
+
+    max_workers = int(os.environ.get("GEOFF_MAX_WORKERS", "3"))
+    results = []
+    step_locks: dict = {}
+    step_locks_meta = threading.Lock()
+
+    def _run_single(item, item_params):
+        """Run one step on one evidence item and return a result tuple."""
+        step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
+
+        # Idempotency check
+        if findings_writer.is_completed(step_key):
+            _fe_log(job_id, f"  ⎘ {module}.{function} already completed for {Path(item).name}")
+            return ("skipped", None, 0, 0, 1)
+
+        exec_key_inner = _make_exec_key(module, function, item, item_params)
+        with step_locks_meta:
+            if exec_key_inner not in step_locks:
+                step_locks[exec_key_inner] = threading.Lock()
+            step_lock = step_locks[exec_key_inner]
+
+        with step_lock:
+            _cached = exec_cache.get(exec_key_inner)
+            if _cached is not None:
+                _fe_log(job_id, f"  deduped {module}.{function} ({Path(item).name})")
+                deduped_rec = {
+                    "playbook": playbook_id, "module": module, "function": function,
+                    "evidence_file": item, "device_id": dev_id,
+                    "status": "completed", "result": _cached, "_deduped": True,
+                }
+                findings_writer.append(deduped_rec)
+                pb_findings.append(deduped_rec)
+                return ("deduped", deduped_rec, 1, 0, 0)
+
+            raw_cmd = _reconstruct_raw_command(module, function, item_params)
+            exec_hash = hashlib.md5(
+                f"{step_key}:{json.dumps(item_params, sort_keys=True, default=str)}".encode()
+            ).hexdigest()[:12]
+
+            try:
+                command_logger.set_step(step_key, playbook_id)
+            except Exception:
+                pass  # worker threads don't inherit command_logger context
+
+            step_record = {
+                "playbook": playbook_id,
+                "step_key": step_key,
+                "execution_hash": exec_hash,
+                "module": module,
+                "function": function,
+                "params": item_params,
+                "raw_command": raw_cmd,
+                "evidence_file": item,
+                "device_id": dev_id,
+                "owner": dev.get("owner") if dev else None,
+                "status": "running",
+                "started_at": datetime.now().isoformat(),
+                "result": {},
+            }
+
+            result = _execute_fallback_chain(
+                module, function, item_params, evidence_path=item, job_id=job_id
+            )
+            exec_cache.set(exec_key_inner, result)
+
+        c = f = s = 0
+        if isinstance(result, dict) and result.get("code") is not None:
+            code = result["code"]
+            if code == -1:
+                step_record["status"] = "failed"
+                step_record["error"] = f"Timeout: {result.get('stderr', '')} (CIFS network latency may cause slow reads on compressed E01 images)"
+                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
+                _fe_log(job_id, f"  ✗ {module}.{function} → timeout (CIFS network latency may cause slow reads on compressed E01 images)")
+                f = 1
+            elif code < 0:
+                step_record["status"] = "failed"
+                step_record["error"] = f"Execution error: {result.get('stderr', '')}"
+                step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "execution_error"}
+                f = 1
+            else:
+                step_status = result.get("status", "error")
+                if step_status == "error" and "not found" in str(result.get("error", "")).lower():
+                    step_record["status"] = "skipped"
+                    step_record["result"] = {"status": "skipped", "stdout": "", "stderr": "", "artifacts": [], "error": "tool not found"}
+                    s = 1
+                elif step_status in ("success", "success_partial"):
+                    stdout = result.get("stdout", "")
+                    if step_status == "success" and (not stdout or len(stdout.strip()) < 10):
+                        step_record["status"] = "failed"
+                        step_record["error"] = f"Empty or invalid output from {module}.{function}"
+                        step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
+                        f = 1
+                    else:
+                        step_record["status"] = "completed"
+                        step_record["result"] = result
+                        if step_status == "success_partial":
+                            step_record["_fallback_primary_failed"] = result.get("_fallback_primary_failed", True)
+                            step_record["_fallback_final_method"] = result.get("_fallback_final_method", "")
+                        c = 1
+
+        findings_writer.append(step_record)
+        pb_findings.append(step_record)
+
+        return (step_record["status"], step_record, c, f, s)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_single, item, params): (item, params)
+            for item, params in params_list
+        }
+
+        item_order = {item: idx for idx, (item, _) in enumerate(params_list)}
+        temp = {}
+
+        for future in as_completed(futures):
+            item, params = futures[future]
+            try:
+                temp[item] = future.result()
+            except Exception as exc:
+                _log_error(f"Parallel step {module}.{function} on {item} failed: {exc}")
+                temp[item] = ("error", {"status": "error", "evidence_file": item, "error": str(exc)}, 0, 1, 0)
+
+        results = sorted(temp.items(), key=lambda x: item_order.get(x[0], 0))
+
+    delta_c = delta_f = delta_s = 0
+    for item, (status, step_record, c, f, s) in results:
+        # Bug 2 fix: step_record is None for idempotency-skipped items
+        if step_record is None:
+            delta_s += s
+            continue
+        delta_c += c
+        delta_f += f
+        delta_s += s
+
+    return (delta_c, delta_f, delta_s)
 
 
 # ---------------------------------------------------------------------------
@@ -116,17 +293,6 @@ from pipeline_reports import _timeline_intelligence_analysis
 # on a raw EWF container file.
 # ---------------------------------------------------------------------------
 _EWF_EXTENSIONS = frozenset({'.e01', '.e02', '.e03', '.e04', '.e05', '.ee01', '.ex01'})
-
-# File-extension–level compatibility guards: prevent modules running against
-# evidence files whose format is incompatible regardless of evidence category.
-_TOOL_EVIDENCE_COMPAT: dict = {
-    "volatility": frozenset({".raw", ".dmp", ".lime", ".mem", ".vmem",
-                              ".dd", ".img", ".e01", ".e02", ".vmdk", ".vhd", ".vhdx"}),
-    "registry":   frozenset({".dd", ".img", ".e01", ".e02", ".dat", ".hive",
-                              ".vmdk", ".vhd", ".vhdx"}),
-    "network":    frozenset({".pcap", ".pcapng", ".log", ".cap"}),
-    "zeek":       frozenset({".pcap", ".pcapng", ".log", ".cap"}),
-}
 
 # Tools that must be skipped even after ewfmount (they need raw image bytes
 # or operate on extracted data, not a mounted filesystem).
@@ -144,6 +310,32 @@ _SKIP_ON_EWF_CONTAINER = frozenset({
 })
 
 
+def _cleanup_ewf_early_mounts(ewf_mounts: dict) -> None:
+    """Unmount FUSE ewfmount directories created during the Phase 2.5 pre-mount.
+
+    Filesystem mounts (mount_dir) are tracked via _active_mounts and cleaned
+    up by _cleanup_mounts(). Only the FUSE ewfmount dirs need fusermount here.
+    """
+    import shutil as _shutil
+    for _img, _mnt in ewf_mounts.items():
+        _ewf_dir = _mnt.get("ewf_dir")
+        if _ewf_dir and os.path.exists(_ewf_dir):
+            for _fuse_cmd in (["fusermount", "-u", _ewf_dir], ["fusermount3", "-u", _ewf_dir]):
+                try:
+                    subprocess.run(_fuse_cmd, capture_output=True, timeout=15)
+                    break
+                except Exception:
+                    continue
+            try:
+                _shutil.rmtree(_ewf_dir, ignore_errors=True)
+            except Exception:
+                pass
+        _mnt_dir = _mnt.get("mount_dir")
+        if _mnt_dir and os.path.exists(_mnt_dir):
+            try:
+                _shutil.rmtree(_mnt_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -267,11 +459,905 @@ def run_full_investigation(case_name: str, evidence_path: str = None):
 
 
 
+def _reconstruct_attack_chain(findings: list, indicator_hits: list, device_map: dict) -> dict:
+    """Compute dwell time and reconstruct lateral movement path from findings.
+
+    Returns a dict with:
+      - first_seen_ts: ISO timestamp of earliest artefact
+      - last_seen_ts: ISO timestamp of most recent artefact
+      - dwell_days: float (None if timestamps unavailable)
+      - lateral_movement_path: list of device IDs in order of first activity
+      - mitre_techniques_observed: deduplicated list of all ATT&CK IDs seen
+      - kill_chain_phases: set of categories observed (triage + findings)
+    """
+    timestamps: list = []
+    device_first_seen: dict = {}  # device_id -> earliest ISO ts
+
+    for f in findings:
+        for ts_key in ("started_at", "completed_at"):
+            ts = f.get(ts_key)
+            if ts:
+                timestamps.append(ts)
+        dev = f.get("device_id")
+        ts = f.get("started_at") or f.get("completed_at")
+        if dev and ts:
+            if dev not in device_first_seen or ts < device_first_seen[dev]:
+                device_first_seen[dev] = ts
+
+    first_ts = min(timestamps) if timestamps else None
+    last_ts = max(timestamps) if timestamps else None
+
+    dwell_days = None
+    if first_ts and last_ts:
+        try:
+            from datetime import datetime as _dt
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            # Strip sub-second and TZ offset for simple comparison
+            t0 = _dt.fromisoformat(first_ts[:19])
+            t1 = _dt.fromisoformat(last_ts[:19])
+            dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
+        except Exception as dwell_exc:
+            _log_info(f"dwell calculation skipped: {dwell_exc}")
+
+    # Lateral movement path: devices sorted by first activity
+    lateral_path = sorted(device_first_seen.keys(),
+                          key=lambda d: device_first_seen[d])
+
+    # Collect all ATT&CK techniques from indicator hits
+    mitre_seen: list = []
+    kill_chain_phases: set = set()
+    for hit in indicator_hits:
+        kill_chain_phases.add(hit.get("category", ""))
+        for t in hit.get("mitre_techniques", []):
+            if t not in mitre_seen:
+                mitre_seen.append(t)
+
+    return {
+        "first_seen_ts": first_ts,
+        "last_seen_ts": last_ts,
+        "dwell_days": dwell_days,
+        "lateral_movement_path": lateral_path,
+        "mitre_techniques_observed": mitre_seen,
+        "kill_chain_phases": sorted(kill_chain_phases - {""}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch Mode Helpers
+# ---------------------------------------------------------------------------
+
+def _preflight_validation(evidence_path: Path, case_work_dir: Path, job_id: str) -> list:
+    """
+    Preflight checks before starting a Find Evil run.
+    Returns a list of warning strings (empty list = all clear).
+    Raises ValueError for fatal conditions (missing evidence dir is handled by
+    the caller; this function focuses on softer warnings).
+    """
+    warnings = []
+
+    # Evidence directory must contain at least one file
+    evidence_files = [f for f in evidence_path.rglob("*") if f.is_file()]
+    if not evidence_files:
+        warnings.append(f"Evidence directory {evidence_path} contains no files - inventory will be empty")
+
+    # Verify git is available (needed for custody commits)
+    git_check = safe_run(['git', '--version'], timeout=5)
+    if git_check["code"] != 0:
+        warnings.append("git not found in PATH - per-step custody commits will be skipped")
+
+    # Verify case_work_dir parent is writable
+    try:
+        case_work_dir.parent.mkdir(parents=True, exist_ok=True)
+        test_file = case_work_dir.parent / f".geoff_preflight_{uuid.uuid4().hex[:8]}"
+        test_file.touch()
+        test_file.unlink()
+    except OSError as e:
+        warnings.append(f"Case work dir parent not writable: {e}")
+
+    if warnings:
+        for w in warnings:
+            _fe_log(job_id, f"  ⚠ Preflight: {w}")
+    else:
+        _fe_log(job_id, "  ✓ Preflight: all checks passed")
+    return warnings
+
+
+def _reconstruct_raw_command(module: str, function: str, params: dict) -> str:
+    """
+    Reconstruct a copy-pasteable CLI command string from module, function, and params.
+    Handles the most common forensic tools used across all playbook steps.
+    Falls back to a descriptive string for unknown param patterns.
+    """
+    if not params:
+        return f"{module}.{function}"
+
+    # ---- SleuthKit tools ----
+    if module == "sleuthkit":
+        # Extract image path from any of the common keys
+        image = params.get("disk_image") or params.get("image") or ""
+        offset = params.get("offset")
+        inode = params.get("inode")
+        # Determine the tool from the function
+        tool_map = {
+            "analyze_partition_table": "mmls",
+            "analyze_filesystem": "fsstat",
+            "list_files": "fls",
+            "list_files_mactime": "fls",
+            "list_inodes": "ils",
+            "get_file_info": "istat",
+            "list_deleted": "fls",
+            "extract_file": "icat",
+        }
+        tool = tool_map.get(function, function)
+        args = []
+        if offset is not None:
+            args.append(f"-o {offset}")
+        if function == "list_files" and params.get("recursive"):
+            args.append("-r")
+        if function == "list_deleted":
+            args.append("-d")
+        if function == "list_files_mactime":
+            args.append("-m")
+        args.append(image)
+        if inode is not None:
+            args.append(str(inode))
+        cmd = f"{tool} {' '.join(a for a in args if a)}"
+        return cmd.strip()
+
+    # ---- Strings tool ----
+    if module == "strings":
+        file_path = params.get("file_path", "")
+        min_len = params.get("min_length")
+        encoding = params.get("encoding")
+        args = []
+        if min_len:
+            args.append(f"-n {min_len}")
+        if encoding:
+            enc_map = {"ascii": "a", "unicode": "l", "wide": "l"}
+            args.append(f"-e {enc_map.get(encoding, encoding)}")
+        args.append(file_path)
+        return f"strings {' '.join(a for a in args if a)}"
+
+    # ---- Volatility tool ----
+    if module == "volatility":
+        mem = params.get("memory_dump", "")
+        plugin_map = {
+            "process_list": "windows.pslist",
+            "network_scan": "windows.netscan",
+            "find_malware": "windows.malfind",
+            "scan_registry": "windows.registry.printkey",
+            "dump_process": "windows.dumpfiles",
+        }
+        plugin = plugin_map.get(function, function)
+        # Check if volatility3 or vol.py
+        return f"vol -f {mem} {plugin}"
+
+    # ---- Memory module ----
+    if module == "memory":
+        mem = params.get("memory_dump", "")
+        func_name = function.replace("_", ".")
+        return f"memory.{func_name} --memory-dump {mem}"
+
+    # ---- Network tools ----
+    if module == "network":
+        pcap = params.get("pcap_file", "")
+        if function == "analyze_pcap":
+            return f"tshark -r {pcap}"
+        elif function == "extract_http":
+            return f"tshark -r {pcap} -Y http"
+        elif function == "extract_flows":
+            return f"tshark -r {pcap} -T fields -e ip.src -e ip.dst -e ip.proto"
+        return f"network.{function} {pcap}"
+
+    # ---- Logs module ----
+    if module == "logs":
+        log_file = params.get("evtx_file") or params.get("evt_file") or params.get("log_file") or params.get("syslog_file", "")
+        if function == "parse_evtx":
+            return f"python3 -m evtx_dump {log_file}"
+        elif function == "parse_evt":
+            return f"python3 -m python-evt {log_file}"
+        elif function == "parse_syslog":
+            return f"cat {log_file}"
+        return f"logs.{function} {log_file}"
+
+    # ---- Registry module ----
+    if module == "registry":
+        hive = params.get("software_path") or params.get("system_path") or params.get("ntuser_path") or params.get("sam_path") or params.get("hive_path", "")
+        if function == "extract_autoruns":
+            return f"regripper -r {hive} -a autoruns"
+        elif function == "extract_services":
+            return f"regripper -r {hive} -a services"
+        elif function == "parse_hive":
+            return f"regripper -r {hive}"
+        return f"registry.{function} {hive}"
+
+    # ---- Bulk Extractor ----
+    if module == "bulk_extractor":
+        image = params.get("image", "")
+        outdir = params.get("output_dir", "/tmp/bulk_extractor_out")
+        return f"bulk_extractor -o {outdir} {image}"
+
+    # ---- dc3dd ----
+    if module == "dc3dd":
+        image = params.get("image", "")
+        return f"dc3dd if={image}"
+
+    # ---- VSS module ----
+    if module == "vss":
+        image = params.get("image", "")
+        return f"vshadowinfo {image}"
+
+    # ---- Browser module ----
+    if module == "browser":
+        profile_path = params.get("profile_path") or params.get("directory") or params.get("evidence_dir", "")
+        return f"browser.{function} {profile_path}"
+
+    # ---- SQLite module ----
+    if module == "sqlite":
+        db_path = params.get("db_path") or params.get("database") or params.get("file_path", "")
+        return f"sqlite3 {db_path} .dump"
+
+    # ---- Email module ----
+    if module == "email":
+        mbox = params.get("mbox") or params.get("email_file") or params.get("file_path", "")
+        return f"email.{function} {mbox}"
+
+    # ---- JumpList ----
+    if module == "jumplist":
+        directory = params.get("directory", "")
+        return f"jumplist.{function} {directory}"
+
+    # ---- Scheduled tasks ----
+    if module == "scheduled":
+        evidence_dir = params.get("evidence_dir", "")
+        return f"scheduled.{function} {evidence_dir}"
+
+    # ---- Plaso ----
+    if module == "plaso":
+        image = params.get("image") or params.get("source", "")
+        return f"log2timeline.py --storage-file {params.get('storage_file', 'plaso.dump')} {image}"
+
+    # ---- Mobile ----
+    if module == "mobile":
+        mobile_dir = params.get("mobile", "") or params.get("backup_dir", "") or params.get("directory", "")
+        return f"mobile.{function} {mobile_dir}"
+
+    # ---- Photorec ----
+    if module == "photorec":
+        image = params.get("disk_image") or params.get("image", "")
+        return f"photorec /d {params.get('output_dir', '/tmp/photorec')} {image}"
+
+    # ---- Zeek ----
+    if module == "zeek":
+        pcap = params.get("pcap_file") or params.get("pcap", "")
+        return f"zeek -r {pcap}"
+
+    # ---- Generic fallback ----
+    # Build a descriptive string from params
+    param_str = " ".join(f"{k}={v}" for k, v in sorted(params.items()) if not k.startswith("_"))
+    return f"{module}.{function} {param_str}"
+
+
+def _commit_step_with_custody(
+    step_record: dict,
+    evidence_file: str,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Commit a single completed step result to git with chain-of-custody metadata.
+
+    Writes a custody record alongside the step output, then commits.
+    Returns the git commit result dict (same shape as safe_git_commit).
+    Called for each completed step (~10s overhead per step for git commit).
+    """
+    step_key = step_record.get("step_key", "unknown")
+    module = step_record.get("module", "unknown")
+    function = step_record.get("function", "unknown")
+    playbook_id = step_record.get("playbook", "unknown")
+
+    # Chain-of-custody: hash evidence file + hash params
+    evidence_sha256 = (
+        _hash_file(evidence_file)
+        if evidence_file and os.path.isfile(evidence_file)
+        else "N/A"
+    )
+    params_hash = hashlib.sha256(
+        json.dumps(step_record.get("params", {}), sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+    raw_command = step_record.get("raw_command", "")
+
+    # Real versions of the tool binaries that actually executed during this
+    # step, captured by the command logger (empty if logging was unavailable).
+    try:
+        tool_versions = command_logger.get_step_tool_versions()
+    except Exception:
+        tool_versions = {}
+
+    custody = {
+        "step_key": step_key,
+        "playbook": playbook_id,
+        "module": module,
+        "function": function,
+        "evidence_file": evidence_file,
+        "evidence_sha256": evidence_sha256,
+        "params_hash": params_hash,
+        "raw_command": raw_command,
+        "tool_versions": tool_versions,
+        "status": step_record.get("status", "unknown"),
+        "committed_at": datetime.now().isoformat(),
+        "execution_hash": step_record.get("execution_hash", ""),
+    }
+
+    # Write custody sidecar to disk
+    custody_dir = case_work_dir / "custody"
+    custody_dir.mkdir(exist_ok=True)
+    safe_key = step_key.replace(":", "_").replace("/", "_")[:120]
+    custody_file = custody_dir / f"{safe_key}.json"
+    try:
+        _atomic_write(custody_file, json.dumps(custody, indent=2, default=str))
+    except Exception as e:
+        _fe_log(job_id, f"  ⚠ Custody write failed for {step_key}: {e}")
+
+    # Append to the Merkle hash-chained chain-of-custody log
+    if _COC_AVAILABLE:
+        try:
+            coc_log = get_case_custody_log(case_work_dir)
+            pre_hash_future = step_record.get("_coc_pre_hash_future")
+            if pre_hash_future is not None:
+                try:
+                    pre_hash = pre_hash_future.result(timeout=60)
+                except Exception:
+                    pre_hash = evidence_sha256
+            else:
+                pre_hash = evidence_sha256
+            post_hash = (
+                _hash_with_stat_cache(evidence_file)
+                if evidence_file and os.path.isfile(evidence_file)
+                else "N/A"
+            )
+            verification_passed = (
+                pre_hash == post_hash
+                if pre_hash not in ("N/A", "hash_failed") and post_hash not in ("N/A", "hash_failed")
+                else None
+            )
+            if verification_passed is False:
+                _fe_log(job_id, (
+                    f"  ⚠ CUSTODY VIOLATION: {evidence_file} hash changed during "
+                    f"{module}.{function} (pre={pre_hash[:12]} post={post_hash[:12]})"
+                ))
+            record_step_custody(
+                step_record=step_record,
+                evidence_file=evidence_file or "",
+                pre_hash=pre_hash,
+                post_hash=post_hash,
+                verification_passed=verification_passed,
+                custody_log=coc_log,
+                initiating_agent="Manager",
+            )
+        except Exception as coc_err:
+            _fe_log(job_id, f"  ⚠ Chain-of-custody record failed for {step_key}: {coc_err}")
+
+    ev_name = Path(evidence_file).name if evidence_file else "N/A"
+    commit_msg = (
+        f"step: {playbook_id}:{module}.{function} "
+        f"[{step_record.get('status', 'unknown')}] "
+        f"ev={ev_name} sha256={evidence_sha256[:12]}"
+    )
+    if raw_command:
+        commit_msg += f"\ncmd: {raw_command[:200]}"
+    return safe_git_commit(commit_msg, base_path=str(case_work_dir))
+
+
+def _run_forensicator_batch(
+    execution_plan: list,
+    device_map: dict,
+    case_work_dir: Path,
+    job_id: str,
+) -> dict:
+    """
+    Batch mode orchestrator: logs the start of autonomous execution and returns
+    metadata used by _manager_post_critic_decision.
+
+    Actual step execution runs inside find_evil's existing per-device/playbook
+    loop - per-step custody commits happen inside that loop.
+    """
+    total_templates = sum(
+        sum(len(steps) for steps in PLAYBOOK_STEPS.get(pb, {}).values())
+        for pb in execution_plan
+        if pb in PLAYBOOK_STEPS
+    )
+    _fe_log(job_id, (
+        f"  [BATCH] Autonomous execution: {len(execution_plan)} playbooks, "
+        f"~{total_templates} step templates, {len(device_map)} device(s)"
+    ), agent="Forensicator")
+    return {
+        "mode": "batch",
+        "playbooks_queued": len(execution_plan),
+        "devices": list(device_map.keys()),
+        "started_at": datetime.now().isoformat(),
+    }
 
 
 
+# =====================================================================
+# Pass 2: Timeline Intelligence Analysis
+# =====================================================================
 
+def _timeline_intelligence_analysis(
+    super_timeline_events: list,
+    device_map: dict,
+    indicator_hits: list = None,
+    job_id: str = None,
+    fe_log_func=None,
+) -> dict:
+    """Analyse the super timeline for cross-device patterns that warrant
+    a second pass of targeted investigation.
 
+    Returns a TimelineIntelligence dict with:
+      - cross_device_process_chains
+      - usb_lateral_movement
+      - off_hours_clusters
+      - file_beaconing_patterns
+      - ioc_correlations
+      - dwell_time_window
+      - pass2_playbook_triggers
+    """
+
+    def _log(msg):
+        if fe_log_func and job_id:
+            fe_log_func(job_id, msg)
+
+    intelligence = {
+        "cross_device_process_chains": [],
+        "usb_lateral_movement": [],
+        "off_hours_clusters": [],
+        "file_beaconing_patterns": [],
+        "ioc_correlations": [],
+        "dwell_time_window": {"first_seen": None, "last_seen": None, "dwell_days": 0},
+        "pass2_playbook_triggers": [],
+    }
+
+    if not super_timeline_events or not device_map:
+        return intelligence
+
+    # Index events by device for fast lookup
+    dev_events = {}
+    for event in super_timeline_events:
+        did = event.get("device_id", "")
+        if did not in dev_events:
+            dev_events[did] = []
+        dev_events[did].append(event)
+
+    # ---------------------------------------------------------------
+    # 1. Cross-Device Process Chain Detection
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for cross-device process chains...")
+    all_process_events = []
+    for event in super_timeline_events:
+        if event.get("event_type") in ("process_execution", "process_creation"):
+            all_process_events.append(event)
+
+    all_process_events.sort(key=lambda e: e.get("timestamp", ""))
+
+    # Look for processes that have the same name appearing on different
+    # devices within a short time window (indicating lateral movement)
+    # or uncommon child-to-parent chains crossing device boundaries
+    chain_keywords = ["psexec", "cmd.exe", "powershell.exe", "wmic.exe",
+                      "winrm.exe", "schtasks.exe", "rundll32.exe",
+                      "mshta.exe", "regsvr32.exe", "ntdsutil.exe",
+                      "vssadmin.exe", "wscript.exe", "cscript.exe"]
+
+    for proc_ev in all_process_events:
+        detail = proc_ev.get("detail", {})
+        proc_name = detail.get("name", "").lower() or detail.get("process_name", "").lower()
+        if not proc_name:
+            continue
+        match_kw = None
+        for kw in chain_keywords:
+            if kw in proc_name:
+                match_kw = kw
+                break
+        if not match_kw:
+            continue
+
+        # Find same or related process on other devices within 30 minutes
+        ts = proc_ev.get("timestamp", "")
+        try:
+            from datetime import timedelta
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            window_end = dt + timedelta(minutes=30)
+        except (ValueError, TypeError):
+            continue
+
+        related = []
+        for other_ev in all_process_events:
+            if other_ev.get("device_id") == proc_ev.get("device_id"):
+                continue
+            other_ts = other_ev.get("timestamp", "")
+            try:
+                other_dt = datetime.fromisoformat(other_ts.replace("Z", "+00:00"))
+                if dt <= other_dt <= window_end:
+                    other_detail = other_ev.get("detail", {})
+                    other_name = other_detail.get("name", "").lower() or other_detail.get("process_name", "").lower()
+                    if other_name and match_kw in other_name:
+                        related.append(other_ev)
+            except (ValueError, TypeError):
+                continue
+
+        if related and len(related) >= 1:
+            devices_involved = list(set([proc_ev.get("device_id")] +
+                                        [r.get("device_id") for r in related]))
+            chain = {
+                "root_process": proc_name,
+                "source_device": proc_ev.get("device_id"),
+                "source_timestamp": ts,
+                "target_devices": list(set(r.get("device_id") for r in related)),
+                "related_events": len(related),
+                "devices_involved": devices_involved,
+                "time_window": {
+                    "start": ts,
+                    "end": max(r.get("timestamp", ts) for r in related),
+                },
+            }
+            intelligence["cross_device_process_chains"].append(chain)
+
+            # Generate Pass 2 trigger
+            trigger = {
+                "trigger_id": f"trigger-chain-{proc_name}-{hash(ts) % 10000:04d}",
+                "trigger_type": "cross_device_process_chain",
+                "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("cross_device_process_chain", "PB-SIFT-100"),
+                "priority": "HIGH",
+                "devices_involved": devices_involved,
+                "time_window": chain["time_window"],
+                "context": {
+                    "root_process": proc_name,
+                    "source_device": proc_ev.get("device_id"),
+                    "chain_length": len(related),
+                },
+                "investigation_questions": [
+                    f"How did {proc_name} execute on {proc_ev.get('device_id')}?",
+                    f"What artifacts link {proc_name} across devices?",
+                ],
+            }
+            # Deduplicate - one trigger per matched process keyword
+            if not any(t["trigger_type"] == trigger["trigger_type"] and
+                       all(d in t["devices_involved"] for d in devices_involved)
+                       for t in intelligence["pass2_playbook_triggers"]):
+                intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["cross_device_process_chains"]:
+        _log(f"  ✓ Found {len(intelligence['cross_device_process_chains'])} cross-device process chains")
+
+    # ---------------------------------------------------------------
+    # 2. USB Lateral Movement Detection
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for USB serial number correlations...")
+    usb_events_by_serial = {}
+    for event in super_timeline_events:
+        detail = event.get("detail", {})
+        key = detail.get("key", "").lower()
+        value = detail.get("raw", "").lower() if isinstance(detail.get("raw"), str) else ""
+        # Look for USBSTOR or mounted devices entries
+        if ("usbstor" in key or "usb" in key or "mounteddevice" in key or
+            "usb" in str(detail).lower()):
+            # Extract serial numbers using common patterns
+            for match in re.finditer(
+                r'(?:VEN_[A-Fa-f0-9]{4}&PROD_[A-Fa-f0-9]{4}|[A-Fa-f0-9]{8}&[A-Fa-f0-9]{4}|[0-9A-Z]{10,})',
+                str(detail)
+            ):
+                serial = match.group(0).upper()
+                if serial not in usb_events_by_serial:
+                    usb_events_by_serial[serial] = []
+                usb_events_by_serial[serial].append(event)
+        # Also check summary for USB references
+        if "usb" in event.get("summary", "").lower():
+            summary = event.get("summary", "")
+            for match in re.finditer(
+                r'(?:VEN_[A-Fa-f0-9]{4}&PROD_[A-Fa-f0-9]{4}|[A-Fa-f0-9]{8}&[A-Fa-f0-9]{4}|[0-9A-Z]{10,})',
+                summary
+            ):
+                serial = match.group(0).upper()
+                if serial not in usb_events_by_serial:
+                    usb_events_by_serial[serial] = []
+                usb_events_by_serial[serial].append(event)
+
+    for serial, events in usb_events_by_serial.items():
+        # A USB device seen on multiple hosts = lateral movement candidate
+        devices_with_serial = set(e.get("device_id") for e in events)
+        if len(devices_with_serial) >= 2:
+            timestamps = sorted(e.get("timestamp", "") for e in events if e.get("timestamp"))
+            if len(timestamps) >= 2:
+                usb_movement = {
+                    "serial_number": serial,
+                    "devices_involved": sorted(devices_with_serial),
+                    "event_count": len(events),
+                    "time_window": {
+                        "start": timestamps[0],
+                        "end": timestamps[-1],
+                    },
+                }
+                intelligence["usb_lateral_movement"].append(usb_movement)
+
+                trigger = {
+                    "trigger_id": f"trigger-usb-{serial[:8]}",
+                    "trigger_type": "usb_lateral_movement",
+                    "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("usb_lateral_movement", "PB-SIFT-101"),
+                    "priority": "HIGH",
+                    "devices_involved": sorted(devices_with_serial),
+                    "time_window": usb_movement["time_window"],
+                    "context": {"serial_number": serial},
+                    "investigation_questions": [
+                        f"What files were accessed on USB {serial}?",
+                        f"Which user performed the USB movement between {list(devices_with_serial)}?",
+                    ],
+                }
+                intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["usb_lateral_movement"]:
+        _log(f"  ✓ Found {len(intelligence['usb_lateral_movement'])} USB lateral movement patterns")
+
+    # ---------------------------------------------------------------
+    # 3. Off-Hours Activity Clusters
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for off-hours activity clusters...")
+    off_hours = []
+    significant_types = ("process_execution", "process_creation", "file_creation",
+                         "login", "network_connection", "service_change")
+    for event in super_timeline_events:
+        ts = event.get("timestamp", "")
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            hour = dt.hour
+            if hour >= 22 or hour < 5:
+                if event.get("event_type") in significant_types:
+                    off_hours.append(event)
+        except (ValueError, TypeError):
+            continue
+
+    if len(off_hours) >= 3:
+        # Cluster by 15-minute windows across devices
+        clusters = {}
+        for event in off_hours:
+            try:
+                dt = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+                # Round to 15-min window
+                rounded = dt.replace(minute=(dt.minute // 15) * 15, second=0, microsecond=0)
+                window_key = rounded.isoformat()[:16]
+            except (ValueError, TypeError):
+                continue
+            if window_key not in clusters:
+                clusters[window_key] = []
+            clusters[window_key].append(event)
+
+        for window_key, cluster_events in clusters.items():
+            devices_in_window = set(e.get("device_id") for e in cluster_events)
+            if len(devices_in_window) >= 2:
+                timestamps = sorted(e.get("timestamp", "") for e in cluster_events if e.get("timestamp"))
+                off_hours_cluster = {
+                    "time_window": window_key,
+                    "devices_involved": sorted(devices_in_window),
+                    "event_count": len(cluster_events),
+                    "sample_events": cluster_events[:5],
+                    "time_range": {
+                        "start": timestamps[0] if timestamps else "",
+                        "end": timestamps[-1] if timestamps else "",
+                    },
+                }
+                intelligence["off_hours_clusters"].append(off_hours_cluster)
+
+                trigger = {
+                    "trigger_id": f"trigger-offhours-{window_key.replace(':', '').replace('-', '')}",
+                    "trigger_type": "off_hours_cluster",
+                    "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("off_hours_cluster", "PB-SIFT-102"),
+                    "priority": "MEDIUM",
+                    "devices_involved": sorted(devices_in_window),
+                    "time_window": {
+                        "start": timestamps[0] if timestamps else "",
+                        "end": timestamps[-1] if timestamps else "",
+                    },
+                    "context": {"cluster_window": window_key, "sample_events": len(cluster_events)},
+                    "investigation_questions": [
+                        f"What triggered activity at {window_key} across {len(devices_in_window)} devices?",
+                        "Were scheduled tasks or WMI subscriptions active?",
+                    ],
+                }
+                if not any(t["trigger_type"] == trigger["trigger_type"] and
+                           t.get("context", {}).get("cluster_window") == window_key
+                           for t in intelligence["pass2_playbook_triggers"]):
+                    intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["off_hours_clusters"]:
+        _log(f"  ✓ Found {len(intelligence['off_hours_clusters'])} off-hours clusters")
+
+    # ---------------------------------------------------------------
+    # 4. File Beaconing / Staging Patterns
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for file beaconing/staging patterns...")
+    temp_pattern = re.compile(r'(?:\\Temp\\|/tmp/|\.tmp$|\.dat$)', re.IGNORECASE)
+    file_events_by_device = {}
+    for event in super_timeline_events:
+        if event.get("event_type") not in ("file_creation", "file_modification",
+                                            "file_deletion"):
+            continue
+        detail = event.get("detail", {})
+        path = detail.get("path", "").lower() or event.get("summary", "").lower()
+        if not temp_pattern.search(path):
+            continue
+        did = event.get("device_id", "")
+        if did not in file_events_by_device:
+            file_events_by_device[did] = []
+        file_events_by_device[did].append(event)
+
+    for did, events in file_events_by_device.items():
+        if len(events) < 4:
+            continue
+        # Sort and look for regular intervals
+        try:
+            sorted_ts = []
+            for e in events:
+                ts = e.get("timestamp", "")
+                if ts:
+                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    sorted_ts.append((dt, e))
+            sorted_ts.sort(key=lambda x: x[0])
+            if len(sorted_ts) < 4:
+                continue
+            intervals = []
+            for i in range(1, len(sorted_ts)):
+                intervals.append((sorted_ts[i][0] - sorted_ts[i-1][0]).total_seconds())
+            if not intervals:
+                continue
+            avg_interval = sum(intervals) / len(intervals)
+            variance = sum((x - avg_interval) ** 2 for x in intervals) / len(intervals)
+            if avg_interval > 0 and variance ** 0.5 / avg_interval < 0.3 and len(intervals) >= 3:
+                beacon = {
+                    "device_id": did,
+                    "file_count": len(sorted_ts),
+                    "avg_interval_seconds": round(avg_interval, 1),
+                    "time_window": {
+                        "start": sorted_ts[0][0].isoformat()[:19] + "Z",
+                        "end": sorted_ts[-1][0].isoformat()[:19] + "Z",
+                    },
+                }
+                intelligence["file_beaconing_patterns"].append(beacon)
+                # Link this to the time window trigger
+                if not any(t.get("context", {}).get("device_id") == did and
+                           "beacon" in t.get("trigger_id", "")
+                           for t in intelligence["pass2_playbook_triggers"]):
+                    trigger = {
+                        "trigger_id": f"trigger-beacon-{did}",
+                        "trigger_type": "file_beaconing",
+                        "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("file_beaconing", "PB-SIFT-103"),
+                        "priority": "HIGH",
+                        "devices_involved": [did],
+                        "time_window": beacon["time_window"],
+                        "context": beacon,
+                        "investigation_questions": [
+                            f"What process created the temp files on {did}?",
+                            f"Is the beacon interval {avg_interval:.0f}s associated with known malware families?",
+                        ],
+                    }
+                    intelligence["pass2_playbook_triggers"].append(trigger)
+        except (ValueError, TypeError):
+            continue
+
+    if intelligence["file_beaconing_patterns"]:
+        _log(f"  ✓ Found {len(intelligence['file_beaconing_patterns'])} file beaconing patterns")
+
+    # ---------------------------------------------------------------
+    # 5. Cross-Device IOC Correlation
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: scanning for cross-device IOC correlations...")
+    # Collect IOCs from indicator hits and findings
+    known_iocs = set()
+    if indicator_hits:
+        for hit in indicator_hits:
+            if isinstance(hit, dict):
+                pattern = hit.get("pattern", "")
+                if pattern and len(pattern) > 4:
+                    known_iocs.add(pattern.lower())
+
+    # Look for co-occurring suspicious patterns across devices
+    dev_ioc_sets = {}
+    for event in super_timeline_events:
+        if not event.get("suspicious"):
+            continue
+        did = event.get("device_id", "")
+        reason = (event.get("suspicion_reason") or "").lower()
+        summary = (event.get("summary") or "").lower()
+        detail = event.get("detail", {})
+        detail_str = str(detail).lower()
+
+        if did not in dev_ioc_sets:
+            dev_ioc_sets[did] = set()
+
+        for ioc in known_iocs:
+            if ioc in summary or ioc in detail_str or ioc in reason:
+                dev_ioc_sets[did].add(ioc)
+
+    # Find IOCs shared across multiple devices
+    for ioc in known_iocs:
+        devices_with_ioc = [did for did, iocs in dev_ioc_sets.items() if ioc in iocs]
+        if len(devices_with_ioc) >= 2:
+            ioc_corr = {
+                "ioc": ioc,
+                "devices_involved": sorted(devices_with_ioc),
+                "device_count": len(devices_with_ioc),
+            }
+            intelligence["ioc_correlations"].append(ioc_corr)
+
+            trigger = {
+                "trigger_id": f"trigger-ioc-{hash(ioc) % 10000:04d}",
+                "trigger_type": "ioc_correlation",
+                "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("ioc_correlation", "PB-SIFT-103"),
+                "priority": "HIGH",
+                "devices_involved": sorted(devices_with_ioc),
+                "time_window": {"start": "", "end": ""},  # Full scope
+                "context": {"ioc": ioc, "device_count": len(devices_with_ioc)},
+                "investigation_questions": [
+                    f"How was IOC '{ioc}' deployed across {len(devices_with_ioc)} devices?",
+                    f"What is the deployment timeline for '{ioc}'?",
+                ],
+            }
+            intelligence["pass2_playbook_triggers"].append(trigger)
+
+    if intelligence["ioc_correlations"]:
+        _log(f"  ✓ Found {len(intelligence['ioc_correlations'])} cross-device IOC correlations")
+
+    # ---------------------------------------------------------------
+    # 6. Dwell Time Window Calculation
+    # ---------------------------------------------------------------
+    _log("  Timeline Intel: calculating dwell time window...")
+    all_timestamps = []
+    for event in super_timeline_events:
+        ts = event.get("timestamp", "")
+        if not ts:
+            continue
+        if event.get("suspicious") or "suspicious" not in event:
+            all_timestamps.append(ts)
+
+    if all_timestamps:
+        all_timestamps.sort()
+        first = all_timestamps[0]
+        last = all_timestamps[-1]
+        try:
+            t0 = datetime.fromisoformat(first.replace("Z", "+00:00")[:19])
+            t1 = datetime.fromisoformat(last.replace("Z", "+00:00")[:19])
+            dwell_days = round((t1 - t0).total_seconds() / 86400, 2)
+        except (ValueError, TypeError):
+            dwell_days = 0
+        intelligence["dwell_time_window"] = {
+            "first_seen": first,
+            "last_seen": last,
+            "dwell_days": dwell_days,
+        }
+
+    # Auto-trigger dwell window deep-dive for multi-day dwells
+    if intelligence["dwell_time_window"]["dwell_days"] > 1:
+        dw = intelligence["dwell_time_window"]
+        trigger = {
+            "trigger_id": f"trigger-dwell-{dw['dwell_days']}d",
+            "trigger_type": "dwell_window",
+            "playbook_id": PASS2_TRIGGER_PLAYBOOK_MAP.get("dwell_window", "PB-SIFT-104"),
+            "priority": "MEDIUM",
+            "devices_involved": sorted(device_map.keys()),
+            "time_window": {"start": dw["first_seen"], "end": dw["last_seen"]},
+            "context": {"dwell_days": dw["dwell_days"]},
+            "investigation_questions": [
+                "What user activity occurred across the full dwell window?",
+                "Are there gaps or bursts that align with attacker behavior?",
+            ],
+        }
+        intelligence["pass2_playbook_triggers"].append(trigger)
+
+    _log(f"  Dwell time: {intelligence['dwell_time_window']['dwell_days']} days")
+    _log(f"  Pass 2 triggers generated: {len(intelligence['pass2_playbook_triggers'])}")
+
+    return intelligence
 
 
 def _manager_review_pass2_triggers(
@@ -990,7 +2076,7 @@ def _manager_post_critic_decision(
         decision = {
             "action": "approve",
             "replay_adjustments": {},
-            "generate_report": True,
+            "generate_report": sufficient,
             "reasoning": "Batch quality GOOD, no replay candidates identified by Critic",
             "critic_executed": True,
             "manager_executed": True,
@@ -1042,7 +2128,7 @@ Respond ONLY in valid JSON (no extra text):
     decision = {
         "action": "approve",
         "replay_adjustments": {},
-        "generate_report": True,
+        "generate_report": sufficient,
         "reasoning": "Manager LLM unavailable - defaulting to approve",
         "critic_unavailable": False,
     }
@@ -1066,15 +2152,12 @@ Respond ONLY in valid JSON (no extra text):
                 parsed = json.loads(m.group())
                 decision["action"]             = parsed.get("action", "approve")
                 decision["replay_adjustments"] = parsed.get("replay_adjustments", {})
-                decision["generate_report"]    = True
+                decision["generate_report"]    = parsed.get("generate_report", sufficient)
                 decision["reasoning"]          = parsed.get("reasoning", "")
                 decision["critic_unavailable"] = False
                 manager_executed = True
         except Exception as e:
             _fe_log(job_id, f"  ⚠ Manager decision parse error: {e} - defaulting to approve", agent="Manager")
-
-    # Always generate the report regardless of critic/manager LLM output.
-    decision["generate_report"] = True
 
     # Fail-open transparency: flag when the approval only happened because a
     # checker was unavailable (Critic didn't run, or Manager LLM didn't respond).
@@ -1134,6 +2217,164 @@ def _read_self_corrections(case_work_dir, cap: int = 100) -> list:
         return []
 
 
+def _retry_unprocessed(
+    findings_writer,
+    inventory: dict,
+    image_offsets: dict,
+    case_work_dir: Path,
+    evidence_path: Path,
+    execution_plan: list,
+    job_id: str = None,
+    fe_log_func=None,
+) -> dict:
+    """Post-run retry phase for unprocessed evidence files.
+
+    Called after the main find_evil() pipeline completes and before
+    report generation.  Attempts to reprocess files that were:
+      - skipped/failed with "step_skipped_or_failed"
+      - capped with "item_cap_exceeded"
+
+    Re-runs the relevant discovery/playbook steps with relaxed limits
+    and logs retry attempts and results.  Updated findings are appended
+    to the findings_writer so that severity counting and report
+    generation include the retry results.
+
+    Returns a summary dict: {"retried": N, "succeeded": N, "failed": N}.
+    """
+
+    def _log(msg):
+        if fe_log_func and job_id:
+            fe_log_func(job_id, msg)
+
+    _log("\n\U0001F501 Post-Run Retry: reprocessing unprocessed evidence files")
+
+    # Build the current processed-paths set from findings_writer
+    processed_paths = set()
+    for rec in findings_writer.all_records():
+        ef = rec.get("evidence_file")
+        if ef:
+            processed_paths.add(str(ef))
+
+    all_paths = geoff_discovery._all_inventory_paths(inventory)
+    unprocessed = _classify_unprocessed(
+        all_paths, processed_paths, inventory, execution_plan
+    )
+
+    retryable = [
+        u for u in unprocessed
+        if u["reason"] in ("step_skipped_or_failed", "item_cap_exceeded")
+    ]
+
+    if not retryable:
+        _log("  No retryable unprocessed files")
+        return {"retried": 0, "succeeded": 0, "failed": 0}
+
+    _log(f"  {len(retryable)} retryable files ({len(unprocessed)} total unprocessed)")
+
+    retried = 0
+    succeeded = 0
+    failed = 0
+    output_dir = str(case_work_dir / "output")
+
+    for entry in retryable:
+        path = entry["path"]
+        ev_type = entry.get("evidence_type")
+        reason = entry["reason"]
+
+        if not Path(path).exists():
+            _log(f"  \u23D8 {Path(path).name}: file gone \u2014 skip")
+            continue
+
+        # Find a playbook that covers this evidence type
+        for pb_id in execution_plan:
+            if pb_id not in PLAYBOOK_STEPS:
+                continue
+            pb_steps = PLAYBOOK_STEPS[pb_id]
+            if ev_type not in pb_steps:
+                continue
+
+            step_templates = pb_steps[ev_type]
+            item_stem = Path(path).stem
+
+            # Run the first applicable step template for this evidence type
+            for module, function, raw_params in step_templates[:1]:
+                params = {}
+                for k, v in raw_params.items():
+                    if isinstance(v, str):
+                        v = (
+                            v.replace("{image}", path)
+                             .replace("{mem}", path)
+                             .replace("{pcap}", path)
+                             .replace("{evtx}", path)
+                             .replace("{evt}", path)
+                             .replace("{syslog}", path)
+                             .replace("{hive}", path)
+                             .replace("{mobile}", str(Path(path).parent))
+                             .replace("{file}", path)
+                             .replace("{output_dir}", output_dir)
+                             .replace("{image_stem}", item_stem)
+                             .replace("{offset}", str(image_offsets.get(path, [2048])[0] if isinstance(image_offsets.get(path), list) else image_offsets.get(path, 2048)))
+                        )
+                    params[k] = v
+
+                for k, v_conv in list(params.items()):
+                    if isinstance(v_conv, str) and v_conv.isdigit():
+                        params[k] = int(v_conv)
+                    elif isinstance(v_conv, str) and v_conv.lower() in ("true", "false"):
+                        params[k] = v_conv.lower() == "true"
+
+                step_key = f"retry:{pb_id}:{module}:{function}:{Path(path).name}"
+
+                try:
+                    result = _execute_fallback_chain(module, function, params,
+                                                     evidence_path=path, job_id=job_id)
+                    step_status = (
+                        "completed" if result.get("status") in ("success", "success_partial") else "failed"
+                    )
+                    if result.get("status") == "unprocessable":
+                        step_status = "unprocessable"
+
+                    record = {
+                        "playbook": pb_id,
+                        "step_key": step_key,
+                        "module": module,
+                        "function": function,
+                        "params": params,
+                        "evidence_file": path,
+                        "status": step_status,
+                        "result": result,
+                        "_retry": True,
+                        "_retry_reason": reason,
+                        "started_at": datetime.now().isoformat(),
+                        "completed_at": datetime.now().isoformat(),
+                    }
+                    findings_writer.append(record)
+                    retried += 1
+
+                    if step_status == "completed":
+                        succeeded += 1
+                        _log(
+                            f"  \u2713 Retry ok: {module}.{function} \u2192 "
+                            f"{Path(path).name}"
+                        )
+                    else:
+                        failed += 1
+                        _log(
+                            f"  \u2717 Retry fail: {module}.{function} \u2192 "
+                            f"{Path(path).name}"
+                        )
+                except Exception as exc:
+                    failed += 1
+                    retried += 1
+                    _log(f"  \u2717 Retry error: {Path(path).name}: {exc}")
+                break  # one step per file is enough
+            break  # one playbook per file is enough
+
+    _log(
+        f"  Retry phase done: {retried} attempted, "
+        f"{succeeded} ok, {failed} failed"
+    )
+    return {"retried": retried, "succeeded": succeeded, "failed": failed}
 
 
 def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) -> dict:
@@ -4277,13 +5518,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     steps_skipped += 1
                                     _fe_log(job_id, f"  ⎘ {module}.{function} skipped — incompatible evidence type: {_skip_reason}")
                                     continue
-                                # Extension-level compatibility guard (e.g. volatility against .pcap)
-                                _item_ext = Path(item).suffix.lower()
-                                _compat_exts = _TOOL_EVIDENCE_COMPAT.get(module)
-                                if _compat_exts is not None and _item_ext not in _compat_exts:
-                                    steps_skipped += 1
-                                    _fe_log(job_id, f"  ⏭ Skipped {module}.{function}: evidence type {_item_ext} not compatible with {module} module")
-                                    continue
                                 # A009 - Anti-forensics steps handled by dedicated checkpoint phase; skip here
                                 if module == "anti_forensics":
                                     continue
@@ -6291,7 +7525,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         # Gated on manager_decision['generate_report'].
         # ------------------------------------------------------------------
         _update_job(98, "narrative", "Generating human-readable report")
-        _generate_narrative = True
+        _generate_narrative = manager_decision.get("generate_report", True)
         if not _generate_narrative:
             _fe_log(job_id, "  [BATCH] Manager decision: skip narrative report (insufficient evidence)")
         if _generate_narrative:
@@ -6548,7 +7782,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                     import email as _email_lib_hd
                     from email import policy as _email_policy_hd
                     _sent_markers = ("sent", "sent items", "sent mail", "outbox")
-                    for _eml_f in list(Path(eml_dir).rglob("*.eml")):
+                    for _eml_f in list(Path(eml_dir).rglob("*.eml"))[:200]:
                         try:
                             _eml_lower = str(_eml_f).lower()
                             if not any(sm in _eml_lower for sm in _sent_markers):
@@ -6643,7 +7877,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                                 body_text = payload.decode(
                                                     "utf-8", errors="replace")
                                             except Exception:
-                                                body_text = str(payload)
+                                                body_text = str(payload)[:5000]
                                             break
                                     elif part.get_content_type() == "text/html":
                                         payload = part.get_payload(decode=True)
@@ -6662,23 +7896,11 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         body_text = payload.decode(
                                             "utf-8", errors="replace")
                                     except Exception:
-                                        body_text = str(payload)
+                                        body_text = str(payload)[:5000]
 
                             body_urls = list(dict.fromkeys(
                                 re.findall(r'https?://[^\s<>"\')\]]+', body_text)
                             ))[:20]
-
-                            # Save email body excerpts for report content
-                            body_excerpt = body_text.strip() if body_text else ""
-                            if body_excerpt:
-                                email_iocs_agg.setdefault("email_bodies", [])
-                                email_iocs_agg["email_bodies"].append({
-                                    "subject": subject[:200],
-                                    "from": from_addr,
-                                    "to": to_addr[:200],
-                                    "date": date,
-                                    "body_excerpt": body_excerpt,
-                                })
 
                             # Collect IOCs for aggregation
                             if from_addr:
@@ -6708,6 +7930,9 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                             "return_path": return_path,
                                             "return_path_domain": rp_domain,
                                             "eml_path": str(eml_file),
+                                            "body_text": body_text,
+                                            "subject": subject,
+                                            "to": to_addr,
                                         }
                                         email_iocs_agg["return_path_mismatches"].append(
                                             mismatch)
@@ -6745,10 +7970,6 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         ioc_text_lines.append(f"return-path: {addr}")
                     for url in email_iocs_agg["urls_in_body"]:
                         ioc_text_lines.append(f"url: {url}")
-                    for eb in email_iocs_agg.get("email_bodies", []):
-                        ioc_text_lines.append(
-                            f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')}"
-                        )
                     ioc_text = "\n".join(ioc_text_lines)
 
                     # Step 7: Write findings to findings_writer, enriched with IOCs
@@ -6770,7 +7991,6 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                 "return_path_mismatches": email_iocs_agg[
                                     "return_path_mismatches"],
                                 "spoofed_domains": email_iocs_agg["spoofed_domains"],
-                                "email_bodies": email_iocs_agg.get("email_bodies", []),
                             }
                             findings_writer.append({
                                 "step_key": step_key,
@@ -6822,7 +8042,6 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         "return_path_mismatches"],
                                     "spoofed_domains": email_iocs_agg[
                                         "spoofed_domains"],
-                                    "email_bodies": email_iocs_agg.get("email_bodies", []),
                                 },
                                 "note": (
                                     "No phishing indicators detected"
@@ -6844,22 +8063,8 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         except Exception as e:
             _fe_log(job_id, f"  [EMAIL_DIRECT] Error processing {img_name}: {e}")
         finally:
-            # Preserve extracted evidence before cleaning temp dirs
+            # Cleanup temp dirs
             import shutil
-            if extract_dir and os.path.isdir(extract_dir):
-                preserve_dir = os.path.join(case_work_dir, 'extracted_emails', img_stem)
-                os.makedirs(preserve_dir, exist_ok=True)
-                for f in os.listdir(extract_dir):
-                    src = os.path.join(extract_dir, f)
-                    dst = os.path.join(preserve_dir, f)
-                    try:
-                        if os.path.isfile(src):
-                            shutil.copy2(src, dst)
-                        elif os.path.isdir(src):
-                            shutil.copytree(src, dst, dirs_exist_ok=True)
-                    except Exception:
-                        pass
-                _fe_log(job_id, f'  [EMAIL_DIRECT] Preserved extracted emails to {preserve_dir}')
             if ewf_raw_dir:
                 shutil.rmtree(ewf_raw_dir, ignore_errors=True)
             if extract_dir:
