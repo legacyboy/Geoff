@@ -6844,8 +6844,22 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
         except Exception as e:
             _fe_log(job_id, f"  [EMAIL_DIRECT] Error processing {img_name}: {e}")
         finally:
-            # Cleanup temp dirs
+            # Preserve extracted evidence before cleaning temp dirs
             import shutil
+            if extract_dir and os.path.isdir(extract_dir):
+                preserve_dir = os.path.join(case_work_dir, 'extracted_emails', img_stem)
+                os.makedirs(preserve_dir, exist_ok=True)
+                for f in os.listdir(extract_dir):
+                    src = os.path.join(extract_dir, f)
+                    dst = os.path.join(preserve_dir, f)
+                    try:
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                        elif os.path.isdir(src):
+                            shutil.copytree(src, dst, dirs_exist_ok=True)
+                    except Exception:
+                        pass
+                _fe_log(job_id, f'  [EMAIL_DIRECT] Preserved extracted emails to {preserve_dir}')
             if ewf_raw_dir:
                 shutil.rmtree(ewf_raw_dir, ignore_errors=True)
             if extract_dir:
