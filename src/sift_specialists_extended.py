@@ -6602,7 +6602,7 @@ class EMAIL_Specialist:
 
         # Build artifact list for all emails (parse once, reuse for LLM + heuristics)
         artifacts: List[Dict[str, Any]] = []
-        for eml_path in eml_files[:500]:
+        for eml_path in eml_files:
             try:
                 with open(eml_path, 'rb') as fh:
                     msg = email_lib.message_from_binary_file(fh, policy=policy.default)
@@ -6626,7 +6626,7 @@ class EMAIL_Specialist:
                                 if payload:
                                     try:
                                         html = payload.decode('utf-8', errors='replace')
-                                        body_text = re.sub(r'<[^>]+>', ' ', html)[:2000]
+                                        body_text = re.sub(r'<[^>]+>', ' ', html)
                                     except Exception:
                                         pass
                                     break
@@ -6637,7 +6637,7 @@ class EMAIL_Specialist:
                             body_text = payload.decode('utf-8', errors='replace')
                         except Exception:
                             body_text = str(payload)[:2000]
-                body_text = body_text[:2000]
+                body_text = body_text
 
                 headers = {}
                 for hdr in ('From', 'To', 'Reply-To', 'Return-Path', 'Subject',
@@ -6648,7 +6648,7 @@ class EMAIL_Specialist:
 
                 link_pattern = re.compile(r'https?://[^\s<>"\')\]]+')
                 links_raw = link_pattern.findall(body_text)
-                links = list(dict.fromkeys(links_raw))[:20]
+                links = list(dict.fromkeys(links_raw))
 
                 attachments: List[str] = []
                 for part in msg.walk():

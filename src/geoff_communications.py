@@ -159,14 +159,14 @@ def _parse_smtp_stream(stream_text: str) -> Optional[dict]:
 
     if not mail_from and not rcpt_to:
         return None
-    body = '\n'.join(body_lines[:30])
+    body = '\n'.join(body_lines)
     return {
         'from': mail_from,
         'to': rcpt_to,
         'subject': subject[:200],
         'date': date[:50],
-        'body': body[:500],
-        'raw_snippet': f"From: {mail_from}\nTo: {', '.join(rcpt_to)}\nSubject: {subject}\n\n{body[:200]}",
+        'body': body,
+        'raw_snippet': f"From: {mail_from}\nTo: {', '.join(rcpt_to)}\nSubject: {subject}\n\n{body}",
     }
 
 
@@ -218,7 +218,7 @@ def _extract_pcap_smtp(pcap_path: Path) -> list:
                     'date': date[:50],
                     'body': body,
                     'message_id': msg_id[:100],
-                    'raw_snippet': f"From: {from_hdr}\nTo: {to_hdr}\nSubject: {subject}\n\n{body[:200]}",
+                    'raw_snippet': f"From: {from_hdr}\nTo: {to_hdr}\nSubject: {subject}\n\n{body}",
                     'source_playbook': 'PCAP_SMTP',
                     'source_function': f'pcap:{pcap_path.name}',
                     'protocol': 'smtp',
@@ -241,7 +241,7 @@ def _extract_pcap_smtp(pcap_path: Path) -> list:
                 capture_output=True, text=True, timeout=30,
             )
             stream_ids = sorted({ln.strip() for ln in res.stdout.splitlines() if ln.strip().isdigit()})
-            for sid in stream_ids[:30]:
+            for sid in stream_ids:
                 try:
                     fr = subprocess.run(
                         ['tshark', '-r', str(pcap_path), '-qz', f'follow,tcp,ascii,{sid}'],
@@ -273,7 +273,7 @@ def _extract_pcap_imap(pcap_path: Path) -> list:
         )
         stream_ids = sorted({ln.strip() for ln in stream_res.stdout.splitlines() if ln.strip().isdigit()})
 
-        for sid in stream_ids[:20]:
+        for sid in stream_ids:
             try:
                 fr = subprocess.run(
                     ['tshark', '-r', str(pcap_path), '-qz', f'follow,tcp,ascii,{sid}'],
@@ -463,7 +463,7 @@ def _extract_pcap_http_webmail(pcap_path: Path) -> list:
                     ['tshark', '-r', str(pcap_path), '-qz', f'follow,tcp,ascii,{sid}'],
                     capture_output=True, text=True, timeout=20,
                 )
-                content = fr.stdout[:8000]  # limit per stream
+                content = fr.stdout  # limit per stream
 
                 for pattern, service in _WEBMAIL_PATTERNS:
                     for m in pattern.finditer(content):
@@ -669,9 +669,9 @@ class CommunicationsAnalyzer:
                         messages.append({
                             "from": msg_from,
                             "to": msg_to,
-                            "subject": msg_body[:200],
+                            "subject": msg_body,
                             "date": msg_ts,
-                            "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body[:200]}",
+                            "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body}",
                             "platform": platform,
                             "source_playbook": playbook,
                             "source_function": function,
@@ -698,9 +698,9 @@ class CommunicationsAnalyzer:
                         messages.append({
                             "from": msg_from,
                             "to": msg_to,
-                            "subject": msg_body[:200],
+                            "subject": msg_body,
                             "date": msg_ts,
-                            "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body[:200]}",
+                            "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body}",
                             "platform": platform,
                             "source_playbook": playbook,
                             "source_function": function,
@@ -800,9 +800,9 @@ class CommunicationsAnalyzer:
                     messages.append({
                         "from": msg_from,
                         "to": msg_to,
-                        "subject": msg_body[:200],
+                        "subject": msg_body,
                         "date": msg_ts,
-                        "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body[:200]}",
+                        "raw_snippet": f"[{platform}] {msg_from} → {', '.join(msg_to)}: {msg_body}",
                         "platform": platform,
                         "source_playbook": "PB-SIFT-031",
                         "source_function": f"extract_{platform}_from_evidence",

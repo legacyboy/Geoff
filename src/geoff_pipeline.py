@@ -6747,7 +6747,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         ioc_text_lines.append(f"url: {url}")
                     for eb in email_iocs_agg.get("email_bodies", []):
                         ioc_text_lines.append(
-                            f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')[:200]}"
+                            f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')}"
                         )
                     ioc_text = "\n".join(ioc_text_lines)
 
