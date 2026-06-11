@@ -215,54 +215,87 @@ This asymmetry is intentional in the current implementation — narrative regene
 
 ---
 
-## 8. Evidence Caps Audit (2026-06-10)
+## 8. Report Suppression Incident (2026-06-10)
 
-A comprehensive audit of the email and communications evidence pipeline was conducted on 2026-06-10 to identify and remove all data truncation caps. The audit examined `src/geoff_pipeline.py`, `src/sift_specialists_extended.py`, `src/geoff_communications.py`, and `src/narrative_report.py`.
+### 8.1 What Happened
 
-### 8.1 Caps Discovered and Removed
+A four-case batch run (jeanm57, dfrws2008, google-drive-case, network-forensics) completed all investigations successfully but produced **zero narrative reports**. Every case's `manager_decision.json` contained `"generate_report": false` despite `action: approve`.
 
-| Location | Cap | What Was Limited | Fix |
-|----------|-----|-----------------|-----|
-| `sift_specialists_extended.py:6605` | `eml_files[:500]` | Phishing detection skipped emails 501+ | Removed cap — all emails analyzed |
-| `sift_specialists_extended.py:6619,6628` | `body_text[:2000]` | Phishing body truncated at 2,000 chars | Removed cap — full body preserved |
-| `geoff_pipeline.py:6655` | `html_body[:5000]` | HTML email body capped at 5,000 chars | Removed cap — full body preserved |
-| `geoff_pipeline.py:6723-6727` | `[:30]` on from/to/return_path lists | Address lists capped at 30 entries | Removed caps — all addresses preserved |
-| `geoff_pipeline.py:6669` + `sift_specialists_extended.py:6651` | `[:20]` URL extraction | Each email contributed at most 20 URLs | Removed caps — all URLs preserved |
-| `geoff_pipeline.py:6750` | `body_excerpt[:200]` in IOC regex scanner | IOCs after char 200 in body missed | Removed cap — full body scanned |
-| `geoff_communications.py:162,168,202,207,221` | `body[:500]`, `body[:800]`, etc. | SMTP/IMAP/IRC bodies truncated | Removed all caps — full bodies preserved |
-| `geoff_communications.py:244,276,460` | `stream_ids[:30]`, `[:20]`, `[:40]` | Stream enumeration capped | Removed caps — all streams processed |
-| `geoff_communications.py:466` | `stdout[:8000]` | Per-stream content capped | Removed cap |
-| `geoff_communications.py:1101` | `messages[:200]` | Total output capped at 200 messages | Removed cap |
-| `geoff_pipeline.py:6706-6715` | Missing `body_text`/`subject`/`to` fields | Spoofed email mismatch records had blank body content in reports | Added `body_text`, `subject`, `to` to mismatch dict |
+**Root cause chain:**
+1. Volatility memory forensics tools were being executed against E01 disk images (a tool-to-evidence mismatch)
+2. Per-step critics correctly flagged these as `REJECTED` — volatility cannot analyze disk images without a memory dump
+3. A "Critic hard gate" (commit `f6cbe5a8`, 2026-06-02) was designed to block report generation when any step had unresolved critic flags — intended as a quality safeguard
+4. The hard gate triggered on every case because every E01-based investigation hit volatility-on-disk-image rejections
+5. The Manager LLM inherited `sufficient_for_report: False` from the batch critic assessment and returned `generate_report: false` — even when it correctly chose `action: approve`
 
-### 8.2 Evidence Deletion Audit
+**The bug:** `action: approve` and `generate_report: false` is a contradiction. Approval means the investigation produced sufficient evidence to report on. The hard gate conflated "tool had issues" with "investigation had no evidence".
 
-The `_direct_email_extraction()` function's cleanup logic (`geoff_pipeline.py:6848-6880`) was verified to preserve extracted evidence before deleting temp directories. The finally block now copies all extracted PST/EML files and directories to `case_work_dir/extracted_emails/<stem>/` before clearing temp dirs. No extracted evidence is discarded.
+### 8.2 How It Was Caught
+
+Manual inspection of case directories revealed every `manager_decision.json` had `generate_report: false`. The batch critic assessment files showed all 4 cases rated `POOR` quality with `sufficient_for_report: False`, driven entirely by volatility-on-disk rejections — not by absence of actual findings. The jeanm57 case had found 3 spoofed phishing emails but couldn't report them.
+
+### 8.3 Resolution
+
+The `_manager_post_critic_decision()` function was changed to unconditionally generate reports. The manager can still flag or replay steps for quality, but suppression now requires explicit action. A `_TOOL_EVIDENCE_COMPAT` guard was added to the playbook execution loop preventing volatility tools from even attempting disk-only images, registry tools from running on PCAPs, and network tools from targeting disk images — eliminating the critic rejections at their source rather than suppressing their downstream effects.
+
+### 8.4 Lesson
+
+Quality gates that suppress output are dangerous when their triggers are noisy. The critic hard gate was correct in intent but wrong in execution — it blocked legitimate outputs because borderline tool failures looked identical to investigation failures. The fix addresses both the gate (always generate reports) and the noise source (prevent mismatched tool-evidence pairings).
 
 ---
 
-## 9. Report Generation and Tool-Evidence Compatibility (2026-06-10)
+## 9. Executive Summary — Phishing Contradiction (2026-06-10)
 
-### 9.1 Report Suppression Bug
+### 9.1 What Happened
 
-**Background:** Commit `f6cbe5a8` (2026-06-02) introduced a "Critic hard gate" that blocked narrative report generation whenever any per-step critic produced a `REQUIRES_REVIEW` or `REJECTED` verdict. This was intended to prevent hallucinated findings from reaching the narrative stage, but it created an unintentional side effect: tool-to-evidence mismatches (volatility running against PCAP files, registry tools against non-Windows images) caused legitimate borderline critic verdicts, which cascaded into the hard gate and suppressed report generation entirely.
+The M57-Jean-Real investigation correctly identified **3 spoofed phishing emails** (from `alison@m57.biz` and `tuckgorge@gmail.com`, relayed via `xy.dreamhostps.com`, MITRE T1566.002 Spearphishing Link) in the detailed Email & Phishing section of the narrative report. However, the Executive Summary stated: *"No direct email findings (e.g., targeted phishing campaigns) were flagged."*
 
-**Impact on 2026-06-10 batch run:** All four cases (jeanm57, dfrws2008, google-drive-case, network-forensics) completed with `generate_report: false` in their manager decisions, producing no narrative reports despite successful investigation completion.
+This is a **contradiction within the same report** — the detailed findings proved phishing existed, the summary claimed it didn't. A judge reading only the Executive Summary would conclude the case found nothing.
 
-**Fix:** The `_manager_post_critic_decision()` function was modified to unconditionally set `generate_report: True`. The manager can still decide `action: flag` or `action: replay` for quality concerns, but the report is always generated. Quality concerns are documented in the report rather than suppressing it. Report suppression now requires explicit action — the default is generation.
+### 9.2 Root Cause
 
-### 9.2 Tool-Evidence Compatibility Guard
+The `_generate_executive_summary()` function built its email context from `findings_detail` entries filtered for `playbook == "EMAIL_DIRECT"`. However, EMAIL_DIRECT findings are stored in `findings.jsonl` but not propagated to the `findings_detail` list within `find_evil_report.json`. The filter returned an empty list. The LLM prompt then contained an explicit instruction:
 
-A `_TOOL_EVIDENCE_COMPAT` dictionary was added to the playbook execution loop (`src/geoff_pipeline.py:122`):
-- Volatility tools: only run on memory/disk image formats (`.raw`, `.dmp`, `.mem`, `.dd`, `.img`, `.E01`, `.E02`)
-- Registry tools: only run on disk/hive formats (`.dd`, `.img`, `.dat`, `.hive`, `.E01`, `.E02`)
-- Network tools: only run on capture formats (`.pcap`, `.pcapng`, `.log`)
+> *"CRITICAL RULE: If the email_direct_findings list is empty, state clearly that no email or phishing indicators were found."*
 
-Mismatched tools are cleanly skipped with a `⏭ Skipped` log entry and `status=skipped` (not `failed`), preventing critic error cascades from tool-evidence mismatches.
+The LLM obeyed. The phishing evidence existed elsewhere in the report — the LLM was just explicitly told it didn't.
 
-### 9.3 Executive Summary Phishing Contradiction
+### 9.3 Resolution
 
-The `_generate_executive_summary()` function had a destructive prompt instruction that directed the LLM to state "no phishing indicators were found" when the `email_direct_findings` list was empty — despite phishing evidence existing in `email_iocs` records elsewhere in the same report. This caused the M57-Jean executive summary to explicitly contradict the detailed Email & Phishing section (which correctly identified 3 spoofed emails, MITRE T1566.002). Fixed by feeding `email_phishing_indicators` context (spoofed domains, Return-Path mismatches, email counts) directly to the LLM and replacing the destructive instruction with a requirement to report actual findings.
+The email context was rebuilt to pull from multiple sources: `findings_detail`, `email_iocs` from `find_evil_report.json`, and `email_direct_findings`. A new `email_phishing_indicators` context object (with spoofed domains, Return-Path mismatches, email counts, and phishing detection flags) was fed directly to the LLM. The destructive prompt instruction was replaced with a requirement to report whatever the data shows. The report was regenerated and now correctly states: *"Email spoofing confirmed — 3 emails identified with Return-Path mismatch between gmail.com/m57.biz and xy.dreamhostps.com."*
+
+### 9.4 Lesson
+
+Prompt instructions that tell the LLM what to say about the *absence* of data are dangerous when the data the instruction checks is incomplete. The instruction should have been about what the data *does* show, not about what it *doesn't*. The fix inverts the logic: show the LLM everything you have, tell it to report what's there.
+
+---
+
+## 10. Evidence Caps Audit (2026-06-10)
+
+### 10.1 What Was Found
+
+A line-by-line audit of the email and communications evidence pipeline (`geoff_pipeline.py`, `sift_specialists_extended.py`, `geoff_communications.py`, `narrative_report.py`) discovered **14 separate data truncation caps**. Key findings:
+
+| Cap | Impact |
+|-----|--------|
+| `eml_files[:500]` in phishing detection | Emails 501+ silently skipped for phishing analysis |
+| `body_text[:2000]` in detect_phishing | Email bodies truncated at 2,000 characters — content beyond was invisible to phishing heuristics |
+| `body_excerpt[:200]` in IOC regex scanner | IOCs appearing after character 200 in any email body were never detected |
+| `from/to/return_path[:30]` | If a PST had 31+ unique senders, the 31st was silently dropped from the IOC record |
+| `messages[:200]` in geoff_communications.py | All communications output capped at 200 messages total — anything beyond unrecoverable |
+| 8 additional caps on SMTP/IMAP/IRC body text and TCP stream enumeration | Progressive data loss at every layer of the communications pipeline |
+
+### 10.2 Evidence Deletion
+
+The `_direct_email_extraction()` finally block was previously deleting all extracted EML/PST files after processing (`shutil.rmtree(extract_dir)`). The structured data survived in findings.jsonl, but the raw extracted evidence was unrecoverable for audit or review.
+
+### 10.3 Resolution
+
+All 14 caps removed. Extracted evidence is now copied to `case_work_dir/extracted_emails/<stem>/` before temp directory cleanup. Spoofed email mismatch records now include `body_text`, `subject`, and `to` fields (previously missing, causing blank content in the report's spoofing section).
+
+---
+
+## 11. Known Limitations (continued)
 
 ---
 
