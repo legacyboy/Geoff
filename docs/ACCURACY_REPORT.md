@@ -2,17 +2,6 @@
 
 **Date:** 2026-06-10 (updated)  
 **Version:** v1.1  
-**Purpose:** Judge-facing structured assessment of Geoff's accuracy, self-correction effectiveness, evidence integrity approach, and known limitations.
-
----
-
-## 0. Philosophy: Honesty Over Perfection
-
-Geoff is an autonomous multi-agent DFIR platform. It runs LLM-driven forensic analysis with no human in the loop during investigation. This report documents every accuracy failure, hallucination, data loss point, and false positive we have observed — whether from adversarial testing, live case runs, or cross-model code audits.
-
-We disclose everything here because: (1) an autonomous system that claims to never make mistakes is either lying or untested, (2) judges evaluating a forensic tool need to know where it can fail, not just where it succeeds, and (3) the self-correction mechanisms only have value if you can see what they catch and what they miss.
-
-Every incident in this report is traceable to a specific commit, case directory, git diff, or cross-model audit finding. None are hypothetical.
 
 ---
 
