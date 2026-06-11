@@ -6548,7 +6548,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                     import email as _email_lib_hd
                     from email import policy as _email_policy_hd
                     _sent_markers = ("sent", "sent items", "sent mail", "outbox")
-                    for _eml_f in list(Path(eml_dir).rglob("*.eml"))[:200]:
+                    for _eml_f in list(Path(eml_dir).rglob("*.eml")):
                         try:
                             _eml_lower = str(_eml_f).lower()
                             if not any(sm in _eml_lower for sm in _sent_markers):
@@ -6643,7 +6643,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                                 body_text = payload.decode(
                                                     "utf-8", errors="replace")
                                             except Exception:
-                                                body_text = str(payload)[:5000]
+                                                body_text = str(payload)
                                             break
                                     elif part.get_content_type() == "text/html":
                                         payload = part.get_payload(decode=True)
@@ -6662,14 +6662,14 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                                         body_text = payload.decode(
                                             "utf-8", errors="replace")
                                     except Exception:
-                                        body_text = str(payload)[:5000]
+                                        body_text = str(payload)
 
                             body_urls = list(dict.fromkeys(
                                 re.findall(r'https?://[^\s<>"\')\]]+', body_text)
                             ))[:20]
 
                             # Save email body excerpts for report content
-                            body_excerpt = body_text[:500].strip() if body_text else ""
+                            body_excerpt = body_text.strip() if body_text else ""
                             if body_excerpt:
                                 email_iocs_agg.setdefault("email_bodies", [])
                                 email_iocs_agg["email_bodies"].append({
@@ -6745,7 +6745,7 @@ def _direct_email_extraction(inventory: dict, findings_writer, case_work_dir, jo
                         ioc_text_lines.append(f"return-path: {addr}")
                     for url in email_iocs_agg["urls_in_body"]:
                         ioc_text_lines.append(f"url: {url}")
-                    for eb in email_iocs_agg.get("email_bodies", [])[:20]:
+                    for eb in email_iocs_agg.get("email_bodies", []):
                         ioc_text_lines.append(
                             f"email: from={eb.get('from','')} subject={eb.get('subject','')} body={eb.get('body_excerpt','')[:200]}"
                         )
