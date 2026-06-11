@@ -1696,8 +1696,8 @@ except Exception as e:
                 for sb_id, fragments in reassembled.items():
                     fragments.sort(key=lambda x: x[0])
                     full_scripts[sb_id] = "\n".join(text for _, text in fragments)
-                result["reassembled_scripts"] = full_scripts
-                result["reassembled_count"] = len(full_scripts)
+                _reassembled_scripts = full_scripts
+                _reassembled_count = len(full_scripts)
 
             return {
                 'tool': 'evtx_parser',
@@ -1709,6 +1709,8 @@ except Exception as e:
                 'time_range': time_range,
                 'security_events': security_events,
                 'events_sample': parsed_events[:100],
+                'reassembled_scripts': _reassembled_scripts if reassembled else {},
+                'reassembled_count': _reassembled_count if reassembled else 0,
                 'timestamp': datetime.now().isoformat(),
             }
         except Exception as e:
