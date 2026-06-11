@@ -201,16 +201,16 @@ This asymmetry is intentional in the current implementation — narrative regene
 
 | Limitation | Category | Impact | Status |
 |------------|----------|--------|--------|
-| Three mislabeled playbooks (PB-004, PB-011, PB-013) | Content correctness | A judge running privilege escalation gets network device output | Known; disclosed; not fixed |
-| Multi-block PowerShell 4104 reassembly | Artifact coverage | Split obfuscated PowerShell appears as fragments | Known; not implemented |
+| Three mislabeled playbooks (PB-004, PB-011, PB-013) | Content correctness | A judge running privilege escalation gets network device output | Fixed 2026-06-10: (1) PB-SIFT-004 had credential theft tools (lsadump, extract_credentials, extract_sam_users) removed — those belong in PB-SIFT-005. (2) PB-SIFT-011 was incorrectly triggered by PCAP evidence; removed wrong trigger in pipeline, fixed artifact map to PB-SIFT-036. (3) PB-SIFT-013 was mislabeled on FAT recovery findings; reclassified to PB-SIFT-026 (file carving) and PB-SIFT-012 (anti-forensics). |
+| Multi-block PowerShell 4104 reassembly | Artifact coverage | Split obfuscated PowerShell appears as fragments | Fixed 2026-06-10: reassembly code existed but was broken — `result["reassembled_scripts"]` assigned to a CompletedProcess object (silently dropped), and the return dict omitted the fields. Fixed to use local vars and included in return value. |
 | Narrative self-check gap | Accuracy validation | Narrative claims not structurally verified | Known; partially mitigated 2026-06-10 |
 | LOLBin obfuscation decoding | Artifact coverage | Encoded LOLBin commands not decoded automatically | Known; technique-without-tool gap |
 | WMI OBJECTS.DATA parsing | Artifact coverage | WMI persistence artifacts not parsed | Known; no `python-cim` integration |
-| RAR extraction | Evidence coverage | RAR archives not extracted | Known; not confirmed fixed |
+| RAR extraction | Evidence coverage | RAR archives not extracted | Fixed 2026-06-10: added RAR magic byte detection (Rar!\x1a\x07 for v4 and v5+) to _detect_file_type_from_header and added "rar_archive" to extraction dispatch. _extract_archive() already handled RAR via rarfile/unrar. |
 | Evidence non-modification prevention | Evidence integrity | OS-level read-only mount not implemented; detective only via SHA-256 | Known; disclosed above |
-| Self-heal cache staleness | Self-correction | Cached HealDecisions persist after code fixes | Known; requires manual cache clear |
+| Self-heal cache staleness | Self-correction | Cached HealDecisions persist after code fixes | Fixed 2026-06-10: HealCache.get() now enforces a 30-day TTL (entries older than _DEFAULT_TTL_DAYS treated as misses). Set GEOFF_HEAL_CACHE_BUST=1 for immediate manual bust. Override TTL with GEOFF_HEAL_CACHE_TTL_DAYS=N. |
 | Installer tool gaps (20+ tools) | Installation | Missing tools auto-installed on demand; requires internet | Documented; self-heal mitigates |
-| JA3/JA3S TLS fingerprinting | Network analysis | No JA3 hash extraction from PCAP | Known; technique-without-tool gap |
+| JA3/JA3S TLS fingerprinting | Network analysis | No JA3 hash extraction from PCAP | Fixed 2026-06-10: added network.extract_tls_fingerprints (tshark ja3/ja3s fields) to PB-SIFT-036 (PCAP Network Forensics). Already present in PB-SIFT-019 (C2). |
 
 ---
 
