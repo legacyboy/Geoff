@@ -1,0 +1,84 @@
+
+--- CC5 Remaining Fixes (2026-06-11) ---
+
+Fix 1: evidence_classifier.py — [:20] cap
+  Status: Already resolved in a prior session (no [:20] cap present).
+  Verification: grep for '[:20]' returned no matches; py_compile PASS.
+
+Fix 2a: geoff_pipeline.py — severity_counts REJECTED filtering (~line 6978)
+  Added check at top of 'for f in findings_writer.all_records()' loop:
+    if isinstance(_f_critic, dict) and _f_critic.get('verdict') == 'REJECTED': continue
+  Prevents REJECTED findings from inflating severity counts.
+  Verification: py_compile PASS.
+
+Fix 2b: geoff_pipeline.py — generate_report uses LLM judgment (~line 2169)
+  Completed broken parsed.get() call:
+    decision['generate_report'] = parsed.get('generate_report', overall_quality not in ('POOR',))
+  Previously had unclosed parenthesis with comment as placeholder (syntax error).
+  Now defaults to True unless quality is POOR when LLM omits the field.
+  Verification: py_compile PASS.
+
+Fix 3: narrative_report.py — IOC noise filtering for PCAP URLs (~line 2731)
+  Added to _NOISE_URL_DOMAINS: amazon.com, ebay.com, disney.com, yahoo.com,
+    travelocity.com, bankrate.com, myspace.com, atdmt.com
+  (google, facebook, msn, live, wikipedia, akamai, edgesuite, doubleclick
+   were already present in the list.)
+  Verification: py_compile PASS.
+
+All 3 fixes verified clean. 7/7 CC5 fixes now deployed.
+
+=== 2026-06-11 fixes ===
+
+[main.js] Timestamp comparison bug fixed (lines 287, 314, 408-414, 444-450):
+  - Replaced string timestamp tracking (lastLogTs) with log index tracking (lastLogIdx)
+  - Old: compared entry.time strings with >, silently dropped same-second or duplicate entries
+  - New: tracks last rendered array index; renders all entries from lastLogIdx+1 onward
+  - No maximum log entry cap found in addLog(); feed grows unbounded (existing behavior unchanged)
+  - Verified: node --check static/main.js CLEAN
+
+[geoff_discovery.py] SyntaxWarning fixed (lines 4169, 4171):
+  - Removed invalid \$ escape sequences from docstring inside parse_usnjrnl function
+  - Lines 4169/4171 referenced $Extend$UsnJrnl:$J (invalid escape in non-raw docstring)
+  - Fixed to : (bare dollar, no backslash)
+  - Verified: python3 -m py_compile src/geoff_discovery.py CLEAN (no SyntaxWarning)
+
+=== P1 Fix Session — 2026-06-11 ===
+
+Case analyzed: /mnt/cases/dfrws2008_findevil_39db792957d0/
+False positive confirmed: classification=Rootkit, severity=CRITICAL, total_findings=None, playbooks_run=[]
+Root cause: 17 indicator hits from PCAP data populated severity_counts (CRITICAL:6, HIGH:11)
+           driving overall_severity=CRITICAL and classification=Rootkit with 0 corroborating findings.
+
+--- Fix 1: Corroboration Gate (geoff_pipeline.py ~line 7057) ---
+APPLIED. After multi-label classification completes, count completed playbook findings
+(findings_writer.all_records() where status=="completed"). If 0 completed findings AND
+indicator_hits present: cap overall_severity to MEDIUM, set classification to
+"Potential Indicator Hit — Uncorroborated". Prevents indicator-only hits from driving
+CRITICAL/HIGH classification without forensic corroboration.
+
+--- Fix 2: Evidence Type → Playbook Mapping Layer ---
+APPLIED (geoff_discovery.py + geoff_pipeline.py):
+  a) Added EVIDENCE_TYPE_TO_PLAYBOOK_KEY mapping dict to geoff_discovery.py — normalizes
+     classifier label variants (e.g. "memory_dump" → "memory_dumps") to canonical keys.
+  b) Updated covered_ev_types build loop in _classify_unprocessed to normalize through map.
+  c) Updated coverage check to normalize ev_type before comparison.
+  d) Added "pcaps" to UNCAPPED_TYPES (was only disk_images/memory_dumps) — pcaps were
+     incorrectly capped at 3 items per run.
+  e) Both _classify_unprocessed call sites (lines 2274, 7513) now pass PLAYBOOK_STEPS
+     so covered_ev_types is actually populated (was always empty dict before).
+
+--- Fix 3: OS-Aware Volatility Plugin Selection (sift_specialists.py) ---
+APPLIED:
+  a) Added VOLATILITY_Specialist._detect_memory_os() static method — detects Linux from
+     .lime extension or "linux" in filename; Windows from .dmp/.vmem or "win" in name.
+  b) Added _select_plugin() method — returns linux.* plugins for Linux dumps, windows.*
+     for Windows/unknown. Returns None for inapplicable plugins (e.g. scan_registry on Linux).
+  c) process_list, network_scan, find_malware, dump_process now call _select_plugin().
+  d) scan_registry returns status="skipped" for Linux (no registry).
+  e) Error logging in run() now prints to sys.stderr visibly and attempts _fe_log().
+     Previously silently fell back with broken _fe_log call (wrong arg order).
+
+--- Verification ---
+python3 -m py_compile src/geoff_pipeline.py src/geoff_discovery.py src/sift_specialists.py src/evidence_classifier.py
+Result: ALL SYNTAX OK (4/4 files pass)
+
