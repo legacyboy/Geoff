@@ -543,8 +543,6 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-004": {  # Privilege Escalation
         "memory_dumps": [
             ("memory", "find_injected_code", {"memory_dump": "{mem}"}),
-            ("memory", "extract_credentials", {"memory_dump": "{mem}"}),
-            ("windows", "lsadump", {"memory_dump": "{mem}"}),
             ("windows", "malfind", {"memory_dump": "{mem}"}),
             # Token analysis: enumerate process command lines for elevated/suspicious processes
             ("windows", "cmdline", {"memory_dump": "{mem}"}),
@@ -555,7 +553,6 @@ PLAYBOOK_STEPS = {
             ("registry", "extract_services", {"system_path": "{hive}"}),
             ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"}),
             ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Installer"}),
-            ("registry", "extract_sam_users", {"sam_path": "{hive}"}),
             # Service binary path hijacking: enumerate raw service keys for unquoted ImagePath detection
             ("registry", "extract_keys", {"hive_path": "{hive}", "key_path": "SYSTEM\\CurrentControlSet\\Services"}),
         ],
