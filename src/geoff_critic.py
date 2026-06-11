@@ -137,11 +137,28 @@ class HealCache:
             except Exception:
                 pass
 
+    # Cache TTL: entries older than this are treated as misses, forcing a fresh LLM heal call.
+    # Prevents stale decisions from masking post-fix improvements.
+    # Override with GEOFF_HEAL_CACHE_TTL_DAYS=0 to disable caching entirely.
+    _DEFAULT_TTL_DAYS = 30
+
     def get(self, key: str) -> Optional[HealDecision]:
+        # GEOFF_HEAL_CACHE_BUST=1 forces a cache miss for all entries (manual bust after code fixes)
+        if os.environ.get("GEOFF_HEAL_CACHE_BUST") == "1":
+            return None
         entry = self._store.get(key)
-        if entry and entry.success_count > 0:
-            return entry.decision
-        return None
+        if not entry or entry.success_count <= 0:
+            return None
+        # TTL check: expire entries older than _DEFAULT_TTL_DAYS
+        ttl_days = int(os.environ.get("GEOFF_HEAL_CACHE_TTL_DAYS", self._DEFAULT_TTL_DAYS))
+        if ttl_days > 0 and entry.created:
+            try:
+                age = datetime.now() - datetime.fromisoformat(entry.created)
+                if age.days > ttl_days:
+                    return None
+            except (ValueError, TypeError):
+                pass
+        return entry.decision
 
     def store(self, key: str, decision: HealDecision):
         entry = HealCacheEntry(
