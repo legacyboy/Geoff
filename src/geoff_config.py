@@ -1110,6 +1110,8 @@ PLAYBOOK_STEPS = {
             # Gap 3: DNS forensics
             ("dns", "analyze_dns_from_pcap", {"pcap_file": "{pcap}"}),
             ("dns", "detect_tunneling", {"pcap_file": "{pcap}"}),
+            # JA3/JA3S TLS fingerprinting — identify client/server TLS stacks and known malware profiles
+            ("network", "extract_tls_fingerprints", {"pcap_file": "{pcap}"}),
         ],
     },
     "PB-SIFT-050": {  # DNS Forensics — dedicated DNS analysis playbook
