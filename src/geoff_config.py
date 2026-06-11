@@ -653,19 +653,32 @@ PLAYBOOK_STEPS = {
     "PB-SIFT-010": {  # Living-off-the-Land
         "evtx_logs": [
             ("logs", "parse_evtx", {"evtx_file": "{evtx}"}),
+            # Gap 1: decode encoded commands found in EVTX event data
+            ("lolbin", "decode_encoded_commands", {"evtx_data": "{evtx_data}"}),
+            # Gap 2: detect LOLBin execution patterns in EVTX
+            ("lolbin", "detect_lolbin_patterns", {"evtx_data": "{evtx_data}"}),
         ],
         "evt_logs": [
             ("logs", "parse_evt", {"evt_file": "{evt}"}),
         ],
         "memory_dumps": [
             ("volatility", "process_list", {"memory_dump": "{mem}"}),
-            # Encoded PowerShell: find -EncodedCommand, FromBase64String, IEX patterns in memory
             ("strings", "extract_strings", {"file_path": "{mem}", "min_length": 8}),
+            # Gap 1: detect/decode encoded PowerShell and certutil commands from memory strings
+            ("lolbin", "decode_encoded_commands", {"file_path": "{mem}"}),
+            # Gap 2: detect LOLBin execution patterns in memory strings
+            ("lolbin", "detect_lolbin_patterns", {"file_path": "{mem}"}),
         ],
         "disk_images": [
             ("sleuthkit", "list_deleted", {"image": "{image}", "offset": "{offset}"}),
             ("strings", "extract_strings", {"file_path": "{image}", "min_length": 8}),
             ("sleuthkit", "list_files", {"image": "{image}", "offset": "{offset}", "recursive": True}),
+            # Gap 1: detect/decode encoded PowerShell and certutil commands from disk strings
+            ("lolbin", "decode_encoded_commands", {"file_path": "{image}"}),
+            # Gap 2: detect LOLBin execution patterns (mshta, rundll32, regsvr32, wmic, certutil)
+            ("lolbin", "detect_lolbin_patterns", {"file_path": "{image}"}),
+            # Gap 3: detect WMI event subscription persistence (OBJECTS.DATA)
+            ("lolbin", "detect_wmi_persistence", {"evidence_dir": "{evidence_dir}"}),
         ],
     },
     "PB-SIFT-011": {  # Impact/Data Destruction

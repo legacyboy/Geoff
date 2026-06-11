@@ -11494,6 +11494,471 @@ class SCHEDULED_TASK_Specialist:
         }
 
 
+
+# ---------------------------------------------------------------------------
+# LOLBIN_Specialist  (Gap 1-3 for PB-SIFT-010 Living-off-the-Land)
+# ---------------------------------------------------------------------------
+
+class LOLBIN_Specialist:
+    """LOLBin detection specialist for PB-SIFT-010 Living-off-the-Land.
+
+    Three capabilities:
+      1. decode_encoded_commands   – detect/decode encoded PowerShell and certutil
+      2. detect_lolbin_patterns    – mshta/rundll32/regsvr32/wmic/certutil patterns
+      3. detect_wmi_persistence    – WMI OBJECTS.DATA event subscription persistence
+    """
+
+    _ENCODED_CMD_PATTERNS = [
+        re.compile(r'-(?:EncodedCommand|enc|e)\s+([A-Za-z0-9+/=]{20,})', re.IGNORECASE),
+        re.compile(r'FromBase64String\s*\(\s*["\']([A-Za-z0-9+/=]{20,})["\']', re.IGNORECASE),
+        re.compile(r'\[System\.Convert\]::FromBase64String\s*\(\s*["\']([A-Za-z0-9+/=]{20,})["\']', re.IGNORECASE),
+        re.compile(r'certutil\s+(?:-[a-z]+\s+)*-decode(?:hex)?\s+(\S+)', re.IGNORECASE),
+    ]
+
+    _PAYLOAD_SUSPICIOUS = re.compile(
+        r'(?:https?://\d{1,3}(?:\.\d{1,3}){3}|https?://[a-z0-9.\-]+|'
+        r'\b(?:\d{1,3}\.){3}\d{1,3}\b|'
+        r'\bIEX\b|\bInvoke-[A-Za-z]+|\bdownload\b|\bWebClient\b|\bStart-Process\b|'
+        r'\.exe\b|\.dll\b|\.ps1\b|\.vbs\b|\.bat\b)',
+        re.IGNORECASE,
+    )
+
+    _LOLBIN_PATTERNS = [
+        {
+            'name': 'mshta_script_uri',
+            'pattern': re.compile(r'mshta(?:\.exe)?\s+(?:javascript|vbscript):', re.IGNORECASE),
+            'mitre': 'T1218.005',
+            'severity': 'high',
+            'description': 'mshta.exe executing inline script URI (javascript: or vbscript:)',
+        },
+        {
+            'name': 'rundll32_suspicious_path',
+            'pattern': re.compile(
+                r'rundll32(?:\.exe)?\s+(?:"[^"]*(?:Temp|AppData|Users\\[^"\\]+)[^"]*"'
+                r'|[^\s"]*(?:Temp|AppData|Users\\[^\s\\]+)[^\s"]*)',
+                re.IGNORECASE),
+            'mitre': 'T1218.011',
+            'severity': 'high',
+            'description': 'rundll32.exe loading DLL from user-writable path (Temp/AppData/Users)',
+        },
+        {
+            'name': 'regsvr32_squiblydoo',
+            'pattern': re.compile(r'regsvr32(?:\.exe)?[^\n]*?/i:https?://', re.IGNORECASE),
+            'mitre': 'T1218.010',
+            'severity': 'critical',
+            'description': 'regsvr32.exe /i:http(s):// Squiblydoo — remote COM scriptlet execution',
+        },
+        {
+            'name': 'cscript_wscript_script',
+            'pattern': re.compile(
+                r'(?:cscript|wscript)(?:\.exe)?[^\n]*?\.(?:vbs|js|jse|vbe)\b',
+                re.IGNORECASE),
+            'mitre': 'T1059.005',
+            'severity': 'medium',
+            'description': 'cscript/wscript executing script file',
+            'path_flag': re.compile(r'(?:Temp|AppData|Users\\|Public|PerfLogs)', re.IGNORECASE),
+        },
+        {
+            'name': 'wmic_exec',
+            'pattern': re.compile(
+                r'wmic(?:\.exe)?[^\n]*?(?:process\s+call\s+create|os\s+get[^\n]*?/format)',
+                re.IGNORECASE),
+            'mitre': 'T1047',
+            'severity': 'high',
+            'description': 'WMIC process call create or /format XSL injection',
+        },
+        {
+            'name': 'certutil_urlcache_download',
+            'pattern': re.compile(
+                r'certutil(?:\.exe)?[^\n]*?-urlcache[^\n]*?-(?:split|f)\s+https?://',
+                re.IGNORECASE),
+            'mitre': 'T1105',
+            'severity': 'critical',
+            'description': 'certutil -urlcache -split -f downloading remote file',
+        },
+    ]
+
+    _WMI_INDICATORS = [
+        'ActiveScriptEventConsumer',
+        'CommandLineEventConsumer',
+        '__EventFilter',
+        '__FilterToConsumerBinding',
+        'EventConsumer',
+        'InstanceModificationEvent',
+        'Win32_LocalTime',
+        'ScriptText',
+        'ExecutablePath',
+    ]
+
+    _WMI_PAYLOAD_RE = re.compile(
+        r'(?:https?://\d{1,3}(?:\.\d{1,3}){3}|https?://[a-z0-9.\-]+|'
+        r'\bpowershell\b|\bcmd\.exe\b|\.ps1\b|\.vbs\b|\.bat\b|'
+        r'\bIEX\b|\bInvoke-[A-Za-z]+|\bdownload\b|\bWebClient\b|'
+        r'(?:Temp|AppData|Public|PerfLogs))',
+        re.IGNORECASE,
+    )
+
+    # ----------------------------------------------------------------
+    # Gap 1 — Encoded Command Decoding
+    # ----------------------------------------------------------------
+
+    def decode_encoded_commands(
+        self,
+        strings_output: str = None,
+        file_path: str = None,
+        evtx_data: Any = None,
+    ) -> Dict[str, Any]:
+        """Detect and decode encoded PowerShell/certutil commands.
+
+        Accepts strings tool output, a file path (auto-runs strings), or
+        pre-parsed EVTX event dicts.  Returns structured findings with severity,
+        MITRE technique tag, decoded payload, and suspicious IOC indicators.
+        """
+        try:
+            import base64 as _b64
+
+            text_sources: List[str] = []
+
+            if strings_output:
+                text_sources.append(strings_output)
+
+            if file_path and os.path.isfile(file_path):
+                try:
+                    r = subprocess.run(
+                        ['strings', '-n', '8', file_path],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if r.returncode == 0:
+                        text_sources.append(r.stdout)
+                except Exception:
+                    pass
+
+            if evtx_data:
+                if isinstance(evtx_data, list):
+                    for evt in evtx_data:
+                        ed = (evt.get('EventData') or {})
+                        if isinstance(ed, dict):
+                            for val in ed.values():
+                                if isinstance(val, str):
+                                    text_sources.append(val)
+                        elif isinstance(ed, str):
+                            text_sources.append(ed)
+                elif isinstance(evtx_data, str):
+                    text_sources.append(evtx_data)
+
+            findings: List[Dict[str, Any]] = []
+
+            for text in text_sources:
+                full = text[:1_000_000]
+                # PowerShell encoded command patterns (first 3 in _ENCODED_CMD_PATTERNS)
+                for pat in self._ENCODED_CMD_PATTERNS[:3]:
+                    for m in pat.finditer(full):
+                        b64 = m.group(1).strip()
+                        decoded = self._try_b64_decode(b64, _b64)
+                        if decoded is None:
+                            continue
+                        iocs = list(set(self._PAYLOAD_SUSPICIOUS.findall(decoded)))[:20]
+                        findings.append({
+                            'type': 'encoded_powershell',
+                            'raw_match': m.group(0)[:300],
+                            'b64_payload': b64[:200],
+                            'decoded': decoded[:1000],
+                            'iocs': iocs,
+                            'severity': 'critical' if iocs else 'medium',
+                            'mitre': 'T1027.010',
+                            'mitre_name': 'Obfuscated Files or Information: Command Obfuscation',
+                        })
+                        if len(findings) >= 200:
+                            break
+                    if len(findings) >= 200:
+                        break
+
+                # certutil -decode / -decodehex patterns
+                for m in self._ENCODED_CMD_PATTERNS[3].finditer(full):
+                    findings.append({
+                        'type': 'certutil_decode',
+                        'raw_match': m.group(0)[:300],
+                        'target_file': m.group(1),
+                        'decoded': None,
+                        'iocs': [],
+                        'severity': 'high',
+                        'mitre': 'T1140',
+                        'mitre_name': 'Deobfuscate/Decode Files or Information',
+                    })
+                    if len(findings) >= 200:
+                        break
+
+                if len(findings) >= 200:
+                    break
+
+            critical = sum(1 for f in findings if f['severity'] == 'critical')
+            high = sum(1 for f in findings if f['severity'] == 'high')
+
+            return {
+                'tool': 'lolbin_encoded_command_decoder',
+                'status': 'success',
+                'finding_count': len(findings),
+                'critical_count': critical,
+                'high_count': high,
+                'findings': findings[:200],
+                'mitre': ['T1027.010', 'T1140'],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as exc:
+            return {
+                'tool': 'lolbin_encoded_command_decoder',
+                'status': 'error',
+                'error': str(exc),
+                'finding_count': 0,
+                'findings': [],
+                'timestamp': datetime.now().isoformat(),
+            }
+
+    def _try_b64_decode(self, payload: str, b64_mod) -> Optional[str]:
+        """Attempt base64 decode as UTF-16-LE (PowerShell) then UTF-8; return text or None."""
+        padded = payload + '=' * (-len(payload) % 4)
+        for encoding in ('utf-16-le', 'utf-8'):
+            try:
+                raw = b64_mod.b64decode(padded)
+                decoded = raw.decode(encoding, errors='replace')
+                printable = sum(1 for c in decoded if 32 <= ord(c) < 127)
+                if len(decoded) > 0 and printable / len(decoded) > 0.5:
+                    return decoded
+            except Exception:
+                pass
+        return None
+
+    # ----------------------------------------------------------------
+    # Gap 2 — LOLBin Obfuscation Pattern Detection
+    # ----------------------------------------------------------------
+
+    def detect_lolbin_patterns(
+        self,
+        strings_output: str = None,
+        file_path: str = None,
+        evtx_data: Any = None,
+    ) -> Dict[str, Any]:
+        """Detect LOLBin execution patterns in strings output, file, or EVTX data.
+
+        Covers: mshta script URIs, rundll32 user-path DLLs, regsvr32 Squiblydoo,
+        cscript/wscript scripts, wmic process create / /format, certutil urlcache.
+        """
+        try:
+            text_sources: List[str] = []
+
+            if strings_output:
+                text_sources.append(strings_output)
+
+            if file_path and os.path.isfile(file_path):
+                try:
+                    r = subprocess.run(
+                        ['strings', '-n', '6', file_path],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if r.returncode == 0:
+                        text_sources.append(r.stdout)
+                except Exception:
+                    pass
+
+            if evtx_data:
+                if isinstance(evtx_data, list):
+                    for evt in evtx_data:
+                        ed = (evt.get('EventData') or {})
+                        if isinstance(ed, dict):
+                            for val in ed.values():
+                                if isinstance(val, str):
+                                    text_sources.append(val)
+                        elif isinstance(ed, str):
+                            text_sources.append(ed)
+                elif isinstance(evtx_data, str):
+                    text_sources.append(evtx_data)
+
+            raw_findings: List[Dict[str, Any]] = []
+
+            for text in text_sources:
+                full = text[:500_000]
+                for spec in self._LOLBIN_PATTERNS:
+                    for m in spec['pattern'].finditer(full):
+                        matched = m.group(0)
+                        ctx_s = max(0, m.start() - 80)
+                        ctx_e = min(len(full), m.end() + 80)
+                        context = full[ctx_s:ctx_e]
+
+                        # cscript/wscript: elevate if from suspicious path
+                        sev = spec['severity']
+                        if 'path_flag' in spec and not spec['path_flag'].search(matched):
+                            sev = 'low'
+
+                        raw_findings.append({
+                            'type': spec['name'],
+                            'matched': matched[:300],
+                            'context': context,
+                            'severity': sev,
+                            'mitre': spec['mitre'],
+                            'description': spec['description'],
+                        })
+                        if len(raw_findings) >= 500:
+                            break
+                    if len(raw_findings) >= 500:
+                        break
+                if len(raw_findings) >= 500:
+                    break
+
+            # Deduplicate by (type, first 100 chars of matched)
+            seen: set = set()
+            findings: List[Dict[str, Any]] = []
+            for f in raw_findings:
+                key = (f['type'], f['matched'][:100])
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(f)
+
+            sev_counts: Dict[str, int] = {}
+            for f in findings:
+                sev_counts[f['severity']] = sev_counts.get(f['severity'], 0) + 1
+
+            return {
+                'tool': 'lolbin_pattern_detector',
+                'status': 'success',
+                'finding_count': len(findings),
+                'severity_counts': sev_counts,
+                'mitre_techniques': list({f['mitre'] for f in findings}),
+                'findings': findings[:200],
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as exc:
+            return {
+                'tool': 'lolbin_pattern_detector',
+                'status': 'error',
+                'error': str(exc),
+                'finding_count': 0,
+                'findings': [],
+                'timestamp': datetime.now().isoformat(),
+            }
+
+    # ----------------------------------------------------------------
+    # Gap 3 — WMI OBJECTS.DATA Persistence Detection
+    # ----------------------------------------------------------------
+
+    def detect_wmi_persistence(
+        self,
+        evidence_dir: str = None,
+        file_path: str = None,
+    ) -> Dict[str, Any]:
+        """Detect WMI event subscription persistence via OBJECTS.DATA analysis.
+
+        Walks the evidence directory for OBJECTS.DATA files and runs strings to
+        find persistence class names, script payloads, and suspicious IOCs.
+        """
+        try:
+            candidates: List[str] = []
+
+            if file_path and os.path.isfile(file_path):
+                candidates.append(file_path)
+
+            if evidence_dir and os.path.isdir(evidence_dir):
+                ev = Path(evidence_dir)
+                for name_glob in ('OBJECTS.DATA', 'objects.data', 'OBJECTS.data'):
+                    for p in ev.rglob(name_glob):
+                        if str(p) not in candidates:
+                            candidates.append(str(p))
+
+            files_examined: List[Dict[str, Any]] = []
+            findings: List[Dict[str, Any]] = []
+
+            for obj_path in candidates[:20]:
+                entry: Dict[str, Any] = {
+                    'path': obj_path,
+                    'size': 0,
+                    'indicators_found': [],
+                    'suspicious_payloads': [],
+                    'severity': 'info',
+                }
+                try:
+                    entry['size'] = os.path.getsize(obj_path)
+
+                    # strings -e l = little-endian 16-bit (wide)
+                    raw1 = subprocess.run(
+                        ['strings', '-n', '6', '-e', 'l', obj_path],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    # strings default = 7-bit ASCII
+                    raw2 = subprocess.run(
+                        ['strings', '-n', '6', obj_path],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    combined = (
+                        (raw1.stdout if raw1.returncode == 0 else '') + '\n' +
+                        (raw2.stdout if raw2.returncode == 0 else '')
+                    )
+
+                    found_indicators = [i for i in self._WMI_INDICATORS if i in combined]
+                    entry['indicators_found'] = found_indicators
+
+                    if found_indicators:
+                        lines = combined.splitlines()
+                        payloads: List[Dict[str, Any]] = []
+                        for idx, line in enumerate(lines):
+                            if any(ind in line for ind in found_indicators):
+                                ctx_start = max(0, idx - 3)
+                                ctx_end = min(len(lines), idx + 10)
+                                ctx = '\n'.join(lines[ctx_start:ctx_end])
+                                iocs = list(set(self._WMI_PAYLOAD_RE.findall(ctx)))[:10]
+                                if iocs or self._WMI_PAYLOAD_RE.search(line):
+                                    payloads.append({
+                                        'indicator_line': line.strip()[:200],
+                                        'context': ctx[:500],
+                                        'iocs': iocs,
+                                    })
+                            if len(payloads) >= 50:
+                                break
+
+                        entry['suspicious_payloads'] = payloads
+                        if payloads:
+                            entry['severity'] = 'critical'
+                        elif len(found_indicators) >= 3:
+                            entry['severity'] = 'high'
+                        elif found_indicators:
+                            entry['severity'] = 'medium'
+
+                except Exception as e:
+                    entry['error'] = str(e)
+
+                files_examined.append(entry)
+                if entry['severity'] in ('critical', 'high', 'medium'):
+                    findings.append(entry)
+
+            sev_order = ['critical', 'high', 'medium', 'low', 'info']
+            overall = 'info'
+            for s in sev_order:
+                if any(f['severity'] == s for f in findings):
+                    overall = s
+                    break
+
+            return {
+                'tool': 'wmi_persistence_detector',
+                'status': 'success',
+                'objects_data_files_found': len(candidates),
+                'files_examined': len(files_examined),
+                'finding_count': len(findings),
+                'overall_severity': overall,
+                'findings': findings[:50],
+                'all_files': files_examined[:20],
+                'mitre': 'T1546.003',
+                'mitre_name': 'Event Triggered Execution: Windows Management Instrumentation Event Subscription',
+                'timestamp': datetime.now().isoformat(),
+            }
+        except Exception as exc:
+            return {
+                'tool': 'wmi_persistence_detector',
+                'status': 'error',
+                'error': str(exc),
+                'finding_count': 0,
+                'findings': [],
+                'timestamp': datetime.now().isoformat(),
+            }
+
+
 # ---------------------------------------------------------------------------
 # ExtendedOrchestrator (includes new specialists)
 # ---------------------------------------------------------------------------
@@ -11534,6 +11999,7 @@ class ExtendedOrchestrator:
         self.vss = VSS_Specialist()
         self.zimmerman = ZIMMERMAN_Specialist()
         self.scheduled = SCHEDULED_TASK_Specialist()
+        self.lolbin = LOLBIN_Specialist()
         self.host_correlator = self._init_host_correlator()
         # New external tool specialists (bulk_extractor, dc3dd, zeek)
         self.bulk_extractor = BULK_EXTRACTOR_Specialist()
@@ -11594,6 +12060,7 @@ class ExtendedOrchestrator:
             'vm':             self.vm,
             'container':      self.container,
             'scheduled':      self.scheduled,
+            'lolbin':          self.lolbin,
             'host_correlator':self.host_correlator,
             'bulk_extractor': self.bulk_extractor,
             'dc3dd':          self.dc3dd,
@@ -11813,5 +12280,10 @@ class ExtendedOrchestrator:
                 'category': 'Scheduled Tasks & Backdoor Detection',
                 'functions': ['parse_windows_scheduled_tasks', 'parse_linux_crontabs', 'detect_backdoors'],
                 'tools': ['xml.etree.ElementTree (stdlib)', 'strings', 'getfattr'],
+            },
+            'lolbin': {
+                'category': 'LOLBin / Living-off-the-Land Detection',
+                'functions': ['decode_encoded_commands', 'detect_lolbin_patterns', 'detect_wmi_persistence'],
+                'tools': ['strings'],
             },
         }
