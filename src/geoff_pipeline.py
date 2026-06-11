@@ -2525,7 +2525,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             extracted_archives = []
             for archive_path in inventory.get("mobile_backups", []) + inventory.get("other_files", []):
                 header_type = _detect_file_type_from_header(archive_path)
-                if header_type in ("zip_archive", "gzip_archive", "tar_archive", "7zip_archive"):
+                if header_type in ("zip_archive", "gzip_archive", "tar_archive", "7zip_archive", "rar_archive"):
                     # Checkpoint dedup: use fast stat-based identity (path+size+mtime)
                     # Skipping SHA256 of multi-GB archives over NFS - redundant:
                     # extracted E01 images already embed their own integrity hashes

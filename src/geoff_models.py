@@ -269,6 +269,10 @@ def _detect_file_type_from_header(path: str) -> str | None:
         if header[:6] == b'7z\xbc\xaf\x27\x1c':
             return "7zip_archive"
 
+        # RAR archives (v1.5-4.x and v5+)
+        if header[:7] == b'Rar!\x1a\x07\x00' or header[:8] == b'Rar!\x1a\x07\x01\x00':
+            return "rar_archive"
+
         # SQLite databases (mobile artifacts)
         if header[:16] == b'SQLite format 3\x00':
             return "sqlite_db"
