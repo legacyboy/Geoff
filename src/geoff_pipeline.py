@@ -3097,6 +3097,21 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             except OSError:
                 pass
 
+        # Propagate partition offsets to extracted copies of disk images.
+        # Phase 1b only scans dev["evidence_files"] (original paths), but extracted
+        # archives add new paths to inventory["disk_images"] that share the same
+        # basename.  Without this, the {offset} template substitution falls back to
+        # 2048 for extracted copies, causing "Cannot determine file system type" on
+        # flat-filesystem images (e.g. FAT16 USB images with no partition table).
+        _bn_to_offset = {Path(k).name: v for k, v in image_offsets.items()
+                         if k != "_candidates" and isinstance(v, (list, int))}
+        for _fpath in inventory.get("disk_images", []):
+            if _fpath not in image_offsets:
+                _bn = Path(_fpath).name
+                if _bn in _bn_to_offset:
+                    image_offsets[_fpath] = _bn_to_offset[_bn]
+                    _fe_log(job_id, f"  📋 Propagated offset {_bn_to_offset[_bn]} to extracted copy: {_bn}")
+
         # ------------------------------------------------------------------
         # Phase 1c: Nuclear Deep Classification (filesystem walk inside disk images)
         # ------------------------------------------------------------------
@@ -5452,16 +5467,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     # --- Per-playbook evidence precheck ---
                     # Skip entire playbook for this device if no matching evidence types exist
                     dev_ev_types = set()
-                    for fpath in dev_ev.get('evidence_files', []):
-                        for ev_type_key, files in inventory.items():
-                            if isinstance(files, list) and fpath in files:
-                                dev_ev_types.add(ev_type_key)
+                    # Iterate over evidence type keys in dev_ev (which maps type->paths)
+                    # to find which evidence types this device actually has files for
+                    for ev_type_key, fpaths in dev_ev.items():
+                        if isinstance(fpaths, list) and len(fpaths) > 0:
+                            dev_ev_types.add(ev_type_key)
                     playbook_ev_types = set(pb_steps_def.keys())
-                    if not (dev_ev_types & playbook_ev_types):
-                        if job_id:
-                            _fe_log(job_id, f"  ⎘ {playbook_id} skipped for {dev_id} - no matching evidence types")
-                        continue
-                    
                     # Skip orphan-user playbooks for devices with no matching other_files
                     if playbook_id in ('PB-SIFT-041', 'PB-SIFT-042'):
                         _of = dev_ev.get('other_files', [])
@@ -6946,7 +6957,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         # Corroboration gate: count playbook findings BEFORE indicator hits drive severity.
         # If zero playbook findings exist with indicator hits present, cap at MEDIUM.
-        indicator_hits = evidence_report.get("indicator_hits", [])
         _gate_playbook_records = list(findings_writer.all_records())
         _gate_corroborated = sum(1 for f in _gate_playbook_records if f.get("status") == "completed")
         _uncorroborated = (_gate_corroborated == 0 and len(indicator_hits) > 0)

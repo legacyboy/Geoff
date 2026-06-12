@@ -2738,7 +2738,7 @@ class NarrativeReportGenerator:
         'pubmatic.com', 'openx.net', 'casalemedia.com', 'agkn.com',
         'adsrvr.org', 'adsymptotic.com', 'exponential.com', 'burstnet.com',
         'contextweb.com', 'bluekai.com', 'demdex.net', 'rlcdn.com',
-        'adsafeprotected.com', '2mdn.net', 'adform.net', 'adnxs.com',
+        'adsafeprotected.com', '2mdn.net', '2o7.net', 'adform.net', 'adnxs.com',
         'adzerk.net', 'tribalfusion.com', 'turn.com', 'invitemedia.com',
         'media6degrees.com', 'specificmedia.com', 'tidaltv.com',
         # Mozilla telemetry
@@ -3583,9 +3583,18 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
             t["technique_id"] for t in report_json.get("mitre_techniques", [])
             if isinstance(t, dict) and "technique_id" in t
         ]
+        _tmpl_email_iocs = report_json.get("email_iocs", {}) or {}
+        _tmpl_rp = _tmpl_email_iocs.get("return_path_mismatches", [])
+        _tmpl_real_spoof = [
+            m for m in _tmpl_rp
+            if isinstance(m, dict)
+            and "bounces.google.com" not in m.get("return_path_domain", "")
+            and m.get("from_domain", "") != m.get("return_path_domain", "")
+        ]
         return self._template_attack_chain(
             evil, severity, all_flags, lateral_indicators,
-            hit_categories, devices, users, mitres_observed=mitres_observed)
+            hit_categories, devices, users, mitres_observed=mitres_observed,
+            real_spoof_emails=_tmpl_real_spoof)
 
     def _template_attack_chain(self, evil: bool, severity: str,
                                 all_flags: List[dict],
@@ -3593,7 +3602,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                                 hit_categories: List[str],
                                 devices: List[str],
                                 users: List[str],
-                                mitres_observed: list = None) -> str:
+                                mitres_observed: list = None,
+                                real_spoof_emails: list = None) -> str:
         """Template-based attack chain when LLM is unavailable."""
         lines = []
 
@@ -3618,6 +3628,27 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 lines.append(
                     f"\nLateral movement was detected: "
                     f"{len(lateral_indicators)} cross-device event(s) observed.")
+            if real_spoof_emails:
+                lines.append(
+                    f"\n**Email spoofing confirmed** — {len(real_spoof_emails)} spoofing "
+                    f"email(s) identified via Return-Path mismatch (T1566 — Phishing). "
+                    f"These emails impersonated internal senders but were routed through "
+                    f"an external mail server, indicating a social engineering attack.")
+                for _i, _em in enumerate(real_spoof_emails[:5], 1):
+                    _frm = _em.get("from", "?")
+                    _to = _em.get("to", "?")
+                    _subj = _em.get("subject", "(no subject)")
+                    _rp = _em.get("return_path", "?")
+                    _rp_dom = _em.get("return_path_domain", "?")
+                    _body = str(_em.get("body_text", _em.get("body_snippet", ""))).strip()
+                    _body_excerpt = (_body[:400].replace("\n", " ").strip() + "…") if len(_body) > 400 else _body.replace("\n", " ").strip()
+                    lines.append(f"\n**Spoofing Email {_i}:**")
+                    lines.append(f"- **From:** `{_frm}`")
+                    lines.append(f"- **To:** `{_to}`")
+                    lines.append(f"- **Subject:** {_subj}")
+                    lines.append(f"- **Return-Path:** `{_rp}` (domain: `{_rp_dom}`)")
+                    if _body_excerpt:
+                        lines.append(f"- **Body:** {_body_excerpt}")
 
         # MITRE phases observed from behavioral flags AND attack_chain
         lines.append("\n## MITRE ATT&CK Techniques Observed\n")
@@ -3669,6 +3700,31 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
             lines.append(
                 "Insufficient evidence to determine attribution. "
                 "Manual review of flagged items is recommended.")
+
+        # Phishing / Email threats
+        if real_spoof_emails:
+            lines.append("\n## Phishing / Spoofed Emails\n")
+            lines.append(f"{len(real_spoof_emails)} email(s) identified with Return-Path mismatch (spoofing indicator):\n")
+            for i, em in enumerate(real_spoof_emails[:10], 1):
+                lines.append(f"### Email {i}\n")
+                lines.append(f"- **From:** `{em.get('from', '?')}`")
+                lines.append(f"- **To:** `{em.get('to', '?')}`")
+                lines.append(f"- **Subject:** {em.get('subject', 'No subject')}")
+                lines.append(f"- **Return-Path:** `{em.get('return_path', '?')}`")
+                lines.append(f"- **Spoofed domain:** `{em.get('return_path_domain', '?')}`")
+                body = em.get('body_text', '')
+                if body:
+                    lines.append(f"\n  **Body excerpt:** {body[:500].replace(chr(10), ' ')}")
+                headers = em.get('headers', {})
+                if headers:
+                    lines.append(f"\n  **Full Headers:**")
+                    for hdr_key in ('From', 'To', 'Subject', 'Date', 'Return-Path', 'Message-ID'):
+                        if hdr_key in headers:
+                            lines.append(f"    - {hdr_key}: `{headers[hdr_key]}`")
+                lines.append("")
+        elif evil:
+            lines.append("\n## Phishing / Spoofed Emails\n")
+            lines.append("No spoofed emails identified.")
 
         # Key evidence
         lines.append("\n## Key Evidence\n")
