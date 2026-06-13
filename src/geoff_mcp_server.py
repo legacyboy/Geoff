@@ -426,7 +426,7 @@ def registry_analyze(
     Run a Registry (RegRipper) analysis function directly.
 
     Common functions: run_regripper, parse_hive, extract_run_keys,
-    extract_services, extract_users, extract_network, extract_usb,
+    extract_services, extract_network, extract_usb,
     extract_shellbags, extract_sam.
 
     Args:
