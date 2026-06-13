@@ -29,6 +29,7 @@ and `parent_trace_id` so judges can reconstruct Geoff's complete reasoning chain
 | Critic | Validates each finding for forensic validity | embedded in findings as `"critic"` field |
 | Correlator | Finds cross-source causal/correlated/identity links | `correlation_event` |
 | ClaimVerifier | Checks every final claim against trace_ids | `claim_verification` |
+| RevisionLoop | Spawns revised hypotheses when claims are UNSUPPORTED | `hypothesis_revision` |
 | Narrative | Generates human-readable IR report | `narrative_report_path` in `find_evil_report.json` |
 
 All six agents run within a single Python process (no external API calls required).
@@ -297,6 +298,43 @@ The tool uses only the Python standard library (`html`, `json`, `argparse`) — 
 ---
 
 *Generated for the Geoff 5-star competition submission.*
+
+## Competition Guardrail Enforcement (C4)
+
+Geoff enforces 5 hard limits per investigation to prevent runaway execution, ensure every claim has evidence, and bound the revision loop. These are hard-coded in `src/geoff_pipeline.py` and visible in every `audit_trail.jsonl`.
+
+| Guardrail | Limit | Enforced Where | How to Verify |
+|-----------|-------|---------------|---------------|
+| **MAX_TOOL_INVOCATIONS** | 50 per investigation | Before every tool dispatch | `grep '"type": "hypothesis"' audit_trail.jsonl | wc -l` ≤ 50 |
+| **MAX_CLAIMS_PER_TRAIL** | 50 per investigation | In `_run_claim_verifier` loop | `grep '"type": "claim_verification"' audit_trail.jsonl | wc -l` ≤ 50 |
+| **MAX_CORRELATION_DEPTH** | 3 hops per correlation chain | In `_run_correlator` | `grep '"type": "correlation_event"' audit_trail.jsonl | wc -l` — max 3 per correlation chain |
+| **MAX_HYPOTHESIS_REVISIONS** | 3 revisions per verification cycle | In revision loop after C2 | `grep '"type": "hypothesis_revision"' audit_trail.jsonl | wc -l` ≤ 3 |
+| **MIN_EVIDENCE_PER_CLAIM** | ≥1 trace_id per claim | Claim record requires `source_trace_ids` | Each `claim_verification` record with VERIFIED status has ≥1 `source_trace_ids` |
+
+When a guardrail fires, it is logged to the job output (visible in the web UI's log view):
+
+```
+  ✗ MAX_TOOL_INVOCATIONS (50) reached - skipping volatility.memdump
+  [C1] 2 unsupported claims - generating revision hypotheses
+```
+
+### Seeing Guardrails in the Audit Trail
+
+Each guardrail event produces a traceable record:
+
+```
+# Hypothesis before every tool dispatch:
+grep '"type": "hypothesis"' audit_trail.jsonl | python3 -c "import sys,json; recs=[json.loads(l) for l in sys.stdin]; print(len(recs), 'hypotheses logged'); print(json.dumps(recs[0], indent=2))"
+
+# Revision hypothesis triggered by UNSUPPORTED claims:
+grep '"type": "hypothesis_revision"' audit_trail.jsonl | python3 -c "import sys,json; recs=[json.loads(l) for l in sys.stdin]; [print(r['hypothesis'][:80], r['revision_number']) for r in recs]"
+
+# Hallucination flags on claims:
+grep '"type": "claim_verification"' audit_trail.jsonl | python3 -c "import sys,json; recs=[json.loads(l) for l in sys.stdin]; [print(r.get('hallucination_flags',[])) for r in recs if 'hallucination_flags' in r]"
+
+# Entity alignment per claim:
+grep '"type": "claim_verification"' audit_trail.jsonl | python3 -c "import sys,json; recs=[json.loads(l) for l in sys.stdin]; [print(r['claim_text'][:60], r.get('entity_alignment_status',''), r.get('entity_alignment_reason','')) for r in recs if 'entity_alignment_status' in r]"
+```
 
 ## Concrete 3-Claim Trace Walkthrough
 
