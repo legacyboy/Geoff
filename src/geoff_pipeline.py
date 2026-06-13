@@ -1,3 +1,13 @@
+# ============ Competition Guardrails (C4: Constraint Implementation) ============
+MAX_TOOL_INVOCATIONS = 50        # Per investigation
+MIN_EVIDENCE_PER_CLAIM = 1       # Minimum trace_ids per claim
+MAX_CLAIMS_PER_TRAIL = 50        # Per investigation report
+MAX_CORRELATION_DEPTH = 3        # Prevent infinite correlation
+MAX_HYPOTHESIS_REVISIONS = 3     # Per verification cycle
+TOOL_INVOCATION_COUNT = 0        # Runtime counter
+CLAIM_COUNT = 0                  # Runtime counter
+# =================================================================================
+
 #!/usr/bin/env python3
 """Geoff DFIR - Main find_evil() investigation pipeline and phase management.
 
@@ -411,6 +421,58 @@ class PipelineContext:
             "description": description,
             "confidence": min(1.0, max(0.0, confidence)),
         }
+    def form_hypothesis(self, prior_findings=None):
+        """Generate investigation hypothesis from prior findings."""
+        if not prior_findings:
+            return {"hypothesis": "Initial survey: establishing baseline", "confidence": "medium"}
+        unresolved = []
+        if isinstance(prior_findings, list):
+            for f in prior_findings:
+                if isinstance(f, dict) and f.get("confidence", "high") != "high":
+                    unresolved.append(str(f.get("description", ""))[:200])
+        elif isinstance(prior_findings, dict):
+            for key in ["high_severity_findings", "medium_severity_findings"]:
+                items = prior_findings.get(key, [])
+                if isinstance(items, list):
+                    for f in items:
+                        if isinstance(f, dict) and f.get("confidence", "high") != "high":
+                            unresolved.append(str(f.get("description", ""))[:200])
+        if unresolved:
+            return {"hypothesis": f"Investigating: {unresolved[0]}" if unresolved else "Proceeding", "confidence": "medium"}
+        return {"hypothesis": "Proceeding to next stage", "confidence": "high"}
+
+    def check_hallucination_flags(self, claim_text):
+        """Check claim for hallucination patterns (numeric claims, absolute language)."""
+        import re
+        flags = []
+        nums = re.findall(r'\b(\d+)\s*(?:GB|MB|KB|files|emails|connections|users)\b', claim_text)
+        if nums:
+            flags.append({"type": "numeric_claim", "values": nums, "note": "Verify against tool output"})
+        for word in ["always", "never", "definitely", "undoubtedly", "impossible"]:
+            if re.search(r'\b' + word + r'\b', claim_text, re.I):
+                flags.append({"type": "absolute_language", "word": word, "note": "Verify claim boundary"})
+        return flags
+
+    def verify_entity_alignment(self, claim_text, evidence_records):
+        """Check if claim entities appear in supporting evidence."""
+        import re
+        entities = set()
+        for pat in [r'\b(?:\d{1,3}\.){3}\d{1,3}\b', r'(?:/[^/\s]+)+',
+                     r'[\w._%+-]+@[\w.-]+\.[\w]{2,}', r'\b\d{4}-\d{2}-\d{2}\b']:
+            entities.update(re.findall(pat, claim_text))
+        if not entities:
+            return "NO_ENTITIES", "No verifiable entities in claim"
+        evidence_txt = " ".join(
+            str(r.get("evidence", r.get("result", {}).get("stdout", "")))
+            for r in (evidence_records or []) if isinstance(r, dict)
+        )
+        found = [e for e in entities if e.lower() in evidence_txt.lower()]
+        if len(found) >= len(entities) * 0.5:
+            return "VERIFIED", f"{len(found)}/{len(entities)} entities match evidence"
+        elif found:
+            return "PARTIAL", f"{len(found)}/{len(entities)} entities found"
+        return "HALLUCINATED", "No claim entities found in supporting evidence"
+
 
     def write_trace_record(self, case_work_dir, record: dict):
         """Append a trace record to audit_trail.jsonl. Best-effort, never raises."""
@@ -490,7 +552,7 @@ def _run_correlator(findings: list, case_work_dir, job_id: str, call_llm_func=No
                             "type": "correlation_event",
                             "trace_id": corr_trace_id,
                             "linked_trace_ids": corr.get("linked_trace_ids", []),
-                            "relationship_type": corr.get("relationship_type", "CORRELATED"),
+                            "relationship_type": corr.get("relationship_type", "ENTITY_SHARED"),
                             "description": corr.get("description", ""),
                             "confidence": float(corr.get("confidence", 0.5)),
                         }
@@ -517,7 +579,7 @@ def _run_correlator(findings: list, case_work_dir, job_id: str, call_llm_func=No
                     "type": "correlation_event",
                     "trace_id": corr_trace_id,
                     "linked_trace_ids": trace_ids[:5],
-                    "relationship_type": "CORRELATED",
+                    "relationship_type": "ENTITY_SHARED",
                     "description": f"Multiple tools analyzed same artifact: {key}",
                     "confidence": 0.9,
                 }

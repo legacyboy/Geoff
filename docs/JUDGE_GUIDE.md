@@ -297,3 +297,57 @@ The tool uses only the Python standard library (`html`, `json`, `argparse`) — 
 ---
 
 *Generated for the Geoff 5-star competition submission.*
+
+## Concrete 3-Claim Trace Walkthrough
+
+The following walkthrough demonstrates how to trace any finding from the narrative report back to the specific tool execution that produced it — the mandatory 3-claim trace that every judge must perform.
+
+### How the Trace Chain Works
+
+Every finding in the narrative report carries a `trace_id`. Every step in `audit_trail.jsonl` carries both `trace_id` (self) and `parent_trace_id` (link to the hypothesis that spawned it). Together they form a chain:
+
+```
+Finding in narrative report
+  → trace_id on the claim_verification record
+    → parent_trace_id → the hypothesis that drove the investigation
+      → trace_id on the tool execution record
+        → raw tool output
+```
+
+### Walkthrough: 3 Claim Traces
+
+**Claim 1: "Suspicious IP communication detected"**
+
+1. Open `narrative_report.json` and find the finding with `description` containing an IP address
+2. Extract its `trace_id` field (present if the narrative was generated with trace chain)
+3. If no `trace_id` on the finding directly, search `audit_trail.jsonl` for `type: claim_verification` containing IP text
+4. From the `claim_verification` record, get `parent_trace_id` → this is the hypothesis UUID
+5. Search `audit_trail.jsonl` for `trace_id: <parent_trace_id>` → this finds the hypothesis
+6. From the hypothesis, find its parent's `trace_id` → this is the tool execution record
+7. The tool record shows: tool name, parameters, stdout excerpt, timestamp
+8. **Verify:** Does the tool output contain the IP and support the claim?
+
+**Claim 2: "File exfiltration via USB"**
+
+1. Search `audit_trail.jsonl` for `type: correlation_event` containing "file" or "USB"
+2. Extract the `linked_trace_ids` — these are the tool execution IDs
+3. For each linked trace_id, find the corresponding tool record
+4. Check: do the tool outputs (e.g., `usbstor` parser, `prefetch` analyzer) both reference the same device?
+5. **Verify:** The correlation event linked them — does the evidence support the causal link?
+
+**Claim 3: "Registry persistence mechanism"**
+
+1. Search `audit_trail.jsonl` for `type: claim_verification` with `verification_status: VERIFIED`
+2. Extract one `source_trace_ids` entry
+3. Find the tool record: `trace_id == source_trace_ids[0]`
+4. The tool record contains the exact registry tool output (e.g., `regripper`, `registry.printkey`)
+5. **Verify:** The registry key path in the claim matches the tool output
+
+### Using the Timeline Visualizer
+
+```bash
+python3 src/render_timeline.py --input /mnt/cases/<case_dir>/audit_trail.jsonl --output timeline.html
+# Open timeline.html in any browser
+# Color coding: blue=hypothesis, orange=recovery_arc, green/red/yellow=claim_verification, purple=correlation_event
+# Each card shows trace_id — click through to follow the chain
+```
