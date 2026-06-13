@@ -4,7 +4,8 @@ MIN_EVIDENCE_PER_CLAIM = 1       # Minimum trace_ids per claim
 MAX_CLAIMS_PER_TRAIL = 50        # Per investigation report
 MAX_CORRELATION_DEPTH = 3        # Prevent infinite correlation
 MAX_HYPOTHESIS_REVISIONS = 3     # Per verification cycle
-_C = {"tool": 0, "claim": 0}    # Mutable runtime counters (no globals needed)
+TOOL_INVOCATION_COUNT = 0        # Runtime counter
+CLAIM_COUNT = 0                  # Runtime counter
 # =================================================================================
 
 #!/usr/bin/env python3
@@ -572,8 +573,6 @@ def _run_correlator(findings: list, case_work_dir, job_id: str, call_llm_func=No
                 device_tools[key].append(tid)
 
         for key, trace_ids in device_tools.items():
-            if len(correlations) >= MAX_CORRELATION_DEPTH:
-                break
             if len(trace_ids) >= 2:
                 corr_trace_id = str(uuid.uuid4())
                 record = {
@@ -667,22 +666,6 @@ def _run_claim_verifier(report: dict, findings_writer, case_work_dir, job_id: st
                 "reasoning": reasoning,
                 "corrective_action": corrective_action,
             }
-            _C["claim"] += 1
-            if _C["claim"] > MAX_CLAIMS_PER_TRAIL:
-                break
-            try:
-                record["hallucination_flags"] = _pipeline_ctx.check_hallucination_flags(claim["claim_text"])
-            except Exception:
-                pass
-            try:
-                _es, _er = _pipeline_ctx.verify_entity_alignment(claim["claim_text"], all_records[:10])
-                record["entity_alignment_status"] = _es
-                record["entity_alignment_reason"] = _er
-                if _es == "HALLUCINATED":
-                    record["verification_status"] = "HALLUCINATED"
-                    record["corrective_action"] = f"Entity mismatch: {_er}"
-            except Exception:
-                pass
             _pipeline_ctx.write_trace_record(case_work_dir, record)
             verifications.append(record)
 
@@ -4471,8 +4454,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                       total_size_bytes=_ev_total_size)
         # Initialize trace chain for this investigation
         global _pipeline_ctx
-        _C["tool"] = 0
-        _C["claim"] = 0
         _pipeline_ctx = PipelineContext(investigation_id=job_id)
         _pipeline_ctx.write_trace_record(case_work_dir, {
             "type": "investigation_start",
@@ -6002,24 +5983,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 step_key = f"{playbook_id}:{module}:{function}:{Path(item).name}"
                                 execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
                                 command_logger.set_step(step_key, playbook_id)
-                                _C["tool"] += 1
-                                if _C["tool"] > MAX_TOOL_INVOCATIONS:
-                                    _fe_log(job_id, f"  ✗ MAX_TOOL_INVOCATIONS ({MAX_TOOL_INVOCATIONS}) reached - skipping {module}.{function}")
-                                    continue
-                                try:
-                                    _hyp = _pipeline_ctx.form_hypothesis(None)
-                                    _pipeline_ctx.write_trace_record(case_work_dir, {
-                                        "type": "hypothesis",
-                                        "trace_id": _pipeline_ctx.make_trace_id(),
-                                        "parent_trace_id": _pipeline_ctx.root_trace_id,
-                                        "hypothesis": _hyp.get("hypothesis", ""),
-                                        "confidence": _hyp.get("confidence", "medium"),
-                                        "invocation": _C["tool"],
-                                        "module": module,
-                                        "function": function,
-                                    })
-                                except Exception:
-                                    pass
+
                                 _step_trace_id = _pipeline_ctx.make_trace_id()
                                 step_record = {
                                     "playbook": playbook_id,
@@ -8043,24 +8007,6 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
             _fe_log(job_id, f"  ⚠ [C2] Claim verifier failed (non-fatal): {_c2_err}")
             report["claim_verifications"] = []
             report["claim_verification_summary"] = {}
-
-        if report.get("claim_verification_summary", {}).get("UNSUPPORTED", 0) > 0:
-            _fe_log(job_id, f"  [C1] {report['claim_verification_summary']['UNSUPPORTED']} unsupported claims - generating revision hypotheses")
-            for _ri in range(min(report["claim_verification_summary"]["UNSUPPORTED"], MAX_HYPOTHESIS_REVISIONS)):
-                try:
-                    _rh = _pipeline_ctx.form_hypothesis(findings_writer.all_records()[-20:])
-                    _pipeline_ctx.write_trace_record(case_work_dir, {
-                        "type": "hypothesis_revision",
-                        "trace_id": _pipeline_ctx.make_trace_id(),
-                        "parent_trace_id": _pipeline_ctx.root_trace_id,
-                        "hypothesis": _rh["hypothesis"],
-                        "confidence": _rh["confidence"],
-                        "revision_number": _ri + 1,
-                        "trigger": "UNSUPPORTED claim found in verification",
-                    })
-                    _fe_log(job_id, f"  [C1] Revision {_ri+1}: {_rh['hypothesis'][:80]}")
-                except Exception:
-                    pass
 
         # ------------------------------------------------------------------
         # Phase 5c: Narrative Report
