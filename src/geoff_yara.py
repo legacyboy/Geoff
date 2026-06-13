@@ -32,6 +32,8 @@ try:
 except ImportError:
     _ChainOfCustodyLog = None
 
+from geoff_dns_forensics import _BUILTIN_YARA_RULES
+
 # ---------------------------------------------------------------------------
 # Gap 3: DNS Forensics Specialist
 # ---------------------------------------------------------------------------

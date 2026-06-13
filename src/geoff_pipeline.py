@@ -2613,7 +2613,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 if fpath not in inventory.get("evtx_logs", []):
                                     inventory.setdefault("evtx_logs", []).append(fpath)
                                     _added += 1
-                            elif fext in ('.vmem', '.mem', '.dmp', '.raw', '.001'):
+                            elif fext in ('.vmem', '.mem', '.dmp', '.raw'):
                                 if fpath not in inventory["memory_dumps"]:
                                     inventory["memory_dumps"].append(fpath)
                                     _added += 1

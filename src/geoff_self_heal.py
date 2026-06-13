@@ -139,8 +139,6 @@ _TOOL_INSTALL_CMDS = {
     "oledump.py": "pip3 install oletools --break-system-packages",
     "upx": "sudo apt-get install -y -qq upx-ucl",
     "r2": "sudo apt-get install -y -qq radare2",
-    "inetsim": "sudo apt-get install -y -qq inetsim",
-    "fakedns": "pip3 install fakedns --break-system-packages",
 }
 
 

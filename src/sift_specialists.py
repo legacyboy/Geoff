@@ -1156,6 +1156,7 @@ class VOLATILITY_Specialist:
             'tool': 'volatility_fallback',
             'plugin': plugin,
             'status': 'success',
+            'stdout': '',
             'memory_dump': memory_dump,
             'timestamp': datetime.now().isoformat(),
         }

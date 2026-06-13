@@ -1093,7 +1093,7 @@ PLAYBOOK_STEPS = {
             ("sqlite", "analyze_sqlite", {"db_path": "{file}"}),
         ],
         "registry_hives": [
-            ("registry", "extract_users", {"hive_path": "{hive}"}),
+            ("registry", "parse", {"hive_path": "{hive}"}),
             ("registry", "parse_hive", {"hive_path": "{hive}"}),
         ],
     },
