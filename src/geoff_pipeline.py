@@ -347,11 +347,219 @@ remnux_orchestrator = None
 geoff_critic = None
 geoff_forensicator = None
 
+
+# ---------------------------------------------------------------------------
+# Universal Trace Chain - PipelineContext
+# ---------------------------------------------------------------------------
+
+class PipelineContext:
+    """Generates and propagates trace_ids for every hypothesis/step in the pipeline."""
+
+    def __init__(self, investigation_id: str = None):
+        self.investigation_id = investigation_id or str(uuid.uuid4())
+        self.root_trace_id = str(uuid.uuid4())
+
+    def make_trace_id(self) -> str:
+        return str(uuid.uuid4())
+
+    def write_trace_record(self, case_work_dir, record: dict):
+        """Append a trace record to audit_trail.jsonl. Best-effort, never raises."""
+        if case_work_dir is None:
+            return
+        try:
+            path = Path(str(case_work_dir)) / 'audit_trail.jsonl'
+            record.setdefault('ts', datetime.now().isoformat())
+            with open(path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, default=str) + '\n')
+        except Exception:
+            pass
+
+# Module-level pipeline context (reset per investigation inside find_evil)
+_pipeline_ctx = PipelineContext()
+
 # ---------------------------------------------------------------------------
 # Pipeline functions
 # ---------------------------------------------------------------------------
 
 
+
+
+# ---------------------------------------------------------------------------
+# C3: Cross-Source Correlator
+# ---------------------------------------------------------------------------
+
+def _run_correlator(findings: list, case_work_dir, job_id: str, call_llm_func=None) -> list:
+    """Identify cross-source links between findings and log correlation_event records."""
+    if not findings or case_work_dir is None:
+        return []
+    correlations = []
+    try:
+        high_findings = [
+            f for f in findings
+            if f.get("forensicator", {}).get("significance") in ("CRITICAL", "HIGH")
+            or f.get("evidence_chain", {}).get("significance") in ("CRITICAL", "HIGH")
+        ]
+        if not high_findings:
+            high_findings = findings[:20]
+
+        evidence_summaries = []
+        for f in high_findings[:30]:
+            ec = f.get("evidence_chain") or {}
+            fn = f.get("forensicator") or {}
+            trace_id = f.get("trace_id", str(uuid.uuid4()))
+            evidence_summaries.append({
+                "trace_id": trace_id,
+                "tool": ec.get("tool") or f"{f.get('module')}.{f.get('function')}",
+                "device_id": f.get("device_id", ""),
+                "significance": ec.get("significance") or fn.get("significance", "UNKNOWN"),
+                "note": fn.get("analyst_note") or ec.get("analyst_note") or "",
+                "indicators": fn.get("threat_indicators", []),
+            })
+
+        if call_llm_func and evidence_summaries:
+            prompt = (
+                "You are a DFIR analyst. Below are evidence findings from a forensic investigation.\n"
+                "Identify cross-source correlations: causal relationships, correlated artifacts, "
+                "or identity matches (same actor/tool seen in multiple sources).\n\n"
+                "Evidence:\n" + json.dumps(evidence_summaries, indent=2)[:6000] + "\n\n"
+                "Return a JSON array of correlation objects, each with fields:\n"
+                "  linked_trace_ids (array of 2+ trace_ids), relationship_type (CAUSAL|CORRELATED|IDENTITY),\n"
+                "  description (string), confidence (0.0-1.0)\n"
+                "Return only valid JSON array, no markdown."
+            )
+            try:
+                raw = call_llm_func(prompt, max_tokens=2000)
+                raw = raw.strip()
+                if raw.startswith("```"):
+                    raw = "\n".join(raw.split("\n")[1:-1])
+                corr_list = json.loads(raw)
+                if isinstance(corr_list, list):
+                    for corr in corr_list:
+                        corr_trace_id = str(uuid.uuid4())
+                        record = {
+                            "type": "correlation_event",
+                            "trace_id": corr_trace_id,
+                            "linked_trace_ids": corr.get("linked_trace_ids", []),
+                            "relationship_type": corr.get("relationship_type", "CORRELATED"),
+                            "description": corr.get("description", ""),
+                            "confidence": float(corr.get("confidence", 0.5)),
+                        }
+                        _pipeline_ctx.write_trace_record(case_work_dir, record)
+                        correlations.append(record)
+            except Exception:
+                pass
+
+        device_tools = {}
+        for f in findings:
+            did = f.get("device_id", "")
+            ef = f.get("evidence_file", "")
+            tid = f.get("trace_id")
+            if did and ef and tid:
+                key = f"{did}:{Path(ef).name}"
+                if key not in device_tools:
+                    device_tools[key] = []
+                device_tools[key].append(tid)
+
+        for key, trace_ids in device_tools.items():
+            if len(trace_ids) >= 2:
+                corr_trace_id = str(uuid.uuid4())
+                record = {
+                    "type": "correlation_event",
+                    "trace_id": corr_trace_id,
+                    "linked_trace_ids": trace_ids[:5],
+                    "relationship_type": "CORRELATED",
+                    "description": f"Multiple tools analyzed same artifact: {key}",
+                    "confidence": 0.9,
+                }
+                _pipeline_ctx.write_trace_record(case_work_dir, record)
+                correlations.append(record)
+
+    except Exception:
+        pass
+    return correlations
+
+
+# ---------------------------------------------------------------------------
+# C2: Live Claim Verifier
+# ---------------------------------------------------------------------------
+
+def _run_claim_verifier(report: dict, findings_writer, case_work_dir, job_id: str) -> list:
+    """Verify every proposed claim has a trace_id in the evidence store. Logs claim_verification records."""
+    if case_work_dir is None:
+        return []
+    verifications = []
+    try:
+        all_records = findings_writer.all_records() if hasattr(findings_writer, "all_records") else []
+        known_trace_ids = {r.get("trace_id") for r in all_records if r.get("trace_id")}
+
+        claims = []
+
+        iocs = report.get("iocs") or {}
+        for ioc_type, ioc_list in iocs.items():
+            if isinstance(ioc_list, list):
+                for ioc_val in ioc_list[:20]:
+                    claims.append({
+                        "claim_text": f"IOC {ioc_type}: {ioc_val}",
+                        "source_trace_ids": [
+                            r.get("trace_id") for r in all_records
+                            if r.get("trace_id") and ioc_type in str(r.get("result", ""))
+                            and str(ioc_val) in str(r.get("result", ""))
+                        ][:5],
+                    })
+
+        attack_chain = report.get("attack_chain") or {}
+        for stage_name, stage_data in attack_chain.items():
+            if isinstance(stage_data, dict):
+                note = stage_data.get("analyst_note") or stage_data.get("summary", "")
+                if note:
+                    claims.append({
+                        "claim_text": f"Attack chain stage {stage_name}: {str(note)[:100]}",
+                        "source_trace_ids": [
+                            r.get("trace_id") for r in all_records
+                            if r.get("trace_id") and stage_name.lower() in str(r.get("evidence_chain", "")).lower()
+                        ][:5],
+                    })
+
+        for rec in all_records:
+            ec = rec.get("evidence_chain") or {}
+            if ec.get("significance") in ("CRITICAL", "HIGH") and ec.get("analyst_note"):
+                claims.append({
+                    "claim_text": ec["analyst_note"][:150],
+                    "source_trace_ids": [rec.get("trace_id")] if rec.get("trace_id") else [],
+                })
+
+        for claim in claims[:50]:
+            source_ids = [t for t in claim.get("source_trace_ids", []) if t]
+            verified_ids = [t for t in source_ids if t in known_trace_ids]
+
+            if verified_ids:
+                status = "VERIFIED"
+                corrective_action = None
+                reasoning = f"Claim backed by {len(verified_ids)} traced evidence record(s)"
+            elif source_ids:
+                status = "UNSUPPORTED"
+                corrective_action = "Trace IDs referenced but not found in evidence store - requires manual review"
+                reasoning = "Source trace IDs not found in current evidence set"
+            else:
+                status = "HALLUCINATED"
+                corrective_action = "Remove or downgrade claim - no supporting evidence trace found"
+                reasoning = "No trace_id links found for this claim"
+
+            record = {
+                "type": "claim_verification",
+                "trace_id": str(uuid.uuid4()),
+                "claim_text": claim["claim_text"],
+                "source_trace_ids": source_ids,
+                "verification_status": status,
+                "reasoning": reasoning,
+                "corrective_action": corrective_action,
+            }
+            _pipeline_ctx.write_trace_record(case_work_dir, record)
+            verifications.append(record)
+
+    except Exception:
+        pass
+    return verifications
 
 def _advance_queue(job_id: str = None) -> None:
     """Auto-advance queue after job completion. Post-completion hook for run_full_investigation."""
@@ -4132,6 +4340,16 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         _audit_append(case_work_dir, "case_init", job_id=job_id, evidence_dir=str(evidence_dir),
                       evidence_count=_ev_count, evidence_types=_ev_types,
                       total_size_bytes=_ev_total_size)
+        # Initialize trace chain for this investigation
+        global _pipeline_ctx
+        _pipeline_ctx = PipelineContext(investigation_id=job_id)
+        _pipeline_ctx.write_trace_record(case_work_dir, {
+            "type": "investigation_start",
+            "trace_id": _pipeline_ctx.root_trace_id,
+            "parent_trace_id": None,
+            "investigation_id": job_id,
+            "evidence_dir": str(evidence_dir),
+        })
 
         # Crash Recovery - reset any 'running' steps from previous runs
         for pb_file in case_work_dir.glob("output/*.json"):
@@ -5654,6 +5872,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                 execution_hash = hashlib.md5(f"{step_key}:{json.dumps(params, sort_keys=True, default=str)}".encode()).hexdigest()[:12]
                                 command_logger.set_step(step_key, playbook_id)
 
+                                _step_trace_id = _pipeline_ctx.make_trace_id()
                                 step_record = {
                                     "playbook": playbook_id,
                                     "step_key": step_key,
@@ -5667,6 +5886,8 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     "owner": dev.get("owner"),
                                     "status": "running",
                                     "started_at": datetime.now().isoformat(),
+                                    "trace_id": _step_trace_id,
+                                    "parent_trace_id": _pipeline_ctx.root_trace_id,
                                 }
 
                                 # Idempotency: skip if already completed with same inputs
@@ -5743,6 +5964,17 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                     step_record["_coc_pre_hash_future"] = _start_hash_async(item)
                                 # Fail-forward: try fallback chain instead of
                                 # dumb retries on the same tool
+                                # Log hypothesis: what we plan to investigate
+                                _pipeline_ctx.write_trace_record(case_work_dir, {
+                                    "type": "hypothesis",
+                                    "trace_id": _step_trace_id,
+                                    "parent_trace_id": _pipeline_ctx.root_trace_id,
+                                    "hypothesis": f"Investigate {module}.{function} on {Path(item).name} for {playbook_id}",
+                                    "selected_tool": f"{module}.{function}",
+                                    "reasoning": f"Playbook {playbook_id} step targeting {ev_type} evidence",
+                                    "device_id": dev_id,
+                                    "evidence_file": item,
+                                })
                                 result = _execute_fallback_chain(module, function, params,
                                                                   evidence_path=item, job_id=job_id)
                                 exec_cache.set(exec_key, result)
@@ -5755,6 +5987,15 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                             step_record["error"] = f"Timeout: {result.get('stderr', '')} (CIFS network latency may cause slow reads on compressed E01 images)"
                                             step_record["result"] = {"status": "failed", "stdout": "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "timeout"}
                                             steps_failed += 1
+                                            _pipeline_ctx.write_trace_record(case_work_dir, {
+                                                "type": "recovery_arc",
+                                                "trace_id": _pipeline_ctx.make_trace_id(),
+                                                "parent_trace_id": _step_trace_id,
+                                                "failure_reason": f"Tool timeout: {module}.{function}",
+                                                "recovery_strategy": "continue_pipeline",
+                                                "new_hypothesis": f"Timeout on {Path(item).name}; skip and continue with remaining steps",
+                                                "device_id": dev_id,
+                                            })
                                             _fe_log(job_id, f"  ✗ {module}.{function} → timeout (CIFS network latency may cause slow reads on compressed E01 images)")
                                             findings_writer.append(step_record)
                                             pb_findings.append(step_record)
@@ -5787,6 +6028,16 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 step_record["error"] = f"Empty or invalid output from {module}.{function}"
                                                 step_record["result"] = {"status": "failed", "stdout": stdout or "", "stderr": result.get('stderr', ''), "artifacts": [], "error": "empty output"}
                                                 steps_failed += 1
+                                                _pipeline_ctx.write_trace_record(case_work_dir, {
+                                                    "type": "recovery_arc",
+                                                    "trace_id": _pipeline_ctx.make_trace_id(),
+                                                    "parent_trace_id": _step_trace_id,
+                                                    "failure_reason": f"Empty output from {module}.{function}",
+                                                    "recovery_strategy": "fallback_chain_or_skip",
+                                                    "new_hypothesis": f"Check alternative tools for {ev_type} evidence on {dev_id}",
+                                                    "device_id": dev_id,
+                                                    "evidence_file": item,
+                                                })
                                             else:
                                                 step_record["status"] = "completed"
                                                 step_record["result"] = result
@@ -7515,6 +7766,23 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         )
         report["post_run_retry"] = _retry_summary
 
+        # ------------------------------------------------------------------
+        # C3: Cross-Source Correlation (5-star upgrade)
+        # ------------------------------------------------------------------
+        _fe_log(job_id, "  [C3] Running cross-source correlator...")
+        try:
+            _correlations = _run_correlator(
+                findings=findings_writer.all_records(),
+                case_work_dir=case_work_dir,
+                job_id=job_id,
+                call_llm_func=call_llm,
+            )
+            report["correlation_events"] = _correlations
+            _fe_log(job_id, f"  [C3] {len(_correlations)} correlation_event records written")
+        except Exception as _c3_err:
+            _fe_log(job_id, f"  ⚠ [C3] Correlator failed (non-fatal): {_c3_err}")
+            report["correlation_events"] = []
+
         # Recompute processed paths after retry (retry may have added records)
         processed_paths = set()
         for rec in findings_writer.all_records():
@@ -7607,6 +7875,26 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                     )
             except Exception as _ioc_val_err:
                 _fe_log_with_exception(job_id, "  ⚠ Final IOC Critic validation failed", _ioc_val_err)
+
+        # ------------------------------------------------------------------
+        # C2: Live Claim Verifier (5-star upgrade)
+        # ------------------------------------------------------------------
+        _fe_log(job_id, "  [C2] Running claim verifier...")
+        try:
+            _verifications = _run_claim_verifier(
+                report=report,
+                findings_writer=findings_writer,
+                case_work_dir=case_work_dir,
+                job_id=job_id,
+            )
+            _ver_counts = {s: sum(1 for v in _verifications if v["verification_status"] == s) for s in ("VERIFIED", "HALLUCINATED", "UNSUPPORTED")}
+            report["claim_verifications"] = _verifications
+            report["claim_verification_summary"] = _ver_counts
+            _fe_log(job_id, f"  [C2] {len(_verifications)} claims verified: {_ver_counts}")
+        except Exception as _c2_err:
+            _fe_log(job_id, f"  ⚠ [C2] Claim verifier failed (non-fatal): {_c2_err}")
+            report["claim_verifications"] = []
+            report["claim_verification_summary"] = {}
 
         # ------------------------------------------------------------------
         # Phase 5c: Narrative Report
