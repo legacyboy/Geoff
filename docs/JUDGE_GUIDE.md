@@ -6,6 +6,37 @@ criteria, explains the trace chain, and tells judges exactly how to verify each
 
 ---
 
+## 0. Geoff's Cognitive Architecture
+
+Geoff's investigation pipeline follows this staged reasoning architecture:
+
+```
+Manager
+  └─► Forensicator (multi-agent: one per device × evidence type)
+        └─► Critic (per-step validation + batch review)
+              └─► Correlator (C3: cross-source evidence linking)
+                    └─► ClaimVerifier (C2: accuracy gate before report)
+                          └─► Narrative (final human-readable report)
+```
+
+Each transition in this chain is logged to `audit_trail.jsonl` with a `trace_id`
+and `parent_trace_id` so judges can reconstruct Geoff's complete reasoning chain.
+
+| Stage | Role | JSONL record types |
+|-------|------|--------------------|
+| Manager | Approves/adjusts investigation plan | `case_init`, `investigation_start` |
+| Forensicator | Executes playbook steps per device | `hypothesis` (intent), step records in `findings.jsonl` |
+| Critic | Validates each finding for forensic validity | embedded in findings as `"critic"` field |
+| Correlator | Finds cross-source causal/correlated/identity links | `correlation_event` |
+| ClaimVerifier | Checks every final claim against trace_ids | `claim_verification` |
+| Narrative | Generates human-readable IR report | `narrative_report_path` in `find_evil_report.json` |
+
+All six agents run within a single Python process (no external API calls required).
+Multi-agent behavior is architectural — each stage has distinct logic and
+produces distinct record types that judges can verify independently.
+
+---
+
 ## 1. The Trace Chain — How to Read It
 
 Every record in `audit_trail.jsonl` carries two fields that connect the dots:
@@ -26,10 +57,13 @@ python3 src/render_timeline.py \
   --output /tmp/timeline.html
 ```
 Open `/tmp/timeline.html` in any browser. Color legend:
-- **Blue** — Hypothesis (what Geoff planned to investigate)
-- **Orange** — Recovery Arc (what Geoff did when a step failed)
-- **Green** — Correlation Event (cross-source links Geoff identified)
-- **Purple** — Claim Verification (accuracy gate: VERIFIED / HALLUCINATED / UNSUPPORTED)
+- 🔍 **Blue** — Hypothesis (what Geoff planned to investigate before tool dispatch)
+- 🔄 **Orange** — Recovery Arc (what Geoff did when a step failed or returned empty output)
+- 🔗 **Purple** — Correlation Event (cross-source links Geoff identified)
+- ✅ **Green** — Claim Verification VERIFIED (claim backed by a real evidence trace)
+- ❌ **Red** — Claim Verification HALLUCINATED (no supporting evidence trace)
+- ⚠️ **Yellow** — Claim Verification UNSUPPORTED (trace_id referenced but not found)
+- ⚙️ **Gray** — Other tool steps and pipeline events
 
 ---
 
@@ -185,14 +219,80 @@ echo "Open /tmp/timeline.html in a browser"
 
 ## 4. Rubric Mapping Summary
 
-| Rubric Criterion | Record Type(s) | Key Field |
-|-----------------|----------------|-----------|
-| C1: Hypothesis-driven | `hypothesis` | `hypothesis`, `selected_tool`, `reasoning` |
-| C1: Self-correction | `recovery_arc` | `failure_reason`, `recovery_strategy` |
-| C2: Claim accuracy | `claim_verification` | `verification_status`, `source_trace_ids` |
-| C3: Cross-source | `correlation_event` | `linked_trace_ids`, `relationship_type` |
-| C6: Visualization | HTML output | `render_timeline.py --input ... --output ...` |
-| Transparency | All records | `trace_id`, `parent_trace_id` |
+| Rubric Criterion | Record Type(s) | Key Field | How to Verify |
+|-----------------|----------------|-----------|---------------|
+| C1: Hypothesis-driven | `hypothesis` | `hypothesis`, `selected_tool`, `reasoning` | `grep '"type": "hypothesis"' audit_trail.jsonl \| wc -l` |
+| C1: Self-correction | `recovery_arc` | `failure_reason`, `recovery_strategy` | `grep '"type": "recovery_arc"' audit_trail.jsonl` |
+| C2: Claim accuracy | `claim_verification` | `verification_status`, `source_trace_ids` | See claim verification commands in Section 2 |
+| C3: Cross-source | `correlation_event` | `linked_trace_ids`, `relationship_type` | `grep '"type": "correlation_event"' audit_trail.jsonl` |
+| C4: Multi-agent | Architecture | Manager→Forensicator→Critic→Correlator→ClaimVerifier | See Section 0: Cognitive Architecture |
+| C5: Trace chain | All records | `trace_id`, `parent_trace_id` | Every record — follow parent_trace_id to root |
+| C6: Visualization | HTML output | `render_timeline.py --input ... --output ...` | `python3 src/render_timeline.py --input audit_trail.jsonl --output /tmp/t.html` |
+
+---
+
+## 5. Criterion-by-Criterion Quick Reference
+
+### C1 — Hypothesis-Driven Reasoning
+**Look for:** `type: hypothesis` records before each tool call, `type: recovery_arc` after failures.
+```bash
+grep '"type": "hypothesis"' audit_trail.jsonl | head -3 | python3 -c "import sys,json; [print(json.loads(l)['hypothesis']) for l in sys.stdin]"
+```
+Each record shows `selected_tool` (what Geoff chose) and `reasoning` (why), logged *before* execution.
+
+### C2 — IR Accuracy / Anti-Hallucination
+**Look for:** `type: claim_verification` records with `verification_status` of VERIFIED / HALLUCINATED / UNSUPPORTED.
+```bash
+grep '"type": "claim_verification"' audit_trail.jsonl | python3 -c "
+import sys, json, collections
+recs = list(map(json.loads, sys.stdin))
+print(collections.Counter(r['verification_status'] for r in recs))
+"
+```
+A VERIFIED result means the claim traces back to a real evidence artifact. HALLUCINATED means no supporting trace was found.
+
+### C3 — Cross-Source Correlation
+**Look for:** `type: correlation_event` records with `relationship_type` of CAUSAL, CORRELATED, or IDENTITY.
+```bash
+grep '"type": "correlation_event"' audit_trail.jsonl | python3 -c "
+import sys, json
+for r in map(json.loads, sys.stdin):
+    print(r['relationship_type'], r['confidence'], r['description'][:60])
+"
+```
+
+### C4 — Multi-Agent Architecture
+**Look for:** The staged pipeline in the source code — not prompt-based, but architectural:
+- `geoff_pipeline.py`: `find_evil()` orchestrates the full pipeline
+- `geoff_forensicator.py`: per-device specialist agents
+- `geoff_critic.py`: validation agents
+- `_run_correlator()`: cross-source synthesis
+- `_run_claim_verifier()`: accuracy gate
+- `narrative_report.py`: final narrative generation
+
+Each stage is a distinct Python module with its own LLM prompt strategy and output schema.
+
+### C5 — Trace Chain (Every Record Has trace_id + parent_trace_id)
+**Look for:** Every record in `audit_trail.jsonl` has `trace_id` and most have `parent_trace_id`.
+```bash
+python3 -c "
+import json
+recs = [json.loads(l) for l in open('audit_trail.jsonl') if l.strip()]
+has_trace = sum(1 for r in recs if r.get('trace_id'))
+has_parent = sum(1 for r in recs if r.get('parent_trace_id'))
+print(f'{has_trace}/{len(recs)} records have trace_id, {has_parent} have parent_trace_id')
+"
+```
+
+### C6 — Timeline Visualization
+**Run:**
+```bash
+python3 /home/sansforensics/Geoff/src/render_timeline.py \
+  --input /path/to/case_work_dir/audit_trail.jsonl \
+  --output /tmp/geoff_timeline.html
+```
+Open the HTML in any browser. The instruction banner at the top explains how to read it.
+The tool uses only the Python standard library (`html`, `json`, `argparse`) — no pip installs needed.
 
 ---
 

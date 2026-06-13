@@ -353,14 +353,64 @@ geoff_forensicator = None
 # ---------------------------------------------------------------------------
 
 class PipelineContext:
-    """Generates and propagates trace_ids for every hypothesis/step in the pipeline."""
+    """Tracks trace_id lineage across the investigation pipeline."""
 
     def __init__(self, investigation_id: str = None):
         self.investigation_id = investigation_id or str(uuid.uuid4())
         self.root_trace_id = str(uuid.uuid4())
+        self.current_hypothesis_id = None
 
     def make_trace_id(self) -> str:
         return str(uuid.uuid4())
+
+    def new_hypothesis(self, hypothesis: str, tool: str, reasoning: str) -> dict:
+        self.current_hypothesis_id = str(uuid.uuid4())
+        return {
+            "type": "hypothesis",
+            "trace_id": self.current_hypothesis_id,
+            "parent_trace_id": self.root_trace_id,
+            "hypothesis": hypothesis,
+            "selected_tool": tool,
+            "reasoning": reasoning,
+        }
+
+    def step_trace(self, step_info: dict) -> dict:
+        """Add trace_id and parent_trace_id to every step record."""
+        record = dict(step_info)
+        record["trace_id"] = str(uuid.uuid4())
+        record["parent_trace_id"] = self.current_hypothesis_id or self.root_trace_id
+        return record
+
+    def recovery_arc(self, failure_reason: str, strategy: str, new_hypothesis: str) -> dict:
+        return {
+            "type": "recovery_arc",
+            "trace_id": str(uuid.uuid4()),
+            "parent_trace_id": self.current_hypothesis_id or self.root_trace_id,
+            "failure_reason": failure_reason,
+            "recovery_strategy": strategy,
+            "new_hypothesis": new_hypothesis,
+        }
+
+    def claim_verification(self, claim: str, trace_ids: list, status: str, reasoning: str) -> dict:
+        return {
+            "type": "claim_verification",
+            "trace_id": str(uuid.uuid4()),
+            "parent_trace_id": self.current_hypothesis_id or self.root_trace_id,
+            "claim_text": claim,
+            "source_trace_ids": trace_ids[:10],
+            "verification_status": status,
+            "reasoning": reasoning,
+        }
+
+    def correlation_event(self, linked_ids: list, rel_type: str, description: str, confidence: float) -> dict:
+        return {
+            "type": "correlation_event",
+            "trace_id": str(uuid.uuid4()),
+            "linked_trace_ids": linked_ids[:10],
+            "relationship_type": rel_type,
+            "description": description,
+            "confidence": min(1.0, max(0.0, confidence)),
+        }
 
     def write_trace_record(self, case_work_dir, record: dict):
         """Append a trace record to audit_trail.jsonl. Best-effort, never raises."""

@@ -20,12 +20,20 @@ from pathlib import Path
 
 
 TYPE_COLORS = {
-    "hypothesis": "#4a90d9",
-    "recovery_arc": "#f5a623",
-    "correlation_event": "#7ed321",
-    "claim_verification": "#9b59b6",
-    "investigation_start": "#95a5a6",
-    "case_init": "#95a5a6",
+    "hypothesis": "#4a90d9",           # blue  🔍
+    "recovery_arc": "#f5a623",          # orange 🔄
+    "correlation_event": "#9b59b6",    # purple 🔗
+    "claim_verification": "#27ae60",   # green (VERIFIED default) ✅
+    "investigation_start": "#7f8c8d",  # gray  ⚙️
+    "case_init": "#7f8c8d",            # gray  ⚙️
+}
+
+TYPE_EMOJIS = {
+    "hypothesis": "🔍",
+    "recovery_arc": "🔄",
+    "correlation_event": "🔗",
+    "investigation_start": "⚙️",
+    "case_init": "⚙️",
 }
 
 TYPE_LABELS = {
@@ -38,9 +46,15 @@ TYPE_LABELS = {
 }
 
 VERIFICATION_COLORS = {
-    "VERIFIED": "#27ae60",
-    "HALLUCINATED": "#e74c3c",
-    "UNSUPPORTED": "#f39c12",
+    "VERIFIED": "#27ae60",     # green  ✅
+    "HALLUCINATED": "#e74c3c", # red    ❌
+    "UNSUPPORTED": "#f39c12",  # yellow ⚠️
+}
+
+VERIFICATION_EMOJIS = {
+    "VERIFIED": "✅",
+    "HALLUCINATED": "❌",
+    "UNSUPPORTED": "⚠️",
 }
 
 
@@ -102,11 +116,18 @@ def render_html(records: list, output_path: str) -> None:
 
     def make_node(rec: dict, idx: int) -> str:
         rtype = rec.get("type", "unknown")
-        color = TYPE_COLORS.get(rtype, "#bdc3c7")
+        color = TYPE_COLORS.get(rtype, "#7f8c8d")
         label = TYPE_LABELS.get(rtype, rtype)
+        emoji = TYPE_EMOJIS.get(rtype, "⚙️")
         trace_id = rec.get("trace_id", "")
         ts = rec.get("ts", "")
         short_id = trace_id[:8] if trace_id else f"rec-{idx}"
+
+        # For claim_verification, use per-status color
+        if rtype == "claim_verification":
+            vs = rec.get("verification_status", "")
+            color = VERIFICATION_COLORS.get(vs, "#95a5a6")
+            emoji = VERIFICATION_EMOJIS.get(vs, "⚠️")
 
         # Verification badge
         badge = ""
@@ -134,6 +155,7 @@ def render_html(records: list, output_path: str) -> None:
         return f"""
 <div class='node' style='border-left:4px solid {color}'>
   <div class='node-header' onclick="toggleNode('{node_id}')">
+    <span class='node-emoji'>{emoji}</span>
     <span class='node-type' style='color:{color}'>{_esc(label)}</span>{badge}
     <span class='node-id'>#{_esc(short_id)}</span>
     <span class='node-ts'>{_esc(ts[:19] if ts else '')}</span>
@@ -225,11 +247,27 @@ def render_html(records: list, output_path: str) -> None:
   .badge {{ border-radius: 3px; padding: 1px 6px; font-size: 11px; color: white; }}
   .empty {{ color: #555; font-style: italic; padding: 8px; }}
   .section-toggle {{ display: none; }}
+  .node-emoji {{ font-size: 14px; margin-right: 2px; }}
+  .instructions {{ background: #0f3460; border: 1px solid #4a90d9; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; line-height: 1.7; }}
+  .instructions code {{ background: #1a1a2e; padding: 1px 4px; border-radius: 3px; }}
 </style>
 </head>
 <body>
 <h1>Geoff — Cognitive Trace Timeline</h1>
 <div class="subtitle">audit_trail.jsonl — {total} records total</div>
+
+<div class="instructions">
+  <strong>For judges:</strong>
+  To verify <strong>C2 accuracy</strong>, look for <span style="color:#27ae60">✅ claim_verification</span> records — each shows VERIFIED / HALLUCINATED / UNSUPPORTED status.<br>
+  To trace <strong>C1 reasoning</strong>, follow <code>parent_trace_id</code> chains — every hypothesis, recovery arc, and step links back to the root investigation.<br>
+  To verify <strong>C3 cross-source correlation</strong>, look for <span style="color:#9b59b6">🔗 correlation_event</span> records — CAUSAL / CORRELATED / IDENTITY relationships.<br>
+  Color legend:
+  <span style="color:#4a90d9">🔍 Hypothesis</span> •
+  <span style="color:#f5a623">🔄 Recovery Arc</span> •
+  <span style="color:#9b59b6">🔗 Correlation</span> •
+  <span style="color:#27ae60">✅ Verified</span> <span style="color:#e74c3c">❌ Hallucinated</span> <span style="color:#f39c12">⚠️ Unsupported</span> •
+  <span style="color:#7f8c8d">⚙️ Tool Step</span>
+</div>
 
 <div class="stats">
   <div class="stat" style="border-top:3px solid #4a90d9">
