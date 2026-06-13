@@ -119,6 +119,10 @@ DFIR investigations require three properties that single-agent frameworks strugg
 
 ### Component Architecture
 
+> Full, GitHub-rendered architecture diagrams (system layers, the Triad agent loop,
+> the two-pass `find_evil` pipeline, and the specialist layer) live in
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The ASCII overview below is a quick summary.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              GEOFF Web Interface (Flask)                 │
