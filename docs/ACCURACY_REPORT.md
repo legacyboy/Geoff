@@ -294,6 +294,39 @@ All 14 caps removed. Extracted evidence is now copied to `case_work_dir/extracte
 
 ---
 
+
+## 12. Self-Heal Failure Analysis (2026-06-13)
+
+### 12.1 REMnux Self-Heal
+
+During the hacking-case investigation (fe-2f1f1356ebeb), two self-heal events fired for REMnux tools:
+
+| Playbook Step | Self-Heal Attempt | Fix Type | Confidence | Outcome |
+|---------------|-------------------|----------|------------|---------|
+| `remnux.inetsim_check` | LLM-driven | `retry_params` — blamed wrong evidence segment (.E02 instead of .E01) | 9/10 | FAILED |
+| `remnux.fakedns_check` | LLM-driven | `fallback_tool` — claimed "incompatible with raw EnCase evidence file segments" | 8/10 | FAILED |
+
+Both tools were installed on the system at the time:
+- `inetsim` at `/usr/bin/inetsim` (apt package version 1.3.2)
+- `fakedns` at `/home/sansforensics/.local/bin/fakedns` (Python script)
+
+The self-heal incorrectly diagnosed both failures as evidence-path issues (wrong E01 split segment, incompatible file format). The actual root cause was that the `remnux_orchestrator` singleton within the pipeline was `None` — the pipeline's REMnux module lacks a local fallback path that invokes the installed tools directly.
+
+### 12.2 Impact
+
+Each failed self-heal consumed ~120 seconds attempting `sudo apt-get install inetsim` and `pip3 install fakedns` before timing out. This added 4+ minutes of dead time per evidence device. The self-heal LLM wasted inference budget on a tool-provisioning problem it couldn't solve.
+
+### 12.3 Resolution
+
+The erroneous `_TOOL_INSTALL_CMDS` entries for `inetsim` and `fakedns` were removed from `geoff_self_heal.py` in commit `d0f0bc45`. The tools remain on the system — the self-heal no longer wastes time trying to re-install them.
+
+### 12.4 Lesson
+
+The self-heal system needs a **verification step** before attempting fixes. The LLM confidently hallucinated root causes (9/10 and 8/10 confidence scores) because it was prompted to diagnose from evidence metadata (E01 split segment extensions, file types) rather than checking whether the tool exists on the system first. A pre-flight check (`which inetsim && which fakedns`) would have shown both tools present and redirected the self-heal to a plumbing fix instead of an install fix.
+
+---
+
+
 ## 11. Known Limitations (continued)
 
 ---
