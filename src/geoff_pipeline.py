@@ -4,7 +4,7 @@ MIN_EVIDENCE_PER_CLAIM = 1       # Minimum trace_ids per claim
 MAX_CLAIMS_PER_TRAIL = 50        # Per investigation report
 MAX_CORRELATION_DEPTH = 3        # Prevent infinite correlation
 MAX_HYPOTHESIS_REVISIONS = 3     # Per verification cycle
-_C = {"tool": 0, "claim": 0}    # Mutable runtime counters (no globals needed)
+_C = {"tool": 0, "claim": 0, "revision": 0}    # Mutable runtime counters
 # =================================================================================
 
 #!/usr/bin/env python3
@@ -4473,6 +4473,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
         global _pipeline_ctx
         _C["tool"] = 0
         _C["claim"] = 0
+        _C["revision"] = 0
         _pipeline_ctx = PipelineContext(investigation_id=job_id)
         _pipeline_ctx.write_trace_record(case_work_dir, {
             "type": "investigation_start",
@@ -8046,7 +8047,12 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
 
         if report.get("claim_verification_summary", {}).get("UNSUPPORTED", 0) > 0:
             _fe_log(job_id, f"  [C1] {report['claim_verification_summary']['UNSUPPORTED']} unsupported claims - generating revision hypotheses")
+            _C["revision"] = 0
             for _ri in range(min(report["claim_verification_summary"]["UNSUPPORTED"], MAX_HYPOTHESIS_REVISIONS)):
+                _C["revision"] += 1
+                if _C["revision"] > MAX_HYPOTHESIS_REVISIONS:
+                    _fe_log(job_id, "  [C1] MAX_HYPOTHESIS_REVISIONS exhausted - stopping revisions")
+                    break
                 try:
                     _rh = _pipeline_ctx.form_hypothesis(findings_writer.all_records()[-20:])
                     _pipeline_ctx.write_trace_record(case_work_dir, {
