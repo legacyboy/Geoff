@@ -112,7 +112,7 @@ if [[ "$SKIP_DEPS" == false ]]; then
             etcd-client passing-the-hash 2>/dev/null || true
         # Ensure forensic tools are available
         info "Verifying forensic tool installation..."
-        for tool in exiftool tshark ssdeep hashdeep ewfmount vol vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
+        for tool in exiftool tshark ssdeep hashdeep ewfmount vol yara vol.py foremost scalpel tcpflow zeek bdeinfo readpst guestmount qemu-img bulk_extractor dc3dd; do
             if ! command -v $tool &>/dev/null; then
                 warn "$tool not found in PATH — some analyses may fail"
             fi
