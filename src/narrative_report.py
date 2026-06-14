@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Callable, Optional
+from urllib.parse import urlparse
 
 
 def _safe_prompt_str(value: Any, max_len: int = 500) -> str:
@@ -2849,7 +2850,6 @@ class NarrativeReportGenerator:
     })
 
 
-
     def _is_noise_url(self, url: str) -> bool:
         """Return True if the URL is noise (ads, SSL infra, CDN, binary artifacts, etc.) and should be excluded."""
         if not url or not isinstance(url, str):
@@ -3174,7 +3174,6 @@ class NarrativeReportGenerator:
                         # Also check for suspicious TLDs and known-malicious domains
                         # (runs on raw url before noise filter to catch payload-encoded C2)
                         try:
-                            from urllib.parse import urlparse
                             parsed = urlparse(url)
                             domain = parsed.netloc.lower()
                             if domain.startswith('www.'):
@@ -3200,6 +3199,17 @@ class NarrativeReportGenerator:
                     for s in susp:
                         if isinstance(s, str) and len(s) >= 6:
                             buckets.setdefault("suspicious_strings", set()).add(s)
+                # Feed bare domains into suspicious check
+                for domain in str_iocs.get("domains", []):
+                    if isinstance(domain, str) and 4 <= len(domain) <= 255:
+                        parts = domain.rsplit(".", 1)
+                        tld = parts[1].lower() if len(parts) == 2 else ""
+                        if tld in self._SUSPICIOUS_TLDS or domain.lower() in self._KNOWN_MALICIOUS_DOMAINS:
+                            buckets.setdefault("suspicious_domains", set()).add(domain.lower())
+                # Feed emails from string extraction into email bucket
+                for email in str_iocs.get("emails", []):
+                    if isinstance(email, str) and "@" in email:
+                        buckets.setdefault("email_addresses", set()).add(email.lower())
 
         # Source 6: structured email IOCs from direct email extraction findings
         # Collects sender IPs, from/to addresses, return-path mismatches
@@ -3294,23 +3304,23 @@ class NarrativeReportGenerator:
             result_dict["email_iocs"] = email_iocs_agg
 
         # Flag suspicious TLD domains and known malicious domains from URL extraction
-        _suspicious_urls = []
+        # This catches URLs from ALL sources, not just strings module
+        _suspicious_domains = []
         for url in buckets.get("urls", set()):
             try:
-                from urllib.parse import urlparse
                 parsed = urlparse(url)
                 domain = parsed.netloc.lower()
                 if domain.startswith("www."):
                     domain = domain[4:]
                 parts = domain.rsplit(".", 1)
                 if len(parts) == 2 and parts[1] in self._SUSPICIOUS_TLDS:
-                    _suspicious_urls.append(url)
+                    _suspicious_domains.append(domain)
                 elif domain in self._KNOWN_MALICIOUS_DOMAINS:
-                    _suspicious_urls.append(url)
+                    _suspicious_domains.append(domain)
             except Exception:
                 pass
-        if _suspicious_urls:
-            buckets.setdefault("suspicious_domains", set()).update(_suspicious_urls)
+        if _suspicious_domains:
+            buckets.setdefault("suspicious_domains", set()).update(_suspicious_domains)
 
         # ── Post-extraction Critic validation on IOCs ──
         # Run format validation on the final IOC set to catch any remaining
