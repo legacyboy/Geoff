@@ -3165,12 +3165,27 @@ class NarrativeReportGenerator:
                 str_iocs = result.get("iocs", {})
                 if not isinstance(str_iocs, dict):
                     continue
-                # Feed URLs into the scanner
+                # Feed URLs into the scanner + check suspicious TLDs/known-malicious domains
                 for url in str_iocs.get("urls", []):
                     if isinstance(url, str) and len(url) >= 8:
-                        cleaned = re.sub(r'[--]', '', url)
+                        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', url)
                         if cleaned and not self._is_noise_url(cleaned):
                             buckets["urls"].add(cleaned)
+                        # Also check for suspicious TLDs and known-malicious domains
+                        # (runs on raw url before noise filter to catch payload-encoded C2)
+                        try:
+                            from urllib.parse import urlparse
+                            parsed = urlparse(url)
+                            domain = parsed.netloc.lower()
+                            if domain.startswith('www.'):
+                                domain = domain[4:]
+                            parts = domain.rsplit('.', 1)
+                            if len(parts) == 2:
+                                tld = parts[1]
+                                if tld in self._SUSPICIOUS_TLDS or domain in self._KNOWN_MALICIOUS_DOMAINS:
+                                    buckets.setdefault("suspicious_domains", set()).add(domain)
+                        except Exception:
+                            pass
                 # Feed IPs into the scanner
                 for ip in str_iocs.get("ips", []):
                     if isinstance(ip, str) and not self._PRIV_IP.match(ip) and not NarrativeReportGenerator._is_in_cdn_range(ip):
@@ -3185,20 +3200,6 @@ class NarrativeReportGenerator:
                     for s in susp:
                         if isinstance(s, str) and len(s) >= 6:
                             buckets.setdefault("suspicious_strings", set()).add(s)
-                # Flag domains with suspicious TLDs found in URLs
-                for url in str_iocs.get("urls", []):
-                    if isinstance(url, str):
-                        try:
-                            from urllib.parse import urlparse
-                            parsed = urlparse(url)
-                            domain = parsed.netloc.lower()
-                            if domain.startswith('www.'):
-                                domain = domain[4:]
-                            parts = domain.rsplit('.', 1)
-                            if len(parts) == 2 and parts[1] in self._SUSPICIOUS_TLDS:
-                                buckets.setdefault("suspicious_domains", set()).add(domain)
-                        except Exception:
-                            pass
 
         # Source 6: structured email IOCs from direct email extraction findings
         # Collects sender IPs, from/to addresses, return-path mismatches
@@ -3323,7 +3324,7 @@ class NarrativeReportGenerator:
             if _format_val.get("format_issue_count", 0) > 0:
                 _bad_values = {issue["value"] for issue in _format_val.get("format_issues", [])}
                 # Remove invalid IOCs from all buckets
-                for key in ["ip_addresses", "urls", "email_addresses", "registry_keys", "file_paths"]:
+                for key in ["ip_addresses", "urls", "email_addresses", "registry_keys", "file_paths", "suspicious_domains", "suspicious_strings"]:
                     if key in result_dict and isinstance(result_dict[key], list):
                         result_dict[key] = [v for v in result_dict[key] if v not in _bad_values]
                 # Also filter file_hashes
