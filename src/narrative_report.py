@@ -3152,7 +3152,7 @@ class NarrativeReportGenerator:
         # Source 5: string extraction IOCs from strings module findings
         # The strings specialist extracts URLs, IPs, file paths, and suspicious strings
         # from binary/text content. These need to be fed into the IOC pipeline.
-        for finding in report_json.get(findings_detail, []):
+        for finding in report_json.get("findings_detail", []):
             _fc = finding.get("critic", {})
             if isinstance(_fc, dict) and _fc.get("verdict") == "REJECTED":
                 continue
@@ -3292,7 +3292,7 @@ class NarrativeReportGenerator:
         if any(v for v in email_iocs_agg.values()):
             result_dict["email_iocs"] = email_iocs_agg
 
-                # Flag suspicious TLD domains and known malicious domains from URL extraction
+        # Flag suspicious TLD domains and known malicious domains from URL extraction
         _suspicious_urls = []
         for url in buckets.get("urls", set()):
             try:
