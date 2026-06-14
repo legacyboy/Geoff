@@ -3158,7 +3158,7 @@ class NarrativeReportGenerator:
                 continue
             if finding.get("status") == "completed_unverified" and finding.get("needs_review"):
                 continue
-            if finding.get("module") == "strings" and finding.get(function) == "extract_strings":
+            if finding.get("module") == "strings" and finding.get("function") == "extract_strings":
                 result = finding.get("result", {})
                 if not isinstance(result, dict):
                     continue
