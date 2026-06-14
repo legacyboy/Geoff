@@ -2840,7 +2840,7 @@ class NarrativeReportGenerator:
         'gq', 'ml', 'tk', 'cf', 'ga',  # Freenom free TLDs (heavily abused)
         'country', 'kim', 'cool', 'surf', 'ren', 'mom', 'lol', 'fox',
         'uno', 'rip', 'day', 'host', 'site', 'space', 'online', 'tech',
-        'store', 'blog', 'press', 'digital', 'live', 'pro', 'link',
+        'store', 'blog', 'press', 'digital', 'live', 'pro', 'link', 'zip',
     })
 
     # Known malicious domains identified in threat intel feeds
@@ -3150,8 +3150,11 @@ class NarrativeReportGenerator:
                 _scan(json.dumps(result, default=str))
 
         # Source 5: string extraction IOCs from strings module findings
-        # The strings specialist extracts URLs, IPs, file paths, and suspicious strings
-        # from binary/text content. These need to be fed into the IOC pipeline.
+        # The strings specialist extracts URLs, IPs, domains, emails, file paths,
+        # and suspicious strings from binary/text content via strings.extract_strings().
+        # Expected result.iocs schema: {"urls":[],"ips":[],"domains":[],"emails":[],
+        #   "file_paths":[],"suspicious_strings":[]}
+        # These need to be fed into the IOC pipeline.
         for finding in report_json.get("findings_detail", []):
             _fc = finding.get("critic", {})
             if isinstance(_fc, dict) and _fc.get("verdict") == "REJECTED":
@@ -3175,7 +3178,7 @@ class NarrativeReportGenerator:
                         # (runs on raw url before noise filter to catch payload-encoded C2)
                         try:
                             parsed = urlparse(url)
-                            domain = parsed.netloc.lower()
+                            domain = (parsed.hostname or "").lower()
                             if domain.startswith('www.'):
                                 domain = domain[4:]
                             parts = domain.rsplit('.', 1)
@@ -3309,7 +3312,7 @@ class NarrativeReportGenerator:
         for url in buckets.get("urls", set()):
             try:
                 parsed = urlparse(url)
-                domain = parsed.netloc.lower()
+                domain = (parsed.hostname or "").lower()
                 if domain.startswith("www."):
                     domain = domain[4:]
                 parts = domain.rsplit(".", 1)
