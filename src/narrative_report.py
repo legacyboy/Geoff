@@ -2840,7 +2840,7 @@ class NarrativeReportGenerator:
         'gq', 'ml', 'tk', 'cf', 'ga',  # Freenom free TLDs (heavily abused)
         'country', 'kim', 'cool', 'surf', 'ren', 'mom', 'lol', 'fox',
         'uno', 'rip', 'day', 'host', 'site', 'space', 'online', 'tech',
-        'store', 'blog', 'press', 'digital', 'live', 'pro', 'link', 'zip',
+        'store', 'blog', 'press', 'digital', 'live', 'pro', 'link', 'zip', 'club', 'info', 'biz', 'ru', 'cn',
     })
 
     # Known malicious domains identified in threat intel feeds
