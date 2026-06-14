@@ -3153,16 +3153,16 @@ class NarrativeReportGenerator:
         # The strings specialist extracts URLs, IPs, file paths, and suspicious strings
         # from binary/text content. These need to be fed into the IOC pipeline.
         for finding in report_json.get(findings_detail, []):
-            _fc = finding.get(critic, {})
-            if isinstance(_fc, dict) and _fc.get(verdict) == REJECTED:
+            _fc = finding.get("critic", {})
+            if isinstance(_fc, dict) and _fc.get("verdict") == "REJECTED":
                 continue
-            if finding.get(status) == completed_unverified and finding.get(needs_review):
+            if finding.get("status") == "completed_unverified" and finding.get("needs_review"):
                 continue
-            if finding.get(module) == strings and finding.get(function) == extract_strings:
-                result = finding.get(result, {})
+            if finding.get("module") == "strings" and finding.get(function) == "extract_strings":
+                result = finding.get("result", {})
                 if not isinstance(result, dict):
                     continue
-                str_iocs = result.get(iocs, {})
+                str_iocs = result.get("iocs", {})
                 if not isinstance(str_iocs, dict):
                     continue
                 # Feed URLs into the scanner
@@ -3174,17 +3174,17 @@ class NarrativeReportGenerator:
                 # Feed IPs into the scanner
                 for ip in str_iocs.get("ips", []):
                     if isinstance(ip, str) and not self._PRIV_IP.match(ip) and not NarrativeReportGenerator._is_in_cdn_range(ip):
-                        buckets[ip_addresses].add(ip)
+                        buckets["ip_addresses"].add(ip)
                 # Feed file paths into the scanner
                 for fp in str_iocs.get("file_paths", []):
                     if isinstance(fp, str) and len(fp) >= 10:
-                        buckets[file_paths].add(fp)
+                        buckets["file_paths"].add(fp)
                 # Flag suspicious strings separately
                 susp = str_iocs.get("suspicious_strings", [])
                 if susp and isinstance(susp, list):
                     for s in susp:
                         if isinstance(s, str) and len(s) >= 6:
-                            buckets.setdefault(suspicious_strings, set()).add(s)
+                            buckets.setdefault("suspicious_strings", set()).add(s)
                 # Flag domains with suspicious TLDs found in URLs
                 for url in str_iocs.get("urls", []):
                     if isinstance(url, str):
@@ -3294,7 +3294,7 @@ class NarrativeReportGenerator:
 
                 # Flag suspicious TLD domains and known malicious domains from URL extraction
         _suspicious_urls = []
-        for url in buckets.get(urls, set()):
+        for url in buckets.get("urls", set()):
             try:
                 from urllib.parse import urlparse
                 parsed = urlparse(url)
@@ -3309,7 +3309,7 @@ class NarrativeReportGenerator:
             except Exception:
                 pass
         if _suspicious_urls:
-            buckets.setdefault(suspicious_domains, set()).update(_suspicious_urls)
+            buckets.setdefault("suspicious_domains", set()).update(_suspicious_urls)
 
         # ── Post-extraction Critic validation on IOCs ──
         # Run format validation on the final IOC set to catch any remaining
