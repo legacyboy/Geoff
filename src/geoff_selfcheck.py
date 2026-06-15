@@ -575,9 +575,12 @@ def startup_check(
 def _load_geoff_config() -> Dict[str, Any]:
     """Load config from geoff_integrated without starting Flask."""
     try:
-        # Minimal env-based config — mirrors geoff_integrated.py logic
+        # Use explicit path — avoid dotenv finding a different .env upstream
         from dotenv import load_dotenv
-        load_dotenv()
+        _sd = os.path.dirname(os.path.abspath(__file__))
+        _dotenv = os.path.join(_sd, "..", ".env")
+        if os.path.exists(_dotenv):
+            load_dotenv(dotenv_path=_dotenv, override=True)
     except ImportError:
         pass
 

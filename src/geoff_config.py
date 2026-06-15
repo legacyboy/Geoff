@@ -13,9 +13,12 @@ import sys
 import subprocess
 
 # Load .env file before reading env vars
+# Use explicit path to avoid dotenv finding a different .env upstream
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    _geoff_dotenv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(_geoff_dotenv):
+        load_dotenv(dotenv_path=_geoff_dotenv, override=True)
 except ImportError:
     pass
 from typing import Optional
