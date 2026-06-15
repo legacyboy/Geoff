@@ -287,8 +287,11 @@ def ollama_headers():
 
 def ollama_base_url():
     """Return the base URL for Ollama API calls.
-    Uses OLLAMA_URL from .env directly.
+    When OLLAMA_API_KEY is set, routes to api.ollama.com directly (cloud).
+    Otherwise uses OLLAMA_URL from .env (default: localhost:11434 for local/signin).
     """
+    if OLLAMA_API_KEY:
+        return "https://api.ollama.com"
     return OLLAMA_URL
 # ---------------------------------------------------------------------------
 # Model Profiles
