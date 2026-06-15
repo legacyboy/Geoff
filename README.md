@@ -978,13 +978,16 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 **Cloud profile (default) — no local GPU needed:**
 ```bash
+# Option A: Interactive sign-in (requires browser)
 curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash
-
-# After installation, sign into Ollama Cloud (one-time):
 ollama signin
-# This authorizes the local Ollama service to use cloud models.
-# No API key needed in .env — auth is handled by the Ollama service.
+
+# Option B: Headless with API key (no browser needed)
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | \
+  bash -s -- --ollama-key YOUR_OLLAMA_API_KEY
 ```
+
+**Get an API key:** [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys)
 
 **Local profile — pulls ~40GB of models:**
 ```bash
@@ -1345,7 +1348,123 @@ case_work_dir/
 
 ---
 
-## Three-Claim Trace — Judge's Walkthrough
+## Judge Deployment — One-Command Setup
+
+This section is for **competition judges** who need to deploy Geoff on a fresh SIFT VM.
+No SSH access to our system needed — the entire framework deploys with one `curl | bash` command.
+
+### Quick Start for Judges
+
+```bash
+# 1. Provision a fresh SIFT Workstation VM (Ubuntu 22.04+)
+# 2. Copy evidence to the VM:
+#    scp -r /path/to/evidence <user>@<sift-vm>:/mnt/evidence/competition-case
+
+# 3. One-command install with API key (headless — no browser needed):
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | \
+  bash -s -- --ollama-key YOUR_OLLAMA_API_KEY
+
+# 4. Start Geoff:
+source /opt/geoff/venv/bin/activate
+nohup python3 /opt/geoff/src/geoff_integrated.py > /opt/geoff/logs/geoff.log 2>&1 &
+
+# 5. Verify it's running:
+curl http://localhost:8080/health
+
+# 6. Run an investigation (replace with your case path):
+source /opt/geoff/venv/bin/activate
+python3 /opt/geoff/src/geoff_pipeline.py --evidence /mnt/evidence/competition-case
+
+# 7. View the report at:
+#    http://<sift-vm-ip>:8080
+```
+
+### Getting an API Key
+
+1. Go to **[ollama.com/settings/api-keys](https://ollama.com/settings/api-keys)**
+2. Click **Create API Key**
+3. Copy the key and use it with `--ollama-key` above
+
+> **⚠️ Key validity:** API keys can be regenerated or revoked at any time.
+> For this competition, the key is valid through the judging period.
+> If it expires, generate a new one at [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys).
+
+### What You Get
+
+After install, Geoff provides:
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Web UI | `http://<vm-ip>:8080` | Find Evil runs, reports, chat |
+| Health | `http://<vm-ip>:8080/health` | Self-check dashboard |
+| MCP | `http://<vm-ip>:9999/mcp` | Model Context Protocol endpoint |
+
+### Evidence Placement
+
+Place your evidence in **`/mnt/evidence/`** (created by the installer).
+Geoff scans this directory recursively — each top-level folder becomes a selectable case in the UI.
+
+Default paths:
+- **Evidence (read-only source):** `/mnt/evidence/`
+- **Cases (write output):** `/mnt/cases/`
+
+```bash
+# Example: copy competition evidence
+sudo mkdir -p /mnt/evidence/competition-case
+sudo cp -r /path/to/evidence/* /mnt/evidence/competition-case/
+sudo chown -R $(whoami) /mnt/evidence/competition-case
+```
+
+### Verifying Everything Works
+
+```bash
+# Check models are registered
+ollama list
+# Expected: deepseek-v4-pro:cloud, qwen3-coder-next:cloud, glm-5.1:cloud, gemma4:31b-cloud
+
+# Check the self-check dashboard
+curl http://localhost:8080/health
+
+# Quick test with a known dataset
+source /opt/geoff/venv/bin/activate
+python3 /opt/geoff/src/geoff_pipeline.py \
+  --evidence /mnt/evidence/competition-case \
+  --quick
+```
+
+### Service Persistence
+
+Geoff starts as a background process. If the VM reboots, restart with:
+
+```bash
+source /opt/geoff/venv/bin/activate
+nohup python3 /opt/geoff/src/geoff_integrated.py > /opt/geoff/logs/geoff.log 2>&1 &
+```
+
+For systemd-based persistence (optional):
+
+```
+sudo tee /etc/systemd/system/geoff.service << 'EOF'
+[Unit]
+Description=Geoff DFIR Framework
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=/opt/geoff
+ExecStart=/opt/geoff/venv/bin/python3 /opt/geoff/src/geoff_integrated.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now geoff
+```
+
+### Three-Claim Trace — Judge's Walkthrough
 
 This section demonstrates how a judge (or anyone) can verify Criterion 5 (Audit Trail Quality) by tracing any three claims in a narrative report back to the exact tool execution that produced them.
 

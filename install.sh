@@ -645,7 +645,7 @@ if [[ "$SKIP_OLLAMA" == false ]]; then
         else
             # Fallback if profiles.json missing
             if [[ "$PROFILE" == "cloud" ]]; then
-                MANAGER_MODEL="deepseek-v3.2:cloud"
+                MANAGER_MODEL="deepseek-v4-pro:cloud"
                 FORENSICATOR_MODEL="qwen3-coder-next:cloud"
                 CRITIC_MODEL="glm-5.1:cloud"
                 CRITIC2_MODEL="gemma4:31b-cloud"

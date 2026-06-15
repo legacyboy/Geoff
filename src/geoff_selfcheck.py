@@ -284,7 +284,12 @@ def check_ollama(ollama_url: str, api_key: str, agent_models: Dict[str, str]) ->
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-        tags_url = "https://ollama.com/api/tags"
+        try:
+            from geoff_config import ollama_base_url as _cfg_url
+            _base = _cfg_url()
+        except ImportError:
+            _base = "https://api.ollama.com"
+        tags_url = f"{_base}/api/tags"
     else:
         tags_url = f"{ollama_url}/api/tags"
 
@@ -319,7 +324,12 @@ def check_ollama(ollama_url: str, api_key: str, agent_models: Dict[str, str]) ->
     # Quick generate smoke test with the manager model
     manager_model = agent_models.get("manager", "")
     if manager_model and api_key:
-        gen_url = "https://ollama.com/api/generate"
+        try:
+            from geoff_config import ollama_base_url as _cfg_url
+            _base = _cfg_url()
+        except ImportError:
+            _base = "https://api.ollama.com"
+        gen_url = f"{_base}/api/generate"
     else:
         gen_url = f"{ollama_url}/api/generate"
 

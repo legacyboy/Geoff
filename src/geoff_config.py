@@ -309,7 +309,7 @@ def load_profile(profile_name: str) -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         # Fallback defaults if profiles.json missing
         profiles = {
-            "cloud": {"manager": "deepseek-v4-flash:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "qwen3.5:cloud", "critic2": "gemma4:31b-cloud"},
+            "cloud": {"manager": "deepseek-v4-pro:cloud", "forensicator": "qwen3-coder-next:cloud", "critic": "glm-5.1:cloud", "critic2": "gemma4:31b-cloud"},
             "local": {"manager": "deepseek-r1:32b", "forensicator": "qwen2.5-coder:14b", "critic": "qwen2.5:14b", "critic2": "gemma4:31b"},
         }
     if profile_name not in profiles:
@@ -330,11 +330,11 @@ AGENT_MODELS = {
 }
 
 # Strip :cloud suffix from model names when using Ollama Cloud API.
-# The ollama.com/api endpoint uses bare model names (e.g. "deepseek-v3.2", not "deepseek-v4-flash:cloud").
-# if OLLAMA_API_KEY:
-#     for role in AGENT_MODELS:
-#         if AGENT_MODELS[role].endswith(":cloud"):
-#             AGENT_MODELS[role] = AGENT_MODELS[role][:-6]
+# The api.ollama.com endpoint uses bare model names (e.g. "deepseek-v4-pro", not "deepseek-v4-pro:cloud").
+if OLLAMA_API_KEY:
+    for role in AGENT_MODELS:
+        if AGENT_MODELS[role].endswith(":cloud"):
+            AGENT_MODELS[role] = AGENT_MODELS[role][:-6]
 
 
 LLM_MODEL = AGENT_MODELS["manager"]

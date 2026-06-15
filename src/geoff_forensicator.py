@@ -18,7 +18,8 @@ import time
 # Forensicator Model Configuration
 # Set GEOFF_FORENSICATOR_MODEL to override, or GEOFF_PROFILE=cloud|local
 # Defaults to the active profile from profiles.json
-FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL', "qwen3-coder-next:cloud")
+FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL',
+    __import__('geoff_config', fromlist=['AGENT_MODELS']).AGENT_MODELS.get('forensicator', 'qwen3-coder-next:cloud'))
 
 OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
@@ -33,8 +34,15 @@ def _ollama_rate_limit():
     _ollama_rate_limiter.acquire()
 
 def _ollama_base_url():
+    """Return base URL for Forensicator LLM calls.
+    Uses consolidated ollama_base_url() from geoff_config when API key is set,
+    falling back to OLLAMA_URL_DEFAULT for local/signin."""
     if OLLAMA_API_KEY:
-        return 'https://ollama.com/api'
+        try:
+            from geoff_config import ollama_base_url as _cfg_base
+            return _cfg_base()
+        except ImportError:
+            return 'https://api.ollama.com'
     return OLLAMA_URL_DEFAULT
 
 def _ollama_headers():
