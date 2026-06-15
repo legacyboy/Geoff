@@ -42,7 +42,9 @@ The following artifact categories are documented gaps where Geoff either fails s
 
 **Status:** Fixed in the 2026-06-01 commit (part of "EVTX error handling" fix group). Error handling now falls back to python-evtx when EvtxECmd returns malformed output.
 
-**Remaining gap:** Multi-block PowerShell 4104 reassembly (stitching `MessageNumber` fragments into the complete script) is not implemented. This means heavily obfuscated PowerShell commands split across multiple 4104 events may appear as truncated fragments. Known outstanding gaps: encoded command decoding (`certutil -decode`, base64 PowerShell), LOLBin obfuscation patterns (`mshta.exe` with `javascript:` URI, `rundll32.exe` with unsigned DLL), and WMI OBJECTS.DATA persistence parsing.
+**Remaining gap:** Encoded command decoding (`certutil -decode`, base64 PowerShell), LOLBin obfuscation patterns (`mshta.exe` with `javascript:` URI, `rundll32.exe` with unsigned DLL), and WMI OBJECTS.DATA persistence parsing.
+
+**Status:** PowerShell 4104 reassembly was fixed 2026-06-10 (reassembly code existed but was broken — `result["reassembled_scripts"]` assigned to a CompletedProcess object and silently dropped).
 
 ### 2.2 Memory Dump Classification Edge Cases
 
@@ -63,7 +65,9 @@ These are technique-without-tool gaps: the playbook identifies the category but 
 
 ### 2.4 RAR Archive Handling
 
-Prior to recent fixes, `.rar` archives were never extracted during evidence preprocessing. Files inside `.rar` archives were not analyzed by any playbook. Current status: RAR extraction was not confirmed fixed at the time of this report.
+Prior to 2026-06-10, `.rar` archives were never extracted during evidence preprocessing. Files inside `.rar` archives were not analyzed by any playbook.
+
+**Status:** Fixed 2026-06-10. RAR magic byte detection (Rar!\x1a\x07 for v4 and v5+) was added to `_detect_file_type_from_header` and `rar_archive` was added to the extraction dispatch. `_extract_archive()` already handled RAR via `rarfile`/`unrar`.
 
 ---
 
@@ -172,7 +176,7 @@ After each chat response, `_self_check_chat_response` (`src/geoff_self_heal.py:9
 
 **The batch Critic does not regenerate the narrative report.** If the Manager approves but the narrative report generation produces hallucinated claims, there is no retry mechanism. The narrative's prohibition on speculation beyond verified evidence is prompt-enforced only.
 
-**The error hash cache can mask healing improvements.** The cache key is `SHA256(module + function + exception_type + stderr_prefix)`. If the same error recurs after a fix is deployed, the cache returns the old HealDecision until manually cleared (`_heal_cache` in `src/geoff_self_heal.py`).
+**The error hash cache can mask healing improvements.** The cache key is `SHA256(module + function + exception_type + stderr_prefix)`. If the same error recurs after a fix is deployed, the cache returns the old HealDecision until manually cleared (`_heal_cache` in `src/geoff_self_heal.py`). **Fixed 2026-06-10:** HealCache now enforces a 30-day TTL; set `GEOFF_HEAL_CACHE_BUST=1` for immediate bust.
 
 ---
 
@@ -312,7 +316,7 @@ The hacking-case narrative report was manually corrected on 2026-06-14 to replac
 
 ## 11. Evidence Caps Audit (2026-06-10)
 
-### 10.1 What Was Found
+### 11.1 What Was Found
 
 A line-by-line audit of the email and communications evidence pipeline (`geoff_pipeline.py`, `sift_specialists_extended.py`, `geoff_communications.py`, `narrative_report.py`) discovered **14 separate data truncation caps**. Key findings:
 
@@ -325,11 +329,11 @@ A line-by-line audit of the email and communications evidence pipeline (`geoff_p
 | `messages[:200]` in geoff_communications.py | All communications output capped at 200 messages total — anything beyond unrecoverable |
 | 8 additional caps on SMTP/IMAP/IRC body text and TCP stream enumeration | Progressive data loss at every layer of the communications pipeline |
 
-### 10.2 Evidence Deletion
+### 11.2 Evidence Deletion
 
 The `_direct_email_extraction()` finally block was previously deleting all extracted EML/PST files after processing (`shutil.rmtree(extract_dir)`). The structured data survived in findings.jsonl, but the raw extracted evidence was unrecoverable for audit or review.
 
-### 10.3 Resolution
+### 11.3 Resolution
 
 All 14 caps removed. Extracted evidence is now copied to `case_work_dir/extracted_emails/<stem>/` before temp directory cleanup. Spoofed email mismatch records now include `body_text`, `subject`, and `to` fields (previously missing, causing blank content in the report's spoofing section).
 
@@ -372,4 +376,4 @@ The self-heal system needs a **verification step** before attempting fixes. The 
 
 ---
 
-*This report was produced from direct inspection of the Geoff codebase, case run artifacts on the development NAS, and the internal audit documentation that was in git HEAD prior to the 2026-06-01 cleanup commit. Updated 2026-06-10 with new incident reports, caps audit, and philosophy section. All incidents cited are traceable to specific commits, case directories, or file paths referenced above. All §§8-10 incidents were discovered, diagnosed, and fixed during the 2026-06-10 testing session; a five-case batch run is currently executing with all fixes active.*
+*This report was produced from direct inspection of the Geoff codebase, case run artifacts on the development NAS, and the internal audit documentation that was in git HEAD prior to the 2026-06-01 cleanup commit. Updated 2026-06-14 with IOC relevance incident (§10) and sweep of stale statuses. All incidents cited are traceable to specific commits, case directories, or file paths referenced above.*
