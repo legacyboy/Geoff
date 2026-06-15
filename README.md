@@ -36,6 +36,8 @@ curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | ba
 
 After install, Geoff is available at `http://localhost:8080`.
 
+> **Note:** The installer uses `sudo` internally for apt packages, directory creation, and tool installation. Your user account needs `sudo` privileges (default on SIFT).
+
 ### ⚠️ Default Evidence Paths
 
 Geoff scans **`/mnt/evidence`** for evidence by default and writes case output to **`/mnt/cases`**.
