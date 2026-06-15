@@ -16,7 +16,7 @@
 
 **Your digital forensics colleague with multi-agent analysis, device-centric investigation, and narrative reporting.**
 
-> **⚠️ Platform Requirement:** Geoff is designed to run on the **SANS SIFT Workstation** (Ubuntu 22.04+). It depends on 100+ forensic tools pre-installed by SIFT (SleuthKit, Volatility, Plaso, RegRipper, bulk_extractor, etc.). While Geoff will attempt to install missing tools via self-heal, a clean SIFT VM provides the most reliable experience and avoids tool-missing errors. Install on a fresh SIFT VM for best results.
+> **⚠️ Platform Requirement:** Geoff is designed to run on the **SANS SIFT Workstation** (Ubuntu 22.04+). The installer automatically installs all required forensic tools (SleuthKit, Volatility, Plaso, RegRipper, bulk_extractor, ewf-tools, ssdeep, hashdeep, foremost, scalpel, tcpflow, and more) — no manual setup needed. A clean SIFT VM provides the most reliable experience, but the installer handles everything on any Ubuntu 22.04+ system.
 
 **License:** Apache 2.0 — see [LICENSE](LICENSE).
 
@@ -35,6 +35,20 @@ curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | ba
 - `--dir <path>` — install directory (default: `/opt/geoff`)
 
 After install, Geoff is available at `http://localhost:8080`.
+
+### ⚠️ Default Evidence Paths
+
+Geoff scans **`/mnt/evidence`** for evidence by default and writes case output to **`/mnt/cases`**.
+
+- **Evidence (`GEOFF_EVIDENCE_PATH`):** `/mnt/evidence` — Geoff will scan **everything** in this directory. Point it at a subfolder (e.g. `/mnt/evidence/jeanm57`) via the UI or `GEOFF_EVIDENCE_PATH` to avoid processing unrelated data.
+- **Cases (`GEOFF_CASES_PATH`):** `/mnt/cases` — all findings, extractions, and git-backed custody chains go here. Needs enough free space for extracted archives.
+
+Set these before your first run:
+```bash
+export GEOFF_EVIDENCE_PATH=/mnt/evidence/your-case
+export GEOFF_CASES_PATH=/mnt/cases
+```
+Or add them to your `.env` file. If you don't set them, Geoff uses the defaults above — and will scan the entire evidence directory.
 
 ---
 
