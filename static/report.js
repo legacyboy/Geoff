@@ -344,15 +344,43 @@
     if (typeof iocs === 'object' && !Array.isArray(iocs)) {
       Object.entries(iocs).forEach(([k, v]) => {
         if (Array.isArray(v) && v.length) {
-          if (k === 'file_hashes' && typeof v[0] === 'object' && v[0].hash) {
-            normalised[k] = v.map(function(item) { return item.hash + (item.algorithm ? ' (' + item.algorithm + ')' : '') + (item.filename ? ' - ' + item.filename : ''); });
+          if (k === 'file_hashes' && typeof v[0] === 'object' && (v[0].hash || v[0].value)) {
+            normalised[k] = v.map(function(item) { 
+              var h = item.hash || item.value || '';
+              var algo = item.algorithm ? ' (' + item.algorithm + ')' : '';
+              var fn = item.filename ? ' - ' + item.filename : '';
+              var st = item.source_tool ? ' [tool: ' + item.source_tool + ']' : '';
+              var sa = item.source_artifact ? ' [from: ' + item.source_artifact + ']' : '';
+              return h + algo + fn + st + sa;
+            });
+          } else if (typeof v[0] === 'object' && v[0] !== null && (v[0].value !== undefined || v[0].source_tool !== undefined)) {
+            // Object-format IOCs with value/source_tool/source_artifact
+            normalised[k] = v.map(function(item) {
+              var val = item.value || '';
+              var st = item.source_tool || '';
+              var sa = item.source_artifact || '';
+              if (st || sa) return val + '  —  ' + st + '  ›  ' + sa;
+              return val;
+            });
           } else {
             normalised[k] = v.map(String);
           }
         } else if (typeof v === 'object' && v !== null) {
           // nested structure — flatten
           Object.entries(v).forEach(([k2, v2]) => {
-            if (Array.isArray(v2) && v2.length) normalised[`${k} / ${k2}`] = v2.map(String);
+            if (Array.isArray(v2) && v2.length) {
+              if (typeof v2[0] === 'object' && v2[0] !== null && v2[0].value !== undefined) {
+                normalised[k + ' / ' + k2] = v2.map(function(item) {
+                  var val = item.value || '';
+                  var st = item.source_tool || '';
+                  var sa = item.source_artifact || '';
+                  if (st || sa) return val + '  —  ' + st + '  ›  ' + sa;
+                  return val;
+                });
+              } else {
+                normalised[k + ' / ' + k2] = v2.map(String);
+              }
+            }
           });
         }
       });
