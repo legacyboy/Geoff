@@ -610,23 +610,25 @@ ok "Profile '${PROFILE}' configured in ${INSTALL_DIR}/.env"
 
 # ── Install Ollama if missing ──────────────────────────────────────────
 _OLLAMA_VERSION="0.30.5"
+# Remove stale 0-byte placeholder binary left by previous failed installs
+if [[ -f /usr/local/bin/ollama && ! -s /usr/local/bin/ollama ]]; then
+    info "Removing stale 0-byte ollama placeholder at /usr/local/bin/ollama"
+    sudo rm -f /usr/local/bin/ollama
+fi
 if ! command -v ollama >/dev/null 2>&1; then
     info "Installing Ollama ${_OLLAMA_VERSION} (pinned for cloud API key compatibility)..."
     _OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v${_OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
     _OLLAMA_TMP="$(mktemp -d)"
-    if command -v zstd >/dev/null 2>&1; then
-        curl -fsSL "$_OLLAMA_URL" | tar --zstd -x -C "$_OLLAMA_TMP" || {
-            rm -rf "$_OLLAMA_TMP"
-            fail "Ollama ${_OLLAMA_VERSION} download failed."
-        }
-    else
-        curl -fsSL -o "${_OLLAMA_TMP}/ollama.tar.zst" "$_OLLAMA_URL" &&
-            sudo apt-get install -y zstd >/dev/null 2>&1 &&
-            tar --zstd -xf "${_OLLAMA_TMP}/ollama.tar.zst" -C "$_OLLAMA_TMP" || {
-            rm -rf "$_OLLAMA_TMP"
-            fail "Ollama ${_OLLAMA_VERSION} download/extract failed."
-        }
+    _OLLAMA_TARBALL="${_OLLAMA_TMP}/ollama.tar.zst"
+    # Download tarball to a file first — piping directly hangs on large files
+    curl -L -o "$_OLLAMA_TARBALL" "$_OLLAMA_URL" || fail "Ollama ${_OLLAMA_VERSION} download failed."
+    if ! command -v zstd >/dev/null 2>&1; then
+        sudo apt-get install -y -qq zstd >/dev/null 2>&1 || fail "Failed to install zstd (required to extract Ollama)."
     fi
+    tar --zstd -xf "$_OLLAMA_TARBALL" -C "$_OLLAMA_TMP" || {
+        rm -rf "$_OLLAMA_TMP"
+        fail "Ollama ${_OLLAMA_VERSION} extraction failed."
+    }
     sudo mv "${_OLLAMA_TMP}/ollama" /usr/local/bin/ollama
     sudo chmod +x /usr/local/bin/ollama
     rm -rf "$_OLLAMA_TMP"
