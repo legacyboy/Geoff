@@ -27,6 +27,7 @@ OLLAMA_SIGNIN=false
 SKIP_OLLAMA=false
 SKIP_REMNUX=false
 SKIP_DEPS=false
+REMNUX_BG_PID=""
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
