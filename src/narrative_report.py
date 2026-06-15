@@ -901,7 +901,9 @@ class NarrativeReportGenerator:
             """Return step citation for a behavioral flag dict."""
             if not flag:
                 return "(see Command History below for details)"
-            ev = flag.get("evidence", "")
+            # evidence can be a dict with 'path' or a plain string
+            raw_ev = flag.get("evidence", "")
+            ev = raw_ev if isinstance(raw_ev, str) else (raw_ev.get("path", "") if isinstance(raw_ev, dict) else "")
             if ev:
                 if ev in _by_evidence:
                     fd = _by_evidence[ev]
