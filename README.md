@@ -70,7 +70,7 @@ echo 'OLLAMA_API_KEY=your-key-here' | sudo tee -a /opt/geoff/.env
 
 Restart Geoff and you're done. The API key routes directly to `api.ollama.com` — no local GPU needed, no browser login. Models are pulled as cloud manifests during install and run on Ollama's infrastructure.
 
-> **Screenshot placeholder:** `.env` file with `OLLAMA_API_KEY=***` (key redacted)
+![API Key Setup](docs/images/ollama-api-key.png)
 
 ### Path 2: Cloud Models with OAuth (`ollama signin`)
 
@@ -82,7 +82,7 @@ ollama signin
 
 This opens a browser window to authenticate with your Ollama account. Once signed in, local Ollama proxies requests to Ollama Cloud automatically. No `.env` changes needed.
 
-> **Screenshot placeholder:** `ollama signin` terminal output showing the browser auth URL
+![OAuth Signin](docs/images/ollama-oauth.png)
 
 ### Path 3: 100% Local Models
 
@@ -102,7 +102,7 @@ echo 'OLLAMA_URL=http://192.168.1.100:11434' | sudo tee -a /opt/geoff/.env
 
 Geoff will use that remote Ollama for all model inference. The remote host must have the required models pulled and be network-accessible.
 
-> **Screenshot placeholder:** `--profile local` install output showing model downloads
+![Local & Remote Setup](docs/images/ollama-local.png)
 
 ### Verifying Ollama
 
