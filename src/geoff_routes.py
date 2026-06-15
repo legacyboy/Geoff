@@ -2553,6 +2553,11 @@ def _render_execution_log_html(result, safe_id):
   .git-log .hash {{ color: #f59e0b; }}
   .git-log .msg {{ color: #cbd5e1; }}
   th.gh {{ top: 106px; }}
+  .dl-bar {{ display: flex; gap: 8px; padding: 10px 24px; background: rgba(15,23,42,.8); border-bottom: 1px solid rgba(71,85,105,.2); flex-wrap: wrap; }}
+  .dl-btn {{ padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(71,85,105,.4); background: rgba(30,41,59,.8); color: #94a3b8; font-family: monospace; font-size: 12px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: all .15s; }}
+  .dl-btn:hover {{ background: rgba(51,65,85,.8); color: #e2e8f0; border-color: rgba(100,116,139,.6); }}
+  .dl-btn.regen {{ color: #60a5fa; border-color: rgba(96,165,250,.3); }}
+  .dl-btn.regen:hover {{ background: rgba(30,58,138,.4); border-color: #60a5fa; }}
 </style>
 <script>
 function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===name)); document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id===name)); }}
@@ -2564,6 +2569,12 @@ function switchTab(name) {{ document.querySelectorAll('.tab-btn').forEach(b => b
   <h1>Execution Log — {_html_escape(title)}</h1>
   <span style="flex:1;"></span>
   <span style="font-family:monospace;font-size:11px;color:#475569;">{len(audit)} events · {len(commands)} commands · {len(result.get('git_log') or [])} commits</span>
+</div>
+<div class="dl-bar">
+  <a class="dl-btn" href="/reports/{safe_id}/download/narrative">⬇ Narrative MD</a>
+  <a class="dl-btn" href="/reports/{safe_id}/download/json">⬇ Report JSON</a>
+  <a class="dl-btn" href="/reports/{safe_id}/download/audit_trail">⬇ Audit Trail</a>
+  <button class="dl-btn regen" onclick="fetch('/reports/{safe_id}/regenerate',{{method:'POST'}}).then(r=>r.json()).then(d=>{{if(d.ok)location.reload()}})">↺ Regenerate Report</button>
 </div>
 <div class="meta">
   <span>Classification: <b>{_html_escape(str(meta.get('classification', '—')))}</b></span>
