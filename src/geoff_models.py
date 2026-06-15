@@ -214,7 +214,7 @@ def get_evidence_recursive(path, prefix=""):
 
 
 def get_all_cases():
-    """Get ALL cases with ALL contents"""
+    """Get all cases with shallow file/dir counts (fast, no recursion)."""
     cases = {}
     if not os.path.exists(EVIDENCE_BASE_DIR):
         return cases
@@ -222,7 +222,23 @@ def get_all_cases():
         for case_name in sorted(os.listdir(EVIDENCE_BASE_DIR)):
             case_path = os.path.join(EVIDENCE_BASE_DIR, case_name)
             if os.path.isdir(case_path):
-                cases[case_name] = get_evidence_recursive(case_path)
+                # Shallow scan — count items, don't recurse
+                files = []
+                dirs = []
+                try:
+                    for item in sorted(os.listdir(case_path)):
+                        item_path = os.path.join(case_path, item)
+                        if os.path.isdir(item_path):
+                            dirs.append(f"[DIR] {item}/")
+                        else:
+                            try:
+                                size = os.path.getsize(item_path)
+                                files.append(f"{item} ({size} bytes)")
+                            except OSError:
+                                files.append(f"{item} (? bytes)")
+                except PermissionError:
+                    pass
+                cases[case_name] = dirs + files
     except Exception as e:
         print(f"Error reading cases: {e}")
     return cases
