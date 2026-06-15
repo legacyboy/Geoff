@@ -819,6 +819,7 @@ class NarrativeReportGenerator:
             ),
             # Collect email_iocs for executive summary
             "email_iocs": report_json.get("email_iocs", {}),
+            "findings_detail": report_json.get("findings_detail", []),
             "email_spoofing_found": bool(
                 report_json.get("email_iocs", {}).get("return_path_mismatches")
                 or report_json.get("email_iocs", {}).get("spoofed_domains")
@@ -883,6 +884,51 @@ class NarrativeReportGenerator:
         """
         evil = context["evil_found"]
         severity = context["overall_severity"]
+
+        # Build step citation lookup from findings_detail
+        _findings_detail = context.get("findings_detail", [])
+        _by_evidence = {}
+        _by_module = {}
+        for _fd in _findings_detail:
+            _ev = _fd.get("evidence_file", "")
+            if _ev:
+                _by_evidence[_ev] = _fd
+            _mod = _fd.get("module", "").lower()
+            if _mod and _mod not in _by_module:
+                _by_module[_mod] = _fd
+
+        def _cite(flag):
+            """Return step citation for a behavioral flag dict."""
+            if not flag:
+                return "(see Command History below for details)"
+            ev = flag.get("evidence", "")
+            if ev:
+                if ev in _by_evidence:
+                    fd = _by_evidence[ev]
+                    return (f"(Source: {fd.get('playbook', '?')}, "
+                            f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+                for ef, fd in _by_evidence.items():
+                    if ev in ef or ef in ev:
+                        return (f"(Source: {fd.get('playbook', '?')}, "
+                                f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+            ft = flag.get("flag_type", "").lower().replace("_", "")
+            for mod_key, fd in _by_module.items():
+                mk = mod_key.replace("_", "")
+                if ft and (ft in mk or mk in ft):
+                    return (f"(Source: {fd.get('playbook', '?')}, "
+                            f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+            return "(see Command History below for details)"
+
+        # Pre-compute citation for email/phishing findings
+        _email_step_fd = next(
+            (fd for fd in _findings_detail if fd.get("playbook") == "EMAIL_DIRECT"),
+            None
+        )
+        _email_cite = (
+            f"(Source: {_email_step_fd.get('playbook', '?')}, "
+            f"{_email_step_fd.get('module', '?')}.{_email_step_fd.get('function', '?')})"
+            if _email_step_fd else "(see Command History below for details)"
+        )
 
         # Build a narrative opening paragraph
         lines = []
@@ -980,13 +1026,13 @@ class NarrativeReportGenerator:
                         f"with Return-Path mismatch: apparent senders include "
                         f"{', '.join(sorted(set(m.get('from_domain','?') for m in _real_spoof_ctx)))} "
                         f"but Return-Path resolves to {', '.join(_spoof_domains[:3])} (T1566). "
-                        f"See Email & Phishing section for full evidence."
+                        f"See Email & Phishing section for full evidence. {_email_cite}"
                     )
                 else:
                     narrative_parts.append(
                         "**Phishing activity confirmed** — suspicious emails were identified "
                         "through direct email extraction from disk images (T1566). See "
-                        "Email Findings section for details."
+                        f"Email Findings section for details. {_email_cite}"
                     )
             elif context.get("email_direct_findings"):
                 # Direct email extraction found phishing emails even if classification
@@ -999,7 +1045,7 @@ class NarrativeReportGenerator:
                     narrative_parts.append(
                         f"**Phishing activity detected** — {phish_count} suspicious "
                         f"email(s) identified through direct email extraction from "
-                        f"disk images (T1566). See Email Findings section for details."
+                        f"disk images (T1566). See Email Findings section for details. {_email_cite}"
                     )
             if "credential_theft" in all_cats or "credential_access" in all_cats:
                 # Gather concrete flag summaries for this category
@@ -1014,11 +1060,11 @@ class NarrativeReportGenerator:
                     top_summary = cred_flags[0][1].get("summary", "Credential theft indicators")
                     narrative_parts.append(
                         f"**Credential theft** detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(cred_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Credential theft** activity was flagged (T1003) — see detailed findings."
+                        f"**Credential theft** activity was flagged (T1003) — see detailed findings. {_cite(None)}"
                     )
             if "persistence" in all_cats:
                 pers_flags = []
@@ -1031,11 +1077,11 @@ class NarrativeReportGenerator:
                     top_summary = pers_flags[0][1].get("summary", "Persistence mechanisms")
                     narrative_parts.append(
                         f"**Persistence mechanisms** established on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(pers_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Persistence** activity was flagged (T1053) — see detailed findings."
+                        f"**Persistence** activity was flagged (T1053) — see detailed findings. {_cite(None)}"
                     )
             if "lateral_movement" in all_cats:
                 lat_flags = []
@@ -1048,11 +1094,11 @@ class NarrativeReportGenerator:
                     top_summary = lat_flags[0][1].get("summary", "Lateral movement indicators")
                     narrative_parts.append(
                         f"**Lateral movement** detected across {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(lat_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Lateral movement** was flagged — see detailed findings."
+                        f"**Lateral movement** was flagged — see detailed findings. {_cite(None)}"
                     )
             if "cryptominer" in all_cats:
                 crypto_flags = []
@@ -1065,11 +1111,11 @@ class NarrativeReportGenerator:
                     top_summary = crypto_flags[0][1].get("summary", "Cryptomining indicators")
                     narrative_parts.append(
                         f"**Cryptocurrency mining** activity detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(crypto_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Cryptocurrency mining** activity was flagged (T1496) — see detailed findings."
+                        f"**Cryptocurrency mining** activity was flagged (T1496) — see detailed findings. {_cite(None)}"
                     )
             if "exfiltration" in all_cats:
                 exfil_flags = []
@@ -1082,11 +1128,11 @@ class NarrativeReportGenerator:
                     top_summary = exfil_flags[0][1].get("summary", "Data exfiltration indicators")
                     narrative_parts.append(
                         f"**Data exfiltration** detected from {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(exfil_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Data exfiltration** activity was flagged (T1048) — see detailed findings."
+                        f"**Data exfiltration** activity was flagged (T1048) — see detailed findings. {_cite(None)}"
                     )
             if "c2" in all_cats or "command_and_control" in all_cats:
                 c2_flags = []
@@ -1100,11 +1146,11 @@ class NarrativeReportGenerator:
                     top_summary = c2_flags[0][1].get("summary", "C2 communications")
                     narrative_parts.append(
                         f"**Command & Control** communications detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(c2_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Command & Control** (C2) communications were flagged — see detailed findings."
+                        f"**Command & Control** (C2) communications were flagged — see detailed findings. {_cite(None)}"
                     )
             if "web_shell" in all_cats:
                 ws_flags = []
@@ -1117,11 +1163,11 @@ class NarrativeReportGenerator:
                     top_summary = ws_flags[0][1].get("summary", "Web shell indicators")
                     narrative_parts.append(
                         f"**Web shell** detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(ws_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Web shell** activity was flagged — see detailed findings."
+                        f"**Web shell** activity was flagged — see detailed findings. {_cite(None)}"
                     )
             if "lolbin" in all_cats:
                 lolbin_flags = []
@@ -1134,11 +1180,11 @@ class NarrativeReportGenerator:
                     top_summary = lolbin_flags[0][1].get("summary", "LOLBin usage")
                     narrative_parts.append(
                         f"**Living-off-the-land binary** (LOLBin) usage on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(lolbin_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**LOLBin** usage was flagged — see detailed findings."
+                        f"**LOLBin** usage was flagged — see detailed findings. {_cite(None)}"
                     )
             if "privilege_escalation" in all_cats:
                 priv_flags = []
@@ -1151,11 +1197,11 @@ class NarrativeReportGenerator:
                     top_summary = priv_flags[0][1].get("summary", "Privilege escalation indicators")
                     narrative_parts.append(
                         f"**Privilege escalation** detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(priv_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Privilege escalation** activity was flagged — see detailed findings."
+                        f"**Privilege escalation** activity was flagged — see detailed findings. {_cite(None)}"
                     )
             if "defense_evasion" in all_cats:
                 de_flags = []
@@ -1168,11 +1214,11 @@ class NarrativeReportGenerator:
                     top_summary = de_flags[0][1].get("summary", "Defense evasion indicators")
                     narrative_parts.append(
                         f"**Defense evasion** techniques detected on {len(dev_names)} device(s) "
-                        f"({', '.join(dev_names[:3])}) — {top_summary}"
+                        f"({', '.join(dev_names[:3])}) — {top_summary} {_cite(de_flags[0][1])}"
                     )
                 else:
                     narrative_parts.append(
-                        "**Defense evasion** activity was flagged — see detailed findings."
+                        f"**Defense evasion** activity was flagged — see detailed findings. {_cite(None)}"
                     )
 
             if narrative_parts:
