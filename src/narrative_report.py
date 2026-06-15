@@ -2969,6 +2969,27 @@ class NarrativeReportGenerator:
                 return True
         return False
 
+    def _call_llm_for_iocs(self, prompt: str) -> Optional[str]:
+        """Fast LLM call for IOC curation — 20s timeout, single attempt, no retries."""
+        import requests as _requests
+        # Use local Ollama — manager model is accessed via localhost:11434
+        # (cloud profile routes through Ollama proxy which handles auth)
+        try:
+            resp = _requests.post(
+                "http://localhost:11434/api/generate",
+                headers={},
+                json={"model": "deepseek-v4-flash:cloud", "prompt": prompt,
+                       "stream": False, "options": {"temperature": 0.1}},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("response", "")
+            print(f"[REPORT] IOC LLM call HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+        except Exception as _ioc_err:
+            print(f"[REPORT] IOC LLM call failed: {_ioc_err}")
+            return None
+
     def _extract_iocs(self, report_json: dict,
                       behavioral_flags: dict) -> Dict[str, List[str]]:
         """Extract and deduplicate IOCs from all evidence sources.
@@ -3410,6 +3431,189 @@ class NarrativeReportGenerator:
         except Exception as _ioc_val_err:
             # Non-fatal — if Critic is unavailable, just use unvalidated IOCs
             print(f"[REPORT] IOC format validation skipped: {_ioc_val_err}")
+
+        # ── LLM-based IOC curation ──
+        # Instead of regex-dumping everything, have the LLM build IOCs from
+        # the actual findings + behavioral flags. Only values directly
+        # tied to malicious activity should appear.
+        evil_found = report_json.get("evil_found", False)
+        # Always run LLM IOC curation — uses its own fast _call_llm_for_iocs,
+        # not the slow self.call_llm path. This ensures regenerate works even
+        # when call_llm_func is None (to avoid the structural self-check hang).
+        if True:
+            try:
+                sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+                all_flags = [f for flags in behavioral_flags.values() for f in flags]
+                all_flags.sort(key=lambda f: sev_order.get(f.get("severity", "LOW"), 4))
+                flags_summary = "".join(
+                    f"  [{f.get('severity')}] {f.get('summary', '')}\n"
+                    for f in all_flags[:15]
+                )
+
+                # Collect completed findings with meaningful results
+                # Try to load the execution-level report which has the full 1788-finding
+                # version with evidence_chain.artifact populated.
+                exec_report_path = report_json.get("narrative_report_path", "")
+                if exec_report_path:
+                    exec_base = os.path.dirname(exec_report_path)
+                    exec_json = os.path.join(exec_base, "find_evil_report.json")
+                else:
+                    # Fall back: check if case_work_dir has execution report
+                    cwd = report_json.get("case_work_dir", "")
+                    exec_json = os.path.join(cwd, "reports", "find_evil_report.json") if cwd else ""
+                
+                detailed_findings = report_json.get("findings", [])
+                # If findings are sparse (< 500 entries), try to find the execution JSON
+                if len(detailed_findings) < 500 and exec_json and os.path.exists(exec_json):
+                    try:
+                        import json as _json
+                        _exec = _json.load(open(exec_json))
+                        _exec_findings = _exec.get("findings", [])
+                        if len(_exec_findings) > len(detailed_findings):
+                            detailed_findings = _exec_findings
+                    except Exception:
+                        pass
+
+                completed = []
+                for fi in detailed_findings:
+                    ec = fi.get("evidence_chain", {}) or {}
+                    r = fi.get("result", {}) or {}
+                    if isinstance(ec, dict) and ec.get("artifact"):
+                        completed.append({
+                            "artifact": ec.get("artifact"),
+                            "evidence_file": ec.get("evidence_file", ""),
+                            "tool": ec.get("tool", ""),
+                            "playbook": ec.get("playbook", ""),
+                            "severity": ec.get("significance", fi.get("severity", "LOW")),
+                            "analyst_note": ec.get("analyst_note", ""),
+                            "threat_indicators": ec.get("threat_indicators", []),
+                        })
+
+                # Collect email IOC data from the narrative-level email_iocs
+                email_iocs_structured = report_json.get("email_iocs", {})
+
+                # Serialize completed findings (capped) for LLM context
+                findings_summary = json.dumps(
+                    [c for c in completed if c.get("analyst_note")][:30],
+                    indent=2, default=str
+                )
+
+                # If no findings with evidence_chain, fall back to indicator_hits
+                if not findings_summary or findings_summary == "[]":
+                    hits = report_json.get("indicator_hits", [])
+                    findings_summary = json.dumps(
+                        [{"file": h.get("file",""), "pattern": h.get("pattern",""),
+                          "raw_match": h.get("raw_match","")[:200]}
+                         for h in hits[:30]],
+                        indent=2, default=str
+                    )
+
+                prompt = (
+                    "You are a forensic analyst identifying Indicators of Compromise (IOCs) "
+                    "from completed forensic analysis findings.\n\n"
+                    f"Case context:\n"
+                    f"- Evil found: {evil_found}\n"
+                    f"- Severity: {report_json.get('severity', 'INFO')}\n"
+                    f"- Classification: {report_json.get('classification', '')}\n"
+                    f"- Key behavioral findings:\n{flags_summary}\n"
+                    "\n"
+                    f"Completed findings with evidence:\n{findings_summary}\n"
+                )
+
+                if email_iocs_structured and any(email_iocs_structured.get(k) for k in ["sender_ips", "from_addresses", "return_path_mismatches"]):
+                    prompt += (
+                        "\nEmail IOC data:\n"
+                        + json.dumps({k: v for k, v in email_iocs_structured.items()
+                                      if v}, indent=2, default=str)
+                    )
+
+                # Also include key excerpts from the existing narrative to give
+                # the LLM context about what the investigation actually found
+                executive_summary_md = ""
+                if "executive_summary" in report_json:
+                    executive_summary_md = report_json.get("executive_summary", "")[:1500]
+                if not executive_summary_md:
+                    # Try to load narrative report from disk
+                    _nr_path = None
+                    if exec_report_path:
+                        _nr_base = os.path.dirname(exec_report_path)
+                        _nr_path = os.path.join(_nr_base, "narrative_report.md")
+                    if _nr_path and os.path.exists(_nr_path):
+                        try:
+                            _nr_text = open(_nr_path).read()
+                            _es_idx = _nr_text.find("Executive Summary")
+                            if _es_idx >= 0:
+                                executive_summary_md = _nr_text[_es_idx:_es_idx+2000]
+                            else:
+                                executive_summary_md = _nr_text[:2000]
+                        except Exception:
+                            pass
+                if executive_summary_md:
+                    prompt += (
+                        "\nExisting investigation narrative (executive summary):\n"
+                        + executive_summary_md
+                    )
+
+                if not evil_found:
+                    prompt += (
+                        "\n\nNo evil was confirmed in this case. However, list any suspicious "
+                        "items worth noting. If nothing is suspicious, return empty arrays.\n"
+                    )
+                else:
+                    prompt += (
+                        "\n\nTask: Identify the concrete Indicators of Compromise (IOCs) directly "
+                        "tied to the malicious activity. Extract specific IPs, email addresses, "
+                        "file paths, registry keys, URLs, and file hashes from the findings above. "
+                        "\n\nRULES:\n"
+                        "- ONLY include values that are directly tied to the attack (attacker IPs, "
+                        "phishing sender addresses, malicious files, compromised artifacts).\n"
+                        "- Do NOT include OS files, browser artifacts, or general system data.\n"
+                        "- Do NOT make up values. Extract exactly what appears in findings.\n"
+                        "- If a category has no relevant IOCs, return an empty array.\n"
+                        "\nRespond with ONLY a JSON object using these keys: "
+                        "ip_addresses, urls, registry_keys, file_paths, email_addresses, file_hashes. "
+                        "For file_hashes return objects with hash and algorithm. No explanation."
+                    )
+
+                llm_raw = self._call_llm_for_iocs(prompt)
+
+                if llm_raw:
+                    cleaned = llm_raw.strip()
+                    if cleaned.startswith("```"):
+                        cleaned = re.sub(r'^```[a-z]*\n?', '', cleaned)
+                        cleaned = re.sub(r'\n?```$', '', cleaned.strip())
+                    curated = json.loads(cleaned)
+                    if isinstance(curated, dict):
+                        # Build result from LLM response, keeping email/special buckets
+                        curated_result = {}
+                        MAIN_BUCKETS = ("ip_addresses", "urls", "registry_keys",
+                                        "file_paths", "email_addresses", "file_hashes")
+                        for key in MAIN_BUCKETS:
+                            if key in curated and isinstance(curated[key], list) and curated[key]:
+                                if key == "file_hashes":
+                                    # Accept both string lists and dict lists
+                                    clean_hashes = []
+                                    for h in curated[key]:
+                                        if isinstance(h, dict):
+                                            clean_hashes.append(h)
+                                        elif isinstance(h, str):
+                                            clean_hashes.append({
+                                                "hash": h, "algorithm":
+                                                {32: "md5", 40: "sha1", 64: "sha256"}.get(len(h), "unknown"),
+                                                "filename": "", "path": "", "source_image": ""
+                                            })
+                                    if clean_hashes:
+                                        curated_result[key] = clean_hashes
+                                else:
+                                    curated_result[key] = curated[key]
+                        for special in ("email_iocs", "suspicious_domains", "suspicious_strings"):
+                            if special in result_dict:
+                                curated_result[special] = result_dict[special]
+                        if curated_result:
+                            print(f"[REPORT] LLM IOC curation: {len(curated_result)} categories")
+                            result_dict = curated_result
+            except Exception as _ioc_curation_err:
+                print(f"[REPORT] LLM IOC curation skipped: {_ioc_curation_err}")
 
         return result_dict
 
