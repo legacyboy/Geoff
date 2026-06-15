@@ -3176,6 +3176,49 @@ def _queue_start_find_evil_job(evidence_dir, job_id, created_by="auto"):
         _log_error(f"Failed to start queued find_evil job {job_id}: {e}")
         return None
 
+def regenerate_report(case_dir):
+    """POST /reports/<case_dir>/regenerate — Re-run narrative report generation using existing
+    find_evil_report.json data. Does NOT re-run the investigation — only regenerates the markdown."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+
+    report_file = case_path / 'reports' / 'find_evil_report.json'
+    if not report_file.exists():
+        return jsonify({'error': 'find_evil_report.json not found — run investigation first'}), 404
+
+    try:
+        report = json.loads(report_file.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as e:
+        return jsonify({'error': f'Failed to read report JSON: {e}'}), 500
+
+    behavioral_flags = report.get('behavioral_flags') or {}
+
+    try:
+        from narrative_report import NarrativeReportGenerator
+        narrator = NarrativeReportGenerator(call_llm_func=None)
+        narrative_path = narrator.generate(
+            report_json=report,
+            device_map={},
+            user_map={},
+            super_timeline_path='',
+            correlated_users={},
+            behavioral_flags=behavioral_flags,
+            case_work_dir=str(case_path),
+            step_evidence_anchors=[],
+        )
+        report['narrative_report_path'] = str(narrative_path)
+        report_file.write_text(json.dumps(report, indent=2, default=str), encoding='utf-8')
+        return jsonify({'ok': True, 'narrative_report_path': str(narrative_path)})
+    except Exception as e:
+        _log_error('regenerate_report failed', e)
+        return jsonify({'error': str(e)}), 500
+
+
 def register_routes(app):
     """Register all route handlers with the Flask app.
 
@@ -3239,6 +3282,7 @@ def register_routes(app):
     app.add_url_rule('/reports/<case_dir>/keylogger', 'get_keylogger', _require_auth(get_keylogger))
     app.add_url_rule('/reports/<case_dir>/chat-aggregator', 'get_chat_aggregator', _require_auth(get_chat_aggregator))
     app.add_url_rule('/reports/<case_dir>/ask', 'ask_case', _require_auth(ask_case), methods=['POST'])
+    app.add_url_rule('/reports/<case_dir>/regenerate', 'regenerate_report', _require_auth(regenerate_report), methods=['POST'])
     # Queue routes
     app.add_url_rule('/queue', 'queue_list', _require_auth(queue_list), methods=['GET'])
     app.add_url_rule('/queue', 'queue_add', _require_auth(queue_add), methods=['POST'])

@@ -1282,6 +1282,31 @@
       a.href = d.url; a.textContent = d.label; a.target = '_blank';
       bar.appendChild(a);
     });
+    const regen = el("button", "exec-dl-btn");
+    regen.textContent = '↺ Regenerate Report';
+    regen.title = 'Re-run narrative report generation using saved find_evil_report.json (no full re-investigation)';
+    regen.addEventListener('click', () => {
+      regen.textContent = '↺ Regenerating…';
+      regen.disabled = true;
+      apiFetch(`/reports/${enc}/regenerate`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) {
+            regen.textContent = '✓ Report regenerated';
+            setTimeout(() => location.reload(), 800);
+          } else {
+            regen.textContent = '✗ Failed';
+            regen.title = data.error || 'Unknown error';
+            regen.disabled = false;
+          }
+        })
+        .catch(e => {
+          regen.textContent = '✗ Error';
+          regen.title = String(e);
+          regen.disabled = false;
+        });
+    });
+    bar.appendChild(regen);
     return bar;
   }
 
