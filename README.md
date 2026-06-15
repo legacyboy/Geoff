@@ -1345,6 +1345,113 @@ case_work_dir/
 
 ---
 
+## Three-Claim Trace — Judge's Walkthrough
+
+This section demonstrates how a judge (or anyone) can verify Criterion 5 (Audit Trail Quality) by tracing any three claims in a narrative report back to the exact tool execution that produced them.
+
+### Overview
+
+Every Geoff investigation produces three traceable artifacts:
+
+| Artifact | Location | Purpose |
+|----------|----------|---------|
+| **Narrative Report** | Case → Reports → Narrative MD | Human-readable findings with source citations |
+| **Command History** | Embedded in narrative report | Every tool execution with CLI commands + raw output |
+| **Audit Trail** | `audit_trail.jsonl` in case directory | Full hypothesis/provenance chain with trace IDs |
+
+### Step-by-Step: Trace a Claim
+
+Open any completed investigation at:
+
+```
+http://<geoff-host>:8080/reports/execution/<case_dir>
+```
+
+You'll see a download bar with four buttons:
+
+```
+[⬇ Narrative MD] [⬇ Report JSON] [⬇ Audit Trail] [↺ Regenerate Report]
+```
+
+#### 1. Open the Narrative Report
+
+Click **⬇ Narrative MD** (or **⬇ Report JSON** for the structured version). The report contains:
+
+- **Executive Summary** with narrative findings. Each bullet has a source citation:
+  - `(Source: PB-SIFT-017, sleuthkit.list_files)` — exact playbook and step
+  - `(see Command History below for details)` — fallback when direct matching isn't available
+
+- **Command History** section listing every forensic tool execution with:
+  - Playbook ID (e.g. `PB-SIFT-004`)
+  - Module and function (e.g. `tshark.connection_map`)
+  - Complete CLI command as executed
+  - Raw output excerpts
+  - Critic verdict (Completed / Unverified / Failed)
+  - Step Key for git-level tracing
+
+- **Playbook Execution Summary** table showing which playbooks ran, success counts, and failure counts.
+
+#### 2. Pick Three Claims
+
+**Example — Claim 1: "Email spoofing confirmed — 2 email(s) with Return-Path mismatch"**
+
+1. Open the narrative report.
+2. In the Executive Summary, find: `"Email spoofing confirmed — 2 email(s) with Return-Path mismatch ... (see Command History below for details)"`
+3. Scroll to the **Command History** section.
+4. Find the playbook that handles email extraction (typically PB-SIFT-009 or PB-SIFT-036).
+5. Each step shows the exact command run and its output. The email extraction step will show the `strings` or `bulk_extractor` command that found the Return-Path headers.
+
+**Example — Claim 2: "File anomaly — executable in temp/user directory"**
+
+1. The Executive Summary lists: `"Executable in temp/user directory ... (Source: PB-SIFT-017, sleuthkit.list_files)"`
+2. Go to the Command History section and find **PB-SIFT-017**.
+3. The `sleuthkit.list_files` step shows the file listing command and the output revealing the suspicious path.
+4. Below it, the critic verdict confirms the finding.
+
+**Example — Claim 3: "MITRE ATT&CK T1204 — User Execution"**
+
+1. The MITRE matrix in the report lists observed techniques with source references.
+2. Cross-reference the technique ID with the Command History steps that produced behavioral flag data.
+3. The `audit_trail.jsonl` (downloadable via **⬇ Audit Trail**) contains the full hypothesis chain — the Manager's reasoning, tool selection, forensicator analysis, and critic validation — all linked by `trace_id` and `parent_trace_id`.
+
+#### 3. Audit Trail Deep Dive
+
+For deeper verification, download the **Audit Trail** and inspect the hypothesis records:
+
+```bash
+# Extract all hypothesis records
+grep '"type": "hypothesis"' audit_trail.jsonl
+
+# Trace the full chain from investigation start
+head -1 audit_trail.jsonl | python3 -m json.tool  # investigation_start
+
+# Follow parent_trace_id chain through every hypothesis, recovery, and verification
+grep '"parent_trace_id": "<trace_id>"' audit_trail.jsonl
+```
+
+Each record contains:
+- `hypothesis` — natural language statement of what was being investigated
+- `selected_tool` — which `module.function` was invoked
+- `reasoning` — why this tool was chosen
+- `trace_id` / `parent_trace_id` — links to parent and child records
+- `failure_reason` / `recovery_strategy` — when self-correction occurred
+
+#### 4. Regenerate Report with Updated Citations
+
+If the existing report was generated before the citation feature was added, click **↺ Regenerate Report**. This re-runs only the narrative report generation (not the full investigation) using the saved `find_evil_report.json` data. It completes in seconds and produces a report with full `(Source: ...)` citations.
+
+### Why This Works for Judges
+
+The judge's job is: **"pick 3 findings from the agent's report, locate the tool execution in the logs that produced each."**
+
+Geoff satisfies this because:
+1. Every finding in the **narrative report** carries a source citation or clear pointer to the Command History.
+2. Every tool execution in **Command History** shows the exact CLI command and raw output.
+3. Every tool execution, decision, and verification is recorded in **audit_trail.jsonl** with a trace ID chain from investigation start to final report.
+4. The **download bar** puts all three artifacts one click away.
+
+---
+
 ## License
 
 Apache 2.0 License — see [LICENSE](LICENSE)
