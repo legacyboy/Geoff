@@ -6312,6 +6312,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 _fe_log(job_id, f"  ↳ Follow-up: {forensicator_notes.get('follow_up_reason', '')}")
                                             # Accuracy validation: evidence chain anchors each finding
                                             # to a specific artifact, tool, and observation.
+                                            _raw_off = image_offsets.get(item) if item else None
                                             step_record["evidence_chain"] = {
                                                 "artifact": function,
                                                 "evidence_file": item,
@@ -6322,9 +6323,11 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 "threat_indicators": forensicator_notes.get("threat_indicators", []),
                                                 "follow_up_needed": forensicator_notes.get("follow_up_needed", False),
                                                 "follow_up_reason": forensicator_notes.get("follow_up_reason"),
+                                                "offset": _raw_off[0] if isinstance(_raw_off, list) else _raw_off,
                                             }
                                         except Exception as fe:
                                             _fe_log(job_id, f"  ⚠ Forensicator unavailable for {module}.{function}: {fe}")
+                                            _raw_off = image_offsets.get(item) if item else None
                                             step_record["evidence_chain"] = {
                                                 "artifact": function,
                                                 "evidence_file": item,
@@ -6335,6 +6338,7 @@ def find_evil(evidence_dir: str, job_id: str = None, case_work_dir: str = None) 
                                                 "threat_indicators": [],
                                                 "follow_up_needed": False,
                                                 "follow_up_reason": None,
+                                                "offset": _raw_off[0] if isinstance(_raw_off, list) else _raw_off,
                                             }
 
                                     # Build Critic analysis string from Forensicator output so the

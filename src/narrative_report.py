@@ -897,6 +897,17 @@ class NarrativeReportGenerator:
             if _mod and _mod not in _by_module:
                 _by_module[_mod] = _fd
 
+        def _fmt_cite(fd):
+            """Format a (Source: ...) citation from a findings_detail record."""
+            parts = [
+                fd.get('playbook', '?'),
+                f"{fd.get('module', '?')}.{fd.get('function', '?')}",
+            ]
+            offset = (fd.get("evidence_chain") or {}).get("offset")
+            if offset is not None:
+                parts.append(f"offset {offset}")
+            return f"(Source: {', '.join(parts)})"
+
         def _cite(flag):
             """Return step citation for a behavioral flag dict."""
             if not flag:
@@ -906,19 +917,15 @@ class NarrativeReportGenerator:
             ev = raw_ev if isinstance(raw_ev, str) else (raw_ev.get("path", "") if isinstance(raw_ev, dict) else "")
             if ev:
                 if ev in _by_evidence:
-                    fd = _by_evidence[ev]
-                    return (f"(Source: {fd.get('playbook', '?')}, "
-                            f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+                    return _fmt_cite(_by_evidence[ev])
                 for ef, fd in _by_evidence.items():
                     if ev in ef or ef in ev:
-                        return (f"(Source: {fd.get('playbook', '?')}, "
-                                f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+                        return _fmt_cite(fd)
             ft = flag.get("flag_type", "").lower().replace("_", "")
             for mod_key, fd in _by_module.items():
                 mk = mod_key.replace("_", "")
                 if ft and (ft in mk or mk in ft):
-                    return (f"(Source: {fd.get('playbook', '?')}, "
-                            f"{fd.get('module', '?')}.{fd.get('function', '?')})")
+                    return _fmt_cite(fd)
             return "(see Command History below for details)"
 
         # Pre-compute citation for email/phishing findings
@@ -926,11 +933,7 @@ class NarrativeReportGenerator:
             (fd for fd in _findings_detail if fd.get("playbook") == "EMAIL_DIRECT"),
             None
         )
-        _email_cite = (
-            f"(Source: {_email_step_fd.get('playbook', '?')}, "
-            f"{_email_step_fd.get('module', '?')}.{_email_step_fd.get('function', '?')})"
-            if _email_step_fd else "(see Command History below for details)"
-        )
+        _email_cite = _fmt_cite(_email_step_fd) if _email_step_fd else "(see Command History below for details)"
 
         # Build a narrative opening paragraph
         lines = []
