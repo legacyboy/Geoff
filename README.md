@@ -16,7 +16,7 @@
 
 **Your digital forensics colleague with multi-agent analysis, device-centric investigation, and narrative reporting.**
 
-> **⚠️ Platform Requirement:** Geoff is designed to run on the **SANS SIFT Workstation** (Ubuntu 22.04+). The installer automatically installs all required forensic tools (SleuthKit, Volatility, Plaso, RegRipper, bulk_extractor, ewf-tools, ssdeep, hashdeep, foremost, scalpel, tcpflow, and more) — no manual setup needed. A clean SIFT VM provides the most reliable experience, but the installer handles everything on any Ubuntu 22.04+ system.
+> **⚠️ Platform Requirement — REQUIRED:** Geoff **requires** the **SANS SIFT Workstation** (Ubuntu 22.04+). The installer automatically installs all required forensic tools (SleuthKit, Volatility, Plaso, RegRipper, bulk_extractor, ewf-tools, ssdeep, hashdeep, foremost, scalpel, tcpflow, and more), but a SIFT base image is mandatory for full tool compatibility. Running on a minimal Ubuntu system may result in missing forensic tools. Install on a fresh SIFT VM.
 
 **License:** Apache 2.0 — see [LICENSE](LICENSE).
 
@@ -49,6 +49,8 @@ export GEOFF_EVIDENCE_PATH=/mnt/evidence/your-case
 export GEOFF_CASES_PATH=/mnt/cases
 ```
 Or add them to your `.env` file. If you don't set them, Geoff uses the defaults above — and will scan the entire evidence directory.
+
+The installer creates `/mnt/evidence` and `/mnt/cases` with permissions for the current user. If `/mnt/evidence` is a NAS mount, make sure it's mounted before running the installer so the user owns `/mnt/cases` (local fast storage).
 
 ---
 
