@@ -18,8 +18,19 @@ import time
 # Forensicator Model Configuration
 # Set GEOFF_FORENSICATOR_MODEL to override, or GEOFF_PROFILE=cloud|local
 # Defaults to the active profile from profiles.json
-FORENSICATOR_MODEL = os.environ.get('GEOFF_FORENSICATOR_MODEL',
-    __import__('geoff_config', fromlist=['AGENT_MODELS']).AGENT_MODELS.get('forensicator', 'qwen3-coder-next:cloud'))
+# IMPORTANT: Resolved lazily to avoid circular imports with geoff_config.
+def _get_forensicator_model():
+    """Resolve forensicator model at call time, avoiding circular import."""
+    env_val = os.environ.get('GEOFF_FORENSICATOR_MODEL')
+    if env_val:
+        return env_val
+    try:
+        from geoff_config import AGENT_MODELS as _models
+        return _models.get('forensicator', 'qwen3-coder-next:cloud')
+    except (ImportError, Exception):
+        return 'qwen3-coder-next:cloud'
+
+FORENSICATOR_MODEL = _get_forensicator_model()
 
 OLLAMA_URL_DEFAULT = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 OLLAMA_API_KEY = os.environ.get('OLLAMA_API_KEY', '')
