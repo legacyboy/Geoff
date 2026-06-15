@@ -609,10 +609,31 @@ EOF
 ok "Profile '${PROFILE}' configured in ${INSTALL_DIR}/.env"
 
 # ── Install Ollama if missing ──────────────────────────────────────────
+_OLLAMA_VERSION="0.30.5"
 if ! command -v ollama >/dev/null 2>&1; then
-    info "Ollama not found — installing..."
-    curl -fsSL https://ollama.com/install.sh | sh || fail "Ollama install failed. Install manually: https://ollama.com"
-    ok "Ollama installed"
+    info "Installing Ollama ${_OLLAMA_VERSION} (pinned for cloud API key compatibility)..."
+    _OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v${_OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
+    _OLLAMA_TMP="$(mktemp -d)"
+    if command -v zstd >/dev/null 2>&1; then
+        curl -fsSL "$_OLLAMA_URL" | tar --zstd -x -C "$_OLLAMA_TMP" || {
+            rm -rf "$_OLLAMA_TMP"
+            fail "Ollama ${_OLLAMA_VERSION} download failed."
+        }
+    else
+        curl -fsSL -o "${_OLLAMA_TMP}/ollama.tar.zst" "$_OLLAMA_URL" &&
+            sudo apt-get install -y zstd >/dev/null 2>&1 &&
+            tar --zstd -xf "${_OLLAMA_TMP}/ollama.tar.zst" -C "$_OLLAMA_TMP" || {
+            rm -rf "$_OLLAMA_TMP"
+            fail "Ollama ${_OLLAMA_VERSION} download/extract failed."
+        }
+    fi
+    sudo mv "${_OLLAMA_TMP}/ollama" /usr/local/bin/ollama
+    sudo chmod +x /usr/local/bin/ollama
+    rm -rf "$_OLLAMA_TMP"
+    if ! command -v ollama >/dev/null 2>&1; then
+        fail "Ollama install failed. Install manually: https://ollama.com"
+    fi
+    ok "Ollama ${_OLLAMA_VERSION} installed"
 fi
 
 # ── Ensure Ollama is running ──────────────────────────────────────────────
