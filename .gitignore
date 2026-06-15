@@ -15,10 +15,42 @@
 *.vhd
 *.vmdk
 .env
+
+# Runtime logs
+*.log
+logs/
+
+# Backup files
+*.bak
+
+# Case report output directories
+*_reports/
+
+# Scratch/notes files
+*_NOTES.md
+*_review.md
+*_review_glm.md
+*_plan.md
+*_manifest.md
+*_analysis.md
+
+# OS junk
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Pytest
+.pytest_cache/
+
+# One-off script patterns
+scripts/test_*
+scripts/add_*
+scripts/fix_*
+
 REFACTOR_PROGRESS.log
 TEST_PLAN_LOCAL.md
 __pycache__/
-docs/whitepaper-outline.md
 log2timeline-*.log.gz
 node_modules/
 scripts/__pycache__/
