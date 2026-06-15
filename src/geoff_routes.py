@@ -3214,8 +3214,8 @@ def regenerate_report(case_dir):
         narrator = NarrativeReportGenerator(call_llm_func=None)
         narrative_path = narrator.generate(
             report_json=report,
-            device_map={},
-            user_map={},
+            device_map=report.get('device_map', {}),
+            user_map=report.get('user_map', {}),
             super_timeline_path='',
             correlated_users={},
             behavioral_flags=behavioral_flags,
