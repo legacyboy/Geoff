@@ -1033,6 +1033,27 @@ def download_summary(case_dir):
     )
 
 
+def download_audit_trail(case_dir):
+    """GET /reports/<case_dir>/download/audit_trail — Serve audit_trail.jsonl as a downloadable file."""
+    safe_dir = re.sub(r'[^a-zA-Z0-9_\-]', '_', case_dir)
+    if not safe_dir:
+        return jsonify({'error': 'Invalid case directory name'}), 400
+
+    case_path = _find_case_dir(safe_dir)
+
+    if not case_path or not case_path.is_dir():
+        return jsonify({'error': 'Case not found'}), 404
+    path = case_path / 'audit_trail.jsonl'
+    if not path.exists():
+        return jsonify({'error': 'Audit trail not found'}), 404
+    return send_file(
+        path,
+        mimetype='application/x-ndjson',
+        as_attachment=True,
+        download_name=f'{safe_dir}_audit_trail.jsonl'
+    )
+
+
 def viewer_html():
     """GET /reports/viewer — Serve the Evidence Graph viewer UI (with optional case= param)."""
     viewer_dir = Path(__file__).parent.parent / 'static' / 'geoff-viewer'
@@ -3181,6 +3202,7 @@ def register_routes(app):
     app.add_url_rule('/reports/<case_dir>/download/markdown', 'download_markdown', _require_auth(download_markdown))
     app.add_url_rule('/reports/<case_dir>/download/json', 'download_json', _require_auth(download_json))
     app.add_url_rule('/reports/<case_dir>/download/summary', 'download_summary', _require_auth(download_summary))
+    app.add_url_rule('/reports/<case_dir>/download/audit_trail', 'download_audit_trail', _require_auth(download_audit_trail))
     app.add_url_rule('/reports/narrative', 'narrative_report_page', _require_auth(narrative_report_page))
     app.add_url_rule('/reports/viewer', 'viewer_html', _require_auth(viewer_html))
     app.add_url_rule('/static/<filename>', 'ui_static', ui_static)

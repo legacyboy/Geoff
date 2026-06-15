@@ -800,6 +800,7 @@
             e.stopPropagation();
             const evdirInput = $("evdir");
             if (evdirInput) evdirInput.value = EVIDENCE_DIR ? EVIDENCE_DIR + '/' + caseName : caseName;
+            switchTab('console');
           };
         }
       });
@@ -1275,6 +1276,7 @@
       { label: '↓ Narrative MD', url: `/reports/${enc}/download/markdown` },
       { label: '↓ Report JSON',  url: `/reports/${enc}/download/json` },
       { label: '↓ Summary',      url: `/reports/${enc}/download/summary` },
+      { label: '↓ Audit Trail',  url: `/reports/${enc}/download/audit_trail` },
     ].forEach(d => {
       const a = el("a", "exec-dl-btn");
       a.href = d.url; a.textContent = d.label; a.target = '_blank';
