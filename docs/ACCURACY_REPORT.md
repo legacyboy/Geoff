@@ -1,7 +1,7 @@
 # Geoff DFIR — Accuracy Report
 
-**Date:** 2026-06-10 (updated)  
-**Version:** v1.1  
+**Date:** 2026-06-14 (updated)  
+**Version:** v1.2  
 
 ---
 
@@ -269,7 +269,48 @@ Prompt instructions that tell the LLM what to say about the *absence* of data ar
 
 ---
 
-## 10. Evidence Caps Audit (2026-06-10)
+## 10. IOC Relevance — String Extraction Noise (2026-06-14)
+
+### 10.1 What Happened
+
+During the hacking-case investigation (NIST CFReDS), the narrative report claimed **528 URLs** and **197 email addresses** were extracted as IOCs. Manual inspection revealed both numbers were hallucinated by the narrative LLM — the actual aggregate from `findings.jsonl` was **6,855 URLs** and **3,090 emails**. However, the real numbers are arguably worse: 6,855 "URLs" from string extraction on a disk image is functionally useless to an investigator.
+
+### 10.2 Root Cause — Two Bugs
+
+**Bug 1 — Narrative hallucination:** The narrative report generator (`narrative_report.py`) fabricated IOC counts instead of aggregating from the findings data. The LLM was prompted with summary context but not the actual IOC totals, so it invented plausible-sounding numbers (528, 197) that were wrong in both directions.
+
+**Bug 2 — No relevance gate on IOC extraction:** PB-SIFT-009 (String Extraction & IOC Pattern Matching) runs `strings` on extracted files, then applies regex patterns for URLs, emails, IPs, and file paths. Every match is recorded as an IOC with zero context filtering. A URL to `http://www.ethereal.com` in a help file, an email address in a DLL copyright string, and `C:\WINDOWS\system32\mspaint.exe` as a file path are all treated identically to actual C2 infrastructure. The result is thousands of "IOCs" where 99.9% are benign artifacts of the operating system and installed software.
+
+**What makes an actual IOC:**
+- Appears in a suspicious context (malware strings, injected process, C2 channel)
+- Tied to a known threat (threat intel feed match)
+- Anomalous for the environment (unusual domain, foreign TLD, encoded/obfuscated)
+- Temporally correlated with the attack timeline
+
+Geoff's current implementation does none of these. It is pattern-matching without relevance triage.
+
+### 10.3 Impact
+
+- Investigators receive thousands of false positive "IOCs" with no way to distinguish signal from noise
+- The narrative report either hallucinates counts or reports useless aggregates
+- A judge or reviewer seeing "6,855 URLs extracted" gets no actionable intelligence
+- The IOC extraction step consumes processing time and LLM inference budget producing valueless output
+
+### 10.4 Required Fix
+
+PB-SIFT-009 needs a relevance gate before recording an IOC. Options:
+1. **LLM triage:** Feed extracted strings to the Forensicator for contextual relevance assessment ("Is this URL likely related to the incident or is it a benign software artifact?")
+2. **Threat intel cross-reference:** Check extracted domains/URLs against known threat feeds (OTX, MISP, URLhaus) — only record matches
+3. **Context-aware extraction:** Only extract IOCs from files in suspicious locations (temp dirs, AppData, browser caches, email attachments) rather than every file on disk
+4. **Deduplication + ranking:** Deduplicate across all extracted files and rank by frequency/anomaly score — surface the top N rather than all 6,855
+
+### 10.5 Interim Mitigation
+
+The hacking-case narrative report was manually corrected on 2026-06-14 to replace hallucinated counts with actual aggregate numbers. This is a stopgap — the underlying extraction and reporting bugs remain.
+
+---
+
+## 11. Evidence Caps Audit (2026-06-10)
 
 ### 10.1 What Was Found
 
@@ -327,7 +368,7 @@ The self-heal system needs a **verification step** before attempting fixes. The 
 ---
 
 
-## 11. Known Limitations (continued)
+## 13. Known Limitations (continued)
 
 ---
 
