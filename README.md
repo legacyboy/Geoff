@@ -56,6 +56,74 @@ The installer creates `/mnt/evidence` and `/mnt/cases` with permissions for the 
 
 ---
 
+## Ollama Setup — Required Before First Run
+
+Geoff's AI agents (Manager, Forensicator, Critic) run on Ollama models. You **must** configure Ollama before Geoff can process evidence. Three paths:
+
+### Path 1: Cloud Models with API Key (Recommended)
+
+Get an API key from [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys), then add it to `/opt/geoff/.env`:
+
+```bash
+echo 'OLLAMA_API_KEY=your-key-here' | sudo tee -a /opt/geoff/.env
+```
+
+Restart Geoff and you're done. The API key routes directly to `api.ollama.com` — no local GPU needed, no browser login. Models are pulled as cloud manifests during install and run on Ollama's infrastructure.
+
+> **Screenshot placeholder:** `.env` file with `OLLAMA_API_KEY=***` (key redacted)
+
+### Path 2: Cloud Models with OAuth (`ollama signin`)
+
+If you prefer browser-based login instead of an API key:
+
+```bash
+ollama signin
+```
+
+This opens a browser window to authenticate with your Ollama account. Once signed in, local Ollama proxies requests to Ollama Cloud automatically. No `.env` changes needed.
+
+> **Screenshot placeholder:** `ollama signin` terminal output showing the browser auth URL
+
+### Path 3: 100% Local Models
+
+Install with the `--profile local` flag to use locally-downloaded models:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/legacyboy/Geoff/main/install.sh | bash -s -- --profile local
+```
+
+This pulls full model weights to disk (~20-50GB). Requires a GPU with sufficient VRAM or system RAM for CPU inference. No internet needed after initial model download.
+
+**Using a remote Ollama host:** To point Geoff at an Ollama instance on another machine (e.g. a GPU server on your network), set `OLLAMA_URL` in `.env`:
+
+```bash
+echo 'OLLAMA_URL=http://192.168.1.100:11434' | sudo tee -a /opt/geoff/.env
+```
+
+Geoff will use that remote Ollama for all model inference. The remote host must have the required models pulled and be network-accessible.
+
+> **Screenshot placeholder:** `--profile local` install output showing model downloads
+
+### Verifying Ollama
+
+After setup, confirm models are available:
+
+```bash
+ollama list
+# Expected: deepseek-v4-pro:cloud, qwen3-coder-next:cloud, glm-5.1:cloud, gemma4:31b-cloud
+```
+
+Test a quick inference:
+
+```bash
+ollama run deepseek-v4-pro:cloud "Say hello in one word."
+# Expected: Hello
+```
+
+If this fails, Geoff's agents will also fail. Fix Ollama before running any investigation.
+
+---
+
 ## What is GEOFF?
 
 GEOFF is a **multi-agent conversational DFIR platform** with three specialized AI agents, device-aware evidence processing, behavioral analysis, and LLM-generated narrative reports.
