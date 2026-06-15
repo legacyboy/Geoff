@@ -629,8 +629,21 @@ if ! command -v ollama >/dev/null 2>&1; then
         rm -rf "$_OLLAMA_TMP"
         fail "Ollama ${_OLLAMA_VERSION} extraction failed."
     }
-    sudo mv "${_OLLAMA_TMP}/ollama" /usr/local/bin/ollama
+    # The tarball extracts to bin/ollama (not plain ollama) in newer releases
+    if [ -f "${_OLLAMA_TMP}/bin/ollama" ]; then
+        sudo mv "${_OLLAMA_TMP}/bin/ollama" /usr/local/bin/ollama
+    elif [ -f "${_OLLAMA_TMP}/ollama" ]; then
+        sudo mv "${_OLLAMA_TMP}/ollama" /usr/local/bin/ollama
+    else
+        rm -rf "$_OLLAMA_TMP"
+        fail "Ollama binary not found in extracted tarball."
+    fi
     sudo chmod +x /usr/local/bin/ollama
+    # Also copy lib/ollama for CUDA support
+    if [ -d "${_OLLAMA_TMP}/lib/ollama" ]; then
+        sudo mkdir -p /usr/local/lib/ollama
+        sudo cp -r "${_OLLAMA_TMP}/lib/ollama/"* /usr/local/lib/ollama/ 2>/dev/null || true
+    fi
     rm -rf "$_OLLAMA_TMP"
     if ! command -v ollama >/dev/null 2>&1; then
         fail "Ollama install failed. Install manually: https://ollama.com"
