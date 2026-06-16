@@ -5379,8 +5379,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 f"in the evidence:"
             )
             lines.append("")
-            lines.append("| Technique | Name | Tactic | Confidence | Evidence |")
-            lines.append("|-----------|------|--------|------------|---------|")
+            lines.append("| Technique | Name | Tactic | Confidence | Supporting Finding | Source Tool | Artifact |")
+            lines.append("|-----------|------|--------|------------|--------------------|-------------|----------|")
             for tid in mitres[:20]:
                 phase = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
                 obj = _mitre_obj_map.get(tid, {})
@@ -5388,8 +5388,17 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 conf = obj.get("confidence", None)
                 conf_str = f"{conf:.0%}" if isinstance(conf, float) else (str(conf) if conf else "—")
                 reasons = obj.get("matched_reasons", [])
-                evidence_str = "; ".join(reasons[:2]) if reasons else "—"
-                lines.append(f"| **{tid}** | {name} | {phase} | {conf_str} | {evidence_str} |")
+                finding_str = "; ".join(reasons[:2]) if reasons else "—"
+                source_tool = obj.get("source_tool", "—") or "—"
+                source_artifact = obj.get("source_artifact", "—") or "—"
+                # Fall back to first evidence_path if source_artifact is empty/missing
+                if source_artifact == "—" or not source_artifact:
+                    ep = obj.get("evidence_paths", [])
+                    if ep:
+                        source_artifact = ep[0]
+                lines.append(f"| **{tid}** | {name} | {phase} | {conf_str} | {finding_str} | {source_tool} | {source_artifact} |")
+            lines.append("")
+            lines.append("*Each MITRE technique is traced to the finding, tool, and artifact that produced it.*")
             lines.append("")
 
         # ── 10. Conclusions & Opinions ──
