@@ -268,8 +268,6 @@ def map_findings_to_mitre(findings: list) -> list:
                             "confidence": technique["confidence_weight"],
                             "evidence_paths": [],
                             "matched_reasons": [],
-                            "source_tool": finding.get("module", ""),
-                            "source_artifact": finding.get("evidence_file", ""),
                         }
                     if evidence_file and evidence_file not in matched[tid]["evidence_paths"]:
                         matched[tid]["evidence_paths"].append(evidence_file)
