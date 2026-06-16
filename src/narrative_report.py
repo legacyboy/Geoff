@@ -3577,9 +3577,11 @@ class NarrativeReportGenerator:
                         "- Do NOT include OS files, browser artifacts, or general system data.\n"
                         "- Do NOT make up values. Extract exactly what appears in findings.\n"
                         "- If a category has no relevant IOCs, return an empty array.\n"
-                        "\nRespond with ONLY a JSON object using these keys: "
-                        "ip_addresses, urls, registry_keys, file_paths, email_addresses, file_hashes. "
-                        "For file_hashes return objects with hash and algorithm. No explanation."
+                        "\nRespond with ONLY a JSON object. Each value should be an array of objects with keys: value, source_tool, source_artifact. "
+                        "Example: {\"email_addresses\": [{\"value\": \"attacker@evil.com\", \"source_tool\": \"sleuthkit.extract_email_artifacts\", \"source_artifact\": \"/mnt/evidence/case.E01\"}], "
+                        "\"file_paths\": [{\"value\": \"/tmp/malware.exe\", \"source_tool\": \"sleuthkit.list_files\", \"source_artifact\": \"/mnt/evidence/case.E01\"}]}. "
+                        "For file_hashes return objects with hash, algorithm, source_tool, source_artifact. "
+                        "If you cannot determine a specific tool or artifact from the findings context, use \"LLM IOC curation\" as source_tool and \"narrative synthesis\" as source_artifact. No explanation."
                     )
 
                 llm_raw = self._call_llm_for_iocs(prompt)
@@ -3598,21 +3600,41 @@ class NarrativeReportGenerator:
                         for key in MAIN_BUCKETS:
                             if key in curated and isinstance(curated[key], list) and curated[key]:
                                 if key == "file_hashes":
-                                    # Accept both string lists and dict lists
+                                    # Accept string lists, dict lists, and dicts with source_tool/source_artifact
                                     clean_hashes = []
                                     for h in curated[key]:
                                         if isinstance(h, dict):
-                                            clean_hashes.append(h)
+                                            h_copy = dict(h)
+                                            h_copy.setdefault("source_tool", "")
+                                            h_copy.setdefault("source_artifact", "")
+                                            clean_hashes.append(h_copy)
                                         elif isinstance(h, str):
                                             clean_hashes.append({
                                                 "hash": h, "algorithm":
                                                 {32: "md5", 40: "sha1", 64: "sha256"}.get(len(h), "unknown"),
-                                                "filename": "", "path": "", "source_image": ""
+                                                "filename": "", "path": "", "source_image": "",
+                                                "source_tool": "", "source_artifact": ""
                                             })
                                     if clean_hashes:
                                         curated_result[key] = clean_hashes
                                 else:
-                                    curated_result[key] = curated[key]
+                                    # Normalize: accept both plain strings (backward compat) and
+                                    # objects with value/source_tool/source_artifact fields
+                                    clean_list = []
+                                    for v in curated[key]:
+                                        if isinstance(v, dict):
+                                            v_copy = dict(v)
+                                            v_copy.setdefault("source_tool", "")
+                                            v_copy.setdefault("source_artifact", "")
+                                            clean_list.append(v_copy)
+                                        elif isinstance(v, str):
+                                            clean_list.append({
+                                                "value": v,
+                                                "source_tool": "",
+                                                "source_artifact": ""
+                                            })
+                                    if clean_list:
+                                        curated_result[key] = clean_list
                         for special in ("email_iocs", "suspicious_domains", "suspicious_strings"):
                             if special in result_dict:
                                 curated_result[special] = result_dict[special]
@@ -5350,16 +5372,37 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 if key == "file_hashes":
                     lines.append(f"**{label}** ({len(values)}):")
                     for v in values[:20]:
+                        if not isinstance(v, dict):
+                            lines.append(f"- `{v}`")
+                            continue
                         h = v.get("hash", "")
                         algo = v.get("algorithm", "")
                         fn = v.get("filename", "") or "unknown"
-                        lines.append(f"- `{h}` ({algo}) — {fn}")
+                        st = v.get("source_tool", "")
+                        sa = v.get("source_artifact", "")
+                        line = f"- `{h}` ({algo}) — {fn}"
+                        if st:
+                            line += f" | tool: {st}"
+                        if sa:
+                            line += f" | artifact: {sa}"
+                        lines.append(line)
                     if len(values) > 20:
                         lines.append(f"- ... and {len(values) - 20} more")
                 else:
                     lines.append(f"**{label}** ({len(values)}):")
                     for v in values[:30]:
-                        lines.append(f"- `{v}`")
+                        if isinstance(v, dict):
+                            val = v.get("value", "")
+                            st = v.get("source_tool", "")
+                            sa = v.get("source_artifact", "")
+                            line = f"- `{val}`"
+                            if st:
+                                line += f" | tool: {st}"
+                            if sa:
+                                line += f" | artifact: {sa}"
+                            lines.append(line)
+                        else:
+                            lines.append(f"- `{v}`")
                     if len(values) > 30:
                         lines.append(f"- ... and {len(values) - 30} more")
                 lines.append("")
@@ -5818,6 +5861,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                     fn = v.get("filename", "") or "(unknown)"
                     p = v.get("path", "") or "-"
                     si = v.get("source_image", "") or ""
+                    st = v.get("source_tool", "") or ""
+                    sa = v.get("source_artifact", "") or ""
                     if fn and fn != "(unknown)":
                         line_parts = [f"**Hash**: `{h}`"]
                         line_parts.append(f"**Algo**: {algo}")
@@ -5826,9 +5871,18 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                             line_parts.append(f"**Path**: {p}")
                         if si:
                             line_parts.append(f"**Image**: {si}")
+                        if st:
+                            line_parts.append(f"**Tool**: {st}")
+                        if sa:
+                            line_parts.append(f"**Artifact**: {sa}")
                         lines.append(" • ".join(line_parts) + "\n")
                     else:
-                        lines.append(f" • `{h}` ({algo})")
+                        parts = [f"`{h}` ({algo})"]
+                        if st:
+                            parts.append(f"tool: {st}")
+                        if sa:
+                            parts.append(f"artifact: {sa}")
+                        lines.append(" • " + " | ".join(parts))
                 if len(values) > 50:
                     lines.append(f"*(+{len(values)-50} more — see findings_jsonl)*")
                 lines.append("")
@@ -5836,12 +5890,32 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
 
             # Standard rendering for non-hash IOCs
             lines.append(f"**{label}** ({len(values)})\n")
-            lines.append("| Value |")
-            lines.append("|-------|")
-            for v in values[:50]:  # cap at 50 per category
-                lines.append(f"| `{v}` |")
+            # Check if values are objects with traceability fields
+            has_traceability = any(
+                isinstance(v, dict) and (v.get("source_tool") or v.get("source_artifact"))
+                for v in values
+            )
+            if has_traceability:
+                lines.append("| Value | Source Tool | Artifact |")
+                lines.append("|-------|-------------|----------|")
+                for v in values[:50]:  # cap at 50 per category
+                    if isinstance(v, dict):
+                        val = v.get("value", "")
+                        st = v.get("source_tool", "\u2014") or "\u2014"
+                        sa = v.get("source_artifact", "\u2014") or "\u2014"
+                        lines.append(f"| `{val}` | `{st}` | `{sa}` |")
+                    else:
+                        lines.append(f"| `{v}` | \u2014 | \u2014 |")
+            else:
+                lines.append("| Value |")
+                lines.append("|-------|")
+                for v in values[:50]:  # cap at 50 per category
+                    if isinstance(v, dict):
+                        lines.append(f"| `{v.get('value', v)}` |")
+                    else:
+                        lines.append(f"| `{v}` |")
             if len(values) > 50:
-                lines.append(f"| *(+{len(values)-50} more — see findings_jsonl)* |")
+                lines.append(f"| *(+{len(values)-50} more \u2014 see findings_jsonl)* |")
             lines.append("")
 
         # Render email IOCs if present
