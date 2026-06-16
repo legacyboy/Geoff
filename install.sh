@@ -712,36 +712,6 @@ SERVICEEOF"
     ok "Ollama is running"
 fi
 
-# ── Ensure Ollama SSH keys exist for cloud model auth ─────────────────────
-if [[ "$PROFILE" == "cloud" && -n "$OLLAMA_KEY" ]]; then
-    _OLLAMA_DIR="${HOME}/.ollama"
-    if [[ ! -f "${_OLLAMA_DIR}/id_ed25519" ]]; then
-        info "Generating Ollama SSH key pair for cloud model authentication..."
-        mkdir -p "${_OLLAMA_DIR}"
-        ssh-keygen -t ed25519 -f "${_OLLAMA_DIR}/id_ed25519" -N "" -q
-        chmod 600 "${_OLLAMA_DIR}/id_ed25519"
-        chmod 644 "${_OLLAMA_DIR}/id_ed25519.pub"
-        ok "SSH key pair generated at ${_OLLAMA_DIR}/id_ed25519"
-        
-        # Register the public key with ollama.com using the API key
-        _PUBKEY=$(cat "${_OLLAMA_DIR}/id_ed25519.pub")
-        if curl -s -X POST "https://ollama.com/api/user/keys" \
-            -H "Authorization: Bearer ${OLLAMA_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"key\": \"${_PUBKEY}\"}" >/dev/null 2>&1; then
-            ok "Public key registered with ollama.com"
-        else
-            warn "Could not register public key with ollama.com — cloud model execution may fail"
-            warn "  Run 'ollama signin' manually to authenticate"
-        fi
-        
-        # Restart ollama to pick up the new keys
-        if command -v systemctl >/dev/null 2>&1; then
-            sudo systemctl restart ollama 2>/dev/null || true
-        fi
-    fi
-fi
-
 # ── Pull Ollama models ────────────────────────────────────────────────────
 if [[ "$SKIP_OLLAMA" == false ]]; then
     info "Setting up models for ${PROFILE} profile..."
