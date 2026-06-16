@@ -3577,11 +3577,11 @@ class NarrativeReportGenerator:
                         "- Do NOT include OS files, browser artifacts, or general system data.\n"
                         "- Do NOT make up values. Extract exactly what appears in findings.\n"
                         "- If a category has no relevant IOCs, return an empty array.\n"
-                        "\nRespond with ONLY a JSON object. Each value should be an array of objects with keys: value, source_tool, source_artifact. "
-                        "Example: {\"email_addresses\": [{\"value\": \"attacker@evil.com\", \"source_tool\": \"sleuthkit.extract_email_artifacts\", \"source_artifact\": \"/mnt/evidence/case.E01\"}], "
-                        "\"file_paths\": [{\"value\": \"/tmp/malware.exe\", \"source_tool\": \"sleuthkit.list_files\", \"source_artifact\": \"/mnt/evidence/case.E01\"}]}. "
-                        "For file_hashes return objects with hash, algorithm, source_tool, source_artifact. "
-                        "If you cannot determine a specific tool or artifact from the findings context, use \"LLM IOC curation\" as source_tool and \"narrative synthesis\" as source_artifact. No explanation."
+                        "\nRespond with ONLY a JSON object. Each value should be an array of strings. "
+                        "Example: {\"email_addresses\": [\"attacker@evil.com\"], "
+                        "\"file_paths\": [\"C:\\\\Malware\\\\payload.exe\"], "
+                        "\"ip_addresses\": [\"192.168.1.100\"]}. "
+                        "For file_hashes return objects with hash and algorithm. No explanation."
                     )
 
                 llm_raw = self._call_llm_for_iocs(prompt)
@@ -3638,6 +3638,9 @@ class NarrativeReportGenerator:
                         for special in ("email_iocs", "suspicious_domains", "suspicious_strings"):
                             if special in result_dict:
                                 curated_result[special] = result_dict[special]
+                        # Attach real source_tool/source_artifact from actual data sources
+                        if curated_result:
+                            curated_result = self._attach_ioc_sources(curated_result, report_json)
                         if curated_result:
                             print(f"[REPORT] LLM IOC curation: {len(curated_result)} categories")
                             result_dict = curated_result
@@ -3645,6 +3648,122 @@ class NarrativeReportGenerator:
                 print(f"[REPORT] LLM IOC curation skipped: {_ioc_curation_err}")
 
         return result_dict
+
+    def _attach_ioc_sources(self, curated, report_json):
+        """Attach real source_tool/source_artifact to LLM-curated IOCs by matching against actual data.
+
+        The LLM returns flat string arrays (no source metadata). This method
+        enriches each IOC with real tool and artifact provenance by matching
+        values against the report's email_iocs and findings evidence chains.
+        """
+        email_iocs = report_json.get('email_iocs', {}) or {}
+        findings = report_json.get('findings', [])
+
+        # ── 1. Email addresses: match against return_path_mismatches for eml_path ──
+        mismatch_map = {}  # email_lower -> (tool, artifact)
+        for m in email_iocs.get('return_path_mismatches', []):
+            eml_path = m.get('eml_path', '')
+            from_addr = m.get('from', '')
+            return_path = m.get('return_path', '')
+            if from_addr:
+                clean = from_addr.lower().strip()
+                if clean and '@' in clean:
+                    mismatch_map[clean] = ('sleuthkit.extract_email_artifacts', eml_path)
+            if return_path:
+                clean_rp = return_path.lower().strip()
+                if clean_rp and '@' in clean_rp:
+                    mismatch_map.setdefault(
+                        clean_rp, ('sleuthkit.extract_email_artifacts', eml_path))
+
+        # Also map from_addresses and to_addresses from email_iocs
+        # Use the PST/evidence path as artifact when available
+        default_email_artifact = ''
+        for f in findings:
+            ec = f.get('evidence_chain', {}) or {}
+            if isinstance(ec, dict) and 'email' in str(ec.get('tool', '')).lower():
+                default_email_artifact = ec.get('artifact', '') or ec.get('evidence_file', '')
+                if default_email_artifact:
+                    break
+
+        # ── 2. File paths and hashes: match against findings with evidence_chain ──
+        file_path_map = {}  # path -> (tool, artifact)
+        for f in findings:
+            ec = f.get('evidence_chain', {}) or {}
+            if not isinstance(ec, dict):
+                continue
+            tool = ec.get('tool', '')
+            artifact = ec.get('artifact', '') or ec.get('evidence_file', '')
+            if not tool:
+                continue
+            result = f.get('result', {}) or {}
+            # Scan result values for file paths (Windows and Unix-style)
+            for key, val in (result.items() if isinstance(result, dict) else []):
+                if not isinstance(val, str):
+                    continue
+                if '/' in val or '\\' in val:
+                    # Extract individual paths from lines
+                    for line in val.split('\n'):
+                        line = line.strip()
+                        if line and ('/' in line or '\\' in line) and len(line) >= 8:
+                            file_path_map[line] = (tool, artifact)
+                # Also check fields that are explicitly file paths
+                if key in ('file_path', 'path', 'file', 'artifact_path'):
+                    file_path_map[val] = (tool, artifact)
+
+        # ── 3. Enrich curated IOCs ──
+        for category in ('email_addresses', 'file_paths', 'urls',
+                         'ip_addresses', 'registry_keys'):
+            if category not in curated:
+                continue
+            enriched = []
+            for item in curated[category]:
+                if isinstance(item, dict):
+                    val = item.get('value', '')
+                else:
+                    val = item
+
+                tool, artifact = '', ''
+                if category == 'email_addresses':
+                    tool, artifact = mismatch_map.get(
+                        val.lower(),
+                        ('sleuthkit.extract_email_artifacts', default_email_artifact))
+                elif category == 'file_paths':
+                    tool, artifact = file_path_map.get(val, ('', ''))
+
+                enriched.append({
+                    'value': val,
+                    'source_tool': tool,
+                    'source_artifact': artifact,
+                })
+            curated[category] = enriched
+
+        # ── 4. File hashes: preserve structure, ensure source fields exist ──
+        if 'file_hashes' in curated:
+            enriched = []
+            for h in curated['file_hashes']:
+                if isinstance(h, dict):
+                    enriched.append({
+                        'hash': h.get('hash', ''),
+                        'algorithm': h.get('algorithm', ''),
+                        'filename': h.get('filename', ''),
+                        'path': h.get('path', ''),
+                        'source_image': h.get('source_image', ''),
+                        'source_tool': h.get('source_tool', ''),
+                        'source_artifact': h.get('source_artifact', ''),
+                    })
+                elif isinstance(h, str):
+                    enriched.append({
+                        'hash': h,
+                        'algorithm': '',
+                        'filename': '',
+                        'path': '',
+                        'source_image': '',
+                        'source_tool': '',
+                        'source_artifact': '',
+                    })
+            curated['file_hashes'] = enriched
+
+        return curated
 
     # ----------------------------------------------------------------
     # Attack Chain Synthesis
