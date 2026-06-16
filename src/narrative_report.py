@@ -5370,50 +5370,132 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 if not values:
                     continue
                 if key == "file_hashes":
-                    lines.append(f"**{label}** ({len(values)}):")
-                    for v in values[:20]:
+                    # Check if any hash entries have traceability fields
+                    has_traceability = any(
+                        isinstance(v, dict) and (v.get("source_tool") or v.get("source_artifact"))
+                        for v in values
+                    )
+                    lines.append(f"**{label}** ({len(values)})\n")
+                    if has_traceability:
+                        lines.append("| Hash | Algorithm | Filename | Source Tool | Artifact |")
+                        lines.append("|------|-----------|----------|-------------|----------|")
+                    else:
+                        lines.append("| Hash | Algorithm | Filename |")
+                        lines.append("|------|-----------|----------|")
+                    for v in values[:50]:
                         if not isinstance(v, dict):
-                            lines.append(f"- `{v}`")
+                            lines.append(f"| `{v}` | — | — |")
                             continue
                         h = v.get("hash", "")
-                        algo = v.get("algorithm", "")
-                        fn = v.get("filename", "") or "unknown"
-                        st = v.get("source_tool", "")
-                        sa = v.get("source_artifact", "")
-                        line = f"- `{h}` ({algo}) — {fn}"
-                        if st:
-                            line += f" | tool: {st}"
-                        if sa:
-                            line += f" | artifact: {sa}"
-                        lines.append(line)
-                    if len(values) > 20:
-                        lines.append(f"- ... and {len(values) - 20} more")
+                        algo = v.get("algorithm", "") or "—"
+                        fn = v.get("filename", "") or "—"
+                        st = v.get("source_tool", "—") or "—"
+                        sa = v.get("source_artifact", "—") or "—"
+                        if has_traceability:
+                            lines.append(f"| `{h}` | {algo} | {fn} | `{st}` | `{sa}` |")
+                        else:
+                            lines.append(f"| `{h}` | {algo} | {fn} |")
+                    if len(values) > 50:
+                        lines.append(f"| | | *(+{len(values)-50} more — see findings_jsonl)* |")
                 else:
-                    lines.append(f"**{label}** ({len(values)}):")
-                    for v in values[:30]:
+                    # Check if non-hash IOCs have traceability fields
+                    has_traceability = any(
+                        isinstance(v, dict) and (v.get("source_tool") or v.get("source_artifact"))
+                        for v in values
+                    )
+                    lines.append(f"**{label}** ({len(values)})\n")
+                    if has_traceability:
+                        lines.append("| Value | Source Tool | Artifact |")
+                        lines.append("|-------|-------------|----------|")
+                    else:
+                        lines.append("| Value |")
+                        lines.append("|-------|")
+                    for v in values[:50]:
                         if isinstance(v, dict):
                             val = v.get("value", "")
-                            st = v.get("source_tool", "")
-                            sa = v.get("source_artifact", "")
-                            line = f"- `{val}`"
-                            if st:
-                                line += f" | tool: {st}"
-                            if sa:
-                                line += f" | artifact: {sa}"
-                            lines.append(line)
+                            st = v.get("source_tool", "—") or "—"
+                            sa = v.get("source_artifact", "—") or "—"
+                            if has_traceability:
+                                lines.append(f"| `{val}` | `{st}` | `{sa}` |")
+                            else:
+                                lines.append(f"| `{val}` |")
                         else:
-                            lines.append(f"- `{v}`")
-                    if len(values) > 30:
-                        lines.append(f"- ... and {len(values) - 30} more")
+                            if has_traceability:
+                                lines.append(f"| `{v}` | — | — |")
+                            else:
+                                lines.append(f"| `{v}` |")
+                    if len(values) > 50:
+                        lines.append(f"| *(+{len(values)-50} more — see findings_jsonl)* |")
                 lines.append("")
+            # Email-Derived IOCs
             email_iocs = iocs.get("email_iocs", {})
-            if email_iocs and any(email_iocs.get(k) for k in ["sender_ips", "from_addresses", "return_path_mismatches"]):
-                lines.append("**Email-Derived IOCs:**")
-                if email_iocs.get("sender_ips"):
-                    lines.append(f"- Sender IPs: {', '.join(email_iocs['sender_ips'][:10])}")
-                if email_iocs.get("return_path_mismatches"):
-                    lines.append(f"- Return-Path mismatches: {len(email_iocs['return_path_mismatches'])} (spoofing indicator)")
+            if email_iocs:
+                lines.append("---")
                 lines.append("")
+                lines.append("### Email-Derived IOCs (Header Analysis)\n")
+                sender_ips = email_iocs.get("sender_ips", [])
+                if sender_ips:
+                    lines.append(f"**Sender IP Addresses** ({len(sender_ips)})\n")
+                    lines.append("| IP |")
+                    lines.append("|-----|")
+                    for ip in sender_ips[:20]:
+                        lines.append(f"| `{ip}` |")
+                    if len(sender_ips) > 20:
+                        lines.append(f"| *(+{len(sender_ips)-20} more)* |")
+                    lines.append("")
+                from_addrs = email_iocs.get("from_addresses", [])
+                if from_addrs:
+                    lines.append(f"**From Addresses** ({len(from_addrs)})\n")
+                    lines.append("| Address |")
+                    lines.append("|---------|")
+                    for addr in from_addrs[:20]:
+                        lines.append(f"| `{addr}` |")
+                    lines.append("")
+                to_addrs = email_iocs.get("to_addresses", [])
+                if to_addrs:
+                    lines.append(f"**To Addresses** ({len(to_addrs)})\n")
+                    lines.append("| Address |")
+                    lines.append("|---------|")
+                    for addr in to_addrs[:20]:
+                        lines.append(f"| `{addr}` |")
+                    lines.append("")
+                return_paths = email_iocs.get("return_paths", [])
+                if return_paths:
+                    lines.append(f"**Return-Path Addresses** ({len(return_paths)})\n")
+                    lines.append("| Address |")
+                    lines.append("|---------|")
+                    for rp in return_paths[:20]:
+                        lines.append(f"| `{rp}` |")
+                    lines.append("")
+                body_urls = email_iocs.get("urls_in_body", [])
+                if body_urls:
+                    lines.append(f"**URLs in Email Body** ({len(body_urls)})\n")
+                    lines.append("| URL |")
+                    lines.append("|-----|")
+                    for url in body_urls[:30]:
+                        lines.append(f"| `{url}` |")
+                    lines.append("")
+                mismatches = email_iocs.get("return_path_mismatches", [])
+                if mismatches:
+                    lines.append(f"**Return-Path / From Mismatches (Spoofing Indicators)** ({len(mismatches)})\n")
+                    lines.append("| From | From Domain | Return-Path | Return-Path Domain |")
+                    lines.append("|------|-------------|-------------|--------------------|")
+                    for m in mismatches[:20]:
+                        lines.append(
+                            f"| `{m.get('from', '')}` "
+                            f"| `{m.get('from_domain', '')}` "
+                            f"| `{m.get('return_path', '')}` "
+                            f"| `{m.get('return_path_domain', '')}` |"
+                        )
+                    lines.append("")
+                spoofed = email_iocs.get("spoofed_domains", [])
+                if spoofed:
+                    lines.append(f"**Spoofed Domains** ({len(spoofed)})\n")
+                    lines.append("| Domain |")
+                    lines.append("|--------|")
+                    for domain in spoofed:
+                        lines.append(f"| `{domain}` |")
+                    lines.append("")
         else:
             lines.append("No indicators of compromise were extracted.")
             lines.append("")
