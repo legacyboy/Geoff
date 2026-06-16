@@ -3570,9 +3570,15 @@ class NarrativeReportGenerator:
                         "- Do NOT include OS files, browser artifacts, or general system data.\n"
                         "- Do NOT make up values. Extract exactly what appears in findings.\n"
                         "- If a category has no relevant IOCs, return an empty array.\n"
-                        "\nRespond with ONLY a JSON object using these keys: "
-                        "ip_addresses, urls, registry_keys, file_paths, email_addresses, file_hashes. "
-                        "For file_hashes return objects with hash and algorithm. No explanation."
+                        "- For EMAIL ADDRESSES found in spoofed/phishing emails, include the "
+                        "source_tool and source_artifact fields (the eml_path or artifact that "
+                        "contained the email header).\n"
+                        "\nRespond with ONLY a JSON object. Each value must be an object with "
+                        "keys: value (the IOC string), source_tool (the tool that extracted it), "
+                        "source_artifact (the file/artifact it came from). "
+                        'Example: {"email_addresses": [{"value": "attacker@evil.com", "source_tool": "sleuthkit.extract_email_artifacts", "source_artifact": "outlook_24012.pst"}]}. '
+                        "For file_hashes return objects with hash, algorithm, source_tool, source_artifact. "
+                        "No explanation."
                     )
 
                 llm_raw = self._call_llm_for_iocs(prompt)
@@ -3605,7 +3611,15 @@ class NarrativeReportGenerator:
                                     if clean_hashes:
                                         curated_result[key] = clean_hashes
                                 else:
-                                    curated_result[key] = curated[key]
+                                    # Accept both string lists and object lists with source_traceback
+                                    clean_items = []
+                                    for item in curated[key]:
+                                        if isinstance(item, dict):
+                                            clean_items.append(item)
+                                        elif isinstance(item, str):
+                                            clean_items.append({"value": item})
+                                    if clean_items:
+                                        curated_result[key] = clean_items
                         for special in ("email_iocs", "suspicious_domains", "suspicious_strings"):
                             if special in result_dict:
                                 curated_result[special] = result_dict[special]
@@ -5327,46 +5341,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
         # ── 8. Indicators of Compromise ──
         lines.append("## 7. Indicators of Compromise")
         lines.append("")
-        if iocs:
-            ioc_labels = {
-                "ip_addresses": "IP Addresses",
-                "urls": "URLs",
-                "registry_keys": "Registry Keys",
-                "file_paths": "File Paths",
-                "email_addresses": "Email Addresses",
-                "file_hashes": "File Hashes",
-            }
-            for key, label in ioc_labels.items():
-                values = iocs.get(key, [])
-                if not values:
-                    continue
-                if key == "file_hashes":
-                    lines.append(f"**{label}** ({len(values)}):")
-                    for v in values[:20]:
-                        h = v.get("hash", "")
-                        algo = v.get("algorithm", "")
-                        fn = v.get("filename", "") or "unknown"
-                        lines.append(f"- `{h}` ({algo}) — {fn}")
-                    if len(values) > 20:
-                        lines.append(f"- ... and {len(values) - 20} more")
-                else:
-                    lines.append(f"**{label}** ({len(values)}):")
-                    for v in values[:30]:
-                        lines.append(f"- `{v}`")
-                    if len(values) > 30:
-                        lines.append(f"- ... and {len(values) - 30} more")
-                lines.append("")
-            email_iocs = iocs.get("email_iocs", {})
-            if email_iocs and any(email_iocs.get(k) for k in ["sender_ips", "from_addresses", "return_path_mismatches"]):
-                lines.append("**Email-Derived IOCs:**")
-                if email_iocs.get("sender_ips"):
-                    lines.append(f"- Sender IPs: {', '.join(email_iocs['sender_ips'][:10])}")
-                if email_iocs.get("return_path_mismatches"):
-                    lines.append(f"- Return-Path mismatches: {len(email_iocs['return_path_mismatches'])} (spoofing indicator)")
-                lines.append("")
-        else:
-            lines.append("No indicators of compromise were extracted.")
-            lines.append("")
+        lines.append(self._render_ioc_table(iocs))
+        lines.append("")
 
         # ── 9. MITRE ATT&CK Mapping ──
         # Build a lookup map from top-level mitre_techniques (richer than attack_chain list)
@@ -5379,8 +5355,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 f"in the evidence:"
             )
             lines.append("")
-            lines.append("| Technique | Name | Tactic | Confidence | Evidence |")
-            lines.append("|-----------|------|--------|------------|---------|")
+            lines.append("| Technique | Name | Tactic | Confidence | Supporting Finding | Source Tool | Artifact |")
+            lines.append("|-----------|------|--------|------------|-------------------|-------------|----------|")
             for tid in mitres[:20]:
                 phase = self._MITRE_PHASES.get(tid.split(".")[0], "Other")
                 obj = _mitre_obj_map.get(tid, {})
@@ -5388,8 +5364,36 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 conf = obj.get("confidence", None)
                 conf_str = f"{conf:.0%}" if isinstance(conf, float) else (str(conf) if conf else "—")
                 reasons = obj.get("matched_reasons", [])
-                evidence_str = "; ".join(reasons[:2]) if reasons else "—"
-                lines.append(f"| **{tid}** | {name} | {phase} | {conf_str} | {evidence_str} |")
+                evidence_paths = obj.get("evidence_paths", [])
+                
+                # Build trace: finding description → module/function → evidence file
+                finding_desc = "; ".join(reasons[:2]) if reasons else "—"
+                source_tool = obj.get("source_tool", "—")
+                source_artifact = obj.get("source_artifact", "—")
+                
+                # If source_tool/source_artifact not in the mitre object, try to extract
+                # from the first evidence_path
+                if source_tool == "—" and evidence_paths:
+                    # Infer tool from the path pattern
+                    ep = evidence_paths[0]
+                    if "sleuthkit" in ep.lower() or ep.endswith(".e01") or ".e0" in ep:
+                        source_tool = "sleuthkit"
+                        source_artifact = ep
+                    elif "bulk_extractor" in ep.lower():
+                        source_tool = "bulk_extractor"
+                        source_artifact = ep
+                    elif "plaso" in ep.lower():
+                        source_tool = "plaso"
+                        source_artifact = ep
+                    elif "strings" in ep.lower():
+                        source_tool = "strings"
+                        source_artifact = ep
+                    else:
+                        source_artifact = ep
+                
+                lines.append(f"| **{tid}** | {name} | {phase} | {conf_str} | {finding_desc} | {source_tool} | {source_artifact} |")
+            lines.append("")
+            lines.append("*Each MITRE technique is traced to the finding, tool, and artifact that produced it.*")
             lines.append("")
 
         # ── 10. Conclusions & Opinions ──
@@ -5792,9 +5796,9 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
             if key == "file_hashes":
                 # File hashes are dicts with hash/algorithm/filename/path/source_image
                 lines.append(f"**{label}** ({len(values)})\n")
+                has_source = any(isinstance(v, dict) and ('source_tool' in v or 'source_artifact' in v) for v in values[:50])
                 for v in values[:50]:
                     if not isinstance(v, dict):
-                        # Guard: if somehow stored as string, render as plain hash
                         lines.append(f" • `{v}`")
                         continue
                     h = v.get("hash", "")
@@ -5802,6 +5806,8 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                     fn = v.get("filename", "") or "(unknown)"
                     p = v.get("path", "") or "-"
                     si = v.get("source_image", "") or ""
+                    st = v.get("source_tool", "") or ""
+                    sa = v.get("source_artifact", "") or ""
                     if fn and fn != "(unknown)":
                         line_parts = [f"**Hash**: `{h}`"]
                         line_parts.append(f"**Algo**: {algo}")
@@ -5810,7 +5816,18 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                             line_parts.append(f"**Path**: {p}")
                         if si:
                             line_parts.append(f"**Image**: {si}")
+                        if st:
+                            line_parts.append(f"**Tool**: {st}")
+                        if sa:
+                            line_parts.append(f"**Artifact**: {sa}")
                         lines.append(" • ".join(line_parts) + "\n")
+                    elif h:
+                        parts = [f"`{h}` ({algo})"]
+                        if st:
+                            parts.append(f"via {st}")
+                        if sa:
+                            parts.append(f"from {sa}")
+                        lines.append(" • ".join(parts))
                     else:
                         lines.append(f" • `{h}` ({algo})")
                 if len(values) > 50:
@@ -5819,17 +5836,31 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                 continue
 
             # Standard rendering for non-hash IOCs
-            lines.append(f"**{label}** ({len(values)})\n")
-            lines.append("| Value |")
-            lines.append("|-------|")
-            for v in values[:50]:  # cap at 50 per category
-                lines.append(f"| `{v}` |")
+            # Support both string values and dicts with value/source_tool/source_artifact
+            has_source = any(isinstance(v, dict) and ('source_tool' in v or 'source_artifact' in v) for v in values[:50])
+            if has_source:
+                lines.append(f"**{label}** ({len(values)})\n")
+                lines.append("| Value | Source Tool | Artifact |")
+                lines.append("|-------|-------------|----------|")
+                for v in values[:50]:
+                    val = v.get('value', '') if isinstance(v, dict) else str(v)
+                    st = v.get('source_tool', '') if isinstance(v, dict) else ''
+                    sa = v.get('source_artifact', '') if isinstance(v, dict) else ''
+                    lines.append(f"| `{val}` | `{st}` | `{sa}` |")
+            else:
+                lines.append(f"**{label}** ({len(values)})\n")
+                lines.append("| Value |")
+                lines.append("|-------|")
+                for v in values[:50]:
+                    val = v.get('value', v) if isinstance(v, dict) else v
+                    lines.append(f"| `{val}` |")
             if len(values) > 50:
                 lines.append(f"| *(+{len(values)-50} more — see findings_jsonl)* |")
             lines.append("")
 
         # Render email IOCs if present
         email_iocs = iocs.get("email_iocs", {})
+        print(f"[DEBUG _render_ioc_table] email_iocs present: {bool(email_iocs)}, keys: {list(email_iocs.keys()) if email_iocs else 'none'}")
         if email_iocs:
             lines.append("---")
             lines.append("")
@@ -5891,18 +5922,26 @@ If evidence shows data exfiltration (data leaving the organization), then Confid
                     f"({len(mismatches)})\n"
                 )
                 lines.append(
-                    "| From | From Domain | Return-Path | Return-Path Domain |"
+                    "| From | From Domain | Return-Path | Return-Path Domain | Subject | Artifact (EML Path) |"
                 )
                 lines.append(
-                    "|------|-------------|-------------|--------------------|"
+                    "|------|-------------|-------------|--------------------|---------|----------------------|"
                 )
                 for m in mismatches[:20]:
+                    _eml = str(m.get('eml_path', '')) if m.get('eml_path') else ''
+                    _subj = str(m.get('subject', '')) if m.get('subject') else ''
+                    # Truncate long subject
+                    if len(_subj) > 60:
+                        _subj = _subj[:57] + '...'
                     lines.append(
                         f"| `{m.get('from', '')}` "
                         f"| `{m.get('from_domain', '')}` "
                         f"| `{m.get('return_path', '')}` "
-                        f"| `{m.get('return_path_domain', '')}` |"
+                        f"| `{m.get('return_path_domain', '')}` "
+                        f"| `{_subj}` "
+                        f"| `{_eml}` |"
                     )
+                lines.append("*Source: sleuthkit.extract_email_artifacts — PST dissection (Outlook_*.pst)*")
                 lines.append("")
 
             spoofed = email_iocs.get("spoofed_domains", [])
