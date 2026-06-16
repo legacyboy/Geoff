@@ -492,6 +492,7 @@ PLAYBOOK_NAMES = {
     "PB-SIFT-061": "Steganography Detection",
     "PB-SIFT-062": "Keylogger/Spyware Analysis",
     "PB-SIFT-063": "Chat & Messaging Aggregation",
+    "PB-SIFT-070": "Live Evidence Collection",
 }
 
 # Triage indicators for severity classification (used for reporting, NOT for

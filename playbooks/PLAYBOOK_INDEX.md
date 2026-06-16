@@ -41,6 +41,16 @@ Playbooks are numbered following the MITRE ATT&CK kill chain order.
 | **PB-SIFT-036** | PCAP & Network Forensics | Full packet capture analysis: protocol distribution, DNS tunneling, TLS JA3/JA3S fingerprinting, C2 beacon timing, data exfiltration volume, SMB lateral movement, Zeek log analysis, NetFlow. Runs when PCAP files are in evidence. | ✅ Active |
 | **PB-SIFT-037** | IoT Device Forensics | Consumer IoT device analysis: smart home hubs, cameras, voice assistants (Arlo, Echo, SmartThings, Wink), firmware images, and companion app configs. Runs when IoT artifacts are detected. | ✅ Active |
 
+## 🔴 Live Acquisition Playbooks (Running-System Collection)
+
+Unlike the static-image playbooks above, these acquire volatile and live-system evidence
+from a running host using open-source tooling, then hand the collected artifacts to the
+static-analysis playbooks for processing.
+
+| ID | Name | Focus | Status |
+| :--- | :--- | :--- | :--- |
+| **PB-SIFT-070** | Live Evidence Collection | Order-of-volatility acquisition from a running host using OSS tools (WinPmem/AVML/LiME memory, tcpdump/dumpcap capture, Velociraptor/UAC/CyLR triage, osquery state, dc3dd/ewfacquire live imaging). Each artifact is routed to the static playbook that processes it. Runs when a live host is in scope. | ✅ Active |
+
 ---
 When starting a new case, Geoff must:
 1. **Always run PB-SIFT-000 first.** No exceptions.
@@ -60,5 +70,6 @@ When starting a new case, Geoff must:
 15. PB-SIFT-035 is included when a domain controller is in scope: NTDS.dit, DC event logs, SYSVOL forensics, or AD database files.
 16. PB-SIFT-036 is included when PCAP files or Zeek log directories are in the evidence inventory.
 17. PB-SIFT-037 is included when IoT device evidence is detected: smart home hub images, camera config dumps, IoT firmware files, companion app databases, or directories named after IoT devices (arlo, echo, smartthings, wink).
+18. PB-SIFT-070 is a live-acquisition playbook, not a static-analysis one. It runs on a running host when live collection is in scope (active intrusion, evidence that would be lost on shutdown, or an unlocked encrypted volume), and runs **before** PB-SIFT-000 — its collected artifacts become the evidence set that PB-SIFT-000 triages.
 
 **Location:** `playbooks/` (relative to project root)
