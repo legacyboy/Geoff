@@ -2970,15 +2970,22 @@ class NarrativeReportGenerator:
         return False
 
     def _call_llm_for_iocs(self, prompt: str) -> Optional[str]:
-        """Fast LLM call for IOC curation — 20s timeout, single attempt, no retries."""
+        """Fast LLM call for IOC curation — 20s timeout, single attempt, no retries.
+        Uses direct api.ollama.com with Bearer token (same as _call_llm_with_retry).
+        """
         import requests as _requests
-        # Use local Ollama — manager model is accessed via localhost:11434
-        # (cloud profile routes through Ollama proxy which handles auth)
+        from geoff_config import ollama_base_url, ollama_headers, AGENT_MODELS
         try:
+            _url = ollama_base_url() + "/api/generate"
+            _headers = ollama_headers()
+            _model = AGENT_MODELS.get("manager", "deepseek-v4-pro")
+            # Strip :cloud suffix for api.ollama.com
+            if _model.endswith(":cloud"):
+                _model = _model[:-6]
             resp = _requests.post(
-                "http://localhost:11434/api/generate",
-                headers={},
-                json={"model": "deepseek-v4-flash:cloud", "prompt": prompt,
+                _url,
+                headers=_headers,
+                json={"model": _model, "prompt": prompt,
                        "stream": False, "options": {"temperature": 0.1}},
                 timeout=60,
             )
