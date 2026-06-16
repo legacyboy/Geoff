@@ -654,51 +654,8 @@ fi
 # ── Ensure Ollama is running ──────────────────────────────────────────────
 if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
     info "Starting Ollama service..."
-
-    # Create systemd service for Ollama with cloud API key if provided
-    if command -v systemctl >/dev/null 2>&1; then
-        _OLLAMA_SERVICE="/etc/systemd/system/ollama.service"
-        if [[ ! -f "$_OLLAMA_SERVICE" ]]; then
-            info "Creating systemd service for Ollama..."
-            _OLLAMA_ENV_LINE=""
-            [[ -n "$OLLAMA_KEY" ]] && _OLLAMA_ENV_LINE="Environment=OLLAMA_CLOUD_API_KEY=${OLLAMA_KEY}"
-            sudo bash -c "cat > $_OLLAMA_SERVICE << 'SERVICEEOF'
-[Unit]
-Description=Ollama Service
-After=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/ollama serve
-User=${USER}
-Group=${USER}
-Restart=always
-RestartSec=3
-Environment=OLLAMA_HOST=127.0.0.1
-${_OLLAMA_ENV_LINE}
-
-[Install]
-WantedBy=default.target
-SERVICEEOF"
-            sudo systemctl daemon-reload
-            sudo systemctl enable ollama
-            sudo systemctl start ollama
-            ok "Ollama systemd service created and started"
-        else
-            # Service exists — restart to pick up any new env vars
-            if [[ -n "$OLLAMA_KEY" ]]; then
-                if ! grep -q "OLLAMA_CLOUD_API_KEY" "$_OLLAMA_SERVICE"; then
-                    info "Updating Ollama service with cloud API key..."
-                    sudo sed -i '/^\[Service\]/a Environment=OLLAMA_CLOUD_API_KEY='"${OLLAMA_KEY}" "$_OLLAMA_SERVICE"
-                    sudo systemctl daemon-reload
-                fi
-            fi
-            sudo systemctl restart ollama
-        fi
-    else
-        # No systemd — fall back to background process
-        ollama serve &>/dev/null &
-    fi
-
+    ollama serve &>/dev/null &
+    OLLAMA_PID=$!
     # Wait for Ollama to be ready
     for i in $(seq 1 30); do
         if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
@@ -709,7 +666,7 @@ SERVICEEOF"
     if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
         fail "Ollama failed to start after 30 seconds"
     fi
-    ok "Ollama is running"
+    ok "Ollama is running (PID ${OLLAMA_PID})"
 fi
 
 # ── Pull Ollama models ────────────────────────────────────────────────────
